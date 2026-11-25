@@ -280,6 +280,7 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     let externalId: String?
     var marketType: String? = nil
     let mutuallyExclusive: Bool?
+    var outcomePricesAreIndependent: Bool? = nil
     let commenceTime: String?
     let resolutionDate: String?
     let updatedAt: String?
@@ -348,6 +349,8 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     /// own result (`{"verdict","basis"}`). Absent on every other market and on
     /// older servers. Read only through ``SettledResultDisplay698``.
     @LenientDecode var settlementDisplay: SettlementDisplay698? = nil
+    /// The venue graded this outcome out while the field remains open.
+    var isOut: Bool? = nil
     /// Direction 228 (#12885): optional server-supplied numerical sort key.
     @TolerantNumeric var sortKey: Double? = nil
 
@@ -357,7 +360,7 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, openingAmericanOdds, isWinner, resolutionSource, lastUpdated
         case contributingSources, observedAt, aggregationRule
-        case settlementDisplay, sortKey
+        case settlementDisplay, sortKey, isOut
     }
 }
 
@@ -495,6 +498,9 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
     /// (#11493). Only `/api/teams/{id}` serves it, and only on a row whose market
     /// a decided grid column lists. Read it through ``gridVerdict``.
     let state: String?
+    /// #12957 / #12581 — server-owned provenance mark for this selected team-futures
+    /// outcome row (`/api/teams/{slug}` and `/api/me/teams/futures`).
+    var sourceMark: SourceMark? = nil
 
     var id: Int { outcomeId }
 
@@ -506,7 +512,7 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
         case category, source, probability
         case probabilityChange24h = "probabilityChange24H"
         case rank, totalOutcomes, resolutionDate, isWinner, matchedTeam, canonicalMarketKey
-        case state
+        case state, sourceMark
     }
 }
 
@@ -652,6 +658,7 @@ nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
     let espnId: String?
     /// #9387 — the same per-outcome fields as `FuturesOutcome`, on the current
     /// column of an opt-in timeline.
+    @TolerantNumeric var renderedPercent: Int? = nil
     @TolerantNumeric var contributingSources: [String]? = nil
     @TolerantNumeric var observedAt: String? = nil
     @TolerantNumeric var aggregationRule: String? = nil
@@ -664,7 +671,7 @@ nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, teamId, logoSmall, logoLarge
         case primaryColor, secondaryColor, abbreviation, record, location, espnId
-        case contributingSources, observedAt, aggregationRule
+        case renderedPercent, contributingSources, observedAt, aggregationRule
     }
 }
 
@@ -676,6 +683,7 @@ extension TimelineOutcomeMeta {
     nonisolated func withholdingCurrent() -> TimelineOutcomeMeta {
         var copy = self
         copy.currentProbability = nil
+        copy._renderedPercent = TolerantNumeric(wrappedValue: nil)
         copy._probabilityChange24h = TolerantNumeric(wrappedValue: nil)
         copy._contributingSources = TolerantNumeric(wrappedValue: nil)
         return copy

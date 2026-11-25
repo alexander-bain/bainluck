@@ -223,6 +223,7 @@ enum LiveProjectedFinalAdmission2920 {
         case noActualScore
         case pairNotPrintable
         case levelPair
+        case conflictsWithChance
         case unreachable
     }
 
@@ -306,7 +307,9 @@ enum LiveProjectedFinalAdmission2920 {
         homeScore: Int?,
         awayScore: Int?,
         phase: Phase?,
-        now: Date
+        now: Date,
+        homeChance: Double? = nil,
+        awayChance: Double? = nil
     ) -> Outcome {
         guard status == "live" else { return .withheld(.notLive) }
         if let start = rowStart.commenceTime?.asDate, start > now { return .withheld(.notStarted) }
@@ -335,7 +338,15 @@ enum LiveProjectedFinalAdmission2920 {
         guard admitted.home > 0, admitted.away > 0,
               let home = Int(exactly: admitted.home.rounded()),
               let away = Int(exactly: admitted.away.rounded()) else { return .withheld(.pairNotPrintable) }
-        guard home != away || SportVocab.forSport(sport).canEndInATie else { return .withheld(.levelPair) }
+        if ProjectedFinalChanceGuard240A.conflicts(
+            projectedHome: Double(home),
+            projectedAway: Double(away),
+            homeChance: homeChance,
+            awayChance: awayChance,
+            sportKey: sport
+        ) {
+            return .withheld(.conflictsWithChance)
+        }
         guard home >= homeScore, away >= awayScore else { return .withheld(.unreachable) }
 
         guard let format = format(forSport: sport) else { return .withheld(.unsupportedSport) }

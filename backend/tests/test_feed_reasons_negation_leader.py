@@ -375,21 +375,12 @@ class TestNonWillInterrogatives:
 
     @pytest.mark.parametrize("market", STRATEGY_1_MARKETS)
     def test_the_predicate_still_catches_the_label_strategy_1_ships(self, market):
-        """The road #3517 left open, walked end to end.
-
-        🔴 THIS IS WHAT STOPS THE CLASS ABOVE GOING VACUOUS. Once the producer
-        refuses every Strategy 2 label, "the label never reaches the reader" is
-        satisfied trivially by a producer that emits nothing — so the predicate
-        needs a specimen the producer really does still manufacture. Strategy 1
-        is it: `Not Anthropic` is a genuine negation label, it restates nothing,
-        it ships, and `_answering_side_label` is the only thing between it and
-        the sentence.
+        """#13270 closed Strategy 1 upstream too: binary No stays 'No' and the
+        backstop predicate still collapses any legacy 'Not <subject>' string.
         """
         label = humanize_binary_outcome_name("No", market)
-        assert label.startswith("Not "), (
-            "precondition: the producer must manufacture a label for this road "
-            "to be under test at all"
-        )
+        assert label == "No"
+        assert not label.startswith("Not ")
 
         summary = generate_futures_context_summary(
             highlight_reasons=[],
@@ -399,20 +390,23 @@ class TestNonWillInterrogatives:
             headline="",
         )
         assert summary == "No leads at 72%"
-        # Scoped per UX-P238-5: "No" alone is a substring of the defect.
-        assert label not in summary
+
+        # Exercise the predicate directly on a synthetic legacy "Not <subject>"
+        # string so the backstop remains under test.
+        subject = market.split()[1]
+        legacy_label = f"Not {subject}"
+        legacy_summary = generate_futures_context_summary(
+            highlight_reasons=[],
+            market_name=market,
+            leader_name=legacy_label,
+            leader_probability=0.72,
+            headline="",
+        )
+        assert legacy_summary == "No leads at 72%"
+        assert legacy_label not in legacy_summary
 
     def test_every_non_will_question_now_takes_the_upstream_road(self):
-        """Both directions in one place: the eight collapse, the four do not.
-
-        A rule that collapsed everything fails the second half; a rule that
-        collapsed nothing fails the first. #3491's version of this test pinned
-        one collapse out of eight, because the gate was length. #3517 makes the
-        gate redundancy, and every Strategy 2 label is a restatement, so the
-        split moved to the STRATEGY boundary — which is where it belongs, since
-        that is the boundary that decides whether the question's predicate
-        survives into the label.
-        """
+        """#13270 — every binary question (Will and non-Will) stays bare 'No'."""
         collapsed = {
             market
             for market in self.NON_WILL_MARKETS
@@ -425,7 +419,7 @@ class TestNonWillInterrogatives:
             for market in self.STRATEGY_1_MARKETS
             if humanize_binary_outcome_name("No", market) != "No"
         }
-        assert kept == set(self.STRATEGY_1_MARKETS)
+        assert kept == set()
 
     def test_the_exact_cert_624_sentence_is_gone(self):
         # #3517 closed this one road further upstream than CERT-624 did: the

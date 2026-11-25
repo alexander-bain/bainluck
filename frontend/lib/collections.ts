@@ -27,6 +27,7 @@ export interface MachineryOutcomeVisual {
   name: string;
   probability: number;
   rendered_percent: number;
+  unfloored_percent?: number | null;
   art: MachinerySubjectArt;
 }
 
@@ -41,6 +42,9 @@ export interface MachineryVisualBlock {
     | "benchmark_strip"
     | "probability_history_chart";
   initial_visible_limit?: number;
+  item_noun?: string | null;
+  hero_image_url?: string | null;
+  hero_image_alt?: string | null;
   paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet;
   items?: Record<string, unknown>[];
 }
@@ -74,6 +78,18 @@ export interface CollectionParent {
   name: string;
   href: string;
 }
+export interface CollectionMoreSet {
+  slug: string;
+  name: string;
+  href: string;
+  dek: string | null;
+  category: string | null;
+  memberCount: number;
+  leadLabel: string | null;
+  leadProbability: number | null;
+  leadRenderedPercent?: number | null;
+  asOf: string | null;
+}
 export interface CollectionHub {
   slug: string;
   revision: number | null;
@@ -83,6 +99,7 @@ export interface CollectionHub {
   sections: CollectionSection[];
   children: { key: string; name: string; href: string }[];
   parent?: CollectionParent | null;
+  moreSets?: CollectionMoreSet[];
   members: CollectionMember[];
   related: Record<string, CollectionMember[]>;
   note: string | null;
@@ -341,10 +358,62 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
       };
     }
   }
+  const admittedMoreSets: CollectionMoreSet[] = [];
+  if (Array.isArray(row.more_sets)) {
+    const seenMore = new Set<string>([slug]);
+    for (const rawItem of row.more_sets) {
+      if (admittedMoreSets.length >= 2) break;
+      const item = object(rawItem);
+      if (!item || !safeCollectionSlug(item.slug) || !text(item.name) || seenMore.has(item.slug)) continue;
+      const mHref = collectionPath(item.slug);
+      if (!mHref) continue;
+      const mDest = object(item.destination);
+      if (
+        mDest &&
+        (mDest.kind !== "container" ||
+          mDest.slug !== item.slug ||
+          mDest.api !== `/api/containers/${item.slug}` ||
+          (mDest.web != null && mDest.web !== mHref))
+      ) {
+        continue;
+      }
+      if (!positive(item.member_count)) continue;
+      const prob =
+        typeof item.lead_probability === "number" &&
+        Number.isFinite(item.lead_probability) &&
+        item.lead_probability >= 0 &&
+        item.lead_probability <= 1
+          ? item.lead_probability
+          : null;
+      const leadLabel = prob !== null && text(item.lead_label) ? item.lead_label.trim() : null;
+      const asOf = prob !== null && text(item.as_of) ? item.as_of.trim() : null;
+      if (prob === null || leadLabel === null || asOf === null) continue;
+      const leadRenderedPercent =
+        typeof item.lead_rendered_percent === "number" &&
+        Number.isInteger(item.lead_rendered_percent) &&
+        item.lead_rendered_percent >= 0 &&
+        item.lead_rendered_percent <= 100
+          ? item.lead_rendered_percent
+          : null;
+      seenMore.add(item.slug);
+      admittedMoreSets.push({
+        slug: item.slug,
+        name: item.name.trim(),
+        href: mHref,
+        dek: text(item.dek) ? item.dek.trim() : null,
+        category: text(item.category) ? item.category.trim() : null,
+        memberCount: item.member_count,
+        leadLabel,
+        leadProbability: prob,
+        leadRenderedPercent,
+        asOf,
+      });
+    }
+  }
   const admittedPairedSet = object(row.paired_metric_set) && Array.isArray(object(row.paired_metric_set)?.entries)
     ? (row.paired_metric_set as unknown as CollectionHub["pairedMetricSet"])
     : null;
-  return { ...base, members, related, children, parent: admittedParent, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
+  return { ...base, members, related, children, parent: admittedParent, moreSets: admittedMoreSets, theme, family, relatedSummary, dek: family ? familyDek[family] ?? null : null,
     subtitle: text(row.subtitle) ? row.subtitle : null, caption: admittedCaption, pin: admittedPin, pairedMetricSet: admittedPairedSet,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
     note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or markets aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };

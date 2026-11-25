@@ -351,7 +351,7 @@ enum EvolutionLeaderboardGeometry {
         var byServedIndex = [Int?](repeating: nil, count: served.count)
         for (slot, servedIndex) in headlineOrder.enumerated()
         where printed.indices.contains(slot) {
-            byServedIndex[servedIndex] = printed[slot]
+            byServedIndex[servedIndex] = served[servedIndex].renderedPercent ?? printed[slot]
         }
         return byServedIndex
     }

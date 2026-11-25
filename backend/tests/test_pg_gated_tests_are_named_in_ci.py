@@ -56,14 +56,8 @@ PG_GATE_ENV_RE = re.compile(r"[A-Z][A-Z0-9_]*_DATABASE_URL")
 #: a debt list, not a discretionary opt-out: an entry is a file whose gate does
 #: not run, so nothing about it may be quoted as proof while it sits here.
 #:
-#: ``test_feed_static_tag_filter_pg.py`` — found unnamed by the same sweep that
-#: found the #2637 hole. Wiring it is a feed-lane change (its first CI execution
-#: could legitimately go red, and reding master on another lane's behalf is not
-#: this guard's job), so it is recorded here and handed over rather than
-#: silently fixed or silently ignored.
-KNOWN_UNWIRED = {
-    "test_feed_static_tag_filter_pg.py",
-}
+#: ``test_feed_static_tag_filter_pg.py`` was wired into ``isolated`` under #12612.
+KNOWN_UNWIRED = set()
 
 
 def _pg_gated_files() -> set[str]:
@@ -116,12 +110,12 @@ SKIP_CALL_RE = re.compile(r"pytest\.mark\.skipif\(|pytest\.skip\(")
 #: start-placeholder files were wired with their own step, #12612). Nothing in
 #: these files is evidence while listed.
 KNOWN_UNWIRED_ROOT = {
-    "test_calibration_canonical_pg.py",
-    "test_calibration_examples_canonical_262.py",
-    "test_calibration_horizon_honest_263.py",
+    # #13463 (filed from #12612 hard-stop on Nov 22): after supplying missing NOT NULL
+    # seed columns + Queue #299 proved-exclusivity metadata, T-7 returns final_n=5
+    # because missing outcome lowers ro.mnm_cp_sum to 1.00 <= 1.15 under Queue #263,
+    # hiding incompleteness in precompute_calibration.py. Real calibration defect
+    # owned by Speed (#13463); keep test and seed untouched until #13463 lands.
     "test_calibration_horizon_population_262.py",
-    "test_polymarket_container_sibling_5821.py",
-    "test_repair_10520_keeper_current_anchor.py",
 }
 
 

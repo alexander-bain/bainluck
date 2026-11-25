@@ -253,12 +253,55 @@ enum SavedWidgetTimeline10875 {
         }
         return now.addingTimeInterval(minutes * 60)
     }
+
+    /// #12316 / 254: A — map a saved-item widget's content to its Smart Stack relevance state.
+    static func relevanceState(_ content: SavedWidgetContent10875,
+                               selection: SavedWidgetSelection10875?,
+                               at date: Date) -> GameRelevanceState254A {
+        guard case .detail(.game(let event), _) = content, let selection else { return .other }
+        let read = reading(.game(event), selection: selection, at: date)
+        if read.phase == .result || read.phase == .noResult {
+            // Finals deliberately omit `read.observedAt` so no price clock is printed;
+            // fall back to the event's observation stamp for the 1-hour post-final cooldown.
+            let finalObserved = read.observedAt ?? SavedWidgetDetailDecoding10875.date(event.heroProbabilityObservedAt)
+            return .finalResult(observedAt: finalObserved)
+        }
+        let status = event.status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if status == "live" || status == "in_progress" {
+            return .live
+        }
+        let commence = SavedWidgetDetailDecoding10875.date(event.commenceTime)
+        if EventState.isSuspendedAndStarted(event.status, commenceTime: commence, now: date) {
+            return .other
+        }
+        if status == nil || status == "scheduled" || status == "upcoming" || status == "pregame" || status == "not_started" {
+            return .scheduled(commenceTime: commence, startIsTbd: event.startIsTbd == true)
+        }
+        return .other
+    }
+
+    /// #12316 / 254: A — Smart Stack relevance score and duration at `date`.
+    static func relevance(_ content: SavedWidgetContent10875,
+                          selection: SavedWidgetSelection10875?,
+                          at date: Date) -> WidgetRelevanceSpec254A {
+        WidgetRelevanceRule254A.spec(for: relevanceState(content, selection: selection, at: date), at: date)
+    }
+
+    /// #12316 / 254: A — future relevance-tier transition dates to merge into the widget timeline.
+    static func relevanceBoundaryDates(_ content: SavedWidgetContent10875,
+                                       selection: SavedWidgetSelection10875?,
+                                       now: Date) -> [Date] {
+        WidgetRelevanceRule254A.boundaryDates(for: relevanceState(content, selection: selection, at: now), now: now)
+    }
 }
 
 /// What a widget says when it has no reading to show.
 nonisolated struct SavedWidgetMessage10875: Equatable, Sendable {
     let title: String
     let detail: String
+    /// Short single-line detail for the rectangular Lock Screen widget (#13065)
+    /// so it never clips with an ellipsis at default or accessibility text sizes.
+    let lockScreenDetail: String
 
     var spoken: String { "\(title). \(detail)" }
 
@@ -267,24 +310,31 @@ nonisolated struct SavedWidgetMessage10875: Equatable, Sendable {
         case .notConfigured:
             title = "Choose a saved game or market"
             detail = "Touch and hold, then Edit Widget."
+            lockScreenDetail = "Edit to choose"
         case .openApp:
             title = "Open Bain Luck"
             detail = "Your saved games and markets will appear here."
+            lockScreenDetail = "View saved items"
         case .otherAccount:
             title = "Saved on another account"
             detail = "Edit the widget to choose from your saved items."
+            lockScreenDetail = "Edit to choose"
         case .removed(let name):
             title = name ?? "No longer saved"
             detail = name == nil ? "Edit the widget to choose another." : "No longer saved. Edit the widget to choose another."
+            lockScreenDetail = name == nil ? "Edit to choose" : "No longer saved"
         case .gone:
             title = "No longer listed"
             detail = "Edit the widget to choose another."
+            lockScreenDetail = "Edit to choose"
         case .unreachable:
             title = "Can't reach Bain Luck"
             detail = "This will update when you're back online."
+            lockScreenDetail = "Back online soon"
         case .detail:
             title = ""
             detail = ""
+            lockScreenDetail = ""
         }
     }
 }

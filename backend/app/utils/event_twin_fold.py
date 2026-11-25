@@ -153,24 +153,32 @@ from __future__ import annotations
 
 import bisect
 import logging
-import math
 import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import lru_cache
 from typing import Any, Iterable, Optional
 
+from app.utils.aggregation import parse_source_entry
 from app.utils.kalshi_occurrence_start import (
     _is_orm_instance,
     loaded_sport_key,
     recover_kalshi_occurrence_starts,
 )
 from app.utils.name_normalization import nation_spelling, strip_diacritics
-from app.utils.proven_duplicates import merge_opening_line
+from app.utils.proven_duplicates import (
+    apply_scheduled_stale_betting_override,
+    flip_probability_sources,
+    merge_opening_line,
+    sync_twin_betting_book_count,
+)
 from app.utils.search_fixture_dedup import FIXTURE_TIME_WINDOW_HOURS
 from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
 from app.utils.sport_keys import is_season_variant, league_identity
-from app.utils.venue_club_spellings import VENUE_CLUB_SPELLINGS
+from app.utils.venue_club_spellings import (
+    LEAGUE_CLUB_SPELLINGS,
+    VENUE_CLUB_SPELLINGS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +306,142 @@ def _squash(name: Optional[str]) -> str:
         return ""
     squashed = _squash_spelling(name)
     return _VENUE_SQUASHED.get(squashed, squashed)
+
+
+# #13142: US college sportsbook feeds (The Odds API) abbreviate "State" as "St"
+# ("New Mexico St Aggies", "Oklahoma St Cowgirls", "Appalachian St Mountaineers")
+# and "North Carolina State" as "NC State", while Polymarket and ESPN spell them
+# out ("New Mexico State Aggies", "North Carolina State Wolfpack"). Normalizing
+# those unambiguous college abbreviations inside NCAA leagues puts both rows in
+# the exact strict key so live and scheduled cards fold cleanly without widening
+# non-NCAA sports or Saint schools ("St. John's", "Mount St. Mary's").
+_COLLEGE_SAINT_PREV: frozenset[str] = frozenset(
+    {"mount", "mt", "of", "the", "college", "university"}
+)
+_COLLEGE_SAINT_NEXT: frozenset[str] = frozenset(
+    {
+        "agnes",
+        "ambrose",
+        "anselm",
+        "augustine",
+        "benedict",
+        "bernard",
+        "bonaventure",
+        "catherine",
+        "charles",
+        "clair",
+        "cloud",
+        "edward",
+        "edwards",
+        "elizabeth",
+        "fe",
+        "francis",
+        "john",
+        "johns",
+        "joseph",
+        "josephs",
+        "kate",
+        "katherine",
+        "lawrence",
+        "leo",
+        "louis",
+        "martin",
+        "martins",
+        "mary",
+        "marys",
+        "michael",
+        "michaels",
+        "norbert",
+        "olaf",
+        "paul",
+        "peter",
+        "peters",
+        "rose",
+        "scholastica",
+        "thomas",
+        "vincent",
+        "xavier",
+    }
+)
+
+
+_WBB_LEAGUE_IDENTITY = league_identity("basketball_wncaab")
+
+
+def _college_squash(name: Optional[str], league: Any = None) -> str:
+    """Squash an NCAA team name with ``St`` -> ``State`` and ``NC State`` expansion.
+
+    In women's college basketball (``_WBB_LEAGUE_IDENTITY``), also normalize
+    standalone ``cowboys`` -> ``cowgirls`` so Polymarket's ``Oklahoma State
+    Cowboys`` / ``Wyoming Cowboys`` collapse onto the Odds API's ``Cowgirls``
+    rows strictly inside women's college basketball (#13142).
+    """
+    if not name:
+        return ""
+    cleaned = strip_diacritics(name).lower().replace("'", "").replace("\u2019", "")
+    tokens = re.findall(r"[a-z0-9]+", cleaned)
+    if not tokens:
+        return ""
+    is_wbb = isinstance(league, str) and (
+        league == _WBB_LEAGUE_IDENTITY or league_identity(league) == _WBB_LEAGUE_IDENTITY
+    )
+    expanded: list[str] = []
+    idx = 0
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if (
+            idx == 0
+            and tok == "nc"
+            and idx + 1 < len(tokens)
+            and tokens[idx + 1] in ("st", "state")
+        ):
+            expanded.extend(("north", "carolina", "state"))
+            idx += 2
+            continue
+        if (
+            tok == "st"
+            and idx > 0
+            and tokens[idx - 1] not in _COLLEGE_SAINT_PREV
+            and (idx + 1 >= len(tokens) or tokens[idx + 1] not in _COLLEGE_SAINT_NEXT)
+        ):
+            expanded.append("state")
+        elif is_wbb and tok == "cowboys":
+            expanded.append("cowgirls")
+        else:
+            expanded.append(tok)
+        idx += 1
+    squashed = "".join(expanded)
+    return _VENUE_SQUASHED.get(squashed, squashed)
+
+
+def _is_ncaa_college_league(league: Any) -> bool:
+    if not isinstance(league, str):
+        return False
+    low = league.lower()
+    return "ncaa" in low or "college-" in low
+
+
+#: #13238: sport-scoped squashed spellings (e.g. EuroLeague "FC Barcelona
+#: Bàsquet" -> "barcelona") keyed by ``league_identity(sport_key)`` so they
+#: never fire on another sport (such as La Liga soccer).
+_LEAGUE_SQUASHED: dict[str, dict[str, str]] = {
+    league_identity(sport_key) or sport_key: {
+        _squash_spelling(left): _squash_spelling(right)
+        for left, right in mapping.items()
+    }
+    for sport_key, mapping in LEAGUE_CLUB_SPELLINGS.items()
+}
+
+
+def _squash_for_league(name: Optional[str], league: Any) -> str:
+    if _is_ncaa_college_league(league):
+        return _college_squash(name, league=league)
+    base = _squash(name)
+    if base and isinstance(league, str):
+        league_map = _LEAGUE_SQUASHED.get(league)
+        if league_map:
+            return league_map.get(base, base)
+    return base
 
 
 team_name_fold_key = _squash
@@ -451,11 +595,9 @@ def twin_fold_key(event: Any, identities: Optional[dict] = None) -> Optional[tup
     strictness, still exact minute equality — it simply now sees the instant the
     row's twin already holds instead of one three hours later.
     """
-    home = _squash(getattr(event, "home_team_name", None))
-    away = _squash(getattr(event, "away_team_name", None))
     commence = getattr(event, "commence_time", None)
     sport_id = getattr(event, "sport_id", None)
-    if not home or not away or commence is None or sport_id is None:
+    if commence is None or sport_id is None:
         return None
     # The batch map first (it is the one answer every row of this `sport_id`
     # gets), then this row's own sport for a standalone caller such as
@@ -464,6 +606,10 @@ def twin_fold_key(event: Any, identities: Optional[dict] = None) -> Optional[tup
     league = (identities or {}).get(sport_id) or league_identity(
         loaded_sport_key(event)
     )
+    home = _squash_for_league(getattr(event, "home_team_name", None), league)
+    away = _squash_for_league(getattr(event, "away_team_name", None), league)
+    if not home or not away:
+        return None
     return (
         league or sport_id,
         away,
@@ -700,6 +846,14 @@ class FoldResult:
     :attr:`merged_sources`, the fold has ALREADY applied this to the row (see
     :func:`_elect`); this is the record, for the log line and the guard tests."""
 
+    flipped_loser_ids: set[int] = field(default_factory=set)
+    """Row ids absorbed with Home/Away reversed relative to their survivor.
+
+    Callers that re-read raw DB rows for the survivor's detail/live-quote view
+    (``serve_fold_absorbed`` / ``proven_duplicates``) must flip these ids'
+    readings via :func:`flip_probability_sources` and keep oriented snapshot/prior
+    lookups off their corners."""
+
     @property
     def folded_count(self) -> int:
         return len(self.dropped_ids)
@@ -836,18 +990,42 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     except Exception:  # noqa: BLE001 — gotcha #42; the league-keyed groups stand
         logger.exception("twin fold: catch-all league merge failed; serving groups")
 
+    # #13142 — reversed, id-less WBB claims (Polymarket / Kalshi listing Home
+    # vs Away swapped relative to the Odds API sportsbook row).
+    # #13238 — reversed, id-less claims in leagues whose venues reverse
+    # Home/Away (e.g. Kalshi `KXEUROLEAGUEGAME`), after the within-league
+    # kick-off recovery has aligned the minute and before combat-claim bouts.
+    # Only whole clusters unioned; numbers turned through `corner_flips`.
+    corner_flips: dict[int, "_CornerFlip"] = {}
+    reversed_ids: set[int] = set()
+    try:
+        league_flips: dict[int, "_CornerFlip"] = {}
+        grouped = _merge_reversed_anchored_claim_twins(
+            grouped,
+            row_identities,
+            corner_flips=league_flips,
+            reversed_ids=reversed_ids,
+        )
+        corner_flips.update(league_flips)
+    except Exception:  # noqa: BLE001 — gotcha #42; the clusters above stand
+        logger.exception("twin fold: reversed claim merge failed; serving groups")
+
     # #7993 — last, on whole clusters, for the same reason the catch-all pass is:
     # it only ever UNIONS what the passes above built, so an `mma_other` claim the
     # catch-all pass could not reach is still a cluster this one can place.
     # #7993 residual — the reversed, priced claims this pass admits carry their
     # numbers turned round to the anchor's corners, keyed on the Python object
     # like `keep` below. Only `_elect` reads it.
-    corner_flips: dict[int, "_CornerFlip"] = {}
     try:
-        grouped = _merge_combat_claim_bouts(grouped, corner_flips=corner_flips)
+        combat_flips: dict[int, "_CornerFlip"] = {}
+        grouped = _merge_combat_claim_bouts(
+            grouped,
+            corner_flips=combat_flips,
+            reversed_ids=reversed_ids,
+        )
+        corner_flips.update(combat_flips)
     except Exception:  # noqa: BLE001 — gotcha #42; the clusters above stand
         logger.exception("twin fold: combat claim merge failed; serving groups")
-        corner_flips = {}
 
     # Keyed on the PYTHON object, not on `.id`: the fold must survive a caller
     # that hands it two hydrated rows carrying the same primary key, and must
@@ -861,7 +1039,7 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
             continue
 
         try:
-            _elect(members, keep, result, corner_flips)
+            _elect(members, keep, result, corner_flips, reversed_ids=reversed_ids)
         except Exception:  # noqa: BLE001 — one group's failure keeps its rows
             logger.warning(
                 "twin fold: election failed for %s; all rows kept",
@@ -3268,64 +3446,6 @@ def _combat_sport(members: list) -> Optional[str]:
     return sports.pop() if len(sports) == 1 else None
 
 
-#: The keys a stored venue reading may carry for :func:`_flipped_reading` to turn
-#: it round (#7993 residual). `value` and `observed_value` are the home fighter's
-#: chance; the other three say where and when it was read and hold for either
-#: corner. Measured over every mma/boxing row of the last 120 days on production,
-#: 2026-09-30 17:1xZ: these five are the only keys a `kalshi`, `polymarket` or
-#: `betting` object carries. A key outside this set is a shape nobody has
-#: checked, so the reading is refused rather than guessed at.
-_FLIPPABLE_READING_KEYS = frozenset(
-    {"value", "observed_value", "updated_at", "eligibility", "observed_basis", "price_read"}
-)
-_ORIENTED_READING_KEYS = ("value", "observed_value")
-
-
-def _flipped_chance(raw: Any) -> Optional[float]:
-    """``1 - raw`` for a finite probability, else ``None``."""
-    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-        return None
-    if not math.isfinite(raw) or not 0.0 <= raw <= 1.0:
-        return None
-    return round(1.0 - float(raw), 10)
-
-
-def _flipped_reading(name: str, reading: Any) -> tuple[bool, Any]:
-    """One stored venue entry read from the OTHER corner. ``(ok, reading)``.
-
-    A bare number or a `value`/`observed_value` pair is the home fighter's
-    chance, so the other corner's is its complement. Both halves of the pair
-    turn together, which keeps `observed_value == value` and so keeps the
-    observation basis bound to the value it dates (`stored_observation_basis`).
-    A `*_count` entry is a count of sources, not a chance, and is kept as is.
-    Anything else is refused.
-    """
-    if name.endswith("_count"):
-        return True, reading
-    if not isinstance(reading, dict):
-        flipped = _flipped_chance(reading)
-        return (flipped is not None), flipped
-    if not reading.keys() <= _FLIPPABLE_READING_KEYS or "value" not in reading:
-        return False, None
-    out = dict(reading)
-    for key in _ORIENTED_READING_KEYS:
-        if key in reading:
-            flipped = _flipped_chance(reading[key])
-            if flipped is None:
-                return False, None
-            out[key] = flipped
-    if "price_read" in reading:
-        from app.utils.aggregation import stored_price_read
-
-        # #12581: the exact upstream observation follows the same number onto
-        # the other axis. Invalid age evidence cannot make a valid price vanish.
-        read = stored_price_read(reading, reading["value"])
-        out.pop("price_read", None)
-        if read is not None:
-            out["price_read"] = {**read, "value": _flipped_chance(read["value"])}
-    return True, out
-
-
 @dataclass(frozen=True)
 class _CornerFlip:
     """A reversed claim row's numbers, read from the anchor's corners."""
@@ -3337,17 +3457,11 @@ class _CornerFlip:
 
 def _corner_flip(member: Any) -> Optional[_CornerFlip]:
     """The row's readings turned round, or ``None`` if any cannot be."""
-    sources = getattr(member, "win_probability_sources", None)
-    flipped: Optional[dict] = None
-    if sources:
-        if not isinstance(sources, dict):
-            return None
-        flipped = {}
-        for name, reading in sources.items():
-            ok, turned = _flipped_reading(str(name), reading)
-            if not ok:
-                return None
-            flipped[name] = turned
+    ok, flipped = flip_probability_sources(
+        getattr(member, "win_probability_sources", None)
+    )
+    if not ok:
+        return None
     return _CornerFlip(
         sources=flipped,
         opening_home=getattr(member, "opening_away_probability", None),
@@ -3356,7 +3470,9 @@ def _corner_flip(member: Any) -> Optional[_CornerFlip]:
 
 
 def _merge_combat_claim_bouts(
-    clusters: list[list], corner_flips: Optional[dict] = None
+    clusters: list[list],
+    corner_flips: Optional[dict] = None,
+    reversed_ids: Optional[set[int]] = None,
 ) -> list[list]:
     """Fold an id-less bout claim onto the one anchored bout it names. #7993.
 
@@ -3462,9 +3578,10 @@ def _merge_combat_claim_bouts(
         if _objectively_different_games(claim_members, anchor_members):
             continue
         flips: dict[int, _CornerFlip] = {}
-        if not all(
+        corners_reversed = not all(
             _same_corners(c, a) for c in bouts[claim] for a in bouts[anchor]
-        ):
+        )
+        if corners_reversed:
             if not _anchor_is_elected(claim_members, anchor_members):
                 continue
             if _group_carries_oriented_readings(claim_members):
@@ -3483,6 +3600,149 @@ def _merge_combat_claim_bouts(
         merged_into[claim] = anchor
         if flips:
             corner_flips.update(flips)
+        if corners_reversed and reversed_ids is not None:
+            reversed_ids.update(id(member) for member in claim_members)
+
+    if not merged_into:
+        return clusters
+
+    out: dict[int, list] = {}
+    for index, members in enumerate(clusters):
+        target = merged_into.get(index, index)
+        out.setdefault(target, []).extend(members)
+    return list(out.values())
+
+
+_REVERSED_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset(
+    {"basketball_wncaab", "basketball_euroleague"}
+)
+_REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset(
+    {"basketball_wncaab"}
+)
+
+
+def _reversed_claim_league(members: list) -> Optional[str]:
+    """Allowlisted league key for a cluster (tolerating same-sport catch-all
+    rows already merged onto it by `_merge_catchall_leagues`), else ``None``."""
+    allowlisted: set[str] = set()
+    catchall_prefixes: set[str] = set()
+    for member in members:
+        key = loaded_sport_key(member)
+        if not key:
+            return None
+        if key in _REVERSED_ANCHORED_CLAIM_LEAGUES:
+            allowlisted.add(key)
+        else:
+            prefix = _catchall_sport_prefix(key)
+            if prefix is None:
+                return None
+            catchall_prefixes.add(prefix)
+    if len(allowlisted) != 1:
+        return None
+    league = allowlisted.pop()
+    league_prefix = league.split("_", 1)[0]
+    if catchall_prefixes and catchall_prefixes != {league_prefix}:
+        return None
+    return league
+
+
+def _merge_reversed_anchored_claim_twins(
+    clusters: list[list],
+    identities: dict,
+    corner_flips: Optional[dict] = None,
+    reversed_ids: Optional[set[int]] = None,
+) -> list[list]:
+    """Fold a reversed id-less claim onto its anchored twin (#13142, #13238).
+
+    Narrow fail-closed pass for allowlisted leagues where a venue mints rows
+    with Home/Away swapped relative to the schedule-anchored row (e.g. WBB
+    claims on the same UTC calendar day and Kalshi ``KXEUROLEAGUEGAME`` after
+    ``recover_kalshi_occurrence_starts`` aligns its +3h expiration to the
+    exact tip-off minute). Requires provenance asymmetry, exact minute equality
+    (or same UTC calendar day for ``basketball_wncaab``), exact reversed
+    squashed names (time alone never folds), strict 1-to-1 uniqueness, live
+    safety, guaranteed anchor election, and valid complement flipping.
+    """
+    anchors: list[int] = []
+    claims: list[int] = []
+    sports: dict[int, str] = {}
+    for index, members in enumerate(clusters):
+        sport_key = _reversed_claim_league(members)
+        if sport_key is None or not _anchored_claim_group_status_is_known(members):
+            continue
+        if any(id(m) not in identities for m in members):
+            continue
+        sports[index] = sport_key
+        if _group_is_id_anchored(members):
+            anchors.append(index)
+        elif not _group_carries_schedule_id(members):
+            claims.append(index)
+
+    if not anchors or not claims:
+        return clusters
+
+    def is_reversed_twin(
+        claim_members: list, anchor_members: list, sport_key: str
+    ) -> bool:
+        same_day_allowed = sport_key in _REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES
+        for claim_row in claim_members:
+            c_away, c_home, c_min = identities[id(claim_row)]
+            if c_away == c_home:
+                return False
+            for anchor_row in anchor_members:
+                a_away, a_home, a_min = identities[id(anchor_row)]
+                if c_away != a_home or c_home != a_away:
+                    return False
+                if same_day_allowed:
+                    if c_min.date() != a_min.date():
+                        return False
+                elif c_min != a_min:
+                    return False
+        return True
+
+    claim_target: dict[int, int] = {}
+    claimed_by: dict[int, list[int]] = {}
+    for claim in claims:
+        matches = [
+            anchor
+            for anchor in anchors
+            if sports[claim] == sports[anchor]
+            and is_reversed_twin(clusters[claim], clusters[anchor], sports[claim])
+        ]
+        if len(matches) != 1:
+            continue
+        anchor = matches[0]
+        claim_target[claim] = anchor
+        claimed_by.setdefault(anchor, []).append(claim)
+
+    merged_into: dict[int, int] = {}
+    for claim, anchor in claim_target.items():
+        if len(claimed_by[anchor]) != 1:
+            continue
+        claim_members, anchor_members = clusters[claim], clusters[anchor]
+        if _objectively_different_games(claim_members, anchor_members):
+            continue
+        if not (
+            _variant_group_is_collapsible(claim_members)
+            and _variant_group_is_collapsible(anchor_members)
+        ) and not _live_anchored_claim_pair_is_licensed(claim_members):
+            continue
+        if not _anchor_is_elected(claim_members, anchor_members):
+            continue
+        flips: dict[int, _CornerFlip] = {}
+        if _group_carries_oriented_readings(claim_members):
+            turned = [_corner_flip(member) for member in claim_members]
+            if corner_flips is None or any(t is None for t in turned):
+                continue
+            flips = {
+                id(member): flip
+                for member, flip in zip(claim_members, turned)
+            }
+        merged_into[claim] = anchor
+        if flips:
+            corner_flips.update(flips)
+        if reversed_ids is not None:
+            reversed_ids.update(id(member) for member in claim_members)
 
     if not merged_into:
         return clusters
@@ -3519,6 +3779,7 @@ def _elect(
     keep: set,
     result: "FoldResult",
     corner_flips: Optional[dict] = None,
+    reversed_ids: Optional[set[int]] = None,
 ) -> None:
     """Pick the survivor for one group and union the losers' venues onto it.
 
@@ -3541,21 +3802,45 @@ def _elect(
     # took its place.
     for loser in losers:
         result.survivor_of[loser.id] = survivor.id
+        if id(loser) in flips or (reversed_ids and id(loser) in reversed_ids):
+            result.flipped_loser_ids.add(loser.id)
 
     merged = dict(getattr(survivor, "win_probability_sources", None) or {})
-    added = False
-    for loser in losers:
+    original_snapshot = dict(merged)
+    loser_source_rows: list[tuple[int, dict | None]] = []
+    for idx, loser in enumerate(losers):
         flip = flips.get(id(loser))
         loser_sources = (
             flip.sources
             if flip is not None
             else getattr(loser, "win_probability_sources", None)
         )
+        loser_id = getattr(loser, "id", None)
+        row_id = loser_id if isinstance(loser_id, int) else (10_000_000 + idx)
+        loser_source_rows.append((row_id, loser_sources))
         for name, reading in (loser_sources or {}).items():
+            if name == "betting_book_count":
+                continue
+            if name == "betting":
+                if (
+                    ("betting" not in merged and reading is not None)
+                    or (
+                        parse_source_entry(merged.get("betting"))[0] is None
+                        and parse_source_entry(reading)[0] is not None
+                    )
+                ):
+                    merged["betting"] = reading
+                    sync_twin_betting_book_count(merged, loser_sources)
+                continue
             if name not in merged:
                 merged[name] = reading
-                added = True
-    if added:
+
+    apply_scheduled_stale_betting_override(
+        merged,
+        sorted(loser_source_rows, key=lambda row: row[0]),
+        event_status=getattr(survivor, "status", None),
+    )
+    if merged != original_snapshot:
         result.merged_sources[survivor.id] = merged
 
     _carry_opening_line(survivor, losers, result, flips)

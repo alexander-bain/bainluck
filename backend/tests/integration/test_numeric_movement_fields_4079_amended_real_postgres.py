@@ -539,12 +539,14 @@ async def _client():
 def _forget_process_caches():
     from app.routes import events as _ev
     from app.utils import candidate_base as _cb
+    from app.utils import futures_page_cache as _fpc
     from app.utils import request_cache as _rc
     from app.utils.principal_independent_cache import clear_shared_builds
 
     _rc._reset_last_good_for_tests()
     _rc._reset_inflight_for_tests()
     _cb._reset_l0_for_tests()
+    _fpc._reset_for_tests()
     clear_shared_builds()
     _ev._team_cache = {}
     _ev._team_cache_time = 0
@@ -846,7 +848,7 @@ def test_0c_meta_training_pause_and_us_bank_failure_stay_priced_with_no_daily_nu
         for r in (card.get("discover_card") or {}).get("distribution_outcomes") or []:
             assert r.get(FEED_FIELD) is None, f"{market_id} distribution: {r!r}"
     meta_item = _feed_item(META_ID, category="tech")
-    assert "78.5 points since" in _caption(meta_item), _caption(meta_item)
+    assert "79 points since" in _caption(meta_item) and "78.5" not in _caption(meta_item), _caption(meta_item)
 
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+/** @jest-environment jsdom */
 /**
  * #6018 — THE FUTURES CARD'S AGE PIP, READ OFF RENDERED MARKUP.
  *
@@ -24,10 +25,15 @@
  * "a test anchor must not branch on the clock".
  */
 
-import { renderToStaticMarkup } from "react-dom/server";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 import FuturesCard from "../../components/FuturesCard";
 import type { FuturesMarket, FuturesOutcome } from "../../lib/types";
 import specimen from "../fixtures/futures114175PricelessTail6803.json";
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 /** The minute of the screenshot, so every relative string below is fixed. */
 const SHOT = new Date("2026-09-13T22:47:00.000Z");
@@ -77,7 +83,17 @@ function card(over: Partial<FuturesMarket>): FuturesMarket {
 
 /** The card's footer pip, or null when it renders nothing. */
 function pip(market: FuturesMarket): string | null {
-  const html = renderToStaticMarkup(<FuturesCard market={market} />);
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(<FuturesCard market={market} />);
+  });
+  const html = host.innerHTML;
+  act(() => {
+    root.unmount();
+  });
+  host.remove();
   // The footer is the last `text-micro text-text-muted` span on the card.
   const spans = [...html.matchAll(/class="text-micro text-text-muted"[^>]*>([^<]*)</g)];
   if (spans.length === 0) return null;

@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "description": "Curated preview grouping sets for Batch 7 (#12288, Sun Nov 22): Oscars Best Actor & Races, CFP National Championship, AFC West Duel, European League Titles, Tech & Space Movers, and Extreme Earth & Climate.",
+  "sets": {
+    "batch7-other-oscars-races": {
+      "entries": [
+        {
+          "id": 5869747,
+          "short_label": "Best Director",
+          "plain_short_label": "Best Director",
+          "headline_phrase": "{answer} winning Best Director"
+        },
+        {
+          "id": 58492239,
+          "short_label": "Best Animated Feature",
+          "plain_short_label": "Best Animated Feature",
+          "headline_phrase": "{answer} winning Best Animated Feature"
+        },
+        {
+          "id": 58492240,
+          "short_label": "Best Supporting Actress",
+          "plain_short_label": "Best Supporting Actress",
+          "headline_phrase": "{answer} winning Best Supporting Actress"
+        },
+        {
+          "id": 58492236,
+          "short_label": "Best Original Screenplay",
+          "plain_short_label": "Best Original Screenplay",
+          "headline_phrase": "{answer} winning Best Original Screenplay"
+        }
+      ]
+    },
+    "batch7-cfp-champion": {
+      "entries": [
+        {
+          "id": 181,
+          "short_label": "College Football National Championship"
+        }
+      ]
+    },
+    "batch7-cfp-conferences": {
+      "entries": [
+        {
+          "id": 232,
+          "short_label": "Big Ten Championship"
+        },
+        {
+          "id": 234,
+          "short_label": "Big 12 Championship"
+        },
+        {
+          "id": 4121125,
+          "short_label": "Pac-12 Championship"
+        },
+        {
+          "id": 233,
+          "short_label": "SEC Championship"
+        }
+      ]
+    },
+    "batch7-afc-west-duel": {
+      "entries": [
+        {
+          "id": 53675,
+          "short_label": "AFC West Winner"
+        }
+      ]
+    },
+    "batch7-nfl-divisions": {
+      "entries": [
+        {
+          "id": 53673,
+          "short_label": "NFC North"
+        },
+        {
+          "id": 53672,
+          "short_label": "NFC South"
+        },
+        {
+          "id": 53671,
+          "short_label": "NFC West"
+        }
+      ]
+    },
+    "batch7-european-league-titles": {
+      "entries": [
+        {
+          "id": 70732920,
+          "short_label": "Premier League"
+        },
+        {
+          "id": 70732921,
+          "short_label": "La Liga"
+        },
+        {
+          "id": 70732919,
+          "short_label": "Serie A"
+        },
+        {
+          "id": 70732968,
+          "short_label": "Bundesliga"
+        },
+        {
+          "id": 70732922,
+          "short_label": "Ligue 1"
+        }
+      ]
+    },
+    "batch7-tech-and-space-movers": {
+      "entries": [
+        {
+          "id": 68836748,
+          "short_label": "SpaceX market cap end of 2026",
+          "headline_phrase": "SpaceX year-end cap hits {answer} at {pct}%",
+          "headline_with_phrase": "SpaceX finishing 2026 at {answer} is at {pct}%"
+        },
+        {
+          "id": 24647105,
+          "short_label": "OpenAI's IPO valuation",
+          "headline_phrase": "OpenAI lists {answer} at {pct}%",
+          "headline_with_phrase": "OpenAI listing {answer} is at {pct}%"
+        },
+        {
+          "id": 70088624,
+          "short_label": "Jensen Huang joins SpaceX",
+          "headline_phrase": "Jensen Huang joins SpaceX {lower_answer} at {pct}%",
+          "headline_with_phrase": "Jensen Huang joining SpaceX {lower_answer} is at {pct}%"
+        },
+        {
+          "id": 52755607,
+          "short_label": "SpaceX buys a U.S. telecom before 2028",
+          "headline_phrase": "SpaceX is at {pct}% to buy a U.S. telecom before 2028",
+          "headline_with_phrase": "SpaceX buying a U.S. telecom before 2028 is at {pct}%"
+        },
+        {
+          "id": 115378,
+          "short_label": "SpaceX vs. OpenAI IPO cap",
+          "headline_phrase": "Higher IPO cap: {answer} at {pct}%",
+          "headline_with_phrase": "SpaceX vs. OpenAI IPO cap is at {pct}% for {answer}"
+        }
+      ]
+    },
+    "batch7-extreme-earth-2026": {
+      "entries": [
+        {
+          "id": 109358,
+          "short_label": "2026 hottest year on record",
+          "headline_phrase": "2026 is at {pct}% to be the hottest year on record",
+          "headline_with_phrase": "2026 is at {pct}% to be the hottest year on record"
+        },
+        {
+          "id": 108220,
+          "short_label": "Global warming reaches 2°C before 2050",
+          "headline_phrase": "2°C of warming before 2050 is at {pct}%",
+          "headline_with_phrase": "2°C of warming before 2050 is at {pct}%"
+        },
+        {
+          "id": 61054994,
+          "short_label": "Strongest El Niño on record",
+          "headline_phrase": "the 2026–27 El Niño is at {pct}% to be the strongest on record",
+          "headline_with_phrase": "a record 2026–27 El Niño is at {pct}%"
+        },
+        {
+          "id": 108294,
+          "short_label": "Magnitude 8.0+ quake in Japan before 2030",
+          "headline_phrase": "a magnitude 8.0+ Japan quake before 2030 is at {pct}%",
+          "headline_with_phrase": "a magnitude 8.0+ Japan quake before 2030 is at {pct}%"
+        },
+        {
+          "id": 108222,
+          "short_label": "Supervolcano eruption before 2050",
+          "headline_phrase": "a supervolcano eruption before 2050 is at {pct}%",
+          "headline_with_phrase": "a supervolcano eruption before 2050 is at {pct}%"
+        },
+        {
+          "id": 114086,
+          "short_label": "Category 4 U.S. hurricane before 2027",
+          "headline_phrase": "a Category 4 U.S. hurricane before 2027 is at {pct}%",
+          "headline_with_phrase": "a Category 4 U.S. hurricane before 2027 is at {pct}%"
+        },
+        {
+          "id": 109398,
+          "short_label": "Magnitude 8.0+ California quake before 2027",
+          "headline_phrase": "a magnitude 8.0+ California quake before 2027 is at {pct}%",
+          "headline_with_phrase": "a magnitude 8.0+ California quake before 2027 is at {pct}%"
+        },
+        {
+          "id": 114135,
+          "short_label": "Category 5 U.S. hurricane before 2027",
+          "headline_phrase": "a Category 5 U.S. hurricane before 2027 is at {pct}%",
+          "headline_with_phrase": "a Category 5 U.S. hurricane before 2027 is at {pct}%"
+        }
+      ]
+    }
+  }
+}

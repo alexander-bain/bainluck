@@ -99,12 +99,16 @@ async def _run(team, outcome_market_pairs, sport_key="baseball_mlb"):
     rows = [(o, m, sport_key) for o, m in outcome_market_pairs]
     stats = [(m.id, 30, 1.0) for _o, m in outcome_market_pairs]
 
+    screen_empty = MagicMock()
+    screen_empty.scalars.return_value.all.return_value = []
+
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[
         _result_all([(team, sport_key)]),
         _result_all(rows),
         _result_all([]),
         _result_all(stats),
+        screen_empty,  # price screen reload
     ])
     return await _query_team_futures([team.id], db, limit=20)
 

@@ -17,7 +17,7 @@ import type {
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
-import { formatAsOfStamp } from "@/lib/asOfStamp";
+import { AsOfStamp } from "@/components/AsOfStamp";
 import { manyWayChartCeiling, manyWayChartYTicks } from "@/lib/chartScaleRule201";
 import { NEVER_A_HOLE_MS, seriesFreshness, seriesWindowLabel } from "@/lib/seriesFreshness";
 import s from "./politics.module.css";
@@ -725,8 +725,6 @@ export default function PoliticsPage() {
     other: t.other?.count || 0,
   };
 
-  const asOfStamp = formatAsOfStamp(data.updated_at);
-
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
@@ -751,11 +749,14 @@ export default function PoliticsPage() {
             <span>
               <b className={s.metaNum}>2</b> sources
             </span>
-            {asOfStamp && (
-              <span>
-                <b className={s.metaNum}>{asOfStamp}</b>
-              </span>
-            )}
+            <AsOfStamp
+              iso={data.updated_at}
+              render={(label) => (
+                <span>
+                  <b className={s.metaNum}>{label}</b>
+                </span>
+              )}
+            />
           </div>
         </div>
       </div>

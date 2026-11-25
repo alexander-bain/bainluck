@@ -66,9 +66,13 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     /// rounds the live pair (direction 209: a final shows the winner's pregame
     /// chance). A missing price stays missing.
     var pregameRenderedPercents: (home: Int?, away: Int?) {
-        let drawSport = (sportKey.map { DrawPricedWinner.sportPricesADraw($0) } ?? true) || prematchDrawProbability != nil
-        if drawSport {
+        if prematchDrawProbability != nil {
             return (renderedPercent(prematchHomeProbability), renderedPercent(prematchAwayProbability))
+        }
+        guard let sportKey,
+              !sportKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !DrawPricedWinner.sportPricesADraw(sportKey) else {
+            return (renderedPercent(prematchHomeProbability), nil)
         }
         let pair = renderedDuelPercents(away: prematchAwayProbability, home: prematchHomeProbability)
         return (pair[1], pair[0])
@@ -121,7 +125,9 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         case currentOdds = "current_odds", prematchOdds = "prematch_odds"
         case espn, sportKey = "sport_key", sport
         case heroProbability = "hero_probability", heroAway = "hero_probability_away"
+        case heroProbabilitySource = "hero_probability_source"
         case probabilityObservedAt = "hero_probability_observed_at"
+        case openingChancePolicyChecked
     }
     private struct TeamColorFields: Codable {
         let teamID: Int?
@@ -142,10 +148,12 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         let drawProbability: Double?
         let projectedHomeScore: Double?
         let projectedAwayScore: Double?
+        let quoteKind: String?
         enum CodingKeys: String, CodingKey {
             case homeProbability = "home_probability", awayProbability = "away_probability"
             case drawProbability = "draw_probability"
             case projectedHomeScore = "projected_home_score", projectedAwayScore = "projected_away_score"
+            case quoteKind = "quote_kind"
         }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -164,9 +172,25 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
             drawProbability = probability(.drawProbability)
             projectedHomeScore = positiveScore(.projectedHomeScore)
             projectedAwayScore = positiveScore(.projectedAwayScore)
+            quoteKind = try? c.decode(String.self, forKey: .quoteKind)
         }
     }
+
+    /// Both Watch caches restore the normalized game, whose legacy encoding
+    /// discarded the source. A pre-fix producer clock was only served for a blend.
+    struct CachedReading: Decodable {
+        let game: WatchSelectedGame
+
+        init(from decoder: Decoder) throws {
+            game = try WatchSelectedGame(from: decoder, isCachedReading: true)
+        }
+    }
+
     init(from decoder: Decoder) throws {
+        try self.init(from: decoder, isCachedReading: false)
+    }
+
+    private init(from decoder: Decoder, isCachedReading: Bool) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(Int.self, forKey: .id)
         guard id > 0 else { throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Invalid event id") }
@@ -214,17 +238,29 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         scoreObservedAt = Self.date(try? c.decode(String.self, forKey: .scoreObservedAt))
         let odds = try? c.decode(Odds.self, forKey: .currentOdds)
         let prematch = try? c.decode(Odds.self, forKey: .prematchOdds)
-        let rawHero = try? c.decode(Double.self, forKey: .heroProbability)
+        let heroSource = try? c.decode(String.self, forKey: .heroProbabilitySource)
+        let openingOdds = odds?.quoteKind == "opening"
+        let useHero = heroSource != "opening" && (!openingOdds || heroSource == "blend")
+        let rawHero = useHero ? (try? c.decode(Double.self, forKey: .heroProbability)) : nil
         let hero = rawHero.flatMap { $0.isFinite && (0...1).contains($0) ? $0 : nil }
         let heroAway = try? c.decode(Double.self, forKey: .heroAway)
-        homeProbability = hero.flatMap { (0...1).contains($0) ? $0 : nil } ?? odds?.homeProbability
-        awayProbability = hero != nil ? heroAway.flatMap { (0...1).contains($0) ? $0 : nil } : odds?.awayProbability
         // The producer clock dates the hero, never the sportsbook capture or score.
         probabilityObservedAt = hero != nil ? Self.date(try? c.decode(String.self, forKey: .probabilityObservedAt)) : nil
+        let currentOdds = heroSource == "opening" || openingOdds ? nil : odds
+        let checkedOpeningSource = (try? c.decode(Bool.self, forKey: .openingChancePolicyChecked)) == true
+        let showsPrice = !isCachedReading || checkedOpeningSource || probabilityObservedAt != nil
+        if showsPrice {
+            homeProbability = hero ?? currentOdds?.homeProbability
+            awayProbability = hero != nil ? heroAway.flatMap { (0...1).contains($0) ? $0 : nil } : currentOdds?.awayProbability
+            drawProbability = currentOdds?.drawProbability
+        } else {
+            homeProbability = nil
+            awayProbability = nil
+            drawProbability = nil
+        }
         let espn = try? c.decode(GameState.self, forKey: .espn)
         period = espn?.period
         gameClock = espn?.gameClock
-        drawProbability = odds?.drawProbability
         prematchHomeProbability = prematch?.homeProbability
         prematchAwayProbability = prematch?.awayProbability
         prematchDrawProbability = prematch?.drawProbability
@@ -267,6 +303,7 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         try c.encodeIfPresent(status, forKey: .status)
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        try c.encode(true, forKey: .openingChancePolicyChecked)
         try c.encodeIfPresent(commenceTime.map(formatter.string), forKey: .commenceTime)
         try c.encodeIfPresent(scoreObservedAt.map(formatter.string), forKey: .scoreObservedAt)
         try c.encodeIfPresent(probabilityObservedAt.map(formatter.string), forKey: .probabilityObservedAt)

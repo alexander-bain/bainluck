@@ -19,12 +19,15 @@ to conserve API calls.
 Estimated capacity: ~1.9 calls/second, ~166K calls/day.
 """
 
+import asyncio
 import logging
 import os
+from threading import Thread
 
 import sentry_sdk
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_ready
 from sentry_sdk.integrations.celery import CeleryIntegration
 
 from app.tasks.base import run_async
@@ -2569,6 +2572,18 @@ def backfill_team_logos(self):
     return run_async(_backfill_team_logos())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.sync_espn_standings_records")
+def sync_espn_standings_records(self):
+    """#13241: refresh college basketball Team.current_record from ESPN standings.
+
+    Updates existing Team rows matched by verified `(sport_id, espn_id)` only;
+    never creates Team rows and leaves rows untouched when ESPN is dark or
+    serving preseason standings.
+    """
+    from app.tasks.espn_sync import _sync_espn_standings_records
+    return _tracked_run("sync_espn_standings_records", _sync_espn_standings_records())
+
+
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.ensure_perf_indexes")
 def ensure_perf_indexes(self):
     """#1197: build the missing team-route event indexes CONCURRENTLY at runtime
@@ -3227,6 +3242,9 @@ def send_bug_fixed_email_task(self, report_id: int):
 
 # --- Bug Report → GitHub Issue ---
 
+_TESTFLIGHT_SCREENSHOT_SUMMARY_TIMEOUT_S = 10.0
+
+
 @celery_app.task(bind=True, max_retries=2, name="app.tasks.create_github_issue_for_bug_report")
 def create_github_issue_for_bug_report_task(self, report_id: int):
     """Create a GitHub Issue from a rage-shake bug report."""
@@ -3328,12 +3346,38 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
 
             severity = compute_severity(report.description)
             title = format_issue_title(report.description)
+
+            screenshot_summary = None
+            if (report.app_state or {}).get("source") == "testflight" and report.screenshot_base64:
+                from app.services.testflight_feedback import summarize_testflight_screenshot
+                try:
+                    screenshot_summary = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            summarize_testflight_screenshot,
+                            report.screenshot_base64,
+                            report_id=report.id,
+                        ),
+                        timeout=_TESTFLIGHT_SCREENSHOT_SUMMARY_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "TestFlight screenshot summary timed out after %.1fs for report #%d (filing without it)",
+                        _TESTFLIGHT_SCREENSHOT_SUMMARY_TIMEOUT_S, report.id,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "TestFlight screenshot summary failed unexpectedly for report #%d (%s: %s) — filing without it",
+                        report.id, type(exc).__name__, exc,
+                        exc_info=True,
+                    )
+
             body = format_issue_body(
                 report_id=report.id,
                 description=report.description,
                 category=report.category,
                 app_state=report.app_state,
                 has_screenshot=bool(report.screenshot_base64),
+                screenshot_summary=screenshot_summary,
             )
             labels = build_labels(report.category, severity, is_owner=is_owner)
 
@@ -5939,12 +5983,12 @@ def grid_sentinel(self, file_issues=True):
 
 
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.grouping_sentinel")
-def grouping_sentinel(self, post=True, file_issues=True):
+def grouping_sentinel(self, post=True, file_issues=False):
     """Grouping Sentinel (#12231): count the market families no grouping covers
     (five or more open, priced markets alive 48 h), new venue series, unshaped
     markets and frames written, and post the counts on #12221 once a week
-    through the rail's report path. Report-only (72-A): it files nothing until
-    Thu Nov 26, then at most five issues a run through ``reconcile_issue``.
+    through the rail's report path. Report-only per decision 386: A (replaces
+    72-A): it never files issues.
     Read-only against market data. The 840s soft limit (under the 900s hard
     limit) sits above the run's 600s definitions deadline plus its paged reads,
     so a slow run ends tracked, never SIGKILLed (#966)."""
@@ -5952,6 +5996,26 @@ def grouping_sentinel(self, post=True, file_issues=True):
     return _tracked_run(
         "grouping_sentinel",
         _run_grouping_sentinel(post=post, file_issues=file_issues),
+    )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=840,
+    time_limit=900,
+    name="app.tasks.discover_fun_scout",
+)
+def discover_fun_scout(self, force=False):
+    """Nightly Fun Scout (#13102, Ruling 276: B): tag fun single markets on the
+    small model and propose novel cross-family sets on Claude under Decide 61-A
+    caps ($5/run, $30/month). Runs on ``bainluck``'s ``background`` queue where
+    ``ANTHROPIC_API_KEY_SCOUT`` is configured; no-ops while
+    ``DISCOVER_FUN_SCOUT_ENABLED`` is off unless ``force=True``."""
+    from app.tasks.discover_fun_scout import _run_discover_fun_scout
+
+    return _tracked_run(
+        "discover_fun_scout",
+        _run_discover_fun_scout(force=force),
     )
 
 
@@ -7437,6 +7501,48 @@ def refresh_open_futures_outcomes(self, budget_seconds: int = None):
     )
 
 
+@celery_app.task(
+    name="app.tasks.refresh_onboarding_team_membership",
+    soft_time_limit=135,
+    time_limit=150,
+    ignore_result=True,
+)
+def refresh_onboarding_team_membership():
+    """Refresh the optional league filter for onboarding."""
+    from app.services.onboarding_team_membership import rebuild_onboarding_team_membership
+    from app.tasks.base import get_task_session
+    from app.tasks.redis_state import get_redis_client
+
+    async def refresh():
+        async with get_task_session() as db:
+            return await rebuild_onboarding_team_membership(db, get_redis_client())
+
+    return _tracked_run("refresh_onboarding_team_membership", refresh())
+
+
+def _request_onboarding_membership_rebuild() -> None:
+    try:
+        refresh_onboarding_team_membership.apply_async(queue="background", retry=False)
+    except Exception as exc:
+        logger.warning(
+            "Could not request onboarding membership rebuild (%s)", type(exc).__name__
+        )
+
+
+@worker_ready.connect
+def _onboarding_membership_on_worker_ready(sender=None, **_kwargs) -> None:
+    # worker_ready is sent by the Celery consumer, never import/release or web.
+    if sender is not None and sender.app is celery_app and any(
+        queue.name == "background" for queue in sender.task_consumer.queues
+    ):
+        # A broker stall must not delay the consumer from serving its queues.
+        Thread(
+            target=_request_onboarding_membership_rebuild,
+            name="onboarding-membership-publish",
+            daemon=True,
+        ).start()
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=140, name="app.tasks.warm_search_head")
 def warm_search_head(self, head_size: int = None):
     """Keep the head of the `/search` distribution inside its response cache.
@@ -7962,11 +8068,54 @@ def deliver_activitykit_updates():
     return result
 
 
+@celery_app.task(name="app.tasks.deliver_activitykit_starts", soft_time_limit=60,
+                 time_limit=90, max_retries=0)
+def deliver_activitykit_starts():
+    """One default-off sweep of kickoff Live Activity start pushes (#13052 / 254-A)."""
+    from app.tasks.activitykit_start import run_activitykit_start_dispatch
+
+    result = run_async(run_activitykit_start_dispatch())
+    if result["terminal"] in {"failed", "partial"}:
+        logger.warning("ActivityKit start dispatch incomplete: %s", result)
+        raise RuntimeError("ActivityKit start dispatch incomplete")
+    return result
+
+
+@celery_app.task(name="app.tasks.probe_live_tennis_scores", soft_time_limit=45,
+                 time_limit=60, max_retries=0)
+def probe_live_tennis_scores():
+    """Read-only 15-minute coverage probe of livetennisapi.com (#13000 / 257: B).
+
+    Off when LIVE_TENNIS_API_KEY is unset; never writes DB rows or reader data.
+    """
+    from app.tasks.live_tennis_probe import run_live_tennis_probe
+
+    return run_async(run_live_tennis_probe())
+
+
 celery_app.conf.beat_schedule = {
     "activitykit-runtime": {
+        # #10542 step 5: 15 s beat so pinned Live Activities read ESPN and push
+        # score changes within ~15 s instead of waiting behind the 60 s full-slate
+        # sync + 30 s sweep. When scanned == 0 (no active Live Activities), the
+        # task exits in ~0.2 s with zero ESPN calls.
         "task": "app.tasks.deliver_activitykit_updates",
+        "schedule": 15.0,
+        "options": {"queue": "realtime", "expires": 12},
+    },
+    "activitykit-start-push": {
+        "task": "app.tasks.deliver_activitykit_starts",
         "schedule": 30.0,
         "options": {"queue": "realtime", "expires": 25},
+    },
+    "probe-live-tennis-scores": {
+        # #13000 (Ruling 257: B): read-only coverage probe of livetennisapi.com,
+        # off when LIVE_TENNIS_API_KEY is unset, capped at <=96 requests/day.
+        # Runs on realtime (same `bainluck` app as LIVE_TENNIS_API_KEY, <1 ms
+        # when disabled, 1 read-only GET every 15 min when enabled) at :03/:18/:33/:48.
+        "task": "app.tasks.probe_live_tennis_scores",
+        "schedule": crontab(minute="3,18,33,48"),
+        "options": {"queue": "realtime", "expires": 840},
     },
     "poll-odds-adaptive": {
         "task": "app.tasks.poll_all_odds",
@@ -8315,6 +8464,15 @@ celery_app.conf.beat_schedule = {
     "backfill-team-logos": {
         "task": "app.tasks.backfill_team_logos",
         "schedule": crontab(minute=15, hour="*/6"),
+    },
+    # #13241: refresh college basketball Team.current_record from ESPN's v2
+    # standings endpoint every 2 hours (2 HTTP GETs, existing teams by espn_id
+    # only). Minute :23 avoids the :31-:44 settlement sweep window and even
+    # minutes on `background`.
+    "sync-espn-standings-records": {
+        "task": "app.tasks.sync_espn_standings_records",
+        "schedule": crontab(minute=23, hour="*/2"),
+        "options": {"queue": "background"},
     },
     "heartbeat": {
         "task": "app.tasks.heartbeat",
@@ -9069,6 +9227,12 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="2-59/5"),
         "options": {"queue": "background"},
     },
+    "refresh-onboarding-team-membership": {
+        "task": "app.tasks.refresh_onboarding_team_membership",
+        # Overnight at 11:21 UTC, outside settlement's :31–:44 window.
+        "schedule": crontab(hour=11, minute=21),
+        "options": {"queue": "background"},
+    },
     "warm-search-head": {
         "task": "app.tasks.warm_search_head",
         # Every 20s — LAT-P090/#2211. The BEAT is the fire rate; the PASS rate is
@@ -9393,13 +9557,22 @@ celery_app.conf.beat_schedule = {
         "options": {"queue": "heavy"},
     },
     "grouping-sentinel-weekly": {
-        # #12231: the weekly count of market families no grouping covers, posted
-        # on #12221 (report-only until Thu Nov 26, 72-A). Thursday 16:00 UTC
-        # (8 AM PT) on background, as Fable answered on #12231 (Nov 6, 9:28 PM):
-        # a weekly, rules-only read with no reader waiting on it, so it is not
-        # one of #233's morning alarms that need a guaranteed heavy slot.
+        # #12231 / #12221: weekly count of uncovered market families posted on
+        # #12221 (report-only per decision 386: A, which replaces 72-A).
+        # Thursday 16:00 UTC (8 AM PT) on background, as Fable answered on #12231
+        # (Nov 6, 9:28 PM): a weekly, rules-only read with no reader waiting on
+        # it, so it is not one of #233's morning alarms needing heavy.
         "task": "app.tasks.grouping_sentinel",
         "schedule": crontab(minute=0, hour=16, day_of_week=4),  # Weekly Thursday 16:00 UTC
+        "options": {"queue": "background"},
+    },
+    "discover-fun-scout-nightly": {
+        # #13102 (Ruling 276: B): nightly fun singles + set-writing scout on
+        # bainluck's background queue (where ANTHROPIC_API_KEY_SCOUT lives).
+        # Runs 09:00 UTC (1:00 AM PT), gated behind DISCOVER_FUN_SCOUT_ENABLED
+        # (default OFF until Wed Nov 25).
+        "task": "app.tasks.discover_fun_scout",
+        "schedule": crontab(minute=0, hour=9),  # Daily 09:00 UTC (1:00 AM PT)
         "options": {"queue": "background"},
     },
     "grid-register-sentinel-daily": {

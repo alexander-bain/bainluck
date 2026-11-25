@@ -125,6 +125,17 @@ export function namedAt(text: string | null | undefined, name: string | null | u
  * so "Norway" and "No. 1 seed" are not negative.
  */
 const NEGATIVE_ANSWER = /^\s*(?:(?:no|not)\s*[:\-–—]?(?:\s+.*)?|neither|none)\s*$/i;
+const CALENDAR_DATE_NAME =
+  /^\s*(?:(?:before|by|on|after|in|end\s+of)\s+)?(?:(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:,?\s+\d{4})?|\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+\d{4})?|q[1-4]\s+\d{4}|(?:19|20)\d{2})\s*$/i;
+
+export interface RowAnswerLabelOptions {
+  /**
+   * True when the backend filled a single-row template title with this row's
+   * answer so calendar date deadlines do not repeat underneath (#13393), while
+   * standalone ladder/dated markets still keep their date leg (#9401 / #9642).
+   */
+  titleStatesSingleAnswer?: boolean;
+}
 
 export function answerIsNegative(name: string | null | undefined): boolean {
   return NEGATIVE_ANSWER.test(name ?? "");
@@ -136,10 +147,35 @@ export function answerIsNegative(name: string | null | undefined): boolean {
  *
  * @param hero    the outcome the percentage speaks for (`heroOutcome`'s pick)
  * @param caption the sentence already rendered under the question
+ * @param title   optional row title; when the level/deadline is already named
+ *                inside the row's own title, do not repeat it underneath
+ * @param opts    optional flags controlling title-based calendar date suppression
  */
+const UPPER_FILLER_SUFFIX = /^(.*?)(?:\s*\+|\s+or\s+(?:above|more|higher))\s*$/i;
+const LOWER_FILLER_SUFFIX = /^(.*?)\s+or\s+(?:below|less|lower|under)\s*$/i;
+const UPPER_TITLE_PREP = /\b(?:at\s+least|above|over)\b/i;
+const LOWER_TITLE_PREP = /\b(?:at\s+most|below|under)\b/i;
+
+function titleNamesAnswer(title: string, name: string): boolean {
+  if (captionNames(title, name)) return true;
+  const upperMatch = name.match(UPPER_FILLER_SUFFIX);
+  if (upperMatch && UPPER_TITLE_PREP.test(title)) {
+    const core = upperMatch[1].trim();
+    if (core && captionNames(title, core)) return true;
+  }
+  const lowerMatch = name.match(LOWER_FILLER_SUFFIX);
+  if (lowerMatch && LOWER_TITLE_PREP.test(title)) {
+    const core = lowerMatch[1].trim();
+    if (core && captionNames(title, core)) return true;
+  }
+  return false;
+}
+
 export function rowAnswerLabel(
   hero: HeroCandidate | null | undefined,
   caption: string | null | undefined,
+  title?: string | null,
+  opts?: RowAnswerLabelOptions,
 ): string | null {
   const name = (hero?.name ?? "").replace(/\s+/g, " ").trim();
   if (!name) return null;
@@ -147,6 +183,13 @@ export function rowAnswerLabel(
   // #9876 — a negative answer is never left to the caption. The caption is
   // grey and can be clamped away, and the reader scans the bold column.
   if (answerIsNegative(name)) return name;
+  if (
+    title &&
+    titleNamesAnswer(title, name) &&
+    (!CALENDAR_DATE_NAME.test(name) || opts?.titleStatesSingleAnswer === true)
+  ) {
+    return null;
+  }
   if (captionNames(caption, name)) return null;
   return name;
 }

@@ -174,6 +174,19 @@ enum EventHero {
     static let discoverCardMinimumHeight: CGFloat = 160
 }
 
+private struct DiscoverWithholdUnconfirmedPhotos13670Key: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+
+extension EnvironmentValues {
+    /// #13670 — True while Discover paints disk-cached SWR content so previously
+    /// cached remote photos do not flash before live `/api/feed` confirms them.
+    var discoverWithholdUnconfirmedPhotos13670: Bool {
+        get { self[DiscoverWithholdUnconfirmedPhotos13670Key.self] }
+        set { self[DiscoverWithholdUnconfirmedPhotos13670Key.self] = newValue }
+    }
+}
+
 /// The one futures hero backdrop, shared by the Discover card and the detail page.
 ///
 /// Layering follows the web (`FuturesCard.tsx`): the gradient is the base layer
@@ -184,6 +197,15 @@ enum EventHero {
 struct FuturesHeroBackground: View {
     let imageURL: String?
     let category: String?
+    @Environment(\.discoverWithholdUnconfirmedPhotos13670) private var withholdUnconfirmedPhotos
+
+    nonisolated static func resolvedBackground(
+        imageURL: String?,
+        withholdUnconfirmedPhotos: Bool
+    ) -> FuturesHero.Background {
+        guard !withholdUnconfirmedPhotos else { return .category }
+        return FuturesHero.background(imageURL: imageURL)
+    }
 
     var body: some View {
         let gradient = FuturesHero.gradient(for: category)
@@ -198,7 +220,10 @@ struct FuturesHeroBackground: View {
 
     @ViewBuilder
     private var backdrop: some View {
-        switch FuturesHero.background(imageURL: imageURL) {
+        switch Self.resolvedBackground(
+            imageURL: imageURL,
+            withholdUnconfirmedPhotos: withholdUnconfirmedPhotos
+        ) {
         case .photo(let url):
             AsyncImage(url: url) { phase in
                 switch phase {
@@ -432,10 +457,19 @@ private struct DiscoverBundleArtKey12840: EnvironmentKey {
     static let defaultValue = DiscoverBundleArtContext12840()
 }
 
+private struct DiscoverGroupOnOpenCollectionKey13094: EnvironmentKey {
+    nonisolated(unsafe) static let defaultValue: (() -> Void)? = nil
+}
+
 extension EnvironmentValues {
     var discoverGroupBundleArt12840: DiscoverBundleArtContext12840 {
         get { self[DiscoverBundleArtKey12840.self] }
         set { self[DiscoverBundleArtKey12840.self] = newValue }
+    }
+
+    var discoverGroupOnOpenCollection13094: (() -> Void)? {
+        get { self[DiscoverGroupOnOpenCollectionKey13094.self] }
+        set { self[DiscoverGroupOnOpenCollectionKey13094.self] = newValue }
     }
 }
 
@@ -445,6 +479,7 @@ struct DiscoverGroupBannerView12840: View {
     var preloadedImages: [URL: Image] = [:]
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverWithholdUnconfirmedPhotos13670) private var withholdUnconfirmedPhotos
 
     private var dividerColor: Color {
         colorScheme == .dark ? Color.white.opacity(0.12) : DS.border
@@ -453,9 +488,9 @@ struct DiscoverGroupBannerView12840: View {
     var body: some View {
         let catGradient = FuturesHero.gradient(for: category)
         ZStack {
-            if let url = resolved.primaryURL {
+            if !withholdUnconfirmedPhotos, let url = resolved.primaryURL {
                 primaryBanner(url: url, catGradient: catGradient)
-            } else if let crestURL = resolved.fallbackCrestURL {
+            } else if !withholdUnconfirmedPhotos, let crestURL = resolved.fallbackCrestURL {
                 crestBanner(url: crestURL, catGradient: catGradient)
             } else {
                 monogramBanner(resolved.monogram)

@@ -27,6 +27,18 @@ import type { ConsentLevel } from './telemetryConsent';
 /** Delay before an undecided visit is asked. */
 export const CONSENT_BANNER_DELAY_MS = 1500;
 
+/** Scroll distance (px) that releases a deferred shared-set consent banner. */
+export const CONSENT_BANNER_SCROLL_THRESHOLD_PX = 24;
+
+/**
+ * Ruling 279: A (#13103) — first arrival on a shared set (`/collections/<slug>`)
+ * holds the consent banner back until the visitor scrolls or opens a second page.
+ * Identified telemetry (GA4) remains off while undecided.
+ */
+export function isSharedSetLandingPath(pathname: string | null | undefined): boolean {
+  return typeof pathname === 'string' && /^\/collections\/[^/]+/.test(pathname);
+}
+
 export interface ConsentBannerSchedulerDeps {
   /** Read the current choice; `null` means undecided. */
   getConsent: () => ConsentLevel;
@@ -37,6 +49,16 @@ export interface ConsentBannerSchedulerDeps {
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
   delayMs?: number;
+  /**
+   * When true (shared set arrival), hold the banner back until
+   * `subscribeEngagement` reports a scroll or second-page navigation.
+   */
+  deferUntilEngaged?: boolean;
+  /**
+   * Register a one-shot engagement trigger (scroll or second-page navigation)
+   * when `deferUntilEngaged` is true. Returns an unsubscribe function.
+   */
+  subscribeEngagement?: (onEngage: () => void) => () => void;
 }
 
 /**
@@ -53,9 +75,13 @@ export function startConsentBannerScheduler(
     setTimer = (fn: () => void, ms: number) => setTimeout(fn, ms),
     clearTimer = (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
     delayMs = CONSENT_BANNER_DELAY_MS,
+    deferUntilEngaged = false,
+    subscribeEngagement,
   } = deps;
 
   let handle: unknown = null;
+  let unsubscribeEngagement: (() => void) | null = null;
+  let disposed = false;
 
   const cancelTimer = () => {
     if (handle !== null) {
@@ -64,10 +90,18 @@ export function startConsentBannerScheduler(
     }
   };
 
+  const cancelEngagement = () => {
+    if (unsubscribeEngagement !== null) {
+      unsubscribeEngagement();
+      unsubscribeEngagement = null;
+    }
+  };
+
   const onConsentChange = () => {
     if (getConsent() === null) return;
     // Decided — from anywhere. Nothing left to ask.
     cancelTimer();
+    cancelEngagement();
     setVisible(false);
   };
 
@@ -76,6 +110,15 @@ export function startConsentBannerScheduler(
   if (getConsent() !== null) {
     // Already decided before we even armed: never raise it.
     setVisible(false);
+  } else if (deferUntilEngaged && subscribeEngagement) {
+    // Ruling 279: A — keep the arrival screen clear until the visitor scrolls
+    // or navigates to a second page, re-checking consent at release time.
+    setVisible(false);
+    unsubscribeEngagement = subscribeEngagement(() => {
+      cancelEngagement();
+      if (disposed || getConsent() !== null) return;
+      setVisible(true);
+    });
   } else {
     handle = setTimer(() => {
       handle = null;
@@ -84,7 +127,9 @@ export function startConsentBannerScheduler(
   }
 
   return () => {
+    disposed = true;
     cancelTimer();
+    cancelEngagement();
     unsubscribe();
   };
 }

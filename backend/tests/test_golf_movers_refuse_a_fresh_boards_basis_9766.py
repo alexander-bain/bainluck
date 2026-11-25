@@ -199,7 +199,11 @@ class TestControlARealFieldStillMoves:
         g = _golfer(body, "Bank of Utah", "Ben Griffin")
         assert g["movement_is_dated"] is True
         assert g["movement_24h"] == pytest.approx(0.12, abs=1e-3)
-        assert body["biggest_movers"][0]["name"] == "Ben Griffin"
+        mover = body["biggest_movers"][0]
+        assert mover["name"] == "Ben Griffin"
+        assert mover["probability"] == g["probability"]
+        assert mover["source_mark"] == g["source_mark"]
+        assert mover["source_mark"]["sources"][0]["probability"] == 0.22
 
     async def test_a_display_scale_change_independently_refuses_a_raw_move(self, monkeypatch):
         """#11995: a converted field cannot spend its raw bank on a displayed move."""

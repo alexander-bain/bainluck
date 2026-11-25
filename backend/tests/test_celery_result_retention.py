@@ -565,7 +565,30 @@ def test_no_task_dispatches_another_task():
             if not fname.endswith(".py"):
                 continue
             path = os.path.join(dirpath, fname)
+            worker_ready_lines = set()
+            worker_ready_dispatch = "refresh_onboarding_team_membership.apply_async"
+            if path == os.path.join(tasks_dir, "__init__.py"):
+                # #13338 worker-ready publishes outside any task and does not
+                # read the result. Limit the exception to that one call.
+                with open(path, encoding="utf-8") as fh:
+                    tree = ast.parse(fh.read())
+                for node in tree.body:
+                    if (
+                        isinstance(node, ast.FunctionDef)
+                        and node.name == "_request_onboarding_membership_rebuild"
+                        and not node.decorator_list
+                    ):
+                        worker_ready_lines.update(
+                            call.lineno
+                            for call in ast.walk(node)
+                            if isinstance(call, ast.Call)
+                            and ast.unparse(call.func) == worker_ready_dispatch
+                        )
             for lineno, line in enumerate(_lines_with_comments_and_strings_masked(path), 1):
                 if pattern.search(line):
+                    if lineno in worker_ready_lines and line.strip().startswith(
+                        f"{worker_ready_dispatch}("
+                    ):
+                        continue
                     offenders.append(f"{path}:{lineno} {line.strip()[:80]}")
     assert not offenders, f"intra-task dispatch found: {offenders}"

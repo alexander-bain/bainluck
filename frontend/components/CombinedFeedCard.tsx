@@ -244,7 +244,7 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
                     }`}
                   >
                     {outcome.bestMovement > 0 ? "+" : "-"}
-                    {formatMovementPoints(outcome.bestMovement)} pts
+                    {formatMovementPoints(outcome.bestMovement)} points
                   </span>
                 )}
             </div>

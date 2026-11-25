@@ -68,6 +68,15 @@ struct GolfTournamentView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                FollowButton295A(
+                    subject: .set(slug: slug, setKind: .golfTournament, name: displayName),
+                    pageContextId: "golf-tournament:\(slug)",
+                    compact: true
+                )
+            }
+        }
         .task {
             await vm.load()
             AnalyticsService.trackScreen(name: "golf_tournament", type: "tournament")
@@ -79,6 +88,9 @@ struct GolfTournamentView: View {
     private func loaded(_ presentation: GolfTournamentPresentation) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                GameAlertsInlinePageSlot295A(contextId: "golf-tournament:\(slug)")
+                    .padding(.top, 4)
+
                 if presentation.field.isEmpty {
                     header(presentation)
                     // The tournament is real and the field is not published yet
@@ -145,6 +157,7 @@ struct GolfTournamentView: View {
                     // for the eye to land on.
                     Text(venue)
                         .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -185,6 +198,7 @@ struct GolfTournamentView: View {
                         if let mark = SourceMarkButton(
                             outcome.sourceMark,
                             number: outcome.sourceMark?.state == .settled ? nil : outcome.probability,
+                            renderedPercent: outcome.sourceMark?.state == .settled ? nil : outcome.renderedPercent,
                             subject: outcome.name,
                             numberSize: 15,
                             compactRow: true,
@@ -252,6 +266,7 @@ struct GolfTournamentView: View {
                 if let mark = SourceMarkButton(
                     row.sourceMark,
                     number: (row.isWinner == true || row.sourceMark?.state == .settled) ? nil : row.probability,
+                    renderedPercent: (row.isWinner == true || row.sourceMark?.state == .settled) ? nil : row.renderedPercent,
                     subject: row.name,
                     numberSize: 15,
                     compactRow: true,
@@ -288,5 +303,6 @@ struct GolfTournamentView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .noteReviewPromptTrouble12304()
     }
 }

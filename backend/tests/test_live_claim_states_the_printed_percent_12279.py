@@ -94,7 +94,7 @@ def _event(event_id, *, sport_key, opening_home, opening_away, home_score=0, awa
     return e
 
 
-def _mock_db(events):
+def _mock_db(events, *, live_books=None):
     db = AsyncMock()
 
     def make_result(rows):
@@ -103,8 +103,25 @@ def _mock_db(events):
         r.all.return_value = []
         return r
 
+    snap_rows = []
+    for eid, pair in (live_books or {}).items():
+        if pair is None:
+            continue
+        snap = MagicMock()
+        snap.event_id = eid
+        snap.bookmaker = "draftkings"
+        snap.home_win_probability = pair[0]
+        snap.away_win_probability = pair[1]
+        snap.home_spread = None
+        snap.over_under = None
+        snap.captured_at = NOW - timedelta(seconds=10)
+        snap.valid_until = None
+        snap_rows.append(snap)
+
     async def execute(stmt, *a, **k):
         s = str(stmt).lower()
+        if "odds_snapshots" in s:
+            return make_result(snap_rows)
         if "win_prob_snapshots" in s:
             return make_result([])
         if "events" in s:
@@ -115,7 +132,7 @@ def _mock_db(events):
     return db
 
 
-async def _card(event, blend):
+async def _card(event, blend, *, live_books=None):
     """The card the route builds for ``event`` with its blend at ``blend``.
 
     `my_teams_only=True` only lowers the admission bar to 0 (see the 5324 test);
@@ -126,8 +143,12 @@ async def _card(event, blend):
         new=AsyncMock(return_value={}),
     ), patch("app.routes.feed._compute_aggregate_probability", return_value=blend):
         items = await _score_events(
-            _mock_db([event]), now=NOW, sport_filter=None, ctx=PersonalizationContext(),
-            my_teams_only=True, my_team_names=[HOME],
+            _mock_db([event], live_books=live_books),
+            now=NOW,
+            sport_filter=None,
+            ctx=PersonalizationContext(),
+            my_teams_only=True,
+            my_team_names=[HOME],
         )
     cards = [i for i in items if i["type"] == "event" and i["data"]["id"] == event.id]
     assert cards, "no card was built at all — the test proves nothing as written"
@@ -144,7 +165,9 @@ def _printed(card, side):
 @pytest.mark.asyncio
 async def test_draw_priced_home_trailer_states_the_printed_33_not_34():
     card = await _card(
-        _event(1, sport_key="soccer_epl", opening_home=0.50, opening_away=0.25), 0.335,
+        _event(1, sport_key="soccer_epl", opening_home=0.50, opening_away=0.25),
+        0.335,
+        live_books={1: (0.335, 0.416)},
     )
     assert _printed(card, "home") == 33
     assert card["headline"] == "Arsenal chance fell from 50% to 33%"
@@ -177,7 +200,9 @@ async def test_two_way_away_rising_to_a_trailing_half_percent():
 @pytest.mark.asyncio
 async def test_reason_states_the_same_number_as_the_headline():
     card = await _card(
-        _event(4, sport_key="soccer_epl", opening_home=0.50, opening_away=0.25), 0.335,
+        _event(4, sport_key="soccer_epl", opening_home=0.50, opening_away=0.25),
+        0.335,
+        live_books={4: (0.335, 0.416)},
     )
     assert card["reason"] == card["headline"]
 
@@ -189,7 +214,9 @@ async def test_reason_states_the_same_number_as_the_headline():
 async def test_the_leader_on_a_half_percent_reads_as_before():
     """The issue's own 66.5% case: the leader keeps its rounding on both."""
     card = await _card(
-        _event(5, sport_key="soccer_epl", opening_home=0.8313, opening_away=0.05), 0.665,
+        _event(5, sport_key="soccer_epl", opening_home=0.8313, opening_away=0.05),
+        0.665,
+        live_books={5: (0.665, 0.132)},
     )
     assert _printed(card, "home") == 67
     assert card["headline"] == "Arsenal chance fell from 83% to 67%"
@@ -199,7 +226,9 @@ async def test_the_leader_on_a_half_percent_reads_as_before():
 @pytest.mark.asyncio
 async def test_a_value_off_the_half_percent_grid_reads_as_before():
     card = await _card(
-        _event(6, sport_key="soccer_epl", opening_home=0.8313, opening_away=0.05), 0.6612,
+        _event(6, sport_key="soccer_epl", opening_home=0.8313, opening_away=0.05),
+        0.6612,
+        live_books={6: (0.6612, 0.1388)},
     )
     assert _printed(card, "home") == 66
     assert card["headline"] == "Arsenal chance fell from 83% to 66%"

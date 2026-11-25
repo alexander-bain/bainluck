@@ -49,16 +49,43 @@ def test_legacy_espn_quote_keeps_its_source_and_an_unknown_clock():
     }
 
 
-def test_draw_priced_game_does_not_attribute_a_fabricated_away_quote():
+def test_draw_priced_game_without_three_way_books_serves_no_chance_or_fabricated_away():
     brief = _format_game_brief(FakeEvent(espn=0.68), "soccer_epl")
 
-    assert brief["source_mark"]["state"] == "single"
-    assert brief["current_odds"]["away_probability"] == 0.32
+    assert brief["home_win_probability"] is None
+    assert "current_odds" not in brief
+    assert brief["source_mark"] == {
+        "state": "none",
+        "sources": [],
+        "reason": "no_probability",
+    }
     assert brief["away_source_mark"] == {
         "state": "none",
         "sources": [],
-        "reason": "away_unavailable",
+        "reason": "no_probability",
     }
+
+
+def test_draw_priced_game_with_three_way_books_carries_away_chance_not_complement():
+    now = datetime.now(timezone.utc)
+    read_at = now - timedelta(seconds=10)
+    readings = stamp_source_reading({}, "betting", 0.90, now=now, price_read_at=read_at)
+    event = FakeEvent(sources=readings, status="live")
+    event.commence_time = now - timedelta(minutes=25)
+
+    brief = _format_game_brief(
+        event, "soccer_germany_bundesliga", three_way_books=(0.90, 0.03)
+    )
+
+    co = brief["current_odds"]
+    assert (
+        co["home_rendered_percent"],
+        co["draw_rendered_percent"],
+        co["away_rendered_percent"],
+    ) == (90, 7, 3)
+    assert brief["source_mark"]["sources"][0]["probability"] == 0.90
+    # Away source mark carries the away chance (0.03), NEVER 1 - 0.90 = 0.10.
+    assert brief["away_source_mark"]["sources"][0]["probability"] == 0.03
 
 
 def test_historical_opening_pair_does_not_gain_current_source_marks():

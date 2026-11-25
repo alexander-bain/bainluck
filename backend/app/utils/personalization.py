@@ -29,7 +29,7 @@ Multiplier sources (applied additively, then clamped):
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from app.utils.feed_market_quality import _SPORTS_CATEGORIES
 from app.utils.league_classification import get_league_class
@@ -93,6 +93,20 @@ NAH_AFFINITY_PENALTY = -0.6     # stronger penalty for "Nah" (0.0) sports
 #: at onboarding. `rival` is deliberately absent: it is inferred from a follow, not
 #: declared, and a rival's game is a suggestion rather than a request.
 STANDING_TEAM_RELATIONSHIPS = frozenset({"follow", "local", "alma_mater"})
+
+
+def followed_team_ids_from_ctx(ctx: Any) -> frozenset[int]:
+    """Extract standing-followed team IDs (follow/local/alma_mater) from personalization ctx."""
+    relations = getattr(ctx, "team_relations", None)
+    if not isinstance(relations, dict):
+        return frozenset()
+    out: set[int] = set()
+    for tid, rels in relations.items():
+        if not isinstance(tid, int) or isinstance(tid, bool) or not rels:
+            continue
+        if set(rels) & STANDING_TEAM_RELATIONSHIPS:
+            out.add(tid)
+    return frozenset(out)
 
 # Clamp range
 MIN_MULTIPLIER = 0.15

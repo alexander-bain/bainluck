@@ -91,9 +91,21 @@ def test_draw_priced_away_is_unavailable_but_a_verified_final_keeps_both_results
     now = datetime.now(timezone.utc)
     row = _event_row(now, sources=quote({}, "kalshi", .62, now))
     row.sport.key = "soccer_epl"
+    # #13131 step 3: scheduled one-leg three-way game serves nothing for chance.
+    scheduled = card(row)
+    assert scheduled["hero_probability"] is None
+    assert scheduled["hero_probability_away"] is None
+    assert scheduled["source_mark"] == scheduled["away_source_mark"] == {
+        "state": "none", "sources": [], "reason": "no_probability",
+    }
+    row.status = "live"
+    row.commence_time = now - timedelta(minutes=30)
     live = card(row)
+    assert live["hero_probability"] is None
     assert live["hero_probability_away"] is None
-    assert live["away_source_mark"] == {"state": "none", "sources": [], "reason": "away_unavailable"}
+    assert live["source_mark"] == live["away_source_mark"] == {
+        "state": "none", "sources": [], "reason": "no_probability",
+    }
     row.status = "completed"
     row.commence_time = now - timedelta(hours=2)
     row.completed_at = now - timedelta(minutes=3)

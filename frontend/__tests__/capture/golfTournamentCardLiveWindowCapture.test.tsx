@@ -195,7 +195,7 @@ function assertOnlyTheMovementUnitMoved(fixed: string, legacy: string) {
   expect(after).toHaveLength(before.length);
   if (before.length === 0) return;
   for (const span of after) {
-    expect(span).toMatch(/ pts today<\/span>$/);
+    expect(span).toMatch(/ points today<\/span>$/);
     expect(span).not.toContain("% today");
   }
   for (const span of before) {

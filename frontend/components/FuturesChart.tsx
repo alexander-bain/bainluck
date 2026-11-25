@@ -42,7 +42,7 @@ import {
 } from "@/components/atlas/AtlasChartMarks";
 import {
   ATLAS_STATE_COPY,
-  formatAtlasTimestampPT,
+  formatAtlasTimestampLocal,
 } from "@/components/atlas/atlasStateCopy";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
@@ -1309,7 +1309,7 @@ export function FuturesChart({
               <div className="bg-surface-deep/95 backdrop-blur-sm rounded-lg px-3 py-2 border border-surface-border shadow-lg min-w-[140px] max-w-full">
                 <div className="text-[10px] text-text-muted mb-1 font-mono">
                   {atlas
-                    ? formatAtlasTimestampPT(new Date(hoverInfo.time).toISOString(), {
+                    ? formatAtlasTimestampLocal(new Date(hoverInfo.time).toISOString(), {
                         includeSeconds: true,
                       }) ?? formatTooltipTime(hoverInfo.time)
                     : formatTooltipTime(hoverInfo.time)}

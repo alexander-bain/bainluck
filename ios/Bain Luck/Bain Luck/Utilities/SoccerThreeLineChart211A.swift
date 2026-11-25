@@ -57,6 +57,7 @@ enum SoccerThreeLineChart211A {
         var awayCode: String = ""
         let isLive: Bool
         let isFinished: Bool
+        var showsLiveTenths: Bool = true
 
         static let drawLabel = "Draw"
 
@@ -93,7 +94,7 @@ enum SoccerThreeLineChart211A {
                 home: point.home,
                 draw: point.draw,
                 away: point.away,
-                numberStreams: isLive && !isFinished
+                numberStreams: isLive && !isFinished && showsLiveTenths
             )
         }
     }
@@ -570,14 +571,14 @@ enum SoccerThreeLineChart211A {
 
 struct SoccerThreeLineHeaderView211A: View {
     @ObservedObject var selection: OddsChartSelection
+    @Environment(\.timeZone) private var timeZone
     let series: SoccerThreeLineChart211A.Series
     let homeColor: Color
     let awayColor: Color
 
     var body: some View {
-        // #9517: quiet at rest (the headline above already prints current chances, and
-        // the legend below names all three lines); appears on scrub with non-truncating
-        // percentages and exact PT timestamp.
+        // #9517 / #12628: quiet at rest; appears on scrub with non-truncating
+        // percentages and timestamp in the chart's single timezone.
         if let active = series.reading(at: selection.date), active.isScrubbed {
             let formatted = series.formattedTriple(for: active.point)
             HStack(spacing: 8) {
@@ -585,7 +586,7 @@ struct SoccerThreeLineHeaderView211A: View {
                 outcomePill(label: SoccerThreeLineChart211A.Series.drawLabel, pct: formatted.draw, color: HeadlineStyleTable199.drawInk)
                 outcomePill(label: series.awayCode, pct: formatted.away, color: awayColor)
                 Spacer(minLength: 2)
-                Text(EventAtlasChartMarks11666.formatMinuteTimestampPT(active.point.date))
+                Text(EventAtlasChartMarks11666.formatMinuteTimestamp(active.point.date, timeZone: timeZone))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)

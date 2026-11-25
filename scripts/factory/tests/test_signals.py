@@ -9,11 +9,62 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from model import build, instant, unchanged_after
 from signals import (
     commands_from,
+    crew_posts_from,
+    is_test_file,
     reader_behind,
     resolve_holds,
     stopped_rules,
-    test_file,
 )
+
+
+class CrewPosts(unittest.TestCase):
+    now = instant("2026-11-18T18:00:00Z")
+
+    def post(self, body, at="2026-11-18T17:58:00Z", association="OWNER"):
+        return {
+            "body": body,
+            "created_at": at,
+            "updated_at": "2026-11-18T18:00:00Z",
+            "author_association": association,
+        }
+
+    def test_latest_own_post_records_activity_without_a_change_and_clears_old_wait(self):
+        posts = [
+            self.post("**Apple (9:56 AM PT):** Working on screenshots."),
+            self.post("Builder F: Waiting for change #13001.", at="2026-11-18T17:55:00Z"),
+            self.post("ready to look at #13004 — Builder B (9:57 AM PT).\nWaiting on [#12998](https://example.com/change).",
+                      at="2026-11-18T17:57:00Z", association="COLLABORATOR"),
+            self.post("I’m waiting on #13002 and #13003.\n\n— Wee-Bey"),
+        ]
+        self.assertEqual(crew_posts_from(posts, self.now), {
+            "F": {"at": "2026-11-18T17:58:00Z"},
+            "B": {"at": "2026-11-18T17:57:00Z", "waiting_on": 12998},
+            "W": {"at": "2026-11-18T17:58:00Z"},
+        })
+
+    def test_keeps_recent_signed_reports_as_timestamps_and_comment_ids(self):
+        at = "2026-11-23T06:46:34Z"
+        observed = instant("2026-11-23T07:25:33Z")
+        recent = {**self.post("Builder F — Finished the recorded layout check.", at=at),
+                  "id": 7093663542}
+        older = {**self.post("Builder F: A different report.", at=at), "id": 7093663501}
+        boundary = {**self.post("Atlas: Posted an update.", at="2026-11-23T04:25:33Z"),
+                    "id": 7093663500}
+        self.assertEqual(crew_posts_from([recent, older, boundary], observed), {
+            "F": {"at": at, "comment_id": 7093663542},
+            "D": {"at": "2026-11-23T04:25:33Z", "comment_id": 7093663500},
+        })
+
+    def test_unsigned_outside_quoted_old_and_future_posts_clock_in_nobody(self):
+        posts = [
+            self.post("Waiting on #12998."),
+            self.post("Speed: Waiting on #12998.", association="CONTRIBUTOR"),
+            self.post("**Fable: Floor report.**\n> Waiting on #12998 — Builder E"),
+            self.post("> Waiting on #12998 — Atlas"),
+            self.post("Builder C: Checked the floor.", at="2026-11-18T14:59:59Z"),
+            self.post("Builder B: Checked the floor.", at="2026-11-18T18:00:01Z"),
+        ]
+        self.assertEqual(crew_posts_from(posts, self.now), {})
 
 
 class FactoryStops(unittest.TestCase):
@@ -387,10 +438,10 @@ class FactoryStops(unittest.TestCase):
         self.assertFalse(unchanged_after(pull, "missing"))
 
     def test_production_changes_cannot_be_hidden_by_a_test_rename(self):
-        self.assertTrue(test_file("frontend/__tests__/page.test.tsx"))
-        self.assertTrue(test_file("ios/BainLuckTests/Example.swift"))
-        self.assertFalse(test_file("frontend/app/test/page.tsx"))
-        self.assertFalse(test_file("backend/app/services/testing.py"))
+        self.assertTrue(is_test_file("frontend/__tests__/page.test.tsx"))
+        self.assertTrue(is_test_file("ios/BainLuckTests/Example.swift"))
+        self.assertFalse(is_test_file("frontend/app/test/page.tsx"))
+        self.assertFalse(is_test_file("backend/app/services/testing.py"))
 
     def test_station_transfers_are_recorded_only_after_two_observations(self):
         fixture = json.loads(

@@ -1,0 +1,79 @@
+{
+  "slug": "machinery-ufc-next-fights-and-boxing",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "SPORTS · FIGHTS",
+  "name": "UFC Next Fights & Heavyweight Boxing",
+  "category": "mma",
+  "tag": "MMA",
+  "section_title": "Conor McGregor's Next Opponent",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "mcgregor_next_fight",
+    "suppress_card_photo": true,
+    "sections": [
+      {
+        "key": "mcgregor_next_fight",
+        "title": "Conor McGregor's Next Opponent",
+        "item_noun": "fighters",
+        "note": "Leading contenders to face Conor McGregor in his next octagon appearance.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-mcgregor-next-fight",
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 3,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "ufc_next_opponents",
+        "title": "Top UFC Matchmaking Races",
+        "item_noun": "fights",
+        "note": "Front-runners to face Sean Strickland, Carlos Ulberg, and Magomed Ankalaev next.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-ufc-next-opponents",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 2,
+          "max_items": 4,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "boxing_and_ufc",
+        "title": "Heavyweight Boxing & Rising Contenders",
+        "item_noun": "fights",
+        "note": "Tyson Fury vs. Anthony Joshua and Jean Silva's next matchup.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-boxing-and-ufc",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 3,
+          "max_outcomes": 1,
+          "initial_visible_limit": 2,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

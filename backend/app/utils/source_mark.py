@@ -52,7 +52,10 @@ def no_source_mark(reason: str) -> dict:
 
 
 def quote_source_mark(
-    inputs: Iterable[Mapping[str, Any]], *, method: str | None = None,
+    inputs: Iterable[Mapping[str, Any]],
+    *,
+    method: str | None = None,
+    allow_unpriced: bool = False,
 ) -> dict:
     """Describe admitted prices in stable venue order, once per venue.
 
@@ -60,14 +63,27 @@ def quote_source_mark(
     and oldest observation. This is the existing prop mean, not a new vote or
     a change to the displayed number. A missing leg/price refuses the entire
     claim; it cannot silently turn a two-input number into a one-source mark.
+
+    ``allow_unpriced`` stays ``False`` for every caller except three-way away
+    and draw source marks (#13269 / 196-A), where a contributing venue that
+    does not carry its own away or draw price must be named with
+    ``probability: None`` rather than shown a worked-out figure.
     """
     by_source: dict[str, list[dict]] = {}
     for item in inputs:
         key = item.get("key")
         key = "betting" if key == "odds_api" else key
-        probability = _probability(item.get("probability"))
-        if key not in SOURCE_NAMES or probability is None:
+        raw_prob = item.get("probability")
+        if key not in SOURCE_NAMES:
             return no_source_mark("source_evidence_incomplete")
+        if raw_prob is None:
+            if not allow_unpriced:
+                return no_source_mark("source_evidence_incomplete")
+            probability = None
+        else:
+            probability = _probability(raw_prob)
+            if probability is None:
+                return no_source_mark("source_evidence_incomplete")
         by_source.setdefault(key, []).append(
             {
                 "probability": probability,
@@ -82,12 +98,16 @@ def quote_source_mark(
     for key in sorted(by_source, key=_SOURCE_ORDER.__getitem__):
         legs = by_source[key]
         stamp = blended_observed_at(leg["observed_at"] for leg in legs)
+        if any(leg["probability"] is None for leg in legs):
+            merged_prob = None
+        else:
+            merged_prob = round(
+                sum(leg["probability"] for leg in legs) / len(legs), 6
+            )
         source = {
             "key": key,
             "name": SOURCE_NAMES[key],
-            "probability": round(
-                sum(leg["probability"] for leg in legs) / len(legs), 6
-            ),
+            "probability": merged_prob,
             "observed_at": stamp,
         }
         if stamp is None:
@@ -167,6 +187,8 @@ def headline_source_marks(
     observations: Mapping[str, Any] | None = None,
     method: str | None = None,
     away_available: bool = True,
+    three_way_probs: tuple[float, float, float] | None = None,
+    books_three_way: tuple[float, float] | None = None,
 ) -> tuple[dict, dict]:
     """Both axes from the hero's trace; no client complements or source guesses.
 
@@ -198,18 +220,68 @@ def headline_source_marks(
         observations=observations,
         method=method,
         away_available=away_available,
+        three_way_probs=three_way_probs,
+        books_three_way=books_three_way,
     )
 
 
-def blended_source_marks(
+def _own_three_way_side_price(
+    bag: Any,
+    key: str,
+    home_probability: float,
+    side: str,
+    *,
+    books_three_way: tuple[float, float] | None = None,
+) -> float | None:
+    """Return ``key``'s own away or draw probability, or ``None`` if unheld (#13269).
+
+    Never synthesizes a venue's away or draw price from ``(1 - home)`` or from
+    another source's ratio (196-A). Reads each venue's own stamped
+    ``away_value``/``draw_value`` bound to ``home_probability`` and timestamp;
+    for ``"betting"`` only, also accepts Sportsbooks' own live ``odds_snapshots``
+    consensus ``books_three_way = (books_home, books_away)`` when it matches
+    ``home_probability``.
+    """
+    from app.utils.aggregation import extract_source_three_way_side
+
+    stamped = extract_source_three_way_side(bag, key, home_probability, side)
+    if stamped is not None:
+        return stamped
+    if key == "betting" and books_three_way is not None:
+        bh, ba = books_three_way
+        if (
+            isinstance(bh, (int, float))
+            and isinstance(ba, (int, float))
+            and not isinstance(bh, bool)
+            and not isinstance(ba, bool)
+            and 0.0 < bh < 1.0
+            and 0.0 < ba < 1.0
+            and (bh + ba) < 0.99
+            and abs(float(bh) - float(home_probability)) <= 0.02
+        ):
+            if side == "away":
+                return round(float(ba), 6)
+            return round(1.0 - float(bh) - float(ba), 6)
+    return None
+
+
+def three_way_side_source_mark(
     event: Any,
     selected_inputs: Iterable[tuple[str, float]],
     *,
+    side: str,
     observations: Mapping[str, Any] | None = None,
     method: str | None = None,
-    away_available: bool = True,
-) -> tuple[dict, dict]:
-    """Orient the selected two-sided quote inputs for each team."""
+    books_three_way: tuple[float, float] | None = None,
+) -> dict:
+    """Honest three-way source mark for ``side`` (``"away"`` or ``"draw"``) (#13269).
+
+    Each contributing source shows its own ``side`` price where held on the
+    same reading as its home price, and ``probability: None`` (venue named
+    without a price) where not held. Never works out a figure for a venue.
+    """
+    if side not in ("away", "draw"):
+        raise ValueError(f"three_way_side_source_mark side must be 'away' or 'draw', got {side!r}")
     selected = list(selected_inputs)
     bag = getattr(event, "win_probability_sources", None)
     count = bag.get("betting_book_count") if isinstance(bag, dict) else None
@@ -223,18 +295,93 @@ def blended_source_marks(
     else:
         clocks = observations
 
-    def mark(away: bool) -> dict:
-        return quote_source_mark(
-            ({
+    return quote_source_mark(
+        (
+            {
                 "key": key,
-                "probability": 1 - probability if away else probability,
+                "probability": _own_three_way_side_price(
+                    bag,
+                    key,
+                    probability,
+                    side,
+                    books_three_way=books_three_way,
+                ),
                 "observed_at": clocks.get(key),
                 "count": count if key == "betting" else None,
             }
-            for key, probability in selected),
-            method=method,
-        )
-
-    return mark(False), (
-        mark(True) if away_available else no_source_mark("away_unavailable")
+            for key, probability in selected
+        ),
+        method=method,
+        allow_unpriced=True,
     )
+
+
+def blended_source_marks(
+    event: Any,
+    selected_inputs: Iterable[tuple[str, float]],
+    *,
+    observations: Mapping[str, Any] | None = None,
+    method: str | None = None,
+    away_available: bool = True,
+    three_way_probs: tuple[float, float, float] | None = None,
+    books_three_way: tuple[float, float] | None = None,
+) -> tuple[dict, dict]:
+    """Orient the selected quote inputs for each team.
+
+    On a two-way sport the away leg is ``1 - p_home``. On a three-way
+    (draw-priced) sport (``three_way_probs`` present), ``away_source_mark``
+    shows each contributing source's OWN away price where held and names the
+    source with ``probability: None`` where unheld — never a worked-out figure
+    (#13269 / 196-A).
+    """
+    selected = list(selected_inputs)
+    bag = getattr(event, "win_probability_sources", None)
+    count = bag.get("betting_book_count") if isinstance(bag, dict) else None
+    if observations is None:
+        from app.utils.aggregation import source_price_read_time
+
+        clocks = {
+            key: source_price_read_time(bag, key, value)
+            for key, value in selected
+        }
+    else:
+        clocks = observations
+
+    home_mark = quote_source_mark(
+        (
+            {
+                "key": key,
+                "probability": probability,
+                "observed_at": clocks.get(key),
+                "count": count if key == "betting" else None,
+            }
+            for key, probability in selected
+        ),
+        method=method,
+    )
+    if not away_available:
+        return home_mark, no_source_mark("away_unavailable")
+    if three_way_probs is not None:
+        away_mark = three_way_side_source_mark(
+            event,
+            selected,
+            side="away",
+            observations=clocks,
+            method=method,
+            books_three_way=books_three_way,
+        )
+        return home_mark, away_mark
+
+    away_mark = quote_source_mark(
+        (
+            {
+                "key": key,
+                "probability": 1 - probability,
+                "observed_at": clocks.get(key),
+                "count": count if key == "betting" else None,
+            }
+            for key, probability in selected
+        ),
+        method=method,
+    )
+    return home_mark, away_mark

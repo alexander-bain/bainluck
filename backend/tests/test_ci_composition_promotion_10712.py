@@ -135,9 +135,21 @@ STEP_ENV_KEYS = {
         "database-integration",
         "#8841 start-placeholder tag rewrites (real Postgres)",
     ): {"START_PLACEHOLDER_DATABASE_URL"},
+    (
+        "database-integration",
+        "#12612 calibration real-Postgres contracts",
+    ): {"CALIBRATION_TEST_DATABASE_URL"},
+    (
+        "database-integration",
+        "#13338 onboarding club search and save (real Postgres)",
+    ): {"ONBOARDING_TEST_REDIS_URL"},
     ("search-recall", "Every database integration group passed"): {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",
+    },
+    ("search-recall", "Every backend test shard passed"): {
+        "SCOPE_RESULT",
+        "BACKEND_RESULT",
     },
 }
 
@@ -183,6 +195,11 @@ for _receipt_job in (
         "REUSE_HEAD",
         "REUSE_BASE",
     }
+
+# #13283: dry-run post-deploy smoke step passes workflow inputs as env data.
+STEP_ENV_KEYS[
+    ("post-deploy-smoke-dry-run", "Post-deploy smoke rollback check (dry-run only)")
+] = {"AUTO_ROLLBACK_ENABLED", "EXPECTED_SHA", "PREV_LIVE_SHA"}
 
 
 def _allowed_environment(env, allowed, scope):
@@ -374,7 +391,7 @@ def _validate_current_composed_promotion(
     assert verifier.get("if") == f"{SCOPE_RUNS} && {LIVE}"
     assert verifier["steps"][-1].get("if") == REUSE
     aggregate = jobs["search-recall"]
-    assert set(aggregate["needs"]) == {"change-scope", "database-integration"}
+    assert set(aggregate["needs"]) == {"change-scope", "database-integration", "backend-tests"}
     # 75-A: only the explicitly labelled never-merge study skips this runner.
     # Keep the ordinary scope/live predicates and every master promotion gate.
     assert aggregate["if"] == SEARCH_RECALL

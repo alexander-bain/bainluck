@@ -83,7 +83,7 @@ class TestTheRunLineProjectsNothing:
         assert values["home_win_probability"] is not None
 
     @pytest.mark.parametrize(
-        "sport_key", ["basketball_nba", "americanfootball_nfl", "icehockey_nhl"]
+        "sport_key", ["basketball_nba", "americanfootball_nfl", "soccer_epl"]
     )
     def test_a_sport_whose_spread_is_a_margin_still_projects(self, sport_key):
         # Control: the refusal is baseball's, not every sport's.
@@ -104,12 +104,15 @@ class TestTheRunLineProjectsNothing:
 
 
 class TestThePredicateMirrorsTheWeb:
-    @pytest.mark.parametrize("sport_key", ["baseball_mlb", "baseball_ncaa", "baseball_kbo"])
+    @pytest.mark.parametrize(
+        "sport_key",
+        ["baseball_mlb", "baseball_ncaa", "baseball_kbo", "icehockey_nhl", "icehockey_ahl"],
+    )
     def test_baseball_is_not_a_margin(self, sport_key):
         assert sportsbook_spread_is_a_margin(sport_key) is False
 
     @pytest.mark.parametrize(
-        "sport_key", ["icehockey_nhl", "basketball_nba", "soccer_epl", None, ""]
+        "sport_key", ["americanfootball_nfl", "basketball_nba", "soccer_epl", None, ""]
     )
     def test_everything_else_is(self, sport_key):
         assert sportsbook_spread_is_a_margin(sport_key) is True

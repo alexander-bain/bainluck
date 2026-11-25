@@ -1061,7 +1061,15 @@ async def _withhold_refused_prices(
     return None
 
 
-async def _board_staleness_withheld(db: AsyncSession, market) -> set[int]:
+_UNSET_FLEET = object()
+
+
+async def _board_staleness_withheld(
+    db: AsyncSession,
+    market,
+    *,
+    fleet_newest: Any = _UNSET_FLEET,
+) -> set[int]:
     """The two board-level refusals the market page adds outside the six arms (#11534).
 
     ``withheld_price_outcome_ids_for_markets`` is the shared six arms, and
@@ -1094,10 +1102,15 @@ async def _board_staleness_withheld(db: AsyncSession, market) -> set[int]:
     if status == "open":
         withheld |= stale_observation_keys(observations)
     if status in ("open", "resolved"):
+        fleet_obs = (
+            await _fleet_newest_observation(db, market)
+            if fleet_newest is _UNSET_FLEET
+            else fleet_newest
+        )
         withheld |= unobserved_board_keys(
             observations,
             board_touched_at=board_touched_at(market),
-            fleet_newest_observation=await _fleet_newest_observation(db, market),
+            fleet_newest_observation=fleet_obs,
             board_has_a_verdict=_board_has_a_verdict(outcomes),
         )
     return withheld

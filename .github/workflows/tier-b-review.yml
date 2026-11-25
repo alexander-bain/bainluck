@@ -172,7 +172,7 @@ jobs:
               }
               const ignoredSuites = new Set(runs.filter(run =>
                 run.conclusion === 'cancelled' || latest.get(run.path)?.id !== run.id ||
-                ['.github/workflows/tier-b-review.yml', '.github/workflows/tier-b.yml'].includes(run.path)
+                ['.github/workflows/tier-b-review.yml', '.github/workflows/tier-b.yml', '.github/workflows/tier-b-trigger.yml'].includes(run.path)
               ).map(run => run.check_suite_id).filter(id => id != null));
               const checks = (await github.paginate(github.rest.checks.listForRef,
                 {...repo, ref: head, filter: 'latest', per_page: 100})).filter(check =>

@@ -769,7 +769,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // aria-says-one-thing/eye-says-another split #4066 fixed one card over. Both
   // render sites (the hero and the photo-scrim variant) read this one string.
   const movementStr = movementPts != null && Math.abs(movementPts) >= HERO_MIN_MOVEMENT_POINTS && !probIsPlaceholder
-    ? `${movementUp ? "↑" : "↓"} ${movementDisplay} pts`
+    ? `${movementUp ? "↑" : "↓"} ${movementDisplay} ${movementDisplay === "1" || movementDisplay === "1.0" ? "point" : "points"}`
     : null;
   // L2-156 Item 3 — explain the arrow: it's a 24h probability move, not a rank change.
   const movementTitle = movementDisplay != null
@@ -1364,7 +1364,9 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   const otherChoices = otherChoiceTexts(data, leader);
   const answerLabel = otherChoices.length > 0 && leader?.name?.trim()
     ? leader.name.trim()
-    : rowAnswerLabel(leader, context);
+    : rowAnswerLabel(leader, context, data.name, {
+        titleStatesSingleAnswer: data.title_states_single_answer === true,
+      });
   // #7331 — and the label #4396 added collapses when the answer is itself a
   // quantity: `Core CPI YoY - September 2026 · 2.4% · Resolves within a month`
   // with `41%` in this column printed two percentages and said which was which

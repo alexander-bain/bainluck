@@ -136,7 +136,7 @@ describe("UX-P233: every number on the futures page states its baseline", () => 
   test("the hero's movement pill carries a window, and it is the last move", () => {
     const html = render(market109441, "109441");
     // The pill itself still shows the figure Alex saw.
-    expect(testIdText(html, "hero-movement")).toContain("71.5 pts");
+    expect(testIdText(html, "hero-movement")).toContain("71.5 points");
     // …and now says what it is baselined on.
     expect(testIdText(html, "hero-movement-window")).toBe("last move · Aug 28");
   });
@@ -159,7 +159,7 @@ describe("UX-P233: every number on the futures page states its baseline", () => 
     // it said percent, on the ninth surface of that family. The magnitude and
     // the sign are byte-identical — `-71.5` either way — which is what makes
     // this an anchor following its label rather than a test rewritten to fit.
-    expect(testIdText(html, "outcome-change")).toBe("-71.5 pts");
+    expect(testIdText(html, "outcome-change")).toBe("-71.5 points");
   });
 
   test("the sort control names the field honestly", () => {
@@ -185,8 +185,8 @@ describe("UX-P233: every number on the futures page states its baseline", () => 
     const leader = (market109441.outcomes as { probability: number | null }[])[0];
     expect(movementExplanation(leader)).toContain("from opening");
     // The two windows really are different claims about the same outcome.
-    expect(movementExplanation(leader)).toContain("up 13.5 pts");
-    expect(testIdText(html, "hero-movement")).toContain("↓ 71.5 pts");
+    expect(movementExplanation(leader)).toContain("up 13.5 points");
+    expect(testIdText(html, "hero-movement")).toContain("↓ 71.5 points");
   });
 });
 
@@ -238,7 +238,7 @@ describe("UX-P233: BOTH hero renderings carry the window", () => {
         sparklinePoints={UP_CURVE}
       />,
     );
-    expect(testIdText(html, "hero-movement")).toContain("71.5 pts");
+    expect(testIdText(html, "hero-movement")).toContain("71.5 points");
     expect(testIdText(html, "hero-movement-window")).toBe("last move · Aug 28");
   });
 
@@ -252,7 +252,7 @@ describe("UX-P233: BOTH hero renderings carry the window", () => {
         movementLabel="last move · Aug 28"
       />,
     );
-    expect(testIdText(html, "hero-movement")).toContain("71.5 pts");
+    expect(testIdText(html, "hero-movement")).toContain("71.5 points");
     expect(testIdText(html, "hero-movement-window")).toBe("last move · Aug 28");
   });
 

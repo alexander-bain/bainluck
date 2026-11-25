@@ -65,6 +65,7 @@ half of #6238: the server stops asserting an away probability it cannot source.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Optional, TypeVar
 
 from app.utils.graded_card import is_complement_pair
@@ -74,6 +75,9 @@ __all__ = [
     "sport_prices_a_draw",
     "away_is_the_complement",
     "printable_away",
+    "resolve_three_way_probabilities",
+    "rendered_three_way_percents",
+    "read_live_three_way_books",
 ]
 
 #: The declared draw-priced sports, as SUBSTRINGS of ``sports.key``.
@@ -163,3 +167,242 @@ def printable_away(away: Optional[_T], home: Any, sport_key: Any) -> Optional[_T
     removes a value; it never invents or changes one.
     """
     return None if away_is_the_complement(away, home, sport_key) else away
+
+
+def _finite_open_prob(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(v) or not (0.0 < v < 1.0):
+        return None
+    return v
+
+
+def resolve_three_way_probabilities(
+    home_prob: Any,
+    *,
+    books_home: Any,
+    books_away: Any,
+    sport_key: Any,
+) -> Optional[tuple[float, float, float]]:
+    """Resolve ``(home, away, draw)`` for a three-way match when books price both sides (#13131).
+
+    On a draw-priced sport (soccer), sportsbook rows de-vigged across all three
+    outcomes carry ``books_home`` and ``books_away`` summing strictly below 1,
+    leaving ``books_draw = 1 - books_home - books_away`` as the implied draw.
+
+    - Preserves ``home_prob`` (the multi-source blend when present, else
+      ``books_home``) so the home leg never diverges from ``win_probability_sources``.
+    - Splits the remaining ``1 - home`` share between away and draw in the
+      books' exact ``(books_away : books_draw)`` ratio, guaranteeing
+      ``home + away + draw == 1.0`` with every leg strictly in ``(0, 1)``.
+    - Returns ``None`` when the sport is not draw-priced, when either book leg
+      is absent, or when the book pair is a two-way complement (``sum >= 0.99``),
+      so a one-leg game never fabricates an away or draw probability.
+    """
+    if not sport_prices_a_draw(sport_key):
+        return None
+    bh = _finite_open_prob(books_home)
+    ba = _finite_open_prob(books_away)
+    if bh is None or ba is None:
+        return None
+    if is_complement_pair([ba, bh]) or (bh + ba) >= 0.99:
+        return None
+    bd = 1.0 - bh - ba
+    if bd <= 0.005:
+        return None
+
+    home = _finite_open_prob(home_prob)
+    if home is None:
+        home = bh
+
+    non_home_books = 1.0 - bh
+    if non_home_books <= 0.0:
+        return None
+    rem = 1.0 - home
+    away = round(rem * (ba / non_home_books), 6)
+    home_r = round(home, 6)
+    draw = round(1.0 - home_r - away, 6)
+    if not (0.0 < home_r < 1.0 and 0.0 < away < 1.0 and 0.0 < draw < 1.0):
+        return None
+    return (home_r, away, draw)
+
+
+def rendered_three_way_percents(
+    home: float, draw: float, away: float
+) -> tuple[int, int, int]:
+    """Return ``(home_pct, draw_pct, away_pct)`` integers summing to exactly 100 (#13131).
+
+    Rounds ``draw`` with standard half-up rounding first (matching iOS 1.0.7's
+    ``formatProbability(draw, renderedPercent: nil)``) and distributes the
+    remaining ``100 - draw_pct`` between home and away by largest remainder so
+    both server and shipped clients print three whole percents that sum to 100.
+    """
+    draw_pct = max(0, min(100, int(math.floor(draw * 100.0 + 0.5))))
+    remaining = 100 - draw_pct
+    h_raw = home * 100.0
+    a_raw = away * 100.0
+    h_floor = max(0, int(math.floor(h_raw)))
+    a_floor = max(0, int(math.floor(a_raw)))
+
+    total = h_floor + a_floor
+    if total == remaining:
+        return (h_floor, draw_pct, a_floor)
+    if total < remaining:
+        diff = remaining - total
+        # Give extra point(s) to whichever of home/away has the larger fractional part.
+        h_frac = h_raw - h_floor
+        a_frac = a_raw - a_floor
+        if diff == 1:
+            if h_frac >= a_frac:
+                h_floor += 1
+            else:
+                a_floor += 1
+        else:
+            # Rare extreme clamp case: split proportionally.
+            add_h = int(math.floor(diff * (h_raw / (h_raw + a_raw)) + 0.5)) if (h_raw + a_raw) > 0 else diff // 2
+            h_floor += add_h
+            a_floor += diff - add_h
+        return (h_floor, draw_pct, a_floor)
+
+    # total > remaining (possible only if draw rounded up and both floors exceeded)
+    excess = total - remaining
+    h_frac = h_raw - h_floor
+    a_frac = a_raw - a_floor
+    if excess == 1:
+        if h_frac <= a_frac and h_floor > 0:
+            h_floor -= 1
+        elif a_floor > 0:
+            a_floor -= 1
+        else:
+            h_floor -= 1
+    else:
+        sub_h = min(h_floor, excess // 2)
+        h_floor -= sub_h
+        a_floor -= excess - sub_h
+    return (h_floor, draw_pct, a_floor)
+
+
+async def read_live_three_way_books(
+    db: Any,
+    events: Any,
+    now: Any,
+    *,
+    sport_key_override: Optional[str] = None,
+    latest_odds_query: Any = None,
+    absorbed_ids_by_event: Any = None,
+) -> dict[int, tuple[float, float]]:
+    """Read filtered latest per-book (home, away) consensus for live draw-priced events.
+
+    Shares the exact same stale-book and reversed-book filtering pipeline as
+    ``/api/events/{id}`` (``latest_odds_per_bookmaker_query`` ->
+    ``filter_stale_bookmaker_snapshots`` -> ``detect_reversed_bookmakers`` ->
+    ``aggregate_bookmaker_odds``) so a single stale or reversed bookmaker cannot
+    collapse a live soccer match's three-way consensus into two chances with no
+    draw, and covers both stored ``live`` rows and ``scheduled`` rows promoted
+    to ``live`` by ``served_event_status`` (#13131).
+
+    When ``absorbed_ids_by_event`` is supplied, also reads snapshots belonging
+    to each live event's suppressed twins (keeping the newest row per
+    bookmaker), matching ``get_event``'s twin-folded sportsbook read.
+    """
+    from datetime import datetime
+    from sqlalchemy import select
+    from app.models.models import OddsSnapshot
+    from app.utils.lifecycle import served_event_status
+    from app.utils.odds_filtering import filter_stale_bookmaker_snapshots
+    from app.utils.odds_math import aggregate_bookmaker_odds, detect_reversed_bookmakers
+    from app.utils.proven_duplicates import group_latest_snapshots_by_event
+
+    live_events: dict[int, Any] = {}
+    for e in events:
+        sk = sport_key_override if sport_key_override is not None else (
+            e.sport.key if getattr(e, "sport", None) else None
+        )
+        if not sport_prices_a_draw(sk):
+            continue
+        status = getattr(e, "status", None)
+        commence = getattr(e, "commence_time", None)
+        is_live = status == "live" or (
+            isinstance(commence, datetime)
+            and served_event_status(status, commence, now) == "live"
+        )
+        if is_live:
+            live_events[int(e.id)] = e
+    if not live_events:
+        return {}
+
+    owner_by_id: dict[int, int] = {eid: eid for eid in live_events}
+    if absorbed_ids_by_event:
+        for cid in live_events:
+            for tid in absorbed_ids_by_event.get(cid) or ():
+                try:
+                    tid_int = int(tid)
+                except (TypeError, ValueError):
+                    continue
+                owner_by_id.setdefault(tid_int, cid)
+
+    try:
+        ids = sorted(owner_by_id)
+        stmt = (
+            latest_odds_query(ids)
+            if latest_odds_query is not None
+            else (
+                select(OddsSnapshot)
+                .where(
+                    OddsSnapshot.event_id.in_(ids),
+                    OddsSnapshot.home_win_probability.isnot(None),
+                    OddsSnapshot.away_win_probability.isnot(None),
+                )
+                .distinct(OddsSnapshot.event_id, OddsSnapshot.bookmaker)
+                .order_by(
+                    OddsSnapshot.event_id,
+                    OddsSnapshot.bookmaker,
+                    OddsSnapshot.captured_at.desc(),
+                )
+            )
+        )
+        res = await db.execute(stmt)
+        snaps = res.scalars().all()
+    except Exception:
+        return {}
+
+    by_event = group_latest_snapshots_by_event(snaps, owner_by_id)
+
+    out: dict[int, tuple[float, float]] = {}
+    for eid, ev_snaps in by_event.items():
+        ev = live_events.get(eid)
+        if ev is None or not ev_snaps:
+            continue
+        try:
+            filtered = filter_stale_bookmaker_snapshots(
+                ev_snaps,
+                event_status="live",
+                commence_time=getattr(ev, "commence_time", None),
+            )
+            reversed_bks = detect_reversed_bookmakers(filtered)
+            snap_dicts = [
+                {
+                    "home_win_probability": float(s.home_win_probability)
+                    if s.home_win_probability is not None
+                    else None,
+                    "away_win_probability": float(s.away_win_probability)
+                    if s.away_win_probability is not None
+                    else None,
+                }
+                for s in filtered
+                if getattr(s, "bookmaker", None) not in reversed_bks
+            ]
+            if not snap_dicts:
+                continue
+            agg = aggregate_bookmaker_odds(snap_dicts)
+            bh = agg.get("home_probability")
+            ba = agg.get("away_probability")
+            if bh is not None and ba is not None:
+                out[eid] = (float(bh), float(ba))
+        except Exception:
+            continue
+    return out

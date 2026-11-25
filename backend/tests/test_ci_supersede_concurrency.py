@@ -116,14 +116,14 @@ def test_two_different_prs_never_touch_each_other():
 
 
 def test_master_pushes_share_one_group_and_an_in_progress_run_is_never_cancelled():
-    """Decide 76 (Alex, Nov 6): one group per pushed ref, cancel-in-progress OFF.
+    """Decide 76 (Alex, Nov 6; restored per #13352 revert trigger): one group per pushed ref, cancel-in-progress OFF.
 
     A group holds ONE pending run: a newer master push displaces an older run
     still waiting for a runner, which is the point — the newest master head
     contains every earlier merge, and `ci-deploy-base.sh` widens its range back to
     the last deployed commit. An IN-PROGRESS master run is never cancelled.
-    (Before 76 each master run had its own group, and on Nov 6 eight queued
-    master runs each waited to deploy a commit the newest one already carried.)
+    (Under `ci-push-master-<run_id>` on Nov 22, concurrent master runs saturated
+    the ~20-runner pool and pushed release v6556 over 60 minutes.)
     """
     a, b = _slot(_push("95bd398", 10)), _slot(_push("1074051", 11))
     assert a[0] == b[0] == "ci-push-refs/heads/master", (a, b)
@@ -140,6 +140,13 @@ def test_a_rerun_of_a_master_run_rejoins_the_master_group__known_and_operational
         _slot(_push("1074051", 11)),
     )
     assert first == rerun and rerun[0] == other[0] and rerun[1] is False
+
+
+def test_deploy_keeps_never_backwards_guard():
+    deploy_steps = _workflow()["jobs"]["deploy"]["steps"]
+    deploy_run = next(s["run"] for s in deploy_steps if "Deploy to Heroku" in s.get("name", ""))
+    assert 'git merge-base --is-ancestor "$GITHUB_SHA" "$LIVE"' in deploy_run
+    assert 'git merge-base --is-ancestor "$GITHUB_SHA" "$LIVE_NOW"' in deploy_run
 
 
 def test_rerunning_an_OLD_pr_sha_cancels_that_prs_head_run__known_and_fail_closed():

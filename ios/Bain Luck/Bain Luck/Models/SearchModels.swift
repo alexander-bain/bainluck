@@ -121,6 +121,7 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     let status: String?
     let homeScore: Int?
     let awayScore: Int?
+    var scoreSourceUnavailable: Bool? = nil
     let metadata: EventMetadata?
     let espn: ESPNData?
     let winProbabilitySources: [String: WinProbSource]?
@@ -553,6 +554,11 @@ nonisolated struct TeamPageResponse: Decodable, Sendable {
     let recentEvents: [SearchEvent]
     let futures: [TeamFutureItem]
     let championshipPath: [ChampionshipPathEntry]
+    /// #13604 / #13583: Server marks cold/timed-out futures price screens distinctly
+    /// so the client never presents a failed futures screen as "no futures".
+    var futuresUnavailable: Bool? = nil
+    var futuresPartial: Bool? = nil
+    var futuresOmittedCount: Int? = nil
 }
 
 /// Roster player entry served on `/api/teams/{slug}` (`team.roster`).

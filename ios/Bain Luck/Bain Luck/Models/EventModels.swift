@@ -34,6 +34,9 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     /// Missing on older servers/caches; never replace with receipt or price time.
     var scoreSource: String?
     var scoreObservedAt: String?
+    /// #13000 (`250: A`) — `score_source_unavailable: bool` when no score source
+    /// carries this match (distinguished from `"no score yet"` before kickoff).
+    var scoreSourceUnavailable: Bool? = nil
     let homeTeamData: TeamData?
     let awayTeamData: TeamData?
     let metadata: EventMetadata?
@@ -126,6 +129,15 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     var sportName: String? = nil
     var completedAt: String? = nil
     var linescore: TennisLinescoreData? = nil
+    /// #13182 — authoritative playoff series record served on `EventDetail`
+    /// (`home_series_wins`, `away_series_wins`, `best_of` / `series_best_of`,
+    /// `series_wins_include_current_game`). When absent (`nil`),
+    /// `SeriesProbabilityView` withholds rather than assuming `0–0`.
+    var homeSeriesWins: Int? = nil
+    var awaySeriesWins: Int? = nil
+    var bestOf: Int? = nil
+    var seriesBestOf: Int? = nil
+    var seriesWinsIncludeCurrentGame: Bool? = nil
 }
 
 /// Served tennis linescore object (`backend/app/utils/tennis_live_score.py` `attach_tennis_score`),

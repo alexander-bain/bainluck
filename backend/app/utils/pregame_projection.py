@@ -148,9 +148,20 @@ basis, time and kind, and never inherits that field.
 
 from __future__ import annotations
 
+import asyncio
+from collections import OrderedDict
+import copy
+import hashlib
+import json
+import logging
 import math
+import os
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional, Sequence
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.odds_math import (
     aggregate_bookmaker_odds,
@@ -596,7 +607,70 @@ async def read_pregame_projections(
 
     if plan is None:
         return _answered()
-    failed = {event_id: {UNAVAILABLE_KEY: REASON_READ_FAILED} for event_id in plan["ids"]}
+
+    # #11931: settled games' pregame projections (odds_snapshots captured strictly
+    # before scheduled start) are immutable once finished. Reuse L1+L2 cached
+    # answers so feed/league builds query only newly finished misses instead of
+    # re-running PREGAME_PROJECTION_SQL over ~90 settled events (which timed out
+    # and dropped every pregame projection on /api/feed?mode=sports&sport=...).
+    use_cache = (
+        not live_detail
+        and isinstance(db, AsyncSession)
+        and pregame_projection_cache_enabled()
+    )
+    now_utc = datetime.now(timezone.utc)
+    miss_ids: list[int] = []
+    miss_cutoffs: list[datetime] = []
+    miss_formats: dict[int, tuple[str, str]] = {}
+    miss_cache_keys: dict[int, tuple[int, str, str, str]] = {}
+
+    if use_cache:
+        l2_candidates: list[tuple[int, datetime, tuple[str, str], tuple[int, str, str, str]]] = []
+        for event_id, cutoff in zip(plan["ids"], plan["cutoffs"]):
+            fmt = plan["formats"][event_id]
+            cache_key = _settled_cache_key(event_id, cutoff, fmt, now_utc)
+            if cache_key is None:
+                miss_ids.append(event_id)
+                miss_cutoffs.append(cutoff)
+                miss_formats[event_id] = fmt
+                continue
+            hit = _l1_get(cache_key)
+            if hit is not None:
+                answers[event_id] = hit
+            else:
+                l2_candidates.append((event_id, cutoff, fmt, cache_key))
+
+        if l2_candidates:
+            l2_hits = (
+                {}
+                if timeout_ms is not None and timeout_ms <= 0
+                else await _l2_mget([c[3] for c in l2_candidates])
+            )
+            for event_id, cutoff, fmt, cache_key in l2_candidates:
+                hit = l2_hits.get(cache_key)
+                if hit is not None:
+                    _l1_put(cache_key, hit)
+                    answers[event_id] = copy.deepcopy(hit)
+                else:
+                    miss_ids.append(event_id)
+                    miss_cutoffs.append(cutoff)
+                    miss_formats[event_id] = fmt
+                    miss_cache_keys[event_id] = cache_key
+
+        if not miss_ids:
+            return _answered()
+        query_plan = {
+            "ids": miss_ids,
+            "cutoffs": miss_cutoffs,
+            "formats": miss_formats,
+        }
+    else:
+        query_plan = plan
+
+    failed = {
+        event_id: {UNAVAILABLE_KEY: REASON_READ_FAILED}
+        for event_id in query_plan["ids"]
+    }
     if timeout_ms is not None and timeout_ms <= 0:
         answers.update(failed)
         return _answered()
@@ -610,24 +684,180 @@ async def read_pregame_projections(
             rows = (
                 await db.execute(
                     text(PREGAME_PROJECTION_SQL),
-                    {"ids": plan["ids"], "cutoffs": plan["cutoffs"]},
+                    {"ids": query_plan["ids"], "cutoffs": query_plan["cutoffs"]},
                 )
             ).all()
         finally:
             try:
                 await nested.rollback()
             except Exception:  # noqa: BLE001 — the read's own error wins
+                # Savepoint already aborted or closed; keep original exception.
                 pass
     except Exception:  # noqa: BLE001 — one optional key, never the page
         logging.getLogger(__name__).warning(
             "pregame projection read failed for %d event(s)",
-            len(plan["ids"]),
+            len(query_plan["ids"]),
             exc_info=True,
         )
         answers.update(failed)
         return _answered()
-    answers.update(answers_from_rows(plan, rows))
+
+    computed = answers_from_rows(query_plan, rows)
+    answers.update(computed)
+
+    if use_cache and miss_cache_keys:
+        to_store: list[tuple[tuple[int, str, str, str], dict]] = []
+        for event_id, cache_key in miss_cache_keys.items():
+            ans = computed.get(event_id)
+            # Never cache transient read failures.
+            if ans is None or ans.get(UNAVAILABLE_KEY) == REASON_READ_FAILED:
+                continue
+            _l1_put(cache_key, ans)
+            to_store.append((cache_key, ans))
+        if to_store:
+            await _l2_mset(to_store)
+
     return _answered()
+
+
+# ── Settled pregame projection L1 + L2 cache (#11931) ────────────────────────
+
+PREGAME_PROJECTION_CACHE_ENV = "PREGAME_PROJECTION_CACHE_ENABLED"
+PREGAME_PROJECTION_CACHE_SHARED_ENV = "PREGAME_PROJECTION_CACHE_SHARED_ENABLED"
+_L1_MAX_ENTRIES = 2048
+_CACHE_TTL_SECONDS = 6 * 3600
+_L2_PREFIX = "pregame_proj:v1"
+_SQL_DIGEST = hashlib.sha256(PREGAME_PROJECTION_SQL.encode()).hexdigest()[:12]
+
+_l1_lock = threading.Lock()
+_l1_cache: OrderedDict[tuple[int, str, str, str], tuple[float, dict]] = OrderedDict()
+_cache_logger = logging.getLogger(__name__)
+
+
+def clear_pregame_projection_cache() -> None:
+    """Clear the process-local settled pregame projection cache (tests)."""
+    with _l1_lock:
+        _l1_cache.clear()
+
+
+def pregame_projection_cache_enabled() -> bool:
+    """Rollback switch for settled pregame projection caching. Defaults ON."""
+    raw = os.environ.get(PREGAME_PROJECTION_CACHE_ENV, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def pregame_projection_cache_shared_enabled() -> bool:
+    """Rollback switch for the Redis L2 tier. Defaults ON."""
+    raw = os.environ.get(PREGAME_PROJECTION_CACHE_SHARED_ENV, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _settled_cache_key(
+    event_id: Any,
+    cutoff: Any,
+    fmt: tuple[str, str],
+    now: datetime,
+) -> Optional[tuple[int, str, str, str]]:
+    if type(event_id) is not int or not isinstance(cutoff, datetime):
+        return None
+    cutoff_utc = _utc(cutoff)
+    if cutoff_utc is None or cutoff_utc >= now:
+        return None
+    return (event_id, cutoff_utc.isoformat(), fmt[0], fmt[1])
+
+
+def _l1_get(key: tuple[int, str, str, str]) -> Optional[dict]:
+    now_mono = time.monotonic()
+    with _l1_lock:
+        entry = _l1_cache.get(key)
+        if entry is None:
+            return None
+        expires_at, payload = entry
+        if now_mono >= expires_at:
+            _l1_cache.pop(key, None)
+            return None
+        _l1_cache.move_to_end(key)
+        return copy.deepcopy(payload)
+
+
+def _l1_put(key: tuple[int, str, str, str], payload: dict) -> None:
+    expires_at = time.monotonic() + _CACHE_TTL_SECONDS
+    stored = copy.deepcopy(payload)
+    with _l1_lock:
+        _l1_cache[key] = (expires_at, stored)
+        _l1_cache.move_to_end(key)
+        while len(_l1_cache) > _L1_MAX_ENTRIES:
+            _l1_cache.popitem(last=False)
+
+
+def _l2_redis_key(key: tuple[int, str, str, str]) -> str:
+    event_id, cutoff_iso, unit, period = key
+    return f"{_L2_PREFIX}:{_SQL_DIGEST}:{event_id}:{cutoff_iso}:{unit}:{period}"
+
+
+def _l2_redis_client():
+    from app.tasks.redis_state import get_redis_client
+
+    return get_redis_client(socket_timeout=0.5, fast_fail=True)
+
+
+async def _l2_mget(
+    keys: list[tuple[int, str, str, str]],
+) -> dict[tuple[int, str, str, str], dict]:
+    if not keys or not pregame_projection_cache_shared_enabled():
+        return {}
+    try:
+        client = _l2_redis_client()
+        if client is None:
+            return {}
+        redis_keys = [_l2_redis_key(k) for k in keys]
+        blobs = await asyncio.to_thread(client.mget, redis_keys)
+    except Exception:
+        # Redis L2 is purely an acceleration tier; fail open to Postgres.
+        _cache_logger.debug("pregame_projection L2 mget skipped", exc_info=True)
+        return {}
+
+    hits: dict[tuple[int, str, str, str], dict] = {}
+    for key, blob in zip(keys, blobs or []):
+        if not blob:
+            continue
+        try:
+            raw = blob.decode("utf-8") if isinstance(blob, (bytes, bytearray)) else str(blob)
+            parsed = json.loads(raw)
+            if (
+                isinstance(parsed, dict)
+                and (PROJECTION_KEY in parsed or UNAVAILABLE_KEY in parsed)
+                and parsed.get(UNAVAILABLE_KEY) != REASON_READ_FAILED
+            ):
+                hits[key] = parsed
+        except Exception:
+            # Ignore malformed cache entry and rebuild from Postgres.
+            _cache_logger.debug("pregame_projection L2 decode skipped", exc_info=True)
+    return hits
+
+
+async def _l2_mset(items: list[tuple[tuple[int, str, str, str], dict]]) -> None:
+    if not items or not pregame_projection_cache_shared_enabled():
+        return
+    try:
+        client = _l2_redis_client()
+        if client is None:
+            return
+
+        def _write() -> None:
+            pipe = client.pipeline(transaction=False)
+            for key, payload in items:
+                pipe.set(
+                    _l2_redis_key(key),
+                    json.dumps(payload, separators=(",", ":")),
+                    ex=_CACHE_TTL_SECONDS,
+                )
+            pipe.execute()
+
+        await asyncio.to_thread(_write)
+    except Exception:
+        # Redis L2 write is best-effort; L1 and the current response are unaffected.
+        _cache_logger.debug("pregame_projection L2 mset skipped", exc_info=True)
 
 
 def attach_pregame_projection(payload: dict, answer: Optional[Mapping[str, Any]]) -> None:

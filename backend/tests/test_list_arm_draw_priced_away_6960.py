@@ -134,30 +134,26 @@ def test_the_sports_under_test_are_the_ones_the_rule_is_about():
 
 class TestTheListFormatterWithholds:
     def test_current_odds_does_not_serve_the_complement(self):
-        """🔴 Kaizer Chiefs served at 0.775 over a board pricing them 0.465."""
+        """#13131 step 3: a two-way complement on a draw-priced sport cannot
+        separate away from draw, so the card gets nothing for chance."""
         response = events_route._format_event_with_aggregated_odds(
             _event("soccer_other", SOCCER_HOME_PROB), _odds_data(SOCCER_HOME_PROB)
         )
         current = response["current_odds"]
 
-        assert current["home_probability"] == pytest.approx(
-            SOCCER_HOME_PROB
-        ), "the home leg is not the defect and must survive untouched"
-        assert current["away_probability"] is None, (
-            "the list formatter served `1 - home` as the away team's price; "
-            f"the fixture's own three-way prices them {MARKET_AWAY}"
-        )
+        assert current["home_probability"] is None
+        assert current["away_probability"] is None
+        assert current["draw_probability"] is None
 
     def test_the_top_level_hero_does_not_serve_the_complement(self):
-        """🔴 `hero_probability_away` — the field native and My Stuff bind to."""
+        """#13131 step 3: one-leg three-way game serves nothing for chance."""
         response = events_route._format_event_with_aggregated_odds(
             _event("soccer_other", SOCCER_HOME_PROB), None
         )
 
-        assert response["hero_probability"] == pytest.approx(SOCCER_HOME_PROB)
-        assert (
-            response["hero_probability_away"] is None
-        ), f"served {FABRICATED_AWAY} for {AWAY} on production 2026-09-18"
+        assert response["hero_probability"] is None
+        assert response["hero_probability_away"] is None
+        assert response["hero_probability_draw"] is None
 
     def test_a_complement_opening_pair_is_withheld_too(self):
         """The stored pair can itself be a complement; the detail arm withholds it."""
@@ -229,8 +225,9 @@ class TestTheListFormatterRefusesToWithhold:
             "settled means settled: a result is not a price and was never "
             "derived from the home number"
         )
-        assert response["hero_probability"] == pytest.approx(0.5)
-        assert response["hero_probability_away"] == pytest.approx(0.5)
+        assert response["hero_probability"] == pytest.approx(0.0)
+        assert response["hero_probability_away"] == pytest.approx(0.0)
+        assert response["hero_probability_draw"] == pytest.approx(1.0)
 
 
 # ── THE DURABLE ONE ──────────────────────────────────────────────────────────

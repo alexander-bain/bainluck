@@ -16,6 +16,7 @@ from app.utils.resolution_authority import (
 )
 from app.utils.settlement_display import RETRACTED_SOURCE
 from app.utils.source_mark import no_source_mark, quote_source_mark, settled_source_mark
+from app.utils.settlement_display import applies_to_market, settlement_display
 
 _RESULT_SOURCES = (
     AUTHORITATIVE_SOURCES - PRICE_DERIVED_SOURCES
@@ -42,8 +43,14 @@ def describe_field_normalization(
     )
 
 
-def futures_outcome_source_mark(market: Any, outcome: Any, row: dict) -> dict:
-    """Retain the venue input before field normalization; never reprice it."""
+def futures_outcome_source_mark(
+    market: Any, outcome: Any, row: dict, *, served_settled: bool | None = None
+) -> dict:
+    """Retain the venue input before field normalization; never reprice it.
+
+    A caller with its own settlement display decision can constrain the mark
+    to that decision. An official result still requires an authoritative grade.
+    """
     settlement = row.get("settlement_display")
     if isinstance(settlement, dict) and settlement.get("verdict") == "unknown":
         return no_source_mark("result_unknown")
@@ -51,13 +58,24 @@ def futures_outcome_source_mark(market: Any, outcome: Any, row: dict) -> dict:
     authority = getattr(outcome, "resolution_source", None)
     # The sheet calls this an official result. Price/clock guesses and a
     # retracted grade cannot supply it, even when the stored flag is boolean.
-    if type(grade) is bool and authority in _RESULT_SOURCES:
+    if (
+        served_settled is not False
+        and type(grade) is bool
+        and authority in _RESULT_SOURCES
+    ):
+        if row.get("is_out"):
+            return settled_source_mark(authority, "Out")
         return settled_source_mark(authority, "Won" if grade else "Lost")
     status = getattr(market, "status", None)
     # Retracting a grade leaves an open venue quote eligible. A closed result
     # or a contradictory stored win has no such pricing basis.
-    if status == "resolved" or (
-        authority == RETRACTED_SOURCE and (status != "open" or grade is True)
+    if (
+        served_settled is True
+        or status == "resolved"
+        or (
+            authority == RETRACTED_SOURCE
+            and (status not in {"active", "open"} or grade is True)
+        )
     ):
         return no_source_mark("result_unknown")
     if row.get("probability") is None:
@@ -92,3 +110,52 @@ def verified_futures_source_mark(
         ),
         method=method,
     )
+
+
+def futures_card_source_mark(
+    market: Any, outcome: Any, row: dict, *, verified: Any = None
+) -> dict:
+    """Explain a card's final value using its original row or held composition.
+
+    Cards do not all carry the detail settlement object, so ask that same
+    contract before calling a stored grade official. No clock or read is added.
+    """
+    evidence = row
+    if applies_to_market(market):
+        evidence = {
+            **row,
+            "settlement_display": settlement_display(
+                is_winner=getattr(outcome, "is_winner", None),
+                resolution_source=getattr(outcome, "resolution_source", None),
+                stored_probability=getattr(outcome, "current_probability", None),
+            ),
+        }
+    mark = futures_outcome_source_mark(market, outcome, evidence)
+    input_probability = getattr(outcome, "current_probability", None)
+    if (
+        verified is not None
+        and mark["state"] != "settled"
+        and mark.get("reason") != "result_unknown"
+    ):
+        overlay = verified.overlay.get(outcome.id)
+        mark = verified_futures_source_mark(
+            overlay.source_inputs if overlay is not None else (),
+            row["probability"],
+            overlay.aggregation_rule if overlay is not None else "unsupported",
+        )
+        input_probability = overlay.probability if overlay is not None else None
+    describe_field_normalization(
+        mark,
+        input_probability=input_probability,
+        displayed_probability=row["probability"],
+    )
+    return mark
+
+
+def mark_futures_card_rows(market: Any, rows: list[dict]) -> None:
+    """Attach marks to the already selected source-card rows, without repricing."""
+    outcomes = {o.id: o for o in market.outcomes}
+    for row in rows:
+        row["source_mark"] = futures_card_source_mark(
+            market, outcomes[row["id"]], row,
+        )

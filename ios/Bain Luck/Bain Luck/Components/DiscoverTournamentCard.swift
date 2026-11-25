@@ -83,39 +83,41 @@ struct NativeTournamentDiscoverCard: View {
                 )
 
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(tourBadge)
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white.opacity(0.7))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.white.opacity(0.15))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                        if presentation.showsFinalChip {
-                            Text("🏁 FINAL")
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(tourBadge)
                                 .font(.caption2.bold())
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.white.opacity(0.7))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(.white.opacity(0.2))
+                                .background(.white.opacity(0.15))
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                            if presentation.showsFinalChip {
+                                Text("🏁 FINAL")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.white.opacity(0.2))
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                            }
                         }
-
-                        Spacer()
-
-                        if let venue = data.venue {
+                        if let venue = data.venue?.trimmingCharacters(in: .whitespacesAndNewlines), !venue.isEmpty {
                             Text(venue)
                                 .font(.caption2)
                                 .foregroundStyle(.white.opacity(0.6))
-                                .lineLimit(1)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
 
                     Text(properTitleCase(data.name))
                         .font(.headline.bold())
                         .foregroundStyle(.white)
-                        .lineLimit(2)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 0.78 : 1.0)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     if let leader {
                         if presentation.showsChampion {
@@ -133,7 +135,7 @@ struct NativeTournamentDiscoverCard: View {
                                     Text(leader.name)
                                         .font(.title3.bold())
                                         .foregroundStyle(.white)
-                                        .lineLimit(2)
+                                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                                         .minimumScaleFactor(0.85)
                                         .fixedSize(horizontal: false, vertical: true)
                                     if let mark = SourceMarkButton(leader.sourceMark, number: nil, subject: leader.name, numberSize: 17, compactRow: true) {
@@ -154,14 +156,20 @@ struct NativeTournamentDiscoverCard: View {
                             }
                         } else {
                             let leaderPriceText = leader.renderedPercent.map { formatProbability(leader.probability, renderedPercent: $0) } ?? FeedProbabilityScale.percentLabel(fromFraction: leader.probability)
-                            HStack(spacing: 8) {
+                            let heroLayout = dynamicTypeSize.isAccessibilitySize
+                                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                                : AnyLayout(HStackLayout(spacing: 8))
+                            heroLayout {
                                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                                     Text(leaderPriceText)
                                         .font(.title.bold())
                                         .foregroundStyle(.white)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
                                     if let mark = SourceMarkButton(
                                         leader.sourceMark,
                                         number: leader.probability,
+                                        renderedPercent: leader.renderedPercent,
                                         subject: leader.name,
                                         numberSize: 22,
                                         compactRow: true,
@@ -179,13 +187,18 @@ struct NativeTournamentDiscoverCard: View {
                                     Text(leader.name)
                                         .font(.subheadline.bold())
                                         .foregroundStyle(.white)
+                                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                                        .fixedSize(horizontal: false, vertical: true)
                                     if presentation.showsMovementLine,
                                        let move = FeedProbabilityScale.movementPoints(fromFraction: leader.movement24h) {
                                         // Live movement only — a settled tournament
                                         // never reaches this branch.
-                                        Text(move > 0 ? "+\(String(format: "%.1f", move))pp today" : "\(String(format: "%.1f", move))pp today")
+                                        Text(Self.movementTodayText(move))
                                             .font(.caption2)
                                             .foregroundStyle(move > 0 ? .green : .red)
+                                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                                            .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.85)
+                                            .fixedSize(horizontal: false, vertical: true)
                                     }
                                 }
                             }
@@ -239,7 +252,8 @@ struct NativeTournamentDiscoverCard: View {
                 Text(context)
                     .font(.caption)
                     .foregroundStyle(DS.textSecondaryReadable)
-                    .lineLimit(2)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -268,6 +282,11 @@ struct NativeTournamentDiscoverCard: View {
     /// Without one there is no tournament to open and the category is the
     /// honest destination: better the generic page than a screen that can only
     /// say it failed.
+    nonisolated static func movementTodayText(_ move: Double) -> String {
+        let formatted = String(format: "%.1f", move)
+        return move > 0 ? "+\(formatted) points today" : "\(formatted) points today"
+    }
+
     nonisolated static func destination(for data: FeedTournamentData) -> Route {
         guard let slug = data.slug, !slug.isEmpty else {
             return .sportCategory(key: "golf", name: "Golf")

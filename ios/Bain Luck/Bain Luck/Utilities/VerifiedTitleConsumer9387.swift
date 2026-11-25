@@ -103,7 +103,7 @@ enum VerifiedTitlePresentation {
         guard verifiedContext, let history = historyLabel(response.historyBasis) else { return nil }
         guard !withholdsCurrent, response.effectiveRepresentation == .verifiedTitle,
               displayed.contains(where: isCurrentBlend) else { return history }
-        return "\(history) · Prob: all sources now"
+        return "\(history) · Current chances from all sources"
     }
 
     private static func nameable(_ keys: [String]?) -> [String]? {

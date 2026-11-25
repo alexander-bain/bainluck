@@ -22,6 +22,7 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
     let assembled: Bool
     let knownClasses: [String]
     let counts: ContainerHubCounts?
+    let marketCounts: ContainerHubMarketCounts?
     let page: ContainerHubPage?
     let revisionMoved: Bool
     let pairedMetricSet: PairedMetricSet?
@@ -47,8 +48,18 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
         withheldCount = try c.decodeIfPresent(Int.self, forKey: .withheldCount) ?? 0
         assembled = try c.decodeIfPresent(Bool.self, forKey: .assembled) ?? false
         knownClasses = try c.decodeIfPresent([String].self, forKey: .knownClasses) ?? []
-        counts = try c.decodeIfPresent(ContainerHubCounts.self, forKey: .counts)
-        page = try c.decodeIfPresent(ContainerHubPage.self, forKey: .page)
+        if edition?.isTheme == true {
+            counts = try c.decodeIfPresent(ContainerHubCounts.self, forKey: .counts)
+            marketCounts = nil
+            page = try c.decodeIfPresent(ContainerHubPage.self, forKey: .page)
+        } else {
+            // #12901: compact NFL week responses carry market-selection `counts`
+            // (`market_count`, `selected_market_count`, `deferred_market_count`)
+            // and `page` (`kind == "nfl_week_markets"`, `limit`, `next_cursor`).
+            counts = nil
+            marketCounts = try c.decodeIfPresent(ContainerHubMarketCounts.self, forKey: .counts)
+            page = try c.decodeIfPresent(ContainerHubPage.self, forKey: .page)
+        }
         revisionMoved = try c.decodeIfPresent(Bool.self, forKey: .revisionMoved) ?? false
         pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet)) ?? nil
         if state == .published {
@@ -63,6 +74,12 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
                       counts.eligibleCount >= counts.shownCount, counts.withheldCount.values.allSatisfy({ $0 >= 0 }),
                       (1...100).contains(page.limit), page.nextCursor.map(ContainerHubPage.validCursor) ?? true else {
                     throw DecodingError.dataCorruptedError(forKey: .counts, in: c, debugDescription: "Theme page requires valid full-inventory counts and cursor")
+                }
+            } else if let page {
+                guard page.kind == ContainerHubPage.nflWeekMarketsKind,
+                      (1...100).contains(page.limit),
+                      page.nextCursor.map(ContainerHubPage.validMarketCursor) ?? true else {
+                    throw DecodingError.dataCorruptedError(forKey: .page, in: c, debugDescription: "Compact week page requires valid market cursor and limit")
                 }
             }
         }
@@ -81,7 +98,8 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
         edition = envelope.edition; container = envelope.container; children = envelope.children
         self.sections = sections; self.memberCount = memberCount; self.page = page
         self.withheld = withheld; self.withheldCount = withheldCount; assembled = envelope.assembled
-        knownClasses = envelope.knownClasses; counts = envelope.counts; revisionMoved = envelope.revisionMoved
+        knownClasses = envelope.knownClasses; counts = envelope.counts; marketCounts = envelope.marketCounts
+        revisionMoved = envelope.revisionMoved
         pairedMetricSet = envelope.pairedMetricSet
     }
 
@@ -100,6 +118,30 @@ nonisolated struct ContainerHubEdition: Decodable, Equatable, Sendable {
     let week: Int?
     let subject: String?
     let edition: Int?
+    let family: String?
+    let role: String?
+
+    init(
+        kind: String,
+        league: String? = nil,
+        season: Int? = nil,
+        stage: String? = nil,
+        week: Int? = nil,
+        subject: String? = nil,
+        edition: Int? = nil,
+        family: String? = nil,
+        role: String? = nil
+    ) {
+        self.kind = kind
+        self.league = league
+        self.season = season
+        self.stage = stage
+        self.week = week
+        self.subject = subject
+        self.edition = edition
+        self.family = family
+        self.role = role
+    }
 
     var isTheme: Bool { kind == "theme_continuing" || kind == "theme_edition" }
     func matches(slug: String) -> Bool {
@@ -134,11 +176,28 @@ nonisolated struct ContainerHubCounts: Decodable, Sendable {
     let inventoryComplete: Bool
 }
 
+nonisolated struct ContainerHubMarketCounts: Decodable, Equatable, Sendable {
+    let marketCount: Int
+    let selectedMarketCount: Int
+    let deferredMarketCount: Int
+}
+
 nonisolated struct ContainerHubPage: Decodable, Sendable {
+    static let nflWeekMarketsKind = "nfl_week_markets"
+
+    let kind: String?
     let limit: Int
     let nextCursor: String?
+    let nextUrl: String?
+
     static func validCursor(_ value: String) -> Bool {
         !value.isEmpty && value.count <= 64 && value.unicodeScalars.allSatisfy {
+            CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-").contains($0)
+        }
+    }
+
+    static func validMarketCursor(_ value: String) -> Bool {
+        !value.isEmpty && value.count <= 512 && value.unicodeScalars.allSatisfy {
             CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-").contains($0)
         }
     }
@@ -199,6 +258,7 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
     let count: Int
     let slots: [ContainerHubMemberSlot]
     let visualBlock: MachineryVisualBlock?
+    let kitBlock: KitCardEnvelope366B?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -210,6 +270,10 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
         count = try c.decodeIfPresent(Int.self, forKey: .count) ?? slots.count
         visualBlock = (try? c.decodeIfPresent(MachineryVisualBlock.self, forKey: .visualBlock))
             ?? (try? c.decodeIfPresent(MachineryVisualBlock.self, forKey: .visualBlockSnake))
+        kitBlock = (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitBlock))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitBlockSnake))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpec))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpecSnake))
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -217,6 +281,10 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
         case title, note, layout, count, members
         case visualBlock
         case visualBlockSnake = "visual_block"
+        case kitBlock
+        case kitBlockSnake = "kit_block"
+        case kitSpec
+        case kitSpecSnake = "kit_spec"
     }
 
     init(
@@ -226,7 +294,8 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
         layout: String? = nil,
         count: Int,
         slots: [ContainerHubMemberSlot],
-        visualBlock: MachineryVisualBlock? = nil
+        visualBlock: MachineryVisualBlock? = nil,
+        kitBlock: KitCardEnvelope366B? = nil
     ) {
         self.sectionClass = sectionClass
         self.title = title
@@ -235,6 +304,7 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
         self.count = count
         self.slots = slots
         self.visualBlock = visualBlock
+        self.kitBlock = kitBlock
     }
 
     var members: [ContainerHubMember] { slots.compactMap(\.member).filter(\.canOpen) }

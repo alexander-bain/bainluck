@@ -12,9 +12,12 @@ especially repetitive range/bucket ladders.
 
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Callable, Iterable, Literal, Optional, Sequence
 
 from app.utils.card_integrity import is_anonymized_market
@@ -1244,6 +1247,8 @@ def is_placeholder_flat_field(
 # news) or a high-volume market stays eligible.
 FEED_LOCKED_CERTAIN_HIGH = 0.99  # leader rounds to 100%
 FEED_LOCKED_CERTAIN_LOW = 0.01  # leader rounds to 0%
+FEED_LOCKED_ALL_EXTREME_HIGH = 0.95  # #13093: every priced outcome >95% or <5%
+FEED_LOCKED_ALL_EXTREME_LOW = 0.05
 FEED_LOCKED_CERTAIN_KEEP_MOVE = 0.10  # >=10pt 24h swing = genuine mover
 FEED_LOCKED_CERTAIN_KEEP_VOLUME = 25000.0  # live money = keep
 
@@ -1252,12 +1257,31 @@ def is_locked_near_certain(
     leader_probability: "float | None",
     max_abs_movement_24h: "float | None" = None,
     volume_24h: "float | None" = None,
+    *,
+    outcome_probabilities: "Sequence[float | None] | None" = None,
 ) -> bool:
-    """True if an UNRESOLVED market is pinned at a dead-extreme price with no live
-    interest (#1004). The caller applies this only to open/unresolved feed
-    candidates. Guarded so a near-certain MOVER or a high-volume market is kept —
-    only the boring locked-certain cards are suppressed.
+    """True if an UNRESOLVED market is pinned at a dead-extreme price (#1004, #13093).
+
+    Suppresses a market when EITHER:
+      1. it has 2 or more priced outcomes and every priced outcome sits strictly
+         outside ``[0.05, 0.95]`` (``> 0.95`` or ``< 0.05``, zero contested
+         outcomes in ``[0.05, 0.95]``) unless it had a ``>= 10``-point 24h
+         swing (#13093; one-outcome yes-or-no markets stay on rule 2), OR
+      2. the leader alone sits at ``>= 0.99`` or ``<= 0.01`` with neither a ``>= 10``-pt
+         24h swing nor high 24h volume (``>= 25,000``) (#1004).
     """
+    is_genuine_mover = (
+        max_abs_movement_24h is not None
+        and abs(max_abs_movement_24h) >= FEED_LOCKED_CERTAIN_KEEP_MOVE
+    )
+    if outcome_probabilities is not None:
+        priced = [float(p) for p in outcome_probabilities if p is not None]
+        if len(priced) >= 2 and all(
+            p > FEED_LOCKED_ALL_EXTREME_HIGH or p < FEED_LOCKED_ALL_EXTREME_LOW
+            for p in priced
+        ):
+            return not is_genuine_mover
+
     if leader_probability is None:
         return False
     if not (
@@ -1266,10 +1290,7 @@ def is_locked_near_certain(
     ):
         return False
     # Genuine mover — a big recent swing is interesting even at a dead extreme.
-    if (
-        max_abs_movement_24h is not None
-        and abs(max_abs_movement_24h) >= FEED_LOCKED_CERTAIN_KEEP_MOVE
-    ):
+    if is_genuine_mover:
         return False
     # Live money — high 24h volume means the market is actively traded.
     if volume_24h is not None and volume_24h >= FEED_LOCKED_CERTAIN_KEEP_VOLUME:
@@ -1515,10 +1536,129 @@ _MACRO_EVENT_RE = re.compile(
 )
 
 
-def _is_asset_price_level(name: str) -> bool:
-    """R2 — asset price-LEVEL market (stocks/crypto/commodities ' above $X')."""
+_NON_EQUITY_TICKER_ACRONYMS = frozenset(
+    {
+        "US",
+        "UK",
+        "EU",
+        "UN",
+        "NBA",
+        "NFL",
+        "NHL",
+        "MLB",
+        "UFC",
+        "MLS",
+        "EPL",
+        "CFP",
+        "GDP",
+        "CPI",
+        "PPI",
+        "FOMC",
+        "ECB",
+        "BOJ",
+        "BOE",
+        "BOC",
+        "RBA",
+        "RBNZ",
+        "LOW",
+        "HIGH",
+        "YOY",
+        "QOQ",
+        "MOM",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "ET",
+        "EDT",
+        "EST",
+        "PT",
+        "PDT",
+        "PST",
+        "UTC",
+        "CEO",
+        "IPO",
+        "AI",
+        "EV",
+        "GOP",
+        "DNC",
+        "PM",
+        "AM",
+        "PC",
+        "TV",
+        "NY",
+        "LA",
+        "DC",
+        "WTO",
+        "WHO",
+        "DOJ",
+        "SEC",
+        "FCC",
+        "FDA",
+        "FTC",
+        "FBI",
+        "CIA",
+        "IRS",
+        "IMF",
+        "NATO",
+        "OPEC",
+        "SPAC",
+    }
+)
+_EQUITY_TICKER_PAREN_RE = re.compile(
+    r"\b[A-Z][A-Za-z0-9.&',\-\s]{1,40}\s*\(([A-Z]{1,5})\)"
+)
+_EQUITY_TICKER_CATEGORIES = frozenset(
+    {"economics", "finance", "business", "stocks", "markets"}
+)
+_EQUITY_PRICE_CONTEXT_RE = re.compile(
+    r"(?:\b(?:stocks?|share\s+price|per\s+share|market\s+cap|earnings|revenue|eps|"
+    r"valuation|price|closes?\s+(?:above|below|under|over|at|(?:the\s+)?week\s+of|\$)|"
+    r"finish(?:es)?\s+(?:the\s+)?week\s+of)\b|\$\s*\d)",
+    re.IGNORECASE,
+)
+_WEEKLY_STOCK_PRICE_RE = re.compile(
+    r"(?:\bcloses?\s+(?:the\s+)?week\s+of\b"
+    r"|\bfinish(?:es)?\s+the\s+week(?:\s+of)?\b"
+    r"|\bhit\s+\((?:low|high)\)\s*\$\s?[\d,]+(?:\.\d+)?[^?]{0,40}\bweek\s+of\b"
+    r"|\bweek\s+of\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}\b)",
+    re.IGNORECASE,
+)
+
+
+def _equity_ticker_from_name(name: str, category: str | None = None) -> str | None:
+    """Extract a parenthesized stock ticker like ``Micron (MU)`` (#13645).
+
+    Restricted to finance/business categories or titles carrying an explicit
+    price/stock context word so college/city tags like ``Miami (OH)`` or
+    ``Georgia (UGA)`` never receive ``story:equity_ticker:*`` keys.
+    """
+    has_finance_category = (category or "").strip().lower() in _EQUITY_TICKER_CATEGORIES
+    has_price_context = bool(_EQUITY_PRICE_CONTEXT_RE.search(name or ""))
+    if not (has_finance_category or has_price_context):
+        return None
+    for match in _EQUITY_TICKER_PAREN_RE.finditer(name or ""):
+        ticker = match.group(1)
+        if ticker not in _NON_EQUITY_TICKER_ACRONYMS:
+            return ticker
+    return None
+
+
+def _is_weekly_single_stock_price(name: str, category: str | None = None) -> bool:
+    """Weekly single-stock price close/range/low-high cards (#13645, R2)."""
+    if re.search(r"\bipo\b", name, re.IGNORECASE):
+        return False
+    if not _WEEKLY_STOCK_PRICE_RE.search(name):
+        return False
+    return bool(_equity_ticker_from_name(name, category) or _ASSET_CONTEXT_RE.search(name))
+
+
+def _is_asset_price_level(name: str, category: str | None = None) -> bool:
+    """R2 — asset price-LEVEL market (stocks/crypto/commodities ' above $X' or weekly stock ladders)."""
     if _MACRO_EVENT_RE.search(name):
         return False
+    if _is_weekly_single_stock_price(name, category):
+        return True
     return bool(_ASSET_CONTEXT_RE.search(name)) and bool(
         _PRICE_THRESHOLD_RE.search(name)
     )
@@ -2106,6 +2246,10 @@ _MARGIN_TURNOUT_TICKER_RE = re.compile(
 )
 
 
+_PRES_TURNOUT_PRES_RE = re.compile(r"\bpresident")
+_PRES_TURNOUT_US_RE = re.compile(r"\b(u\.?s\.?|united states|american)\b")
+
+
 def _is_us_presidential_turnout(name: str) -> bool:
     """Carve-out: US presidential voter turnout may surface (Alex 2026-06-24).
 
@@ -2115,9 +2259,9 @@ def _is_us_presidential_turnout(name: str) -> bool:
     low = (name or "").lower()
     if "turnout" not in low:
         return False
-    if not re.search(r"\bpresident", low):
+    if not _PRES_TURNOUT_PRES_RE.search(low):
         return False
-    return bool(re.search(r"\b(u\.?s\.?|united states|american)\b", low))
+    return bool(_PRES_TURNOUT_US_RE.search(low))
 
 
 # Artist annual stream-count markets — Lane 2 Queue L2-2 (2026-06-24), the next
@@ -2618,6 +2762,73 @@ _NON_US_JURISDICTION_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_NON_US_CENTRAL_BANK_FULL_RE = re.compile(
+    r"\b("
+    r"bank of canada|reserve bank of (?:new zealand|australia|india)|"
+    r"bank of england|bank of japan|european central bank|banxico|bank of mexico|"
+    r"swiss national bank|riksbank|norges bank|people'?s bank of china|"
+    r"central bank of (?:brazil|turkey|t[uü]rkiye|russia|chile|colombia|argentina|indonesia|korea)"
+    r")\b",
+    re.IGNORECASE,
+)
+_NON_US_CENTRAL_BANK_ACRONYM_RE = re.compile(
+    r"\b(boc|rbnz|rba|rbi|boe|boj|ecb|snb|pboc)\b",
+    re.IGNORECASE,
+)
+_CENTRAL_BANK_POLICY_CONTEXT_RE = re.compile(
+    r"\b(rates?|interest\s+rates?|bps|basis\s+points?|cuts?|hikes?|holds?|"
+    r"raises?|lowers?|policy|decisions?|meetings?|inflation|monetary)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_non_us_central_bank_policy(name: str) -> bool:
+    """Match explicit foreign central banks, or bare acronyms beside policy words."""
+    if _NON_US_CENTRAL_BANK_FULL_RE.search(name):
+        return True
+    return bool(_NON_US_CENTRAL_BANK_ACRONYM_RE.search(name)) and bool(
+        _CENTRAL_BANK_POLICY_CONTEXT_RE.search(name)
+    )
+
+
+_MINOR_CONF_NAME_RE = re.compile(
+    r"\b("
+    r"sun belt|mid-american|mac|conference usa|c-?usa|mountain west|"
+    r"american athletic|aac|missouri valley|big sky|colonial athletic|"
+    r"swac|meac|ivy league|patriot league|southern conference|socon|"
+    r"big south|ohio valley|southland|horizon league|summit league|"
+    r"maac|america east|big west"
+    r")\b",
+    re.IGNORECASE,
+)
+_MINOR_CONF_TITLE_BERTH_PHRASE_RE = re.compile(
+    r"\b(?:championship game|title game|conference championship|"
+    r"(?:advance|qualify)\s+(?:to|for)\s+[^?]*championship)\b",
+    re.IGNORECASE,
+)
+_POWER_CONF_OR_CFP_RE = re.compile(
+    r"\b(college football playoff|cfp|national championship|"
+    r"sec|big ten|big 10|big 12|big xii|acc|march madness|ncaa tournament)\b",
+    re.IGNORECASE,
+)
+_REGIONAL_CONFLICT_TACTICAL_RE = re.compile(
+    r"(?:"
+    r"\bhouthis?\s+(?:enter|capture|seize|target|strike|attack|successfully\s+target)\b"
+    r"|\benter\s+aden\b"
+    r"|\btarget\s+shipping\b"
+    r"|\bmilitary\s+action\s+against\s+yemen\b"
+    r")",
+    re.IGNORECASE,
+)
+_HEADLINE_CEASEFIRE_RE = re.compile(
+    r"\b(ceasefire|peace deal|end (?:the )?war|regime falls?)\b",
+    re.IGNORECASE,
+)
+EQUITY_TICKER_STORY_PREFIX = "story:equity_ticker:"
+# Decision 408: A (Alex, 7:02 PM PT Tue Nov 24): all three weights ship on.
+NON_US_MACRO_PENALTY = -20
+MINOR_CONF_BERTH_PENALTY = -20
+REGIONAL_CONFLICT_TACTICAL_PENALTY = -15
 
 # #8742. `story:us_federal_power` is headed "Who holds power in Washington?", so
 # its membership rule has to be about Washington — #7494's lesson, second family.
@@ -2808,27 +3019,35 @@ class MarketQuality:
     explanation_required: bool = False
 
 
+_NORM_URL_RE = re.compile(r"https?://\S+")
+_NORM_RANK_RE = re.compile(r"#(\d{1,2})\b")
+_NORM_NUM_RE = re.compile(r"\$?\d+(?:,\d{3})*(?:\.\d+)?%?")
+_NORM_MONTH_RE = re.compile(rf"\b({_MONTH_RE})\b")
+_NORM_YEAR_RE = re.compile(r"\b\d{4}\b")
+_NORM_NON_ALNUM_RE = re.compile(r"[^a-z0-9<>]+")
+_NORM_WS_RE = re.compile(r"\s+")
+_PROPER_TOKENS_RE = re.compile(r"\b[A-Z][a-z]{2,}\b")
+
+
+def _replace_norm_rank(match: re.Match[str]) -> str:
+    rank = int(match.group(1))
+    return f"<rank{_RANK_WORDS[rank]}>" if rank in _RANK_WORDS else "<rankother>"
+
+
+@lru_cache(maxsize=4096)
 def _normalized_text(text: str) -> str:
     text = text.lower()
-    text = re.sub(r"https?://\S+", " ", text)
+    text = _NORM_URL_RE.sub(" ", text)
     # Preserve #N ranking patterns (e.g., "#1 Netflix Show" vs "#2 Netflix
     # Show") so that different rankings get distinct family keys. Without
     # this, both collapse to "<num> netflix show" and dedup kills one.
     # Use a non-numeric placeholder so the subsequent <num> pass won't eat it.
-    text = re.sub(
-        r"#(\d{1,2})\b",
-        lambda m: (
-            f"<rank{_RANK_WORDS[int(m.group(1))]}>"
-            if int(m.group(1)) in _RANK_WORDS
-            else "<rankother>"
-        ),
-        text,
-    )
-    text = re.sub(r"\$?\d+(?:,\d{3})*(?:\.\d+)?%?", "<num>", text)
-    text = re.sub(rf"\b({_MONTH_RE})\b", "<month>", text)
-    text = re.sub(r"\b\d{4}\b", "<year>", text)
-    text = re.sub(r"[^a-z0-9<>]+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = _NORM_RANK_RE.sub(_replace_norm_rank, text)
+    text = _NORM_NUM_RE.sub("<num>", text)
+    text = _NORM_MONTH_RE.sub("<month>", text)
+    text = _NORM_YEAR_RE.sub("<year>", text)
+    text = _NORM_NON_ALNUM_RE.sub(" ", text)
+    return _NORM_WS_RE.sub(" ", text).strip()
 
 
 def _numbers(text: str) -> list[float]:
@@ -2915,11 +3134,60 @@ _OFFICE_NOUNS = frozenset(
 )
 
 
+_STORY_MIDEAST_RE = re.compile(
+    r"\b(iran|iranian|israel|hormuz|uranium|enrichment|nuclear deal|airspace|gaza|houthi|houthis|yemen|aden|red sea)\b"
+)
+_STORY_PUTIN_RE = re.compile(r"\b(putin|president|regime|fall|collapse)\b")
+_STORY_2028_RE = re.compile(r"\b(president|presidential|nominee|election)\b")
+_STORY_PRESIDENTIAL_RE = re.compile(r"\bpresidential\b")
+_STORY_MAYORAL_RE = re.compile(r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b")
+_STORY_EARNINGS_1_RE = re.compile(r"\b(beat|miss|report|quarterly)\b.*\bearnings\b")
+_STORY_EARNINGS_2_RE = re.compile(r"\bearnings\b.*\b(beat|miss|report|quarterly)\b")
+_STORY_OIL_RE = re.compile(r"\b(wti|crude oil|brent oil|oil)\b")
+_STORY_ALIENS_RE = re.compile(r"\b(aliens?|ufo|extraterrestrial)\b")
+_STORY_SPACEX_IPO_RE = re.compile(r"\b(ipo|public|bank)\b")
+_STORY_SPACEX_LAUNCH_RE = re.compile(r"\b(starship|launch|launches)\b")
+_STORY_BB_HOT100_RE = re.compile(r"\bbillboard\s+hot\s+100\b")
+_STORY_BB_200_RE = re.compile(r"\bbillboard\s+200\b")
+_STORY_SPOTIFY_RE = re.compile(r"\bspotify\b")
+_STORY_BB_RE = re.compile(r"\bbillboard\b")
+_STORY_BASKETBALL_FINALS_RE = re.compile(r"\b(nba finals?|wnba finals?)\b")
+_STORY_WORLD_CUP_RE = re.compile(r"\b(fifa\s+)?world cup\b")
+_STORY_UFC_TITLE_RE = re.compile(r"\bufc\b.*\b(title|champion|main event)\b")
+_STORY_TENNIS_SLAM_RE = re.compile(
+    r"\b(wimbledon|french open|australian open|roland garros|grand slam)\b"
+)
+_STORY_US_OPEN_RE = re.compile(r"\bus open\b")
+_STORY_AI_RE = re.compile(
+    r"\b(openai|gpt|claude(?!\s+monet)|deepseek|gemini|ai model|best ai)\b"
+)
+_STORY_OSCARS_RE = re.compile(r"\b(oscars?|academy awards?)\b")
+_STORY_GRAMMYS_RE = re.compile(r"\bgrammys?\b")
+_STORY_EMMYS_RE = re.compile(r"\bemmys?\b")
+_STORY_GOLDEN_GLOBES_RE = re.compile(r"\bgolden globes?\b")
+_STORY_MET_GALA_RE = re.compile(r"\bmet gala\b")
+_STORY_DRAKE_RE = re.compile(r"\b(drake|iceman)\b")
+_STORY_GOV_STAKES_RE = re.compile(r"\bfederal government\b.*\btake a stake\b")
+_FAMILY_MAYORAL_CI_RE = re.compile(
+    r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b", re.IGNORECASE
+)
+_FAMILY_PRES_EXCLUDE_RE = re.compile(
+    r"\b(president|presidential|trump|biden|obama|2028)\b", re.IGNORECASE
+)
+_FAMILY_ENT_STREAM_RE = re.compile(
+    r"streams up this week|weekly streams", re.IGNORECASE
+)
+_FAMILY_ENT_CHART_RE = re.compile(
+    r"billboard|weekly top|spotify", re.IGNORECASE
+)
+_FAMILY_RANGE_RE = re.compile(r"<num>(?:\s*(?:to|and|-)\s*<num>)+")
+
+
 def _has_named_salient_entity(name: str, *, ignore_office_nouns: bool = False) -> bool:
     # Proper-case words are a useful salience hint for people, teams, companies,
     # places, and diseases. Exclude title-case boilerplate by requiring either
     # multiple proper tokens or a known high-salience pattern.
-    proper_tokens = re.findall(r"\b[A-Z][a-z]{2,}\b", name)
+    proper_tokens = _PROPER_TOKENS_RE.findall(name)
     stop = _STOPWORDS | _OFFICE_NOUNS if ignore_office_nouns else _STOPWORDS
     filtered = [t for t in proper_tokens if t.lower() not in stop]
     return len(filtered) >= 2 or bool(
@@ -2930,10 +3198,7 @@ def _has_named_salient_entity(name: str, *, ignore_office_nouns: bool = False) -
 def _story_key(name: str, category: str) -> str | None:
     lower = name.lower()
 
-    if re.search(
-        r"\b(iran|iranian|israel|hormuz|uranium|enrichment|nuclear deal|airspace|gaza)\b",
-        lower,
-    ):
+    if _STORY_MIDEAST_RE.search(lower):
         return "story:middle_east_conflict"
 
     if ("russia" in lower and "ukraine" in lower) or _RUSSIA_WAR_TERRITORY_RE.search(
@@ -2941,22 +3206,18 @@ def _story_key(name: str, category: str) -> str | None:
     ):
         return "story:russia_ukraine"
 
-    if "russia" in lower and re.search(
-        r"\b(putin|president|regime|fall|collapse)\b", lower
-    ):
+    if "russia" in lower and _STORY_PUTIN_RE.search(lower):
         return "story:russia_ukraine"
 
-    if "2028" in lower and re.search(
-        r"\b(president|presidential|nominee|election)\b", lower
-    ):
+    if "2028" in lower and _STORY_2028_RE.search(lower):
         return "story:us_2028_election"
 
-    if _REGIONAL_US_ELECTION_RE.search(name) and not re.search(
-        r"\bpresidential\b", lower
+    if _REGIONAL_US_ELECTION_RE.search(name) and not _STORY_PRESIDENTIAL_RE.search(
+        lower
     ):
         return "story:regional_us_elections"
 
-    if re.search(r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b", lower):
+    if _STORY_MAYORAL_RE.search(lower):
         return "story:regional_us_elections"
 
     # #7494. TWO ARMS, because the container this key feeds is US-specific by
@@ -2987,52 +3248,50 @@ def _story_key(name: str, category: str) -> str | None:
     if _MACRO_PRICE_RATE_RE.search(lower) and not _NON_US_JURISDICTION_RE.search(lower):
         return "story:macro_rates"
 
-    if re.search(r"\b(beat|miss|report|quarterly)\b.*\bearnings\b", lower) or re.search(
-        r"\bearnings\b.*\b(beat|miss|report|quarterly)\b", lower
-    ):
+    if _STORY_EARNINGS_1_RE.search(lower) or _STORY_EARNINGS_2_RE.search(lower):
         return "story:single_stock_earnings"
 
-    if re.search(r"\b(wti|crude oil|brent oil|oil)\b", lower):
+    if _STORY_OIL_RE.search(lower):
         return "story:oil"
 
-    if re.search(r"\b(aliens?|ufo|extraterrestrial)\b", lower):
+    if _STORY_ALIENS_RE.search(lower):
         return "story:aliens_disclosure"
 
-    if "spacex" in lower and re.search(r"\b(ipo|public|bank)\b", lower):
+    if "spacex" in lower and _STORY_SPACEX_IPO_RE.search(lower):
         return "story:spacex_ipo"
 
-    if "spacex" in lower and re.search(r"\b(starship|launch|launches)\b", lower):
+    if "spacex" in lower and _STORY_SPACEX_LAUNCH_RE.search(lower):
         return "story:spacex_launches"
 
     if "ipo" in lower:
         return "story:ipo_markets"
 
-    if re.search(r"\bbillboard\s+hot\s+100\b", lower):
+    if _STORY_BB_HOT100_RE.search(lower):
         return "story:billboard_hot100"
 
-    if re.search(r"\bbillboard\s+200\b", lower):
+    if _STORY_BB_200_RE.search(lower):
         return "story:billboard_200"
 
-    if re.search(r"\bspotify\b", lower):
+    if _STORY_SPOTIFY_RE.search(lower):
         return "story:spotify_charts"
 
-    if re.search(r"\bbillboard\b", lower):
+    if _STORY_BB_RE.search(lower):
         return "story:music_charts"
 
     if is_daily_direction_filler(name):
         return "story:daily_equity_direction"
 
-    if re.search(r"\b(nba finals?|wnba finals?)\b", lower):
+    if _STORY_BASKETBALL_FINALS_RE.search(lower):
         return "story:basketball_finals_path"
 
-    if re.search(r"\b(fifa\s+)?world cup\b", lower):
+    if _STORY_WORLD_CUP_RE.search(lower):
         return "story:fifa_world_cup"
 
     ufc_event = ufc_event_story_key(name)
     if ufc_event is not None:
         return ufc_event
 
-    if re.search(r"\bufc\b.*\b(title|champion|main event)\b", lower):
+    if _STORY_UFC_TITLE_RE.search(lower):
         return "story:ufc_events"
 
     # #4554 — a Slam's NAME is tennis only when the MARKET is. "AFC Wimbledon vs.
@@ -3043,43 +3302,39 @@ def _story_key(name: str, category: str) -> str | None:
     # "tennis" (2,332 rows, none null), and every other match was a mis-filing:
     # 590 AFC Wimbledon soccer rows, golf's "career Grand Slam", a baseball grand
     # slam and esports' "ESL Grand Slam". The same gate as the US Open rule below.
-    if category == "tennis" and re.search(
-        r"\b(wimbledon|french open|australian open|roland garros|grand slam)\b", lower
-    ):
+    if category == "tennis" and _STORY_TENNIS_SLAM_RE.search(lower):
         return "story:grand_slam_tennis"
 
     # "US Open" is tennis when the category is tennis (not golf)
-    if category == "tennis" and re.search(r"\bus open\b", lower):
+    if category == "tennis" and _STORY_US_OPEN_RE.search(lower):
         return "story:grand_slam_tennis"
 
     # #8742: "Claude Monet's artwork break auction record" is not about a model.
-    if re.search(
-        r"\b(openai|gpt|claude(?!\s+monet)|deepseek|gemini|ai model|best ai)\b", lower
-    ):
+    if _STORY_AI_RE.search(lower):
         return "story:ai"
 
-    if re.search(r"\b(oscars?|academy awards?)\b", lower):
+    if _STORY_OSCARS_RE.search(lower):
         return "story:oscars"
 
-    if re.search(r"\bgrammys?\b", lower):
+    if _STORY_GRAMMYS_RE.search(lower):
         return "story:grammys"
 
-    if re.search(r"\bemmys?\b", lower):
+    if _STORY_EMMYS_RE.search(lower):
         return "story:emmys"
 
-    if re.search(r"\bgolden globes?\b", lower):
+    if _STORY_GOLDEN_GLOBES_RE.search(lower):
         return "story:golden_globes"
 
-    if re.search(r"\bmet gala\b", lower):
+    if _STORY_MET_GALA_RE.search(lower):
         return "story:met_gala"
 
     if _is_us_federal_power(name):
         return "story:us_federal_power"
 
-    if category == "entertainment" and re.search(r"\b(drake|iceman)\b", lower):
+    if category == "entertainment" and _STORY_DRAKE_RE.search(lower):
         return "story:drake_iceman"
 
-    if re.search(r"\bfederal government\b.*\btake a stake\b", lower):
+    if _STORY_GOV_STAKES_RE.search(lower):
         return "story:us_government_stakes"
 
     if "truist championship" in lower:
@@ -3116,6 +3371,10 @@ def _story_key(name: str, category: str) -> str | None:
     if national_presidential is not None:
         return national_presidential
 
+    equity_ticker = _equity_ticker_from_name(name, category)
+    if equity_ticker is not None and not re.search(r"\bipo\b", lower):
+        return f"{EQUITY_TICKER_STORY_PREFIX}{equity_ticker.lower()}"
+
     return None
 
 
@@ -3151,7 +3410,7 @@ def classify_market_quality(
     if ticker_boost:
         reasons.append("ticker_boost")
 
-    asset_price_level = _is_asset_price_level(name)  # R2
+    asset_price_level = _is_asset_price_level(name, category)  # R2
     runner_up_rank = _is_runner_up_rank(name)  # R8
     resolved_sports = _is_resolved_sports(status, category)  # R6
     novel_sports = _is_novel_sports_framing(name, category)  # R3
@@ -3168,18 +3427,8 @@ def classify_market_quality(
     obscure = bool(_OBSCURE_PROCEDURAL_RE.search(name))
     regional_election = (
         bool(_REGIONAL_US_ELECTION_RE.search(name))
-        or bool(
-            re.search(
-                r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b",
-                name,
-                re.IGNORECASE,
-            )
-        )
-    ) and not re.search(
-        r"\b(president|presidential|trump|biden|obama|2028)\b",
-        name,
-        re.IGNORECASE,
-    )
+        or bool(_FAMILY_MAYORAL_CI_RE.search(name))
+    ) and not _FAMILY_PRES_EXCLUDE_RE.search(name)
 
     # ── #1958: ADMISSION DECISION for `regional_us_election + salient_entity` ──
     #
@@ -3215,6 +3464,22 @@ def classify_market_quality(
 
     low_signal_sport = bool(_LOW_SIGNAL_SPORT_RE.search(name))
     episode_level = bool(_EPISODE_LEVEL_RE.search(name))
+    non_us_macro_downrank = (
+        _is_non_us_central_bank_policy(name) and not _US_CENTRAL_BANK_RE.search(name)
+    ) or (
+        bool(re.search(r"\bgdp\b", name, re.IGNORECASE))
+        and bool(_NON_US_JURISDICTION_RE.search(name))
+        and not bool(re.search(r"\b(?:u\.?s\.?|united states|american?)\b", name, re.IGNORECASE))
+    )
+    minor_conf_title_berth = (
+        bool(_MINOR_CONF_NAME_RE.search(name))
+        and bool(_MINOR_CONF_TITLE_BERTH_PHRASE_RE.search(name))
+        and not bool(_POWER_CONF_OR_CFP_RE.search(name))
+    )
+    regional_conflict_operational = (
+        bool(_REGIONAL_CONFLICT_TACTICAL_RE.search(name))
+        and not bool(_HEADLINE_CEASEFIRE_RE.search(name))
+    )
 
     # #1872: anonymized-at-source option sets ("Person B / Person K"). The
     # predicate is shared with the labeling sampler via `card_integrity` rather
@@ -3291,6 +3556,12 @@ def classify_market_quality(
         reasons.append("resolved_sports")
     if novel_sports:
         reasons.append("novel_sports_framing")
+    if non_us_macro_downrank:
+        reasons.append("non_us_macro_downrank")
+    if minor_conf_title_berth:
+        reasons.append("minor_conf_title_berth")
+    if regional_conflict_operational:
+        reasons.append("regional_conflict_operational")
 
     compelling = bool(_COMPELLING_RE.search(name))
     personnel = _has_sports_personnel_context(name, category) and has_salient
@@ -3373,15 +3644,14 @@ def classify_market_quality(
 
     family_key = normalized
     if entertainment_metric:
-        if re.search(r"streams up this week|weekly streams", name, re.IGNORECASE):
+        if _FAMILY_ENT_STREAM_RE.search(name):
             family_key = "entertainment:streaming_metric"
-        elif re.search(r"billboard|weekly top|spotify", name, re.IGNORECASE):
+        elif _FAMILY_ENT_CHART_RE.search(name):
             family_key = "entertainment:chart_metric"
         else:
             family_key = "entertainment:metric"
     if ladder_or_bucket:
-        family_key = re.sub(r"<num>(?:\s*(?:to|and|-)\s*<num>)+", "<range>", normalized)
-        family_key = re.sub(r"<num>", "<num>", family_key)
+        family_key = _FAMILY_RANGE_RE.sub("<range>", normalized)
     alt_data_metric = _ALT_DATA_METRIC_RE.search(normalized)
     if alt_data_metric:
         # AFTER the ladder rewrite, deliberately. Every one of these markets
@@ -3431,6 +3701,8 @@ def classify_market_quality(
     computed_story_key = congress_story_key or _story_key(name, category)
     if computed_story_key is not None and (
         computed_story_key.startswith(GOLF_TOURNAMENT_STORY_PREFIX)
+        or computed_story_key.startswith(EQUITY_TICKER_STORY_PREFIX)
+        or (computed_story_key == "story:middle_east_conflict" and regional_conflict_operational)
         or is_national_presidential_election_story_key(computed_story_key)
         or is_congress_control_story_key(computed_story_key)
     ):
@@ -3454,6 +3726,14 @@ def classify_market_quality(
 
 def quality_score_adjustment(quality: MarketQuality) -> int:
     """Score adjustment applied after highlight scoring."""
+    downrank_penalty = 0
+    if "non_us_macro_downrank" in quality.reasons:
+        downrank_penalty += NON_US_MACRO_PENALTY
+    if "minor_conf_title_berth" in quality.reasons:
+        downrank_penalty += MINOR_CONF_BERTH_PENALTY
+    if "regional_conflict_operational" in quality.reasons:
+        downrank_penalty += REGIONAL_CONFLICT_TACTICAL_PENALTY
+
     if quality.quality_class == "compelling":
         boost = 12
         if "health_outbreak" in quality.reasons:
@@ -3462,15 +3742,15 @@ def quality_score_adjustment(quality: MarketQuality) -> int:
             boost += 10
         if "absurd_but_real" in quality.reasons:
             boost += 8
-        return boost
+        return boost + downrank_penalty
     if quality.quality_class == "low_quality":
         penalty = -35
         if quality.is_narrow_range:
             penalty -= 15
-        return penalty
+        return penalty + downrank_penalty
     if quality.quality_class == "suppress":
         return -100
-    return 0
+    return downrank_penalty
 
 
 def editorial_archetype(
@@ -4369,8 +4649,21 @@ def enforce_first_page_quality_floor(
         return items, meta
 
     new_window = list(window)
-    new_tail = list(tail)
+    new_tail: list[Optional[dict]] = list(tail)
+    pushed_to_tail_front: list[dict] = []
     used: set[int] = set()
+    stepped_fun_cards: list[dict] = []
+    # Count non-anchor slots in [why_now_window, window_size) so we only defer
+    # clean fun cards into the post-loop step when a landing slot exists.
+    step_capacity = (
+        sum(
+            1
+            for idx in range(effective_why_now_window, window_size)
+            if not _spacing_is_anchor(window[idx])
+        )
+        if effective_why_now_window < window_size
+        else 0
+    )
     demoted = 0
 
     # A vacancy is filled FROM THE PAGE FIRST (#8797). The card beneath it that
@@ -4440,14 +4733,55 @@ def enforce_first_page_quality_floor(
         for to_idx, from_idx in moves:
             new_window[to_idx] = new_window[from_idx]
         new_window[vacancy] = new_tail[pick]
-        new_tail[pick] = offender
+
+        # #13097 (TIME Person of the Year seating fix): a curated fun-admitted
+        # card that is clean page-wide (not boring/ladder, not silent) and only
+        # lacks a why-now phrase for the opening ten is legal at slots
+        # [why_now_window, window_size). Queue it here and insert it AFTER the
+        # offender loop finishes so seats 11..20 hold still while every later
+        # offender (ladder/boring/silent) in `offender_positions` is evicted.
+        is_fun_why_now_only = (
+            w_idx < effective_why_now_window
+            and bool(offender.get("_fun_tags"))
+            and not is_first_page_quality_offender(offender)
+            and not is_wholly_silent_card(offender)
+        )
+        if is_fun_why_now_only and len(stepped_fun_cards) < step_capacity:
+            stepped_fun_cards.append(offender)
+            new_tail[pick] = None
+        else:
+            new_tail[pick] = offender
+
         used.add(pick)
         demoted += 1
+
+    # #13097: now that every offender in `offender_positions` has been evicted,
+    # step each clean fun card cleanly into the top non-anchor slot of
+    # [why_now_window, window_size), placing each card pushed off seat 20 at
+    # seat 21 (preserving rank order).
+    stepped_fun_slots: set[int] = set()
+    for fun_card in stepped_fun_cards:
+        landing_slots = [
+            idx
+            for idx in range(effective_why_now_window, window_size)
+            if not _spacing_is_anchor(new_window[idx])
+            and idx not in stepped_fun_slots
+        ]
+        if not landing_slots:
+            pushed_to_tail_front.append(fun_card)
+            continue
+        displaced = new_window[landing_slots[-1]]
+        for k in range(len(landing_slots) - 1, 0, -1):
+            new_window[landing_slots[k]] = new_window[landing_slots[k - 1]]
+        new_window[landing_slots[0]] = fun_card
+        pushed_to_tail_front.insert(0, displaced)
+        stepped_fun_slots.add(landing_slots[0])
 
     meta["demoted"] = demoted
     meta["unreplaced"] = len(offender_positions) - demoted
 
-    return new_window + new_tail, meta
+    final_tail = pushed_to_tail_front + [item for item in new_tail if item is not None]
+    return new_window + final_tail, meta
 
 
 _DISCOVER_TAIL_RECALL_RULES: tuple[tuple[str, re.Pattern[str], float], ...] = (
@@ -5337,6 +5671,116 @@ def cap_low_quality_families(items: list[dict], cap: int = 1) -> list[dict]:
 #: than that, so carrying more would be dead weight. These items are NEVER
 #: served on their own — they exist only to top up a bundle that actually forms.
 STORY_OVERFLOW_RESERVE = 6
+_OSCARS_OVERFLOW_COLLECT_LIMIT = 48
+_OSCARS_OVERFLOW_RESERVE = 12
+
+_OSCARS_NON_WINNER_RE = re.compile(
+    r"\b(nominees?|nominations?|be\s+nominated|odds\s+hit)\b",
+    re.IGNORECASE,
+)
+_OSCARS_MAJOR_AWARD_PATTERNS: tuple[tuple[int, str, re.Pattern[str]], ...] = (
+    (0, "best_picture", re.compile(r"\bbest\s+picture\b", re.IGNORECASE)),
+    (1, "best_director", re.compile(r"\bbest\s+director\b", re.IGNORECASE)),
+    (
+        2,
+        "best_actor",
+        re.compile(r"\bbest\s+(?:lead(?:ing)?\s+)?actor\b", re.IGNORECASE),
+    ),
+    (
+        3,
+        "best_actress",
+        re.compile(r"\bbest\s+(?:lead(?:ing)?\s+)?actress\b", re.IGNORECASE),
+    ),
+    (
+        4,
+        "best_supporting_actor",
+        re.compile(r"\bbest\s+supporting\s+actor\b", re.IGNORECASE),
+    ),
+    (
+        5,
+        "best_supporting_actress",
+        re.compile(r"\bbest\s+supporting\s+actress\b", re.IGNORECASE),
+    ),
+)
+_OSCARS_SUPPORTING_RE = re.compile(r"\bsupporting\b", re.IGNORECASE)
+
+
+def oscars_award_slot(market_name: str | None) -> tuple[int, str] | None:
+    """Return ``(priority, canonical_slot)`` for major Oscars winner categories (#13100).
+
+    Ruling 275: the Oscars card shows the most important awards first — Best Picture,
+    then Best Director, Best Actor, and Best Actress where held — rather than letting
+    craft categories or nominations crowd them out on tied static scores.
+    """
+    text = str(market_name or "").strip()
+    if not text or _OSCARS_NON_WINNER_RE.search(text):
+        return None
+    for priority, slot, pattern in _OSCARS_MAJOR_AWARD_PATTERNS:
+        if slot in ("best_actor", "best_actress") and _OSCARS_SUPPORTING_RE.search(text):
+            continue
+        if pattern.search(text):
+            return (priority, slot)
+    return None
+
+
+def oscars_award_priority(market_name: str | None) -> int:
+    """Sort key placing major Oscars winner races ahead of craft/other categories."""
+    slot = oscars_award_slot(market_name)
+    return slot[0] if slot is not None else 100
+
+
+def _oscars_market_has_priced_outcomes(data: dict | None) -> bool:
+    """True when a market payload carries at least one priced (non-withheld) outcome."""
+    if not isinstance(data, dict):
+        return False
+    outcomes = data.get("top_outcomes") or data.get("outcomes") or ()
+    for out in outcomes:
+        if not isinstance(out, dict):
+            continue
+        p = out.get("probability")
+        if isinstance(p, bool) or not isinstance(p, (int, float)):
+            continue
+        if math.isfinite(p) and 0.0 <= float(p) <= 1.0:
+            return True
+    return False
+
+
+def _oscars_market_resolution_ts(data: dict | None) -> float:
+    """Parse resolution_date / event_date to epoch seconds; missing returns -inf."""
+    if not isinstance(data, dict):
+        return float("-inf")
+    raw = data.get("resolution_date") or data.get("event_date")
+    if isinstance(raw, datetime):
+        dt = raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    if isinstance(raw, str) and raw.strip():
+        try:
+            dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except ValueError:
+            return float("-inf")
+    return float("-inf")
+
+
+def oscars_market_rank_key(item: dict) -> tuple[int, int, float, float]:
+    """Deterministic Oscars ranking & slot-dedup key (#13100, Fable 10:26 PM look).
+
+    Order:
+    1. Major award priority (Best Picture, Director, Actor, Actress, Supporting, craft).
+    2. Priced outcomes first — never fold a priced market (e.g. 5869749) for an
+       unpriced/withheld market (e.g. 109566) claiming the same slot.
+    3. Later resolution date first (current ceremony over prior ceremony).
+    4. Higher feed score.
+    """
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    return (
+        oscars_award_priority(data.get("name")),
+        0 if _oscars_market_has_priced_outcomes(data) else 1,
+        -_oscars_market_resolution_ts(data),
+        -float(item.get("score") or 0),
+    )
 
 
 def diversify_quality_families(
@@ -5464,6 +5908,8 @@ def diversify_quality_families(
         # and splitting the key must not quietly raise it to the default 5.
         UFC_EVENT_STORY_PREFIX: 3,
         US_CONGRESS_CONTROL_STORY_PREFIX: 2,
+        # #13645: one-per-subject across weekly/single-stock templates for a ticker.
+        EQUITY_TICKER_STORY_PREFIX: 1,
     }
 
     def _cap_for(story_key: str) -> int:
@@ -5520,7 +5966,12 @@ def diversify_quality_families(
                     # and slot decision downstream, is byte-identical to before
                     # this block.
                     overflow = story_overflow.setdefault(story, [])
-                    if len(overflow) < STORY_OVERFLOW_RESERVE:
+                    overflow_limit = (
+                        _OSCARS_OVERFLOW_COLLECT_LIMIT
+                        if story == "story:oscars"
+                        else STORY_OVERFLOW_RESERVE
+                    )
+                    if len(overflow) < overflow_limit:
                         overflow.append(item)
                     continue
 
@@ -5598,6 +6049,11 @@ def diversify_quality_families(
     # identity of a carrier either way, because the pools are merged by item id
     # (`(it.get("data") or {}).get("id")`), never by object identity.
     for story, overflow in story_overflow.items():
+        if story == "story:oscars" and overflow:
+            overflow = sorted(
+                overflow,
+                key=oscars_market_rank_key,
+            )[:_OSCARS_OVERFLOW_RESERVE]
         for idx in story_kept_idx.get(story, ()):
             kept[idx] = {**kept[idx], "_story_overflow_members": overflow}
 

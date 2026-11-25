@@ -186,15 +186,17 @@ class TestSettledHeroKills:
         assert body["hero_settled_result"] == "draw"
         assert body["hero_probability"] == 0.5
 
-    async def test_current_odds_still_carries_the_market_price(self):
-        """The hero resolves; the MARKET's own number is untouched. Deliberate —
-        'what the market thought' is real history and the chart still needs it."""
+    async def test_current_odds_serves_settled_result_keeping_metadata(self):
+        """#13172 Option B: finished games carry the settled result in current_odds
+        rather than the last live price, while preserving non-chance metadata."""
         event = _settled_event(*SETTLED_SPECIMENS[0][:6])
         body = await _get(event)
         assert body["hero_probability_source"] == "settled"
-        assert body["current_odds"]["home_probability"] == pytest.approx(
-            0.8199, abs=1e-4
-        )
+        assert body["current_odds"]["home_probability"] == 0.0
+        assert body["current_odds"]["away_probability"] == 1.0
+        assert body["current_odds"]["home_rendered_percent"] == 0
+        assert body["current_odds"]["away_rendered_percent"] == 100
+        assert body["current_odds"]["bookmaker_count"] >= 0
 
 
 class TestFinishedUnresolvedIsItsOwnState:
@@ -235,12 +237,9 @@ class TestFinishedUnresolvedIsItsOwnState:
         assert words == {"settled", "final_unresolved", "blend"}
 
     async def test_the_number_survives_the_relabel(self):
-        """The relabel is a claim about the number, not a deletion of it.
-
-        `current_odds` and the hero value both stay — "what the market thought" is
-        real history the chart still needs (gotcha #21: this module is display-only
-        and never writes a probability back).
-        """
+        """CERT-1938 + #13172 Option B: hero_probability retains the relabelled
+        ``final_unresolved`` reading, while current_odds clears its current-chance
+        fields so no finished unresolved game advertises the last live price."""
         body = await _get(
             _settled_event(
                 15293846, "Matteo Berrettini", "Stan Wawrinka", 3, 0, 0.8411,
@@ -249,6 +248,7 @@ class TestFinishedUnresolvedIsItsOwnState:
         )
         assert body["hero_probability_source"] == "final_unresolved"
         assert body["hero_probability"] == pytest.approx(0.8411, abs=1e-4)
-        assert body["current_odds"]["home_probability"] == pytest.approx(
-            0.8411, abs=1e-4
-        )
+        assert body["current_odds"]["home_probability"] is None
+        assert body["current_odds"]["away_probability"] is None
+        assert body["current_odds"]["home_rendered_percent"] is None
+        assert body["current_odds"]["away_rendered_percent"] is None

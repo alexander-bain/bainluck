@@ -9,7 +9,8 @@
     "flagcdn.com",
     "coverartarchive.org",
     "archive.org",
-    "static.tvmaze.com"
+    "static.tvmaze.com",
+    "api.bainluck.com"
   ],
   "entries": [
     {
@@ -410,8 +411,7 @@
       "aliases": [
         "The Fate of Ophelia - Taylor Swift",
         "The Fate of Ophelia",
-        "The Life of a Showgirl",
-        "Taylor Swift"
+        "The Life of a Showgirl"
       ],
       "kind": "song",
       "presentation": "cover",
@@ -441,8 +441,7 @@
     {
       "entity_key": "where-is-my-husband-raye",
       "aliases": [
-        "WHERE IS MY HUSBAND! - RAYE",
-        "RAYE"
+        "WHERE IS MY HUSBAND! - RAYE"
       ],
       "kind": "song",
       "presentation": "cover",
@@ -732,7 +731,8 @@
       "presentation": "portrait",
       "verified_subject": "Christopher Nolan, filmmaker",
       "url": "https://image.tmdb.org/t/p/w185/xuAIuYSmsUzKlUMBFGVZaWsY3DZ.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 525
     },
     {
       "entity_key": "denis-villeneuve",
@@ -743,7 +743,8 @@
       "presentation": "portrait",
       "verified_subject": "Denis Villeneuve, filmmaker",
       "url": "https://image.tmdb.org/t/p/w185/xzQYqb4nR8xT7Zdw5itbEL9K3fd.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 137427
     },
     {
       "entity_key": "nathan-fielder",
@@ -754,7 +755,8 @@
       "presentation": "portrait",
       "verified_subject": "Nathan Fielder, filmmaker and actor",
       "url": "https://image.tmdb.org/t/p/w185/x0UOcjml8WnBfnb89QOh0iXM0w0.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1212667
     },
     {
       "entity_key": "javier-calvo-ambrossi",
@@ -767,7 +769,8 @@
       "presentation": "portrait",
       "verified_subject": "Javier Calvo, Spanish filmmaker",
       "url": "https://image.tmdb.org/t/p/w185/4XfEHAholH6DI1flBpQDHYGSC1l.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1443615
     },
     {
       "entity_key": "martin-mcdonagh",
@@ -778,7 +781,8 @@
       "presentation": "portrait",
       "verified_subject": "Martin McDonagh, playwright and filmmaker",
       "url": "https://image.tmdb.org/t/p/w185/s44uliUJ8ksUKNpP0822cM2NBkI.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 54472
     },
     {
       "entity_key": "alejandro-inarritu",
@@ -791,7 +795,8 @@
       "presentation": "portrait",
       "verified_subject": "Alejandro G. Iñárritu, filmmaker",
       "url": "https://image.tmdb.org/t/p/w185/opRQx3XlOoXH5EFlm0v8Q3O1ccn.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 223
     },
     {
       "entity_key": "john-malkovich",
@@ -802,7 +807,8 @@
       "presentation": "portrait",
       "verified_subject": "John Malkovich, actor",
       "url": "https://image.tmdb.org/t/p/w185/7GoOdGNc4ra1L0F5nJTkmIB37iu.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 6949
     },
     {
       "entity_key": "andrew-scott",
@@ -813,7 +819,8 @@
       "presentation": "portrait",
       "verified_subject": "Andrew Scott, Irish actor",
       "url": "https://image.tmdb.org/t/p/w185/4F8XpjyQCvtuu21WFm5d8RF5Rl.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 125660
     },
     {
       "entity_key": "matt-damon",
@@ -824,7 +831,8 @@
       "presentation": "portrait",
       "verified_subject": "Matt Damon, actor",
       "url": "https://image.tmdb.org/t/p/w185/aCvBXTAR9B1qRjIRzMBYhhbm1fR.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1892
     },
     {
       "entity_key": "anthony-ippolito",
@@ -835,7 +843,8 @@
       "presentation": "portrait",
       "verified_subject": "Anthony Ippolito, actor",
       "url": "https://image.tmdb.org/t/p/w185/a5wHhLA0HwOHnoajmFGpMRtY6OT.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1496755
     },
     {
       "entity_key": "tom-cruise",
@@ -846,7 +855,8 @@
       "presentation": "portrait",
       "verified_subject": "Tom Cruise, actor",
       "url": "https://image.tmdb.org/t/p/w185/maf8PhSvDCdEwjEMbYfGpojR5RP.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 500
     },
     {
       "entity_key": "ryan-gosling",
@@ -857,7 +867,8 @@
       "presentation": "portrait",
       "verified_subject": "Ryan Gosling, actor",
       "url": "https://image.tmdb.org/t/p/w185/lyUyVARQKhGxaxy0FbPJCQRpiaW.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 30614
     },
     {
       "entity_key": "julianne-moore",
@@ -868,7 +879,8 @@
       "presentation": "portrait",
       "verified_subject": "Julianne Moore, actress",
       "url": "https://image.tmdb.org/t/p/w185/3YF19rWusxWfEI59ZM33dFhasRq.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1231
     },
     {
       "entity_key": "inde-navarrette",
@@ -879,7 +891,8 @@
       "presentation": "portrait",
       "verified_subject": "Inde Navarrette, actress",
       "url": "https://image.tmdb.org/t/p/w185/qlNBUGON8FebgzcqVhhRSVFYSa5.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2638587
     },
     {
       "entity_key": "sandra-huller",
@@ -891,7 +904,8 @@
       "presentation": "portrait",
       "verified_subject": "Sandra Hüller, German actress",
       "url": "https://image.tmdb.org/t/p/w185/jQfKXVCPTH9KEnzHHU4QemCnlMe.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 7152
     },
     {
       "entity_key": "olivia-wilde",
@@ -901,8 +915,9 @@
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Olivia Wilde, actress and filmmaker",
-      "url": "https://image.tmdb.org/t/p/w185/eODi1QKamyVa41eSK2SjU20VAZS.jpg",
-      "credit": "TMDB"
+      "url": "https://image.tmdb.org/t/p/w185/jYopRE6nhYGqpb64fVUKrbJVMy1.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 59315
     },
     {
       "entity_key": "drake",
@@ -1090,7 +1105,8 @@
     {
       "entity_key": "erling-haaland",
       "aliases": [
-        "Erling Haaland"
+        "Erling Haaland",
+        "Erling Braut Haaland"
       ],
       "kind": "person",
       "presentation": "portrait",
@@ -1605,6 +1621,2335 @@
       "author": "TVMaze contributors",
       "license": "CC BY-SA 4.0",
       "source_page": "https://www.tvmaze.com/shows/44933/severance"
+    },
+    {
+      "entity_key": "who-gets-engaged-ring",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Who Gets Engaged — stacked engagement ring and wedding bands",
+      "url": "https://api.bainluck.com/api/containers/machinery-who-gets-engaged/card-art.jpg",
+      "credit": "Rawpixel (CC0 1.0 Public Domain, rawpixel.com #5906428)",
+      "author": "Rawpixel (CC0 public domain contributor)",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://www.rawpixel.com/image/5906428/ring-free-public-domain-cc0-photo"
+    },
+    {
+      "entity_key": "batch3-2026-summed-up",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "How 2026 gets summed up — minimalist vinyl turntable",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fc/Minimal_vinyl_player_%28Unsplash%29.jpg/1280px-Minimal_vinyl_player_%28Unsplash%29.jpg",
+      "credit": "Lee Campbell (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Lee Campbell",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Minimal_vinyl_player_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch3-cast-delayed-cancelled",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Who gets cast, delayed, or cancelled — movie theater seats",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/ce/Movie_theater_seats_%28Unsplash%29.jpg/1280px-Movie_theater_seats_%28Unsplash%29.jpg",
+      "credit": "Elijah Flores (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Elijah Flores",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Movie_theater_seats_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch3-stage-and-cover",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Who gets the stage and the cover — studio condenser microphone",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e8/Silver_and_black_studio_microphone_condenser.jpg/1280px-Silver_and_black_studio_microphone_condenser.jpg",
+      "credit": "Jonathan Velasquez (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Jonathan Velasquez",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Silver_and_black_studio_microphone_condenser.jpg"
+    },
+    {
+      "entity_key": "batch3-elon-musk-side-quests",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Elon Musk's wildest side quests — SpaceX Falcon Heavy launch trail (NASA)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/69/NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg/1280px-NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg",
+      "credit": "NASA Kennedy Space Center / Frank Michaux (Public domain, Wikimedia Commons)",
+      "author": "NASA Kennedy Space Center / Frank Michaux",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:NASA%27s_SpaceX_Europa_Clipper_Launch_(KSC-20241014-PH-FMX01_0001).jpg"
+    },
+    {
+      "entity_key": "public-next-james-bond",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "The Next James Bond Film — Tower Bridge in London at twilight",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/30/Tower_Bride_at_dusk_2016-unsplash_%282%29.jpg/960px-Tower_Bride_at_dusk_2016-unsplash_%282%29.jpg",
+      "credit": "Susan Yin (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Susan Yin",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Tower_Bride_at_dusk_2016-unsplash_(2).jpg"
+    },
+    {
+      "entity_key": "public-oscars-best-picture",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Oscars Best Picture — red velvet movie theater seats",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/41/Disused_Cinema_%28Unsplash%29.jpg/1280px-Disused_Cinema_%28Unsplash%29.jpg",
+      "credit": "Felix Mooneeram (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Felix Mooneeram",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Disused_Cinema_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "public-2028-presidential",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "2028 Presidential Race — aerial view of the White House (Carol M. Highsmith)",
+      "url": "https://api.bainluck.com/api/containers/machinery-2028-presidential/card-art.jpg",
+      "credit": "Carol M. Highsmith (Public domain, Library of Congress / Wikimedia Commons)",
+      "author": "Carol M. Highsmith",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Aerial_view_of_the_White_House.jpg"
+    },
+    {
+      "entity_key": "public-fed-and-macro",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Fed & U.S. Macro — Marriner S. Eccles Federal Reserve Board Building",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/89/Eccles_Building_%2826088200676%29.jpg/960px-Eccles_Building_%2826088200676%29.jpg",
+      "credit": "Board of Governors of the Federal Reserve System (Public domain, Wikimedia Commons)",
+      "author": "Board of Governors of the Federal Reserve System",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Eccles_Building_(26088200676).jpg"
+    },
+    {
+      "entity_key": "batch2-long-shots",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Long Shots People Talk About — Milky Way night sky",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/Milky_Way_Streaky_Bay_%28Unsplash%29.jpg/960px-Milky_Way_Streaky_Bay_%28Unsplash%29.jpg",
+      "credit": "Thom Schneider (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Thom Schneider",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Milky_Way_Streaky_Bay_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch2-long-awaited",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Long-Awaited Releases — antique silver pocket watch",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1a/Old_pocket_watch_%28Unsplash_UIUgYu9bENU%29.jpg/960px-Old_pocket_watch_%28Unsplash_UIUgYu9bENU%29.jpg",
+      "credit": "Rodion Kutsaev (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Rodion Kutsaev",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Old_pocket_watch_(Unsplash_UIUgYu9bENU).jpg"
+    },
+    {
+      "entity_key": "batch2-space-race",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Space & Mars — Apollo 8 Earthrise over the lunar horizon (NASA)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/57/NASA-Apollo8-Dec24-Earthrise-b.jpg/960px-NASA-Apollo8-Dec24-Earthrise-b.jpg",
+      "credit": "NASA / Bill Anders (Public domain, Wikimedia Commons)",
+      "author": "NASA / Bill Anders",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:NASA-Apollo8-Dec24-Earthrise-b.jpg"
+    },
+    {
+      "entity_key": "batch4-game-awards-2026",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "The Game Awards 2026 — backlit mechanical gaming keyboard",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ec/Keyboard_%28Unsplash%29.jpg/960px-Keyboard_%28Unsplash%29.jpg",
+      "credit": "Anas Alshanti (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Anas Alshanti",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Keyboard_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch4-big-championships-2027",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "2026-27 Championship Races — Cape Town Stadium pitch and grandstands",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0d/Cape_Town_Stadium%2C_Cape_Town%2C_South_Africa_%28Unsplash%29.jpg/960px-Cape_Town_Stadium%2C_Cape_Town%2C_South_Africa_%28Unsplash%29.jpg",
+      "credit": "Deklerk Basson (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Deklerk Basson",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Cape_Town_Stadium,_Cape_Town,_South_Africa_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch4-unsolved-big-problems",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Unsolved Big Problems — Hubble Space Telescope Westerlund 2 star cluster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg/960px-NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg",
+      "credit": "NASA, ESA, and the Hubble Heritage Team (Public domain, Wikimedia Commons)",
+      "author": "NASA, ESA, and the Hubble Heritage Team",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg"
+    },
+    {
+      "entity_key": "batch4-ai-and-big-tech-race",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "The AI & Big Tech Race — monochrome glass skyscraper facade",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/07/Monochrome_calgary_tower_%28Unsplash%29.jpg/960px-Monochrome_calgary_tower_%28Unsplash%29.jpg",
+      "credit": "Redd Angelo (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Redd Angelo",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Monochrome_calgary_tower_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch5-march-madness-2027",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "March Madness 2027 — basketball hoop and net photographed against the sky",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/75/Basketball_hitting_a_basketball_goal.jpg/960px-Basketball_hitting_a_basketball_goal.jpg",
+      "credit": "noahsilliman (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "noahsilliman",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Basketball_hitting_a_basketball_goal.jpg"
+    },
+    {
+      "entity_key": "batch5-ai-model-leaderboard-2026",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "The 2026 AI Model Leaderboard — server rack compute blades",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f7/Beautiful_technology_%28Unsplash%29.jpg/960px-Beautiful_technology_%28Unsplash%29.jpg",
+      "credit": "Thomas Kvistholt (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Thomas Kvistholt",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Beautiful_technology_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch5-big-tech-deals-hardware",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Big Tech Deals & Hardware — unbranded oxidized silicon semiconductor wafer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/dd/OxidizedSiliconWafer.jpg/960px-OxidizedSiliconWafer.jpg",
+      "credit": "90lbNose (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "90lbNose",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:OxidizedSiliconWafer.jpg"
+    },
+    {
+      "entity_key": "batch5-nhl-100-point-club",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "NHL 100-Point Club — unmarked empty outdoor ice hockey rink",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/16/Hockey_Rink_Castren_Sports_Centre_Oulu_20250309.jpg/960px-Hockey_Rink_Castren_Sports_Centre_Oulu_20250309.jpg",
+      "credit": "Estormiz (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Estormiz",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Hockey_Rink_Castren_Sports_Centre_Oulu_20250309.jpg"
+    },
+    {
+      "entity_key": "batch6-google-year-in-search-2026",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Google's 2026 Year in Search — magnifying glass on open encyclopedia beside a small globe",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Magnfying_glass_book_globe.jpg/960px-Magnfying_glass_book_globe.jpg",
+      "credit": "João Silas (Public domain, Wikimedia Commons)",
+      "author": "João Silas",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Magnfying_glass_book_globe.jpg"
+    },
+    {
+      "entity_key": "batch6-pop-culture-oddities",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Pop Culture Oddities — swirling neon light tubes",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Confused_Neon_%28Unsplash%29.jpg/960px-Confused_Neon_%28Unsplash%29.jpg",
+      "credit": "Clem Onojeghuo (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Clem Onojeghuo",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Confused_Neon_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch6-2026-box-office-showdown",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "2026 Box Office Showdown — rows of dark movie theater seats",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/ce/Movie_theater_seats_%28Unsplash%29.jpg/960px-Movie_theater_seats_%28Unsplash%29.jpg",
+      "credit": "Elijah Flores (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Elijah Flores",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Movie_theater_seats_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch6-golden-globes-2027",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "The 2027 Golden Globes — crimson velvet theater stage curtain",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0e/Curtain-939464.jpg/960px-Curtain-939464.jpg",
+      "credit": "tommybuddy (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "tommybuddy",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Curtain-939464.jpg"
+    },
+    {
+      "entity_key": "florence-pugh",
+      "aliases": [
+        "Florence Pugh"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Florence Pugh TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/qqDsryavx9rwSMhDAxW6OC7oNQg.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1373737
+    },
+    {
+      "entity_key": "kate-o-flynn",
+      "aliases": [
+        "Kate O’Flynn",
+        "Kate O'Flynn"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kate O'Flynn TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/xgQteVK9coyTuXc40WJIyx3TxfU.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 65446
+    },
+    {
+      "entity_key": "david-harbour",
+      "aliases": [
+        "David Harbour"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "David Harbour TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/qMFtMWlYVtFVyBoBhX5IoA5sN5a.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 35029
+    },
+    {
+      "entity_key": "dtf-st-louis",
+      "aliases": [
+        "DTF St. Louis"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "DTF St. Louis official poster",
+      "url": "https://image.tmdb.org/t/p/w342/xHfafw9UmomDc7jO25s9MpiL4Zs.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "the-pitt",
+      "aliases": [
+        "The Pitt"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Pitt official poster",
+      "url": "https://image.tmdb.org/t/p/w342/kvFSpESyBZMjaeOJDx7RS3P1jey.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "euphoria",
+      "aliases": [
+        "Euphoria"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "Euphoria official poster",
+      "url": "https://image.tmdb.org/t/p/w342/aJrG7OkoTMPWG5c8opz8a93AZPY.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "the-super-mario-galaxy-movie",
+      "aliases": [
+        "The Super Mario Galaxy Movie",
+        "Super Mario Movie 2",
+        "The Super Mario Bros. Movie 2"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Super Mario Galaxy Movie official poster",
+      "url": "https://image.tmdb.org/t/p/w342/eJGWx219ZcEMVQJhAgMiqo8tYY.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "the-mandalorian-and-grogu",
+      "aliases": [
+        "The Mandalorian and Grogu"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Mandalorian and Grogu official poster",
+      "url": "https://image.tmdb.org/t/p/w342/uwMKWjcNID0D9jjplsjkQS2OrB4.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "mariah-carey",
+      "aliases": [
+        "Mariah Carey",
+        "\"All I Want for Christmas Is You\""
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Mariah Carey TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/k5vdcaZHKuP4UgHReFWVdo0MXGI.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 66586
+    },
+    {
+      "entity_key": "elon-musk",
+      "aliases": [
+        "Elon Musk"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Elon Musk TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 57563
+    },
+    {
+      "entity_key": "joe-keery",
+      "aliases": [
+        "Joe Keery",
+        "End of Beginning – Djo",
+        "Djo"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Joe Keery TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/ayIAVLMfZGEGIFwAo3pPnY7p59.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1467219
+    },
+    {
+      "entity_key": "benedict-cumberbatch",
+      "aliases": [
+        "Benedict Cumberbatch",
+        "Benedict Cumberbatch as Doctor Strange",
+        "Benedict Cumberbatch as Doctor Strange?"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Benedict Cumberbatch TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/wz3MRiMmoz6b5X3oSzMRC9nLxY1.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 71580
+    },
+    {
+      "entity_key": "the-simpsons",
+      "aliases": [
+        "The Simpsons"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Simpsons official poster",
+      "url": "https://image.tmdb.org/t/p/w342/tf0CUEynk6GfmrlHIQKQ5mfFP5P.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "avengers-secret-wars",
+      "aliases": [
+        "Avengers: Secret Wars"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "Avengers: Secret Wars official poster",
+      "url": "https://image.tmdb.org/t/p/w342/f0YBuh4hyiAheXhh4JnJWoKi9g5.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "caleb-mclaughlin",
+      "aliases": [
+        "Caleb McLaughlin"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Caleb McLaughlin TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/4jVS3EziBn7bf97ErxkW7jsdiLM.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1474123
+    },
+    {
+      "entity_key": "coco-jones",
+      "aliases": [
+        "Coco Jones"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Coco Jones TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/nlCyqeI93ESNFroLw8iP5TVeEPi.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1055595
+    },
+    {
+      "entity_key": "daisy-edgar-jones",
+      "aliases": [
+        "Daisy Edgar-Jones"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Daisy Edgar-Jones TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/4Fdc3VSoVhkkEZNx5Zpz3AU6DYz.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 2230991
+    },
+    {
+      "entity_key": "the-daily-show",
+      "aliases": [
+        "The Daily Show"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Daily Show official poster",
+      "url": "https://image.tmdb.org/t/p/w342/ixcfyK7it6FjRM36Te4OdblAq4X.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "brandon-sklenar",
+      "aliases": [
+        "Brandon Sklenar"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Brandon Sklenar TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/juLH1EhkY1Xx9Zai2H4icvfn4pD.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1855143
+    },
+    {
+      "entity_key": "kevin-parker",
+      "aliases": [
+        "Kevin Parker",
+        "Tame Impala"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kevin Parker TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/pJzgpxdlgYbwezmbzHfsFyjoxj5.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 2261974
+    },
+    {
+      "entity_key": "timoth-e-chalamet",
+      "aliases": [
+        "Timothée Chalamet",
+        "Timothee Chalamet"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Timothée Chalamet TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/dFxpwRpmzpVfP1zjluH68DeQhyj.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1190668
+    },
+    {
+      "entity_key": "miley-cyrus",
+      "aliases": [
+        "Miley Cyrus"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Miley Cyrus TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/7slnMlDLR1O65U3Hr8gcOmxDlZz.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 76594
+    },
+    {
+      "entity_key": "tulsi-gabbard",
+      "aliases": [
+        "Tulsi Gabbard"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tulsi Gabbard TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/zVzci4hYUJqxnTGSZqyfbFu9RPq.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 2246606
+    },
+    {
+      "entity_key": "future",
+      "aliases": [
+        "Future"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Future TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/d10OaKwgAK8C3AuPz7haBgVc8J2.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 2021205
+    },
+    {
+      "entity_key": "olivia-colman",
+      "aliases": [
+        "Olivia Colman"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Olivia Colman TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/lawJUdbLb1YW0niaYjiVGR9IBG8.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 39187
+    },
+    {
+      "entity_key": "margaret-qualley",
+      "aliases": [
+        "Margaret Qualley"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Margaret Qualley TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/r5WeMrU4YLJqRRE3joeOrBVicAH.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1392137
+    },
+    {
+      "entity_key": "ben-whishaw",
+      "aliases": [
+        "Ben Whishaw"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Ben Whishaw TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/e74Cz65ifeNb9zHfUTvF5rTix0d.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 17064
+    },
+    {
+      "entity_key": "cillian-murphy",
+      "aliases": [
+        "Cillian Murphy"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Cillian Murphy TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/2lKs67r7FI4bPu0AXxMUJZxmUXn.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 2037
+    },
+    {
+      "entity_key": "naomie-harris",
+      "aliases": [
+        "Naomie Harris"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Naomie Harris TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/41TVAcYqKKF7PGf3x7QfaLvkLSW.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 2038
+    },
+    {
+      "entity_key": "boyd-holbrook",
+      "aliases": [
+        "Boyd Holbrook"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Boyd Holbrook TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/xmkpedcct3ey1d1HGDNsUMQPHcB.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 467645
+    },
+    {
+      "entity_key": "johnny-depp",
+      "aliases": [
+        "Johnny Depp",
+        "Johnny Depp in Pirates"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Johnny Depp TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/k2xt6EUxQDwYRKIyI4IBdZxfs8n.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 85
+    },
+    {
+      "entity_key": "robert-downey-jr",
+      "aliases": [
+        "Robert Downey Jr.",
+        "Robert Downey Jr. back as Iron Man"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Robert Downey Jr. TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/5qHNjhtjMD4YWH3UP0rm4tKwxCL.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 3223
+    },
+    {
+      "entity_key": "frank-ocean",
+      "aliases": [
+        "Frank Ocean",
+        "Frank Ocean's next album in 2027"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Frank Ocean TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/761XkeFqrGPA0OKfuJN0LAuXHcg.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1667872
+    },
+    {
+      "entity_key": "stranger-things",
+      "aliases": [
+        "Stranger Things",
+        "New Stranger Things episode by Mar 31, 2027"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "Stranger Things official poster",
+      "url": "https://image.tmdb.org/t/p/w342/uOOtwVbSr4QDjAGIifLDwpb2Pdl.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "bryan-johnson",
+      "aliases": [
+        "Bryan Johnson",
+        "Bryan Johnson dunking before 2027"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Bryan Johnson TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/7j2EZoDnLzIzDLowTz1pa2M5kA6.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 572591
+    },
+    {
+      "entity_key": "joe-rogan",
+      "aliases": [
+        "Joe Rogan",
+        "Joe Rogan joining 60 Minutes"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Joe Rogan TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/mWb6QIsGGHMdhN9yVGZXCHQIRzS.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 91609
+    },
+    {
+      "entity_key": "mrbeast",
+      "aliases": [
+        "MrBeast",
+        "Jimmy Donaldson",
+        "MrBeast hitting 1B subscribers before Jan 1, 2027"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jimmy Donaldson TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/xB7yokhM69xmaUcNvw3CnE3rXGz.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 2282154
+    },
+    {
+      "entity_key": "sydney-sweeney",
+      "aliases": [
+        "Sydney Sweeney",
+        "Sydney Sweeney & Scooter Braun"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Sydney Sweeney TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/qYiaSl0Eb7G3VaxOg8PxExCFwon.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 115440
+    },
+    {
+      "entity_key": "scooter-braun",
+      "aliases": [
+        "Scooter Braun"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Scooter Braun TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/kjpSj1Z7boL5yazKFLsDrRLuU0E.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 971001
+    },
+    {
+      "entity_key": "lewis-hamilton",
+      "aliases": [
+        "Lewis Hamilton",
+        "Kim Kardashian & Lewis Hamilton"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Lewis Hamilton TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/5DTGgay9x3kbacqeGArXlL4Q2Ho.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 216294
+    },
+    {
+      "entity_key": "kendall-jenner",
+      "aliases": [
+        "Kendall Jenner"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kendall Jenner TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/3cC2efbEUEk3bOGU1D5DyP4HkQo.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1549005
+    },
+    {
+      "entity_key": "kylie-jenner",
+      "aliases": [
+        "Kylie Jenner",
+        "Timothée Chalamet & Kylie Jenner"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kylie Jenner TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/qfT3sFRpjgRZzc2ZKsJFcXpJbhU.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1695682
+    },
+    {
+      "entity_key": "katy-perry",
+      "aliases": [
+        "Katy Perry",
+        "Katy Perry & Justin Trudeau"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Katy Perry TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/9U2JJMSlM8mDNSmEWNPvHFcUatl.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 111455
+    },
+    {
+      "entity_key": "justin-trudeau",
+      "aliases": [
+        "Justin Trudeau"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Justin Trudeau TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/gFyQlypOoi1A9cBHhg3n9rvXcEx.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1186633
+    },
+    {
+      "entity_key": "tiger-woods",
+      "aliases": [
+        "Tiger Woods",
+        "Tiger Woods & Vanessa Trump"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tiger Woods TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/cUofgaNgM71mgoXpOUA69A5415w.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1218607
+    },
+    {
+      "entity_key": "tate-mcrae",
+      "aliases": [
+        "Tate McRae",
+        "Tate McRae & Jack Hughes"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tate McRae TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/8rRZv8x6svFwu7DAcEWg8hfof1h.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 3319748
+    },
+    {
+      "entity_key": "megan-thee-stallion",
+      "aliases": [
+        "Megan Thee Stallion",
+        "Klay Thompson & Megan Thee Stallion"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Megan Thee Stallion TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/cd10XBENFARLtWxHzHjjFixj6Lw.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 2396830
+    },
+    {
+      "entity_key": "madison-beer",
+      "aliases": [
+        "Madison Beer",
+        "Jaxson Dart & Madison Beer"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Madison Beer TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/rS8HInNIFdxElVElAsoxfDt05Fj.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 3141947
+    },
+    {
+      "entity_key": "tom-brady",
+      "aliases": [
+        "Tom Brady",
+        "Tom Brady & Alix Earle"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tom Brady TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/2kL8pFhFBCP5EXbHXnS0Eg5wXLy.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1223657
+    },
+    {
+      "entity_key": "kevin-durant",
+      "aliases": [
+        "Kevin Durant",
+        "Kevin Durant & Kay Adams"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kevin Durant TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/zDUqKQP4OE9gM0Y75oOF9OPXGFB.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1009931
+    },
+    {
+      "entity_key": "klay-thompson",
+      "aliases": [
+        "Klay Thompson"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Klay Thompson TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/uL6Oprp7CF3ovRQeD4N4RgHprKh.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1474779
+    },
+    {
+      "entity_key": "beyonce",
+      "aliases": [
+        "Beyoncé",
+        "Beyonce",
+        "Beyoncé Knowles",
+        "Beyonce Knowles"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Beyoncé TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/2HbjNtiCtmbArEnELuDFU7knaVK.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 14386
+    },
+    {
+      "entity_key": "taylor-swift-person",
+      "aliases": [
+        "Taylor Swift"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Taylor Swift TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/vr4QrJ23Cm8T7Y5sBN3UnnWrZ0q.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 212208
+    },
+    {
+      "entity_key": "dua-lipa",
+      "aliases": [
+        "Dua Lipa"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Dua Lipa TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/aCZmliGT5oDGiF8aKvxFbct5JQm.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1959397
+    },
+    {
+      "entity_key": "harry-styles",
+      "aliases": [
+        "Harry Styles"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Harry Styles TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/9EKjDDD8Naa7dBH76renIjso6CP.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1052109
+    },
+    {
+      "entity_key": "ralph-fiennes",
+      "aliases": [
+        "Ralph Fiennes"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Ralph Fiennes TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/tJr9GcmGNHhLVVEH3i7QYbj6hBi.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 5469
+    },
+    {
+      "entity_key": "idris-elba",
+      "aliases": [
+        "Idris Elba"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Idris Elba TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/be1bVF7qGX91a6c5WeRPs5pKXln.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 17605
+    },
+    {
+      "entity_key": "charles-dance",
+      "aliases": [
+        "Charles Dance"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Charles Dance TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/28ElvRC5ftOSzZBFM0cn4XrwH36.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 4391
+    },
+    {
+      "entity_key": "anya-taylor-joy",
+      "aliases": [
+        "Anya Taylor-Joy"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Anya Taylor-Joy TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/qYNofOjlRke2MlJVihmJmEdQI4v.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1397778
+    },
+    {
+      "entity_key": "dev-patel",
+      "aliases": [
+        "Dev Patel"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Dev Patel TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/byAo6xoleVSG5O9YpGrQ5YuCRX7.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 76788
+    },
+    {
+      "entity_key": "richard-ayoade",
+      "aliases": [
+        "Richard Ayoade"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Richard Ayoade TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/qHKoy9kP4bsv4G9EkvU4FMUmYkS.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 98103
+    },
+    {
+      "entity_key": "oscar-isaac",
+      "aliases": [
+        "Oscar Isaac"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Oscar Isaac TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/dW5U5yrIIPmMjRThR9KT2xH6nTz.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 25072
+    },
+    {
+      "entity_key": "barry-keoghan",
+      "aliases": [
+        "Barry Keoghan"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Barry Keoghan TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/ngoitknM6hw8fffLywyvjzy6Iti.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1290466
+    },
+    {
+      "entity_key": "adam-driver",
+      "aliases": [
+        "Adam Driver"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Adam Driver TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/fsbGQ1eZFgdsG1XnKlhNSvHsiGo.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1023139
+    },
+    {
+      "entity_key": "jodie-turner-smith",
+      "aliases": [
+        "Jodie Turner-Smith"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jodie Turner-Smith TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/801hOIFSiYfakVDkX0U3vEAHAMt.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1695989
+    },
+    {
+      "entity_key": "phoebe-dynevor",
+      "aliases": [
+        "Phoebe Dynevor"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Phoebe Dynevor TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/cviluUTn94TaPy9rlVSkHpgGxRR.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1232756
+    },
+    {
+      "entity_key": "jodie-comer",
+      "aliases": [
+        "Jodie Comer"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jodie Comer TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/AfsBpnfw0E2h8NZK4zkFcOjYlEb.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 1388593
+    },
+    {
+      "entity_key": "anthony-mackie",
+      "aliases": [
+        "Anthony Mackie"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Anthony Mackie TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/vecvTm7SimizluJkyIwBxeLbvRm.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 53650
+    },
+    {
+      "entity_key": "steven-yeun",
+      "aliases": [
+        "Steven Yeun"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Steven Yeun TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/fOMFO2Xx4duzpNgS9Q5ytO44yGb.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 215055
+    },
+    {
+      "entity_key": "chiwetel-ejiofor",
+      "aliases": [
+        "Chiwetel Ejiofor"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Chiwetel Ejiofor TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/kq5DDnqqofoRI0t6ddtRlsJnNPT.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 5294
+    },
+    {
+      "entity_key": "livvy-dunne",
+      "aliases": [
+        "Livvy Dunne",
+        "Olivia Dunne",
+        "Livvy Dunne & Paul Skenes"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Livvy Dunne TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/bRQLHpnUXyxj0cKGVQ790vdXO76.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 4995597
+    },
+    {
+      "entity_key": "vanessa-trump",
+      "aliases": [
+        "Vanessa Trump"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Vanessa Trump TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/w3FwnXSgD5zxcGDNdrl8yHUPJIh.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 2346707
+    },
+    {
+      "entity_key": "nick-bosa",
+      "aliases": [
+        "Nick Bosa",
+        "Nick Bosa & Ella Ailiff"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Nick Bosa TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/yys0PYQNvMCYiopJ0oX1doNrNm8.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 6012363
+    },
+    {
+      "entity_key": "sara-saffari",
+      "aliases": [
+        "Sara Saffari"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Sara Saffari TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/8QanBqK7vBxtxR9pFKDIMbOzGhc.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 6441115
+    },
+    {
+      "entity_key": "jack-hughes",
+      "aliases": [
+        "Jack Hughes"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jack Hughes TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/tsz08VdCRueP7G3krvi0PZZlYV1.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 6038662
+    },
+    {
+      "entity_key": "kay-adams",
+      "aliases": [
+        "Kay Adams"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kay Adams TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/tBpC87y54Ao2htxK1VSVPCJQCyj.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 2776195
+    },
+    {
+      "entity_key": "jaxson-dart",
+      "aliases": [
+        "Jaxson Dart"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jaxson Dart TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/2nL7UXD2hUvh9bj38Jjsdfu6G5O.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 3716708
+    },
+    {
+      "entity_key": "alix-earle",
+      "aliases": [
+        "Alix Earle"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Alix Earle TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/dT4Up3XztHhPeEfyEOHSNejEBVb.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 5016322
+    },
+    {
+      "entity_key": "raye",
+      "aliases": [
+        "Raye",
+        "RAYE"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "RAYE, British singer-songwriter (TMDB person 3108777)",
+      "url": "https://image.tmdb.org/t/p/w185/zA5WXnyg8iH8DPpuXvsmJpPT2n1.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 3108777
+    },
+    {
+      "entity_key": "puka-nacua",
+      "aliases": [
+        "Puka Nacua"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Puka Nacua, NFL wide receiver (ESPN headshot 4426515)",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4426515.png",
+      "credit": "ESPN"
+    },
+    {
+      "entity_key": "obsession-2026",
+      "aliases": [
+        "Obsession"
+      ],
+      "kind": "film",
+      "presentation": "poster",
+      "verified_subject": "Obsession (2026 film), TMDB movie 1339713",
+      "url": "https://image.tmdb.org/t/p/w342/bRwnj8WEKBCvmfeUNOukJPwB43K.jpg",
+      "credit": "TMDB",
+      "tmdb_movie_id": 1339713
+    },
+    {
+      "entity_key": "batch7-extreme-earth-2026",
+      "aliases": [
+        "Climate & Extreme Earth Benchmarks",
+        "Extreme Earth 2026"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Crescent moon seen through Earth's upper atmosphere above cloud tops from the International Space Station (NASA image ISS013-E-54329)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/be/Top_of_Atmosphere.jpg/960px-Top_of_Atmosphere.jpg",
+      "credit": "NASA Earth Observatory (Public domain, Wikimedia Commons)",
+      "author": "NASA Earth Observatory",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Top_of_Atmosphere.jpg"
+    },
+    {
+      "entity_key": "joe-burrow",
+      "aliases": [
+        "Joe Burrow"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Joe Burrow, NFL quarterback (ESPN headshot 3915511)",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3915511.png",
+      "credit": "ESPN"
+    },
+    {
+      "entity_key": "brock-purdy",
+      "aliases": [
+        "Brock Purdy"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Brock Purdy, NFL quarterback (ESPN headshot 4361741)",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4361741.png",
+      "credit": "ESPN"
+    },
+    {
+      "entity_key": "josh-allen",
+      "aliases": [
+        "Josh Allen"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Josh Allen, NFL quarterback (ESPN headshot 3918298)",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3918298.png",
+      "credit": "ESPN"
+    },
+    {
+      "entity_key": "batch7-tech-and-space-movers",
+      "aliases": [
+        "Tech & Space Weekly Movers",
+        "Tech & Space Milestone Odds"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Flight-ready primary mirror segments of NASA's James Webb Space Telescope at Marshall Space Flight Center (NASA Image of the Day)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/10/James_Webb_Primary_Mirror.jpg/960px-James_Webb_Primary_Mirror.jpg",
+      "credit": "NASA/MSFC/David Higginbotham (Public domain, Wikimedia Commons)",
+      "author": "NASA/MSFC/David Higginbotham",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:James_Webb_Primary_Mirror.jpg"
+    },
+    {
+      "entity_key": "batch8-earth-quakes-storms-2026",
+      "aliases": [
+        "Earth, Quakes & Storms",
+        "batch8-earth-quakes-storms-2026"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "1959 eruption of Kilauea Volcano lava fountain at Kilauea Iki Crater (USGS)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/25/1959_eruption_of_Kilauea_Volcano.jpg/960px-1959_eruption_of_Kilauea_Volcano.jpg",
+      "credit": "Hawaii Volcano Observatory, USGS (Public domain, Wikimedia Commons)",
+      "author": "Hawaii Volcano Observatory, USGS",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:1959_eruption_of_Kilauea_Volcano.jpg"
+    },
+    {
+      "entity_key": "batch8-chess-milestones-curiosities",
+      "aliases": [
+        "World Chess & Grandmaster Races",
+        "Chess, Milestones & Curiosities",
+        "batch8-chess-milestones-curiosities"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Wooden Staunton No. 6 chess pieces arranged on a tournament board",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/Chess_game_Staunton_No._6.jpg/960px-Chess_game_Staunton_No._6.jpg",
+      "credit": "Wilfredor (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Wilfredor",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Chess_game_Staunton_No._6.jpg"
+    },
+    {
+      "entity_key": "batch8-climate-water-energy",
+      "aliases": [
+        "Water, Rain & Climate Shifts",
+        "batch8-climate-water-energy"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Snow-covered alpine ridge under crisp blue sky",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d8/Snow_mountain_background_photo_%28Unsplash%29.jpg/960px-Snow_mountain_background_photo_%28Unsplash%29.jpg",
+      "credit": "Patrick Hendry (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Patrick Hendry",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Snow_mountain_background_photo_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch8-music-and-grammys-2026",
+      "aliases": [
+        "Grammys & Chart Leaders",
+        "batch8-music-and-grammys-2026"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Live concert crowd silhouetted beneath warm stage lights",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bb/Concert_crowd_%28Unsplash%29.jpg/960px-Concert_crowd_%28Unsplash%29.jpg",
+      "credit": "Hannah Rodrigo (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Hannah Rodrigo",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Concert_crowd_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch8-tv-and-gaming-2026",
+      "aliases": [
+        "TV & Late Night Races",
+        "TV, Stage & Gaming Drops",
+        "batch8-tv-and-gaming-2026"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Studio camera and colorful stage lights during a television shoot",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/00/Stand_In_%28Unsplash%29.jpg/960px-Stand_In_%28Unsplash%29.jpg",
+      "credit": "Jakob Owens (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Jakob Owens",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Stand_In_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch8-soccer-cups-and-relegation",
+      "aliases": [
+        "Global Soccer Races",
+        "Soccer Cups & Relegation",
+        "batch8-soccer-cups-and-relegation"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Soccer players huddled on an illuminated grass pitch at dusk",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/98/Playing_football_in_evening_%28Unsplash%29.jpg/960px-Playing_football_in_evening_%28Unsplash%29.jpg",
+      "credit": "Abigail Keenan (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Abigail Keenan",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Playing_football_in_evening_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch8-nfl-conference-division-races",
+      "aliases": [
+        "NFL Division & Seed Races",
+        "batch8-nfl-conference-division-races"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Football kickoff on striped turf field as coverage unit sprints downfield",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/Sherman%2C_United_States_%28Unsplash%29.jpg/960px-Sherman%2C_United_States_%28Unsplash%29.jpg",
+      "credit": "Keith Johnston (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Keith Johnston",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Sherman,_United_States_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch8-ai-math-and-data-centers",
+      "aliases": [
+        "AI Math & Data Centers",
+        "batch8-ai-math-and-data-centers"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Engineer inspecting an integrated circuit layout mask on glowing red Rubylith (US Air Force photo)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cc/Circuit_image_on_Rubylith.jpg/960px-Circuit_image_on_Rubylith.jpg",
+      "credit": "TSgt. Bob Wickley, U.S. Air Force (Public domain, Wikimedia Commons)",
+      "author": "TSgt. Bob Wickley",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Circuit_image_on_Rubylith.jpg"
+    },
+    {
+      "entity_key": "kylian-mbappe",
+      "aliases": [
+        "Kylian Mbappé",
+        "Kylian Mbappe"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kylian Mbappé, French forward",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/95/Kylian_Mbappe_France_v_Senegal_16_June_2026-391_%28cropped%29.jpg/500px-Kylian_Mbappe_France_v_Senegal_16_June_2026-391_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Kylian_Mbappe_France_v_Senegal_16_June_2026-391_(cropped).jpg"
+    },
+    {
+      "entity_key": "raphinha",
+      "aliases": [
+        "Raphinha",
+        "Raphael Dias Belloli"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Raphinha (Raphael Dias Belloli), Brazilian winger",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5e/Raphael_Dias_Belloli_2023.jpg/500px-Raphael_Dias_Belloli_2023.jpg",
+      "credit": "Government of Catalonia (Attribution, Wikimedia Commons)",
+      "author": "Government of Catalonia",
+      "license": "Attribution",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Raphael_Dias_Belloli_2023.jpg"
+    },
+    {
+      "entity_key": "lamine-yamal",
+      "aliases": [
+        "Lamine Yamal"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Lamine Yamal, Spanish forward",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b9/Lamine_Yamal_Argentina_v_Spain_19_July_2026-144_%28cropped%29.jpg/500px-Lamine_Yamal_Argentina_v_Spain_19_July_2026-144_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Lamine_Yamal_Argentina_v_Spain_19_July_2026-144_(cropped).jpg"
+    },
+    {
+      "entity_key": "matthew-rhys",
+      "aliases": [
+        "Matthew Rhys"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Matthew Rhys, Welsh actor",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/df/MatthewRhys-byPhilipRomano.jpg/500px-MatthewRhys-byPhilipRomano.jpg",
+      "credit": "PhilipRomano (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "PhilipRomano",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:MatthewRhys-byPhilipRomano.jpg"
+    },
+    {
+      "entity_key": "ezra-frech",
+      "aliases": [
+        "Ezra Frech"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Ezra Frech, American Paralympic high jumper",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/5/51/Ezra_Frech_Milan_2026.jpg",
+      "credit": "US Embassy Italy (Public domain, Wikimedia Commons)",
+      "author": "US Embassy Italy",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Ezra_Frech_Milan_2026.jpg"
+    },
+    {
+      "entity_key": "tina-fey",
+      "aliases": [
+        "Tina Fey"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tina Fey, American actress, writer, and producer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/62/TinaFey-byPhilipRomano2.jpg/500px-TinaFey-byPhilipRomano2.jpg",
+      "credit": "PhilipRomanoPhoto (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "PhilipRomanoPhoto",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:TinaFey-byPhilipRomano2.jpg"
+    },
+    {
+      "entity_key": "amber-glenn",
+      "aliases": [
+        "Amber Glenn"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Amber Glenn, American figure skater",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/c/c9/Amber_Glenn_in_2026.jpg",
+      "credit": "SpiritedMichelle (CC BY 4.0, Wikimedia Commons)",
+      "author": "SpiritedMichelle",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Amber_Glenn_in_2026.jpg"
+    },
+    {
+      "entity_key": "tatyana-ali",
+      "aliases": [
+        "Tatyana Ali"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tatyana Ali, American actress and singer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7e/Streamy_Awards_Photo_1302_%284513297565%29.jpg/500px-Streamy_Awards_Photo_1302_%284513297565%29.jpg",
+      "credit": "The Bui Brothers (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "The Bui Brothers",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Streamy_Awards_Photo_1302_(4513297565).jpg"
+    },
+    {
+      "entity_key": "jeremy-allen-white",
+      "aliases": [
+        "Jeremy Allen White"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jeremy Allen White, American actor",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/30/Jeremy_Allen_White_Springsteen-33_%28cropped%29.jpg/500px-Jeremy_Allen_White_Springsteen-33_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jeremy_Allen_White_Springsteen-33_(cropped).jpg"
+    },
+    {
+      "entity_key": "steve-carell",
+      "aliases": [
+        "Steve Carell"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Steve Carell, American actor and comedian",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e8/Steve_Carell_-_The_40-Year-Old-Virgin.jpg/500px-Steve_Carell_-_The_40-Year-Old-Virgin.jpg",
+      "credit": "Kevin Paul (CC BY 4.0, Wikimedia Commons)",
+      "author": "Kevin Paul",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Steve_Carell_-_The_40-Year-Old-Virgin.jpg"
+    },
+    {
+      "entity_key": "jason-sudeikis",
+      "aliases": [
+        "Jason Sudeikis"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jason Sudeikis, American actor and comedian",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/67/Jason_Sudeikis_2011_%28cropped%29.jpg/500px-Jason_Sudeikis_2011_%28cropped%29.jpg",
+      "credit": "Eva Rinaldi (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Eva Rinaldi",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jason_Sudeikis_2011_(cropped).jpg"
+    },
+    {
+      "entity_key": "colin-jost",
+      "aliases": [
+        "Colin Jost"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Colin Jost, American comedian and writer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Colin_Jost_at_the_2026_New_York_Film_Festival-066_%28cropped%29.jpg/500px-Colin_Jost_at_the_2026_New_York_Film_Festival-066_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Colin_Jost_at_the_2026_New_York_Film_Festival-066_(cropped).jpg"
+    },
+    {
+      "entity_key": "kenan-thompson",
+      "aliases": [
+        "Kenan Thompson"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kenan Thompson, American actor and comedian",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/72/Kenan_Thompson_2012_%28cropped%29_%282%29.jpg/500px-Kenan_Thompson_2012_%28cropped%29_%282%29.jpg",
+      "credit": "Peabody Awards (CC BY 2.0, Wikimedia Commons)",
+      "author": "Peabody Awards",
+      "license": "CC BY 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Kenan_Thompson_2012_(cropped)_(2).jpg"
+    },
+    {
+      "entity_key": "seth-meyers",
+      "aliases": [
+        "Seth Meyers"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Seth Meyers, American comedian and television host",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/00/Seth_Meyers_by_Gage_Skidmore.jpg/500px-Seth_Meyers_by_Gage_Skidmore.jpg",
+      "credit": "Gage Skidmore (CC BY-SA 3.0, Wikimedia Commons)",
+      "author": "Gage Skidmore",
+      "license": "CC BY-SA 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Seth_Meyers_by_Gage_Skidmore.jpg"
+    },
+    {
+      "entity_key": "adam-brody",
+      "aliases": [
+        "Adam Brody"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Adam Brody, American actor",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7f/Adam_Brody_-_Everyone_Is_Lying_to_You_for_Money.jpg/500px-Adam_Brody_-_Everyone_Is_Lying_to_You_for_Money.jpg",
+      "credit": "Kevin Paul (CC BY 4.0, Wikimedia Commons)",
+      "author": "Kevin Paul",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Adam_Brody_-_Everyone_Is_Lying_to_You_for_Money.jpg"
+    },
+    {
+      "entity_key": "javokhir-sindarov",
+      "aliases": [
+        "Javokhir Sindarov"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Javokhir Sindarov, Uzbek chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3b/Javokhir_Sindarov_at_the_46th_FIDE_Chess_Olympiad_%282%29.jpg/500px-Javokhir_Sindarov_at_the_46th_FIDE_Chess_Olympiad_%282%29.jpg",
+      "credit": "TheBoburshokh (CC BY 4.0, Wikimedia Commons)",
+      "author": "TheBoburshokh",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Javokhir_Sindarov_at_the_46th_FIDE_Chess_Olympiad_(2).jpg"
+    },
+    {
+      "entity_key": "zhu-jiner",
+      "aliases": [
+        "Zhu Jiner"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Zhu Jiner, Chinese chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/10/Zhu_Jiner_at_the_46th_FIDE_Chess_Olympiad.jpg/500px-Zhu_Jiner_at_the_46th_FIDE_Chess_Olympiad.jpg",
+      "credit": "Yunfan Zhao / lichess.org (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Yunfan Zhao / lichess.org",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Zhu_Jiner_at_the_46th_FIDE_Chess_Olympiad.jpg"
+    },
+    {
+      "entity_key": "bibisara-assaubayeva",
+      "aliases": [
+        "Bibisara Assaubayeva"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Bibisara Assaubayeva, Kazakh chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/76/Bibisara_Assaubayeva_in_2025_%28cropped%29.jpg/500px-Bibisara_Assaubayeva_in_2025_%28cropped%29.jpg",
+      "credit": "TheBoburshokh (CC0, Wikimedia Commons)",
+      "author": "TheBoburshokh",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Bibisara_Assaubayeva_in_2025_(cropped).jpg"
+    },
+    {
+      "entity_key": "hikaru-nakamura",
+      "aliases": [
+        "Hikaru Nakamura"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Hikaru Nakamura, American chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1f/Hikaru_Nakamura_at_the_2026_Naroditsky_Memorial_Rapid_and_Blitz_%28v2%29.jpg/500px-Hikaru_Nakamura_at_the_2026_Naroditsky_Memorial_Rapid_and_Blitz_%28v2%29.jpg",
+      "credit": "ChessKelly (CC BY 4.0, Wikimedia Commons)",
+      "author": "ChessKelly",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Hikaru_Nakamura_at_the_2026_Naroditsky_Memorial_Rapid_and_Blitz_(v2).jpg"
+    },
+    {
+      "entity_key": "magnus-carlsen",
+      "aliases": [
+        "Magnus Carlsen"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Magnus Carlsen, Norwegian chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0c/Magnus_Carlsen_Tata_2023_-_71_%28cropped_v4%29.jpg/500px-Magnus_Carlsen_Tata_2023_-_71_%28cropped_v4%29.jpg",
+      "credit": "Frans Peeters Photography (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Frans Peeters Photography",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Magnus_Carlsen_Tata_2023_-_71_(cropped_v4).jpg"
+    },
+    {
+      "entity_key": "gukesh-dommaraju",
+      "aliases": [
+        "Gukesh Dommaraju",
+        "D Gukesh"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Gukesh Dommaraju, Indian chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6d/Gukesh_in_2025_%28cropped%29.jpg/500px-Gukesh_in_2025_%28cropped%29.jpg",
+      "credit": "Frans Peeters (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Frans Peeters",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Gukesh_in_2025_(cropped).jpg"
+    },
+    {
+      "entity_key": "ju-wenjun",
+      "aliases": [
+        "Ju Wenjun"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Ju Wenjun, Chinese chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Ju_Wenjun_in_2024_%28cropped%29.jpg/500px-Ju_Wenjun_in_2024_%28cropped%29.jpg",
+      "credit": "Frans Peeters (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Frans Peeters",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Ju_Wenjun_in_2024_(cropped).jpg"
+    },
+    {
+      "entity_key": "aleksandra-goryachkina",
+      "aliases": [
+        "Aleksandra Goryachkina"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Aleksandra Goryachkina, Russian chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3d/Aleksandra_Goryachkina_Russian_Superfinal_2024_03_%28cropped%29.jpg/500px-Aleksandra_Goryachkina_Russian_Superfinal_2024_03_%28cropped%29.jpg",
+      "credit": "Eteri Kublashvili (CC BY-SA 3.0, Wikimedia Commons)",
+      "author": "Eteri Kublashvili",
+      "license": "CC BY-SA 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Aleksandra_Goryachkina_Russian_Superfinal_2024_03_(cropped).jpg"
+    },
+    {
+      "entity_key": "vaishali-rameshbabu",
+      "aliases": [
+        "Vaishali Rameshbabu",
+        "R Vaishali"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Vaishali Rameshbabu, Indian chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ea/Vaishali_Rameshbabu_at_the_46th_FIDE_Chess_Olympiad_%28cropped_v2%29.jpg/500px-Vaishali_Rameshbabu_at_the_46th_FIDE_Chess_Olympiad_%28cropped_v2%29.jpg",
+      "credit": "TheBoburshokh (CC BY 4.0, Wikimedia Commons)",
+      "author": "TheBoburshokh",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Vaishali_Rameshbabu_at_the_46th_FIDE_Chess_Olympiad_(cropped_v2).jpg"
+    },
+    {
+      "entity_key": "divya-deshmukh",
+      "aliases": [
+        "Divya Deshmukh"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Divya Deshmukh, Indian chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/Divya_Deshmukh_in_2025.jpg/500px-Divya_Deshmukh_in_2025.jpg",
+      "credit": "Frans Peeters (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Frans Peeters",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Divya_Deshmukh_in_2025.jpg"
+    },
+    {
+      "entity_key": "arjun-erigaisi",
+      "aliases": [
+        "Arjun Erigaisi"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Arjun Erigaisi, Indian chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Arjun_Erigaisi_Uzchess_cup_3_masters_%28cropped%29.jpg/500px-Arjun_Erigaisi_Uzchess_cup_3_masters_%28cropped%29.jpg",
+      "credit": "TheBoburshokh (CC0, Wikimedia Commons)",
+      "author": "TheBoburshokh",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Arjun_Erigaisi_Uzchess_cup_3_masters_(cropped).jpg"
+    },
+    {
+      "entity_key": "nodirbek-abdusattorov",
+      "aliases": [
+        "Nodirbek Abdusattorov"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Nodirbek Abdusattorov, Uzbek chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/62/Abdusattorov_Nodirbek_Uzchess_cup_3_masters_%28cropped_v2%29.jpg/500px-Abdusattorov_Nodirbek_Uzchess_cup_3_masters_%28cropped_v2%29.jpg",
+      "credit": "TheBoburshokh (CC0, Wikimedia Commons)",
+      "author": "TheBoburshokh",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Abdusattorov_Nodirbek_Uzchess_cup_3_masters_(cropped_v2).jpg"
+    },
+    {
+      "entity_key": "alireza-firouzja",
+      "aliases": [
+        "Alireza Firouzja"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Alireza Firouzja, French-Iranian chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/41/Alireza_Firouzja_in_2024_%28cropped_v2%29.jpg/500px-Alireza_Firouzja_in_2024_%28cropped_v2%29.jpg",
+      "credit": "Frans Peeters (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Frans Peeters",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Alireza_Firouzja_in_2024_(cropped_v2).jpg"
+    },
+    {
+      "entity_key": "fabiano-caruana",
+      "aliases": [
+        "Fabiano Caruana"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Fabiano Caruana, American chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/36/Fabiano_Caruana_in_2025.jpg/500px-Fabiano_Caruana_in_2025.jpg",
+      "credit": "Frans Peeters (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Frans Peeters",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Fabiano_Caruana_in_2025.jpg"
+    },
+    {
+      "entity_key": "ding-liren",
+      "aliases": [
+        "Ding Liren"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Ding Liren, Chinese chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/87/Ding_Liren_at_the_46th_FIDE_Chess_Olympiad.jpg/500px-Ding_Liren_at_the_46th_FIDE_Chess_Olympiad.jpg",
+      "credit": "TheBoburshokh (CC BY 4.0, Wikimedia Commons)",
+      "author": "TheBoburshokh",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Ding_Liren_at_the_46th_FIDE_Chess_Olympiad.jpg"
+    },
+    {
+      "entity_key": "rameshbabu-praggnanandhaa",
+      "aliases": [
+        "Rameshbabu Praggnanandhaa",
+        "Praggnanandhaa"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Rameshbabu Praggnanandhaa, Indian chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6a/Praggnanandhaa_R%2C_Tata_Steel_chess_tournament_2025%2C_Round_1_%2802%29_%28cropped_v2%29.jpg/500px-Praggnanandhaa_R%2C_Tata_Steel_chess_tournament_2025%2C_Round_1_%2802%29_%28cropped_v2%29.jpg",
+      "credit": "Frans Peeters (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Frans Peeters",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Praggnanandhaa_R,_Tata_Steel_chess_tournament_2025,_Round_1_(02)_(cropped_v2).jpg"
+    },
+    {
+      "entity_key": "lei-tingjie",
+      "aliases": [
+        "Lei Tingjie"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Lei Tingjie, Chinese chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3f/Tan_Zhongyi_interview_with_Lei_Tingjie_as_translator_%28cropped%29.jpg/500px-Tan_Zhongyi_interview_with_Lei_Tingjie_as_translator_%28cropped%29.jpg",
+      "credit": "GibChess (CC BY 3.0, Wikimedia Commons)",
+      "author": "GibChess",
+      "license": "CC BY 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Tan_Zhongyi_interview_with_Lei_Tingjie_as_translator_(cropped).jpg"
+    },
+    {
+      "entity_key": "kateryna-lagno",
+      "aliases": [
+        "Kateryna Lagno"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kateryna Lagno, chess grandmaster",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/be/Kateryna_Lagno_in_2019_3x4_crop.jpg/500px-Kateryna_Lagno_in_2019_3x4_crop.jpg",
+      "credit": "Министерство спорта Республики Татарстан (CC BY 4.0, Wikimedia Commons)",
+      "author": "Министерство спорта Республики Татарстан",
+      "license": "CC BY 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Kateryna_Lagno_in_2019_3x4_crop.jpg"
+    },
+    {
+      "entity_key": "scottie-scheffler",
+      "aliases": [
+        "Scottie Scheffler"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Scottie Scheffler, American golfer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ef/Scottie_Scheffler_Ryder_Cup_2025_%28cropped%29.jpg/500px-Scottie_Scheffler_Ryder_Cup_2025_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Scottie_Scheffler_Ryder_Cup_2025_(cropped).jpg"
+    },
+    {
+      "entity_key": "rory-mcilroy",
+      "aliases": [
+        "Rory McIlroy"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Rory McIlroy, Northern Irish golfer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/02/Rory_McIlroy_Ryder_Cup_2025-195_%28cropped%29.jpg/500px-Rory_McIlroy_Ryder_Cup_2025-195_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Rory_McIlroy_Ryder_Cup_2025-195_(cropped).jpg"
+    },
+    {
+      "entity_key": "jon-rahm",
+      "aliases": [
+        "Jon Rahm"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jon Rahm, Spanish golfer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d4/Jon_Rahm_Ryder_Cup_2025-130_%28cropped%29.jpg/500px-Jon_Rahm_Ryder_Cup_2025-130_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jon_Rahm_Ryder_Cup_2025-130_(cropped).jpg"
+    },
+    {
+      "entity_key": "cameron-young",
+      "aliases": [
+        "Cameron Young"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Cameron Young, American golfer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ad/Cameron_Young_Travelers-023_%28cropped%29.jpg/500px-Cameron_Young_Travelers-023_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Cameron_Young_Travelers-023_(cropped).jpg"
+    },
+    {
+      "entity_key": "tyson-fury",
+      "aliases": [
+        "Tyson Fury"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tyson Fury, British heavyweight boxer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8d/Tyson_Fury_at_Place_Bell%2C_Laval_Quebec%2C_Canada_-_Dec_16_2017_%28cropped%29.jpg/500px-Tyson_Fury_at_Place_Bell%2C_Laval_Quebec%2C_Canada_-_Dec_16_2017_%28cropped%29.jpg",
+      "credit": "Mike DiDomizio (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Mike DiDomizio",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Tyson_Fury_at_Place_Bell,_Laval_Quebec,_Canada_-_Dec_16_2017_(cropped).jpg"
+    },
+    {
+      "entity_key": "anthony-joshua",
+      "aliases": [
+        "Anthony Joshua"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Anthony Joshua, British heavyweight boxer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/98/Anthony_Joshua_Press_Conference_%28cropped%29.jpg/500px-Anthony_Joshua_Press_Conference_%28cropped%29.jpg",
+      "credit": "JazzyJoeyD (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "JazzyJoeyD",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Anthony_Joshua_Press_Conference_(cropped).jpg"
+    },
+    {
+      "entity_key": "conor-mcgregor",
+      "aliases": [
+        "Conor McGregor"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Conor McGregor, Irish mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e5/Conor_McGregor_2025.jpeg/500px-Conor_McGregor_2025.jpeg",
+      "credit": "U.S. Secretary of Defense (Public domain, Wikimedia Commons)",
+      "author": "U.S. Secretary of Defense",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Conor_McGregor_2025.jpeg"
+    },
+    {
+      "entity_key": "max-holloway",
+      "aliases": [
+        "Max Holloway"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Max Holloway, American mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2b/Blue_Angels%27_VIP_Rider_Max_Holloway_%281%29_%28cropped%29.jpg/500px-Blue_Angels%27_VIP_Rider_Max_Holloway_%281%29_%28cropped%29.jpg",
+      "credit": "Cpl. Samantha Sanchez (Public domain, Wikimedia Commons)",
+      "author": "Cpl. Samantha Sanchez",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Blue_Angels%27_VIP_Rider_Max_Holloway_(1)_(cropped).jpg"
+    },
+    {
+      "entity_key": "michael-chandler",
+      "aliases": [
+        "Michael Chandler"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Michael Chandler, American mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5b/MichaelChandler0523_%28cropped%29.jpg/500px-MichaelChandler0523_%28cropped%29.jpg",
+      "credit": "Gage Skidmore (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Gage Skidmore",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:MichaelChandler0523_(cropped).jpg"
+    },
+    {
+      "entity_key": "nate-diaz",
+      "aliases": [
+        "Nate Diaz"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Nate Diaz, American mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/Nate_Diaz_Oct_2019.jpg/500px-Nate_Diaz_Oct_2019.jpg",
+      "credit": "MMAnytt (CC BY 3.0, Wikimedia Commons)",
+      "author": "MMAnytt",
+      "license": "CC BY 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Nate_Diaz_Oct_2019.jpg"
+    },
+    {
+      "entity_key": "carlos-ulberg",
+      "aliases": [
+        "Carlos Ulberg"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Carlos Ulberg, New Zealand mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fe/Motorcycle_stunts_on_the_South_Lawn_of_the_White_House_ahead_of_UFC_Freedom_250%2C_Saturday%2C_June_13%2C_2026_-_11%28cropped%29.jpg/500px-Motorcycle_stunts_on_the_South_Lawn_of_the_White_House_ahead_of_UFC_Freedom_250%2C_Saturday%2C_June_13%2C_2026_-_11%28cropped%29.jpg",
+      "credit": "The White House (Public domain, Wikimedia Commons)",
+      "author": "The White House",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Motorcycle_stunts_on_the_South_Lawn_of_the_White_House_ahead_of_UFC_Freedom_250,_Saturday,_June_13,_2026_-_11(cropped).jpg"
+    },
+    {
+      "entity_key": "magomed-ankalaev",
+      "aliases": [
+        "Magomed Ankalaev"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Magomed Ankalaev, Russian mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/63/Magomed_Ankalaev_at_UFC_Fight_Night_136_in_Moscow%2C_Russia.jpg/500px-Magomed_Ankalaev_at_UFC_Fight_Night_136_in_Moscow%2C_Russia.jpg",
+      "credit": "MMAnytt (CC BY 3.0, Wikimedia Commons)",
+      "author": "MMAnytt",
+      "license": "CC BY 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Magomed_Ankalaev_at_UFC_Fight_Night_136_in_Moscow,_Russia.jpg"
+    },
+    {
+      "entity_key": "nassourdine-imavov",
+      "aliases": [
+        "Nassourdine Imavov",
+        "Nassourdine Imamov"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Nassourdine Imavov, French mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/08/Nassourdine_Imavov.jpg/500px-Nassourdine_Imavov.jpg",
+      "credit": "JoeKhanMMA (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "JoeKhanMMA",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Nassourdine_Imavov.jpg"
+    },
+    {
+      "entity_key": "khamzat-chimaev",
+      "aliases": [
+        "Khamzat Chimaev"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Khamzat Chimaev, Emirati mixed martial artist",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/b/b3/Khamzat_Chimaev_2022_%28cropped%29.png",
+      "credit": "MMAnytt (CC BY 3.0, Wikimedia Commons)",
+      "author": "MMAnytt",
+      "license": "CC BY 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Khamzat_Chimaev_2022_(cropped).png"
+    },
+    {
+      "entity_key": "dricus-du-plessis",
+      "aliases": [
+        "Dricus Du Plessis",
+        "Dricus du Plessis"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Dricus Du Plessis, South African mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/31/IMG-Dricus-Duplessis%28cropped%29.jpg/500px-IMG-Dricus-Duplessis%28cropped%29.jpg",
+      "credit": "User:Philippe3017 (CC0, Wikimedia Commons)",
+      "author": "User:Philippe3017",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:IMG-Dricus-Duplessis(cropped).jpg"
+    },
+    {
+      "entity_key": "jean-silva",
+      "aliases": [
+        "Jean Silva"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jean Silva, Brazilian mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fb/Jean_Silva_%2854451587575%29.jpg/500px-Jean_Silva_%2854451587575%29.jpg",
+      "credit": "The White House (Public domain, Wikimedia Commons)",
+      "author": "The White House",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jean_Silva_(54451587575).jpg"
+    },
+    {
+      "entity_key": "team-europe-flag",
+      "aliases": [
+        "Team Europe"
+      ],
+      "kind": "flag",
+      "presentation": "logo",
+      "verified_subject": "Flag of Europe (Team Europe Ryder Cup)",
+      "url": "https://flagcdn.com/w160/eu.png",
+      "credit": "Flagpedia / European Union flag (Public domain)",
+      "author": "Council of Europe",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Flag_of_Europe.svg"
+    },
+    {
+      "entity_key": "team-usa-flag",
+      "aliases": [
+        "Team USA"
+      ],
+      "kind": "flag",
+      "presentation": "logo",
+      "verified_subject": "Flag of the United States (Team USA Ryder Cup)",
+      "url": "https://flagcdn.com/w160/us.png",
+      "credit": "Flagpedia / United States flag (Public domain)",
+      "author": "United States",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Flag_of_the_United_States.svg"
+    },
+    {
+      "entity_key": "batch9-big-one-cosmic-risks",
+      "aliases": [
+        "The Big One & Cosmic Risks",
+        "batch9-big-one-cosmic-risks"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Lava fountain erupting at twilight at Kilauea volcano, Hawaii",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Pahoeoe_fountain_edit2.jpg/960px-Pahoeoe_fountain_edit2.jpg",
+      "credit": "J.D. Griggs (Public domain, Wikimedia Commons)",
+      "author": "J.D. Griggs",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Pahoeoe_fountain_edit2.jpg"
+    },
+    {
+      "entity_key": "batch9-tech-shocks-ai-bankruptcies",
+      "aliases": [
+        "Tech Shocks & AI Bankruptcies",
+        "batch9-tech-shocks-ai-bankruptcies"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Close-up of colorful source code displayed on a computer monitor",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7f/Code_on_computer_monitor_%28Unsplash%29.jpg/960px-Code_on_computer_monitor_%28Unsplash%29.jpg",
+      "credit": "Markus Spiske (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Markus Spiske",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Code_on_computer_monitor_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch9-critics-choice-oscars",
+      "aliases": [
+        "Critics Choice & Below-the-Line Oscars",
+        "batch9-critics-choice-oscars"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Red velvet seats and wood-paneled acoustic balcony inside a concert hall",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ed/Empty_concert_hall_in_Katowice_%28Unsplash%29.jpg/960px-Empty_concert_hall_in_Katowice_%28Unsplash%29.jpg",
+      "credit": "Radek Grzybowski (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Radek Grzybowski",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Empty_concert_hall_in_Katowice_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch9-live-music-broadway-box-office",
+      "aliases": [
+        "Live Music, Broadway & Box Office",
+        "batch9-live-music-broadway-box-office"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Concert venue stage illuminated in warm purple and blue lights before a show",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Waiting_for_the_concert_to_start_%28Unsplash%29.jpg/960px-Waiting_for_the_concert_to_start_%28Unsplash%29.jpg",
+      "credit": "Laura Wielo (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Laura Wielo",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Waiting_for_the_concert_to_start_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch9-golf-majors-ryder-cup",
+      "aliases": [
+        "Golf Majors & The Ryder Cup",
+        "batch9-golf-majors-ryder-cup"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Green golf fairway and bunkers under blue sky",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9c/Caversham_Heath_Golf_Course_the_4th_fairway_and_green_-_geograph.org.uk_-_2718385.jpg/960px-Caversham_Heath_Golf_Course_the_4th_fairway_and_green_-_geograph.org.uk_-_2718385.jpg",
+      "credit": "Stuart Logan (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Stuart Logan",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Caversham_Heath_Golf_Course_the_4th_fairway_and_green_-_geograph.org.uk_-_2718385.jpg"
+    },
+    {
+      "entity_key": "batch9-ufc-boxing",
+      "aliases": [
+        "UFC Next Fights & Heavyweight Boxing",
+        "batch9-ufc-boxing"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Pair of black leather boxing gloves resting on canvas in ring lighting",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/Black_boxing_gloves.jpg/960px-Black_boxing_gloves.jpg",
+      "credit": "Airman 1st Class Kerelin Molina (Public domain, Wikimedia Commons)",
+      "author": "Airman 1st Class Kerelin Molina",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Black_boxing_gloves.jpg"
+    },
+    {
+      "entity_key": "anthropic-pbc",
+      "aliases": [
+        "Anthropic",
+        "Claude",
+        "Claude Opus"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Anthropic / Claude official symbol mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/330px-Claude_AI_symbol.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Anthropic PBC",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Claude_AI_symbol.svg"
+    },
+    {
+      "entity_key": "openai-inc",
+      "aliases": [
+        "OpenAI",
+        "OpenAI IPO",
+        "ChatGPT"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "OpenAI / ChatGPT blossom mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/OpenAI_logo_2025_%28symbol%29.svg/330px-OpenAI_logo_2025_%28symbol%29.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "OpenAI",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:OpenAI_logo_2025_(symbol).svg"
+    },
+    {
+      "entity_key": "coreweave-inc",
+      "aliases": [
+        "CoreWeave",
+        "CoreWeave Inc"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "CoreWeave corporate logo mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/25/CoreWeave_logo.svg/330px-CoreWeave_logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "CoreWeave, Inc.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:CoreWeave_logo.svg"
     }
   ]
 }

@@ -3,18 +3,20 @@
 from datetime import datetime, timedelta, timezone
 import re
 from zoneinfo import ZoneInfo
-from signals import resolve_holds, stopped_rules
+from signals import LINES, on_floor, resolve_holds, stopped_rules
 
-LINES = ("Server", "Website", "Apps")
 STATIONS = ("Write", "Test", "Review", "Merge line", "Ship", "Live")
 BUILDERS = {
     "speed/": "S",
     "codex/": "B",
     "ios/": "C",
+    "builder-c/": "C",
+    "bc/": "C",
     "atlas/": "D",
     "builder-e/": "E",
     "apple/": "F",
     "weebey/": "W",
+    "factory/": "Factory",
 }
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -29,23 +31,23 @@ def iso(value):
 
 
 def public_title(title):
-    # Titles are the only free text that leaves the collector. Never publish
-    # discussion bodies, author identities, URLs from comments, or email addresses.
+    # Keep account identifiers and the repository owner's name out of public text.
     title = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[email removed]", title)
     title = re.sub(r"(?<!\w)@[\w-]+(?:\[bot\])?", "[account removed]", title)
     title = re.sub(r"\bAlex(?:ander)?(?: Bain)?\b", "the founder", title, flags=re.I)
     return title
 
 
-def line_for(pull):
+def lines_for(pull):
     files = pull.get("files", [])
     if not pull.get("files_complete") or not files:
-        return "Server", True
-    if all(path.startswith("ios/") for path in files):
-        return "Apps", False
-    if all(path.startswith("frontend/") for path in files):
-        return "Website", False
-    return "Server", False
+        return ("Server",), True
+    lines = tuple(
+        line
+        for directory, line in zip(("backend/", "frontend/", "ios/"), LINES)
+        if any(path.startswith(directory) for path in files)
+    )
+    return lines or ("Server",), False
 
 
 def latest_checks(pull):
@@ -95,8 +97,70 @@ def unchanged_after(pull, commit_id):
     )
 
 
-def classify(pull, deployments, now):
-    line, uncertain_line = line_for(pull)
+def fable_decision(pull):
+    return max(
+        (
+            c
+            for c in pull.get("comments", [])
+            if c.get("association") in TRUSTED
+            and (c.get("fable_changes") or c.get("fable_accept"))
+        ),
+        key=lambda c: (instant(c["created_at"]), bool(c.get("fable_changes"))),
+        default={},
+    )
+
+
+def bot_review(pull):
+    return max(
+        (
+            r
+            for r in pull.get("reviews", [])
+            if r.get("login") == "claude[bot]"
+            and unchanged_after(pull, r.get("commit_id"))
+        ),
+        key=lambda r: r.get("submitted_at") or "",
+        default={},
+    )
+
+
+def last_authored(pull):
+    return next(
+        (
+            c
+            for c in reversed(pull.get("commits", []))
+            if not c.get("merge_from_master") and not c.get("test_only")
+        ),
+        None,
+    )
+
+
+def fable_accepted_at(pull, decision=None):
+    look = fable_decision(pull) if decision is None else decision
+    if not pull.get("comments_complete") or not look.get("fable_accept"):
+        return None
+    named = look.get("fable_accept_sha")
+    if named:
+        if len(named) < 40:
+            matches = [
+                c["sha"]
+                for c in pull.get("commits", [])
+                if c.get("sha", "").startswith(named)
+            ]
+            if not pull.get("commits_complete") or len(matches) != 1:
+                return None
+            named = matches[0]
+        return look["created_at"] if unchanged_after(pull, named) else None
+    revised = last_authored(pull)
+    if (
+        pull.get("commits_complete")
+        and revised
+        and instant(look["created_at"]) >= instant(revised["at"])
+    ):
+        return look["created_at"]
+    return None
+
+
+def classify(pull, deployments, now, line, uncertain_line):
     reasons = ["Changed files could not be confirmed."] if uncertain_line else []
     builder = next(
         (value for key, value in BUILDERS.items() if pull["branch"].startswith(key)),
@@ -152,18 +216,18 @@ def classify(pull, deployments, now):
             change["unsure"] = True
             change["reasons"].append("Waiting for deployment evidence on this line.")
         return change
-    if pull["branch"].startswith("dependabot/"):
+    if pull.get("hold_for_108"):
+        change["held_for_108"] = True
+    elif pull["branch"].startswith("dependabot/"):
         change["bot_update"] = True
-    fable = max(
-        (
-            c
-            for c in pull.get("comments", [])
-            if c.get("association") in TRUSTED
-            and (c.get("fable_changes") or c.get("fable_accept"))
-        ),
-        key=lambda c: (instant(c["created_at"]), bool(c.get("fable_changes"))),
-        default={},
+    park_when_quiet = (
+        now - instant(last_activity) >= timedelta(hours=48)
+        and not change.get("bot_update")
+        and not change.get("held_for_108")
     )
+    if pull.get("draft") and park_when_quiet:
+        change["parked"] = True
+    fable = fable_decision(pull)
     if fable.get("fable_changes"):
         change["sent_back"] = True
         return change
@@ -172,54 +236,52 @@ def classify(pull, deployments, now):
     change["station"] = "Test"
     green, unknown = checks_green(pull)
     if not green:
-        if pull.get("checks_complete") and any(
-            c.get("ci") and c["state"] == "in_progress" for c in latest_checks(pull)
-        ):
-            change["checks_running"] = True
+        if pull.get("checks_complete"):
+            checks = list(latest_checks(pull))
+            if any(c.get("ci") and c["state"] == "in_progress" for c in checks):
+                change["checks_running"] = True
+            if any(
+                c.get("ci")
+                and c["name"] != "flaky-canary"
+                and c["state"] == "completed"
+                and c.get("conclusion") in {"failure", "timed_out"}
+                for c in checks
+            ):
+                change["checks_failed"] = True
         change["unsure"] |= unknown
         if unknown:
             change["reasons"].append("Checks on this version could not be confirmed.")
         return change
     change["station"] = "Review"
-    if not change.get("bot_update") and now - instant(last_activity) >= timedelta(
-        hours=48
-    ):
+    if park_when_quiet:
         change["parked"] = True
+    accepted_at = fable_accepted_at(pull, fable)
+    bot = bot_review(pull)
+    if (
+        accepted_at
+        and fable.get("fable_accept_sha") == pull["head_sha"]
+        and bot.get("state") != "CHANGES_REQUESTED"
+    ):
+        if not uncertain_line:
+            change["station"] = "Merge line"
+        return change
     if not pull.get("reviews_complete"):
         change["unsure"] = True
         change["reasons"].append("Review evidence could not be confirmed.")
         return change
-    bot_reviews = [
-        r
-        for r in pull.get("reviews", [])
-        if r.get("login") == "claude[bot]" and unchanged_after(pull, r.get("commit_id"))
-    ]
-    latest_review = max(
-        bot_reviews, key=lambda r: r.get("submitted_at") or "", default={}
-    )
-    if latest_review.get("state") != "APPROVED":
+    if bot.get("state") != "APPROVED":
         return change
     if pull.get("fable_needed") and not pull.get("fable_not_needed"):
-        non_merge = [
-            c
-            for c in pull.get("commits", [])
-            if not c.get("merge_from_master") and not c.get("test_only")
-        ]
+        last_change = last_authored(pull)
         if (
             not pull.get("commits_complete")
             or not pull.get("comments_complete")
-            or not non_merge
+            or not last_change
         ):
             change["unsure"] = True
             change["reasons"].append("The final review could not be confirmed.")
             return change
-        # The API returns commits in topological order. Merge-only syncs do not
-        # invalidate an acceptance of the last authored (non-merge) change.
-        last_commit = non_merge[-1]["at"]
-        accepted = fable.get("fable_accept") and instant(
-            fable["created_at"]
-        ) >= instant(last_commit)
-        if not accepted:
+        if not accepted_at:
             return change
     if not uncertain_line:
         change["station"] = "Merge line"
@@ -238,14 +300,9 @@ def advance_jams(changes, master, previous, now, stops=(), holds=None):
     starts = {}
     origins = {}
     previous_keys = {j["key"] for j in previous if j.get("ended_at") is None}
-    active = [
-        c
-        for c in changes
-        if c["station"] != "Live"
-        and not any(c.get(flag) for flag in ("side_track", "bot_update", "parked"))
-    ]
+    active = [c for c in changes if on_floor(c)]
     for station in STATIONS[:-1]:
-        count = sum(c["station"] == station for c in active)
+        count = len({c["number"] for c in active if c["station"] == station})
         if count >= 10:
             conditions[f"crowd:{station}"] = ("crowd", station, None, 1800, count)
     if master.get("tests") == "failing" or (
@@ -319,14 +376,27 @@ def advance_jams(changes, master, previous, now, stops=(), holds=None):
     ]
 
 
-def delivery_posts(commands, now):
-    batches, live, build_post = {}, {}, None
+def delivery_posts(commands, pulls, now):
+    batches, routes, refusals, live = {}, {}, {}, {}
     for post in sorted(commands, key=lambda c: instant(c["at"])):
         if instant(post["at"]) > now:
             continue
         line = post["line"]
         if post["kind"] == "merging":
             batches[line] = {number: post["at"] for number in post["numbers"]}
+            for number in post["numbers"]:
+                merged = pulls.get(number, {}).get("merged_at")
+                if merged and instant(post["at"]) > instant(merged):
+                    continue
+                if number not in routes or routes[number][0] != post["at"]:
+                    routes[number] = post["at"], set()
+                routes[number][1].add(line)
+        elif post["kind"] == "stuck":
+            for number in post["numbers"]:
+                refusals[number] = post["at"]
+                for batch in batches.values():
+                    if number in batch and instant(batch[number]) < instant(post["at"]):
+                        del batch[number]
         elif post["kind"] == "hold" or (
             post["kind"] == "live" and not post.get("numbers")
         ):
@@ -335,31 +405,75 @@ def delivery_posts(commands, now):
             for number in post["numbers"]:
                 live[(line, number)] = post
                 batches.get(line, {}).pop(number, None)
-        if post.get("build"):
-            build_post = {"build": post["build"], "at": post["at"]}
-    return batches, live, build_post
+    return batches, routes, refusals, live
+
+
+def verified_testflight_post(commands, deployments, now, previous):
+    # GitHub confirms delivery on a master commit, but Xcode Cloud's status
+    # has no build number. Use only a trusted numbered report for that commit.
+    apps = [
+        receipt
+        for receipt in deployments
+        if receipt["line"] == "Apps"
+        and receipt.get("state") == "success"
+        and instant(receipt["at"]) <= now
+    ]
+    if not apps:
+        return None
+    deployed = max(apps, key=lambda receipt: instant(receipt["at"]))
+    commit = deployed["commit"]
+    known_commits = {receipt["commit"] for receipt in apps}
+    candidates = [
+        {"build": post["build"], "at": post["at"], "commit": commit}
+        for post in commands
+        if post["kind"] == "build"
+        and post.get("commit")
+        and commit.startswith(post["commit"])
+        and sum(sha.startswith(post["commit"]) for sha in known_commits) == 1
+        and instant(deployed["committed_at"]) <= instant(post["at"]) <= now
+    ]
+    if previous and previous.get("commit") == commit:
+        candidates.append(previous)
+    return min(candidates, key=lambda p: (-p["build"], instant(p["at"])), default=None)
 
 
 def build(snapshot, previous=None):
     previous = previous or {}
     now = instant(snapshot["captured_at"])
-    changes = [
-        classify(p, snapshot["deployments"], now)
-        for p in snapshot["pulls"]
-        if p["state"] == "open" or p.get("merged_at")
-    ]
+    pulls = {p["number"]: p for p in snapshot["pulls"]}
+    commands = snapshot.get("commands", previous.get("signals", {}).get("commands", []))
+    history = snapshot.get("hold_commands", commands)
+    batches, routes, refusals, live_posts = delivery_posts(history, pulls, now)
+    posted_build = verified_testflight_post(
+        history, snapshot["deployments"], now,
+        previous.get("signals", {}).get("testflight_post"),
+    )
+    changes = []
+    confirmed_routes = set()
+    for pull in pulls.values():
+        if pull["state"] != "open" and not pull.get("merged_at"):
+            continue
+        route = routes.get(pull["number"])
+        lines, uncertain = (
+            (tuple(line for line in LINES if line in route[1]), False)
+            if route
+            else lines_for(pull)
+        )
+        if not uncertain:
+            confirmed_routes.add(pull["number"])
+        for line in lines:
+            changes.append(
+                classify(pull, snapshot["deployments"], now, line, uncertain)
+            )
     # Keep the first observed receipt across updates. Refreshes do not increase
     # merge-to-live time. A source whose evidence disappears stays in Ship.
-    old_changes = {c["number"]: c for c in previous.get("changes", [])}
+    old_changes = {(c["number"], c["line"]): c for c in previous.get("changes", [])}
     for change in changes:
-        old = old_changes.get(change["number"], {})
+        old = old_changes.get((change["number"], change["line"]), {})
         if change["station"] == "Live" and old.get("live_at"):
             change["live_at"] = min(old["live_at"], change["live_at"], key=instant)
             if old["live_at"] == change["live_at"]:
                 change["timing"] = old["timing"]
-    commands = snapshot.get("commands", previous.get("signals", {}).get("commands", []))
-    history = snapshot.get("hold_commands", commands)
-    batches, live_posts, posted_build = delivery_posts(history, now)
     holds = resolve_holds(
         history,
         changes,
@@ -367,14 +481,13 @@ def build(snapshot, previous=None):
         now,
         previous.get("signals", {}).get("holds"),
     )
-    pulls = {p["number"]: p for p in snapshot["pulls"]}
     transitions = [
         t
         for t in previous.get("transitions", [])
         if now - instant(t.get("observed_at", t["at"])) <= timedelta(minutes=15)
     ]
     for change in changes:
-        old = old_changes.get(change["number"], {})
+        old = old_changes.get((change["number"], change["line"]), {})
         pull = pulls[change["number"]]
         authored = [
             c["at"]
@@ -397,14 +510,12 @@ def build(snapshot, previous=None):
                 and r.get("state") == "APPROVED"
                 and unchanged_after(pull, r.get("commit_id"))
             ]
-            if pull.get("fable_needed") and not pull.get("fable_not_needed"):
-                arrivals += [
-                    c["created_at"]
-                    for c in pull.get("comments", [])
-                    if c.get("fable_accept")
-                    and c.get("association") in TRUSTED
-                    and c["created_at"] >= revision
-                ]
+            if accepted_at := fable_accepted_at(pull):
+                arrivals.append(accepted_at)
+            route = routes.get(change["number"])
+            refusal = refusals.get(change["number"])
+            if route and refusal and instant(refusal) > instant(route[0]):
+                arrivals.append(refusal)
         arrived = min(max(arrivals), snapshot["captured_at"])
         announced = batches.get(change["line"], {}).get(change["number"])
         hold = holds.get(change["line"])
@@ -412,9 +523,7 @@ def build(snapshot, previous=None):
             change["station"] == "Merge line"
             and announced
             and instant(announced) >= instant(revision)
-            and not any(
-                change.get(flag) for flag in ("parked", "bot_update", "side_track")
-            )
+            and on_floor(change)
             and not (hold and not hold["ended_at"])
         ):
             change.update(station="Ship", merge_announced_at=announced)
@@ -434,7 +543,11 @@ def build(snapshot, previous=None):
                 if same_station and old.get("revision_at", revision) == revision
                 else arrived
             )
-        if old and not same_station:
+        if (
+            old
+            and not same_station
+            and (on_floor(change) or change["station"] == "Live")
+        ):
             transitions.append(
                 {
                     "number": change["number"],
@@ -477,8 +590,19 @@ def build(snapshot, previous=None):
             ).total_seconds()
     observed_since = previous.get("observed_since", snapshot["captured_at"])
     last_merges = dict(previous.get("signals", {}).get("last_merged_at", {}))
+    current_keys = {(c["number"], c["line"]) for c in changes}
+    for key, old in old_changes.items():
+        line = old["line"]
+        # A legacy floor may have attributed a mixed delivery to the wrong line.
+        if (
+            old.get("merged_at")
+            and old["number"] in confirmed_routes
+            and key not in current_keys
+            and last_merges.get(line) == old["merged_at"]
+        ):
+            del last_merges[line]
     for change in changes:
-        if change["merged_at"]:
+        if change["merged_at"] and change["number"] in confirmed_routes:
             line = change["line"]
             last_merges[line] = max(
                 last_merges.get(line, change["merged_at"]), change["merged_at"]

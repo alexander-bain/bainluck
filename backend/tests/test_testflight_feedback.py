@@ -191,5 +191,302 @@ def test_the_issue_says_it_came_from_testflight_and_shows_the_crash_start():
     body = format_issue_body(5, "TestFlight crash: froze", "ios", state, has_screenshot=False)
     assert "Auto-created from TestFlight crash feedback (report #5)" in body
     assert "Thread 0 Crashed:" in body
+    assert "/admin/bug-reports?id=5" in body
     shake = format_issue_body(6, "x", "ios", {"crash_log": "nope"}, has_screenshot=False)
     assert "Auto-created from rage shake" in shake and "nope" not in shake
+
+
+def _make_png_bytes(width: int, height: int) -> bytes:
+    import io
+    import random
+    from PIL import Image
+
+    rng = random.Random(42)
+    img = Image.frombytes("RGB", (width, height), rng.randbytes(width * height * 3))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_oversized_png_is_reencoded_to_jpeg_instead_of_dropped():
+    big_png = _make_png_bytes(400, 400)
+    raw_b64 = base64.b64encode(big_png).decode("ascii")
+    ceiling = len(raw_b64) // 2  # force compression path
+    assert ceiling > 100_000
+    result = tf.compress_screenshot_if_needed(big_png, max_b64_len=ceiling)
+    assert result is not None
+    assert len(result) <= ceiling
+    decoded = base64.b64decode(result)
+    assert decoded[:3] == b"\xff\xd8\xff"
+
+
+def test_strip_emails_and_phones_redacts_pii_without_touching_scores_or_dates():
+    text = (
+        "- Game page: NYK @BOS, Houston 78-74 Florida, Now 61.4% vs 38.6% on 2001-01-01 at 5:02 PM.\n"
+        "- Mention @someone, contact tester@example.com or +1 (555) 234-5678 / 555-867-5309."
+    )
+    cleaned = tf.strip_emails_and_phones(text)
+    assert "Houston 78-74 Florida" in cleaned
+    assert "61.4%" in cleaned
+    assert "2001-01-01" in cleaned
+    assert "5:02 PM" in cleaned
+    assert "@BOS" not in cleaned
+    assert "@someone" not in cleaned
+    assert "NYK @ BOS" in cleaned
+    assert "@ someone" in cleaned
+    assert "tester@example.com" not in cleaned
+    assert "234-5678" not in cleaned
+    assert "867-5309" not in cleaned
+    assert "[redacted email]" in cleaned
+    assert "[redacted phone]" in cleaned
+
+
+def test_issue_body_includes_model_label_and_direct_admin_link():
+    state = {"source": "testflight", "testflight_kind": "screenshot", "testflight_submission_id": "s42"}
+    body = format_issue_body(
+        42,
+        "Score header cut off",
+        "ios",
+        state,
+        has_screenshot=True,
+        screenshot_summary="- Live Activity card shows 'Scor' / 'e' header wrap.",
+    )
+    assert "### Screenshot description" in body
+    assert "Written by a model from the screenshot" in body
+    assert "Live Activity card shows 'Scor' / 'e' header wrap." in body
+    assert "/admin/bug-reports?id=42" in body
+    assert "data:image" not in body
+
+    without_summary = format_issue_body(43, "Blank screen", "ios", state, has_screenshot=True)
+    assert "### Screenshot description" not in without_summary
+    assert "/admin/bug-reports?id=43" in without_summary
+
+
+def test_summarize_testflight_screenshot_respects_registry_cap_pii_and_cost_logging(monkeypatch, caplog):
+    import logging
+    from types import SimpleNamespace
+    from app.services import llm_request
+
+    class _FakeRedis:
+        def __init__(self):
+            self.counts = {}
+
+        def register_script(self, _lua):
+            def _run(keys, args, client=None):
+                key = keys[0]
+                cap = int(args[0])
+                cur = self.counts.get(key, 0)
+                if cur >= cap:
+                    return 0
+                self.counts[key] = cur + 1
+                return 1
+            return _run
+
+    class _FakeLedger:
+        def reserve(self, day, task, micros, cap_micros):
+            return True
+
+        def adjust(self, day, task, delta):
+            return None
+
+    calls = []
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="- Discover feed: Houston 61.4% vs Florida 38.6%; email leaked@example.com, call 555-321-7654."
+                        )
+                    )
+                ],
+                usage=SimpleNamespace(prompt_tokens=900, completion_tokens=45),
+            )
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr(llm_request, "_get_ledger", lambda: _FakeLedger())
+
+    small_png_b64 = base64.b64encode(_make_png_bytes(120, 200)).decode("ascii")
+
+    with caplog.at_level(logging.INFO, logger="app.services.testflight_feedback"):
+        first = tf.summarize_testflight_screenshot(
+            small_png_b64,
+            report_id=77,
+            client=fake_client,
+            redis_client=fake_redis,
+            daily_cap=1,
+        )
+        second = tf.summarize_testflight_screenshot(
+            small_png_b64,
+            report_id=78,
+            client=fake_client,
+            redis_client=fake_redis,
+            daily_cap=1,
+        )
+
+    assert first is not None
+    assert "Houston 61.4% vs Florida 38.6%" in first
+    assert "leaked@example.com" not in first
+    assert "321-7654" not in first
+    assert second is None  # daily cap of 1 enforced without a second model call
+    assert len(calls) == 1
+    assert any("cost_usd=$" in rec.message and "report #77" in rec.message for rec in caplog.records)
+
+
+def test_summarize_testflight_screenshot_returns_none_on_model_error(monkeypatch):
+    from types import SimpleNamespace
+    from app.services import llm_request
+
+    class _FakeRedis:
+        def register_script(self, _lua):
+            return lambda keys, args, client=None: 1
+
+    class _FakeLedger:
+        def reserve(self, day, task, micros, cap_micros):
+            return True
+
+        def adjust(self, day, task, delta):
+            return None
+
+    class _BrokenCompletions:
+        def create(self, **kwargs):
+            raise TimeoutError("slow provider")
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=_BrokenCompletions()))
+    monkeypatch.setattr(llm_request, "_get_ledger", lambda: _FakeLedger())
+    small_png_b64 = base64.b64encode(_make_png_bytes(64, 64)).decode("ascii")
+
+    assert (
+        tf.summarize_testflight_screenshot(
+            small_png_b64,
+            report_id=99,
+            client=fake_client,
+            redis_client=_FakeRedis(),
+            daily_cap=5,
+        )
+        is None
+    )
+
+
+class TestCreateBugReportIssueTaskTestFlightSummary:
+    """#13274: create_github_issue_for_bug_report_task executes TestFlight summary with real asyncio."""
+
+    def _wire_task_boundaries(self, monkeypatch, summary_fn):
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+        import app.tasks as tasks_mod
+        from app.tasks import base as tasks_base
+        from app.tasks import bug_report_github as gh_mod
+
+        report = SimpleNamespace(
+            id=238,
+            description="Formatting of numbers is off",
+            category="ios",
+            user_email=None,
+            backlog_ref=None,
+            screenshot_base64="ZmFrZV9wbmc=",
+            app_state={"source": "testflight", "platform": "IOS"},
+        )
+
+        class _FakeScalars:
+            def all(self):
+                return []
+
+        class _FakeResult:
+            def scalars(self):
+                return _FakeScalars()
+
+        class _FakeDB:
+            async def get(self, model, pk):
+                return report if pk == 238 else None
+
+            async def execute(self, stmt):
+                return _FakeResult()
+
+        @asynccontextmanager
+        async def _fake_session():
+            yield _FakeDB()
+
+        created_issues = []
+
+        def _fake_create_issue(title, body, labels):
+            created_issues.append({"title": title, "body": body, "labels": labels})
+            return 13999, "I_kwDO_fake_node"
+
+        monkeypatch.setattr(tasks_base, "get_task_session", _fake_session)
+        monkeypatch.setattr(gh_mod, "GITHUB_TOKEN", "test-token")
+        monkeypatch.setattr(gh_mod, "create_github_issue", _fake_create_issue)
+        monkeypatch.setattr(gh_mod, "add_to_project_board", lambda node_id: None)
+        monkeypatch.setattr(tf, "summarize_testflight_screenshot", summary_fn)
+        return tasks_mod, created_issues
+
+    def test_testflight_report_with_screenshot_includes_summary_without_patching_asyncio(self, monkeypatch):
+        """Runs the real task path with unpatched asyncio; fails if asyncio is unimported."""
+        seen = []
+
+        def _fake_summary(screenshot_b64, *, report_id):
+            seen.append((screenshot_b64, report_id))
+            return "- Matchup card shows percentages aligned cleanly."
+
+        tasks_mod, created_issues = self._wire_task_boundaries(monkeypatch, _fake_summary)
+
+        result = tasks_mod.create_github_issue_for_bug_report_task.run(238)
+
+        assert result == {"issue_number": 13999, "report_id": 238}
+        assert seen == [("ZmFrZV9wbmc=", 238)]
+        assert len(created_issues) == 1
+        body = created_issues[0]["body"]
+        assert "### Screenshot description" in body
+        assert "- Matchup card shows percentages aligned cleanly." in body
+
+    def test_unexpected_summary_error_logs_error_with_type_not_timeout(self, monkeypatch, caplog):
+        """Unexpected errors log at ERROR with exception type and never impersonate a timeout."""
+        import logging
+
+        def _broken_summary(screenshot_b64, *, report_id):
+            raise RuntimeError("vision backend boom")
+
+        tasks_mod, created_issues = self._wire_task_boundaries(monkeypatch, _broken_summary)
+
+        with caplog.at_level(logging.WARNING, logger="app.tasks"):
+            result = tasks_mod.create_github_issue_for_bug_report_task.run(238)
+
+        assert result == {"issue_number": 13999, "report_id": 238}
+        assert "### Screenshot description" not in created_issues[0]["body"]
+        error_records = [r for r in caplog.records if r.name == "app.tasks" and r.levelname == "ERROR"]
+        assert len(error_records) == 1
+        msg = error_records[0].getMessage()
+        assert "RuntimeError" in msg
+        assert "vision backend boom" in msg
+        assert "timed out" not in msg.lower()
+        assert not any("timed out" in r.getMessage().lower() for r in caplog.records if r.name == "app.tasks")
+
+    def test_real_summary_timeout_logs_warning_as_timeout(self, monkeypatch, caplog):
+        """Only a genuine asyncio.TimeoutError logs the 'timed out' warning."""
+        import logging
+        import time
+
+        started = []
+
+        def _slow_summary(screenshot_b64, *, report_id):
+            started.append(report_id)
+            time.sleep(0.25)
+            return "- Should not finish in time."
+
+        tasks_mod, created_issues = self._wire_task_boundaries(monkeypatch, _slow_summary)
+        monkeypatch.setattr(tasks_mod, "_TESTFLIGHT_SCREENSHOT_SUMMARY_TIMEOUT_S", 0.05, raising=False)
+
+        with caplog.at_level(logging.WARNING, logger="app.tasks"):
+            result = tasks_mod.create_github_issue_for_bug_report_task.run(238)
+
+        assert started == [238]
+        assert result == {"issue_number": 13999, "report_id": 238}
+        assert "### Screenshot description" not in created_issues[0]["body"]
+        task_records = [r for r in caplog.records if r.name == "app.tasks"]
+        warn_msgs = [r.getMessage() for r in task_records if r.levelname == "WARNING"]
+        assert any("timed out after" in m.lower() for m in warn_msgs)
+        assert not any(r.levelname == "ERROR" for r in task_records)
+

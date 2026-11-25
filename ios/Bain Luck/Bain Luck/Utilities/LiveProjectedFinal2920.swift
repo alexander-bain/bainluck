@@ -22,7 +22,8 @@ enum LiveProjectedFinal2920 {
         odds: CurrentOdds?, sport: String?, status: String?,
         commenceTime: String?,
         homeScore: Int?, awayScore: Int?, servedPeriod: String?,
-        now: Date
+        now: Date,
+        homeChance: Double? = nil, awayChance: Double? = nil
     ) -> LiveProjectedFinalAdmission2920.Outcome {
         LiveProjectedFinalAdmission2920.resolve(
             projection: odds?.liveProjection,
@@ -30,16 +31,22 @@ enum LiveProjectedFinal2920 {
             rowStart: .init(commenceTime: commenceTime),
             homeScore: homeScore, awayScore: awayScore,
             phase: LiveProjectedFinalAdmission2920.soccerPhase(servedPeriod: servedPeriod),
-            now: now)
+            now: now,
+            homeChance: homeChance, awayChance: awayChance)
     }
 
     /// A live card's line, or nil. Both native cards print the row's score
     /// while it is live, so the score handed in is the one on the card.
     static func card(_ event: FeedEventData, now: Date = Date()) -> LiveProjectedFinalAdmission2920.Printed? {
-        resolve(odds: event.currentOdds, sport: event.sport, status: event.status,
-                commenceTime: event.commenceTime,
-                homeScore: event.homeScore, awayScore: event.awayScore,
-                servedPeriod: event.espn?.period, now: now).printed
+        let cardOdds = CompactGameCard12616.currentOddsForCard(event)
+        return resolve(
+            odds: event.currentOdds, sport: event.sport, status: event.status,
+            commenceTime: event.commenceTime,
+            homeScore: event.homeScore, awayScore: event.awayScore,
+            servedPeriod: event.espn?.period, now: now,
+            homeChance: cardOdds?.homeProbability,
+            awayChance: cardOdds?.awayProbability
+        ).printed
     }
 
     /// What the event page's projected-final slot reads for this row.
@@ -67,11 +74,15 @@ enum LiveProjectedFinal2920 {
         // Absent is the object's absence, as web tests `live_projection` for
         // null; anything served goes through the helper.
         guard event.currentOdds?.liveProjection != nil else { return .absent }
+        let isOpening = event.heroProbabilitySource == OpeningLineHero.openingSource
+        let homeChance = isOpening ? nil : (event.currentOdds?.homeProbability ?? event.heroProbability)
+        let awayChance = isOpening ? nil : (event.currentOdds?.awayProbability ?? event.heroProbabilityAway)
         let outcome = resolve(
             odds: event.currentOdds, sport: event.sport, status: event.status,
             commenceTime: event.commenceTime,
             homeScore: event.homeScore, awayScore: event.awayScore,
-            servedPeriod: event.espn?.period, now: now)
+            servedPeriod: event.espn?.period, now: now,
+            homeChance: homeChance, awayChance: awayChance)
         switch outcome {
         case .printed(let printed): return .admitted(printed)
         case .withheld: return .withheld

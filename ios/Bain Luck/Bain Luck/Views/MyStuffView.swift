@@ -9,15 +9,18 @@ struct MyStuffView: View {
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
+    @Environment(\.followManager295A) private var followManager
+    @Environment(\.firstRunChecklistStore364A) private var checklistStore
     @StateObject private var vm: MyStuffViewModel
     @StateObject private var pinContent: SavedPinContentViewModel
+    @StateObject private var landingVM: MyStuffLandingViewModel295A
     @State private var predictionStats: PredictionStats?
     @State private var path: NavigationPath
     @State private var showOnboarding = false
     @State private var showPinManagement = false
-    /// Width available to the iPad card grid, in points. 0 until the first
-    /// geometry pass resolves, which `DiscoverMasonry.columnCount` reads as one
-    /// column (#3709).
+    @State private var checklistStepToOpen364A: FirstRunChecklistRowID364A? = nil
+    /// Width available to the iPad card grid (#3709), kept so `DiscoverMasonry`
+    /// measures the actual card-area width and never emits a multi-column layout on Split View.
     @State private var gridWidth: CGFloat = 0
     /// The render generation already reported to the first-card rail (L2-217 Item 3
     /// / C88). Keying the once-only guard on the token's IMMUTABLE id — not a
@@ -25,6 +28,7 @@ struct MyStuffView: View {
     /// refresh emit its new generation while a stale re-appear cannot double-emit.
     @State private var lastEmittedRenderGenerationId: Int?
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     #endif
@@ -33,13 +37,36 @@ struct MyStuffView: View {
     /// which is today's behaviour. The account-change rebind below still runs
     /// on whichever models the screen holds.
     private let macPlace: MacReadingPlace<MacReadingState10878.MyStuffModels>?
+    private let forceTeamFeedForTest: Bool
 
     init(macPlace: MacReadingPlace<MacReadingState10878.MyStuffModels>? = nil) {
         self.macPlace = macPlace
+        self.forceTeamFeedForTest = false
         _vm = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).feed ?? MyStuffViewModel())
         _pinContent = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).pins ?? SavedPinContentViewModel())
+        _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A())
         _path = State(initialValue: macPlace?.path ?? NavigationPath())
     }
+
+    #if DEBUG
+    init(viewModelForTest: MyStuffViewModel) {
+        self.macPlace = nil
+        self.forceTeamFeedForTest = true
+        _vm = StateObject(wrappedValue: viewModelForTest)
+        _pinContent = StateObject(wrappedValue: SavedPinContentViewModel())
+        _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A())
+        _path = State(initialValue: NavigationPath())
+    }
+
+    init(preloadedLandingForTest: MyStuffLandingViewModel295A.PreloadedSnapshot) {
+        self.macPlace = nil
+        self.forceTeamFeedForTest = false
+        _vm = StateObject(wrappedValue: MyStuffViewModel())
+        _pinContent = StateObject(wrappedValue: SavedPinContentViewModel())
+        _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A(preloaded: preloadedLandingForTest))
+        _path = State(initialValue: NavigationPath())
+    }
+    #endif
 
     /// Whether the gear that leads to Preferences — and so to Delete Account —
     /// is offered. Being signed in is the whole test.
@@ -66,41 +93,132 @@ struct MyStuffView: View {
     }
     #endif
 
+    private var usesLandingView295A: Bool {
+        guard !forceTeamFeedForTest else { return false }
+        return !followManager.subjects.isEmpty
+            || hasPins
+            || (authManager.isAuthenticated && authManager.user?.onboardingCompleted == true)
+    }
+
+    private var landingRefreshKey295A: String {
+        let subj = followManager.subjects.map(\.id).joined(separator: ",")
+        let pins = pinManager.savedPins.map(\.id).joined(separator: ",")
+        return "\(subj)|\(pins)|\(pinContent.content.count)|\(vm.items.count)|\(vm.teamFutures?.items.count ?? 0)|\(vm.error != nil)|\(vm.teamFuturesFailed)|\(vm.teamFuturesLoading)"
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
-                Button {
-                    showPinManagement = true
-                } label: {
-                    HStack {
-                        Label("Manage pins", systemImage: "bookmark.fill")
-                            .font(.subheadline.weight(.medium))
-                        Spacer()
-                        Text("\(pinManager.savedPins.count)")
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
+                if !usesLandingView295A {
+                    Button {
+                        showPinManagement = true
+                    } label: {
+                        HStack {
+                            Label("Manage pins", systemImage: "bookmark.fill")
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
+                            Text("\(pinManager.savedPins.count)")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Color.cardBackgroundDark)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                        )
                     }
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.cardBackgroundDark)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                    )
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+                    .frame(maxWidth: authManager.isAuthenticated ? Self.signedInManagePinsMaxWidth : Self.signInMaxWidth)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("myStuffManagePins")
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-                .frame(maxWidth: authManager.isAuthenticated ? Self.signedInManagePinsMaxWidth : Self.signInMaxWidth)
-                .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("myStuffManagePins")
+                if !usesLandingView295A && checklistStore.state.showsInMyStuff {
+                    let bannerBinding = Binding<FirstRunChecklistState364A>(
+                        get: { checklistStore.state },
+                        set: { checklistStore.state = $0 }
+                    )
+                    MyStuffChecklistBanner364A(
+                        state: bannerBinding,
+                        onOpenRow: { checklistStepToOpen364A = $0 },
+                        onDismiss: { checklistStore.dismissFromMyStuff() }
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                }
                 SiriProbabilityTip12315()
                 Group {
-                    if authManager.isLoading {
+                    if usesLandingView295A {
+                        MyStuffLandingView295A(
+                            landingVM: landingVM,
+                            path: $path,
+                            onOpenDiscover: { navCoordinator.selectedTab = .discover },
+                            onManagePins: { showPinManagement = true },
+                            onRefresh: {
+                                async let pins: Void = pinContent.load(pinManager.savedPins, refresh: true)
+                                if authManager.isAuthenticated {
+                                    await vm.startLoad()
+                                }
+                                await pins
+                                await landingVM.refresh(
+                                    followedSubjects: followManager.subjects,
+                                    savedPins: pinManager.savedPins,
+                                    pinContent: pinContent.content,
+                                    signedInItems: authManager.isAuthenticated ? vm.items : [],
+                                    signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil,
+                                    signedInTeamFeedFailed: authManager.isAuthenticated && vm.error != nil,
+                                    signedInTeamFuturesFailed: authManager.isAuthenticated && vm.teamFuturesFailed,
+                                    signedInTeamFuturesLoading: authManager.isAuthenticated && vm.teamFuturesLoading
+                                )
+                            },
+                            onRetryTeamFutures: {
+                                if authManager.isAuthenticated {
+                                    if vm.items.isEmpty && vm.error != nil {
+                                        await vm.startLoad()
+                                    } else {
+                                        await vm.retryTeamFutures()
+                                    }
+                                } else {
+                                    await landingVM.refresh(
+                                        followedSubjects: followManager.subjects,
+                                        savedPins: pinManager.savedPins,
+                                        pinContent: pinContent.content,
+                                        signedInItems: [],
+                                        signedInTeamFutures: nil
+                                    )
+                                }
+                            },
+                            showsEarnedSignIn212A: !authManager.isAuthenticated,
+                            onAppleSignIn212A: { authManager.signInWithApple() },
+                            onGoogleSignIn212A: { authManager.signInWithGoogle() },
+                            showsChecklistBanner364A: true,
+                            onOpenChecklistRow364A: { checklistStepToOpen364A = $0 }
+                        )
+                        .task(id: authManager.activeFeedUserId) {
+                            guard authManager.isAuthenticated else { return }
+                            vm.viewDidStart()
+                            await vm.startLoad()
+                        }
+                        .task(id: landingRefreshKey295A) {
+                            await landingVM.refresh(
+                                followedSubjects: followManager.subjects,
+                                savedPins: pinManager.savedPins,
+                                pinContent: pinContent.content,
+                                signedInItems: authManager.isAuthenticated ? vm.items : [],
+                                signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil,
+                                signedInTeamFeedFailed: authManager.isAuthenticated && vm.error != nil,
+                                signedInTeamFuturesFailed: authManager.isAuthenticated && vm.teamFuturesFailed,
+                                signedInTeamFuturesLoading: authManager.isAuthenticated && vm.teamFuturesLoading
+                            )
+                        }
+                    } else if authManager.isLoading {
                         ProgressView()
                     } else if !authManager.isAuthenticated {
                         signInView
@@ -141,6 +259,13 @@ struct MyStuffView: View {
         .sheet(isPresented: $showPinManagement) {
             PinManagementView().environmentObject(pinManager)
         }
+        .sheet(item: $checklistStepToOpen364A) { row in
+            FirstRunChecklistRootView364A(initialStep: row)
+                .environmentObject(authManager)
+                .environmentObject(pinManager)
+                .environment(\.followManager295A, followManager)
+                .environment(\.firstRunChecklistStore364A, checklistStore)
+        }
         // #10011 — pinned content is read from the saved IDs themselves, so it
         // never depends on the team feed, onboarding or sign-in state.
         .task(id: pinManager.savedPins) { await pinContent.load(pinManager.savedPins) }
@@ -152,6 +277,15 @@ struct MyStuffView: View {
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
+            checklistStore.syncFollowCount(followManager.subjects.count)
+            checklistStore.syncAuthState(isAuthenticated: authManager.isAuthenticated)
+            checklistStore.syncAlertsState(isEnabled: GameAlertsPreference13083.shared.isEnabled)
+        }
+        .onChange(of: followManager.subjects.count) { _, newCount in
+            checklistStore.syncFollowCount(newCount)
+        }
+        .onChange(of: authManager.isAuthenticated) { _, authed in
+            checklistStore.syncAuthState(isAuthenticated: authed)
         }
         .task {
             predictionStats = try? await APIClient.shared.fetchPredictionStats()
@@ -210,8 +344,7 @@ struct MyStuffView: View {
                 pinnedStack
                     .padding(.top, 16)
                 VStack(spacing: 12) {
-                    Text("🍀")
-                        .font(.system(size: 48))
+                    BainLuckMarkView(size: 48)
                     // #6501: the headline is the loudest half of the pitch, and
                     // it led with the surface `ReleaseSurfaces` switched off.
                     // The two perks below that survive the flag are teams and
@@ -256,6 +389,7 @@ struct MyStuffView: View {
                         .background(.black)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                    .disabled(authManager.isSigningIn)
 
                     Button {
                         authManager.signInWithGoogle()
@@ -271,6 +405,7 @@ struct MyStuffView: View {
                         .background(Color(red: 0.26, green: 0.52, blue: 0.96))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                    .disabled(authManager.isSigningIn)
 
                     if let error = authManager.error {
                         Text(error)
@@ -395,11 +530,24 @@ struct MyStuffView: View {
             } else if vm.loading {
                 SkeletonFeedView()
             } else if let error = vm.error, vm.items.isEmpty {
-                ContentUnavailableView(
-                    "Couldn't Load Feed",
-                    systemImage: "wifi.exclamationmark",
-                    description: Text(error)
-                )
+                ContentUnavailableView {
+                    Label("Couldn't Load Feed", systemImage: "wifi.exclamationmark")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button {
+                        Task { await vm.startLoad() }
+                    } label: {
+                        Text("Try again")
+                            .fontWeight(.semibold)
+                            .frame(minHeight: 36)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("myStuff.retryRequiredFeed")
+                }
+                .noteReviewPromptTrouble12304()
+            } else if vm.items.isEmpty && (vm.teamFuturesFailed || vm.teamFuturesLoading) {
+                teamFuturesEmptyStateView
             } else if vm.items.isEmpty {
                 VStack(spacing: 16) {
                     Spacer()
@@ -463,11 +611,11 @@ struct MyStuffView: View {
     /// The Pinned section for a `List`: real cards first, then any pin whose
     /// content has not loaded, is gone, or failed — each still removable.
     @ViewBuilder
-    private var pinnedListSections: some View {
+    private func pinnedListSections(twoColumns: Bool) -> some View {
         let pinned = pinnedSection
         if !pinned.items.isEmpty {
             feedSection(title: "Pinned", systemImage: "bookmark.fill", imageColor: .orange,
-                        items: pinned.items, count: pinManager.savedPins.count)
+                        items: pinned.items, count: pinManager.savedPins.count, twoColumns: twoColumns)
         }
         if !pinned.fallbacks.isEmpty {
             Section {
@@ -526,6 +674,7 @@ struct MyStuffView: View {
                     Button("Retry") { Task { await pinContent.load(pinManager.savedPins, retryFailed: true) } }
                         .font(.caption)
                         .buttonStyle(.borderless)
+                        .noteReviewPromptTrouble12304()
                 default:
                     Text("Loading…").font(.caption).foregroundStyle(.secondary)
                 }
@@ -547,6 +696,38 @@ struct MyStuffView: View {
         .accessibilityIdentifier("pinnedFallback.\(pin.id)")
     }
 
+    @ViewBuilder
+    private var teamFuturesEmptyStateView: some View {
+        if vm.teamFuturesFailed {
+            ContentUnavailableView {
+                Label("Couldn't Load Your Teams' Futures", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text("Your teams are still saved. This part didn't load.")
+            } actions: {
+                Button {
+                    Task { await vm.retryTeamFutures() }
+                } label: {
+                    if vm.teamFuturesLoading {
+                        ProgressView()
+                            .frame(minHeight: 36)
+                    } else {
+                        Text("Try again")
+                            .fontWeight(.semibold)
+                            .frame(minHeight: 36)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(vm.teamFuturesLoading)
+                .accessibilityIdentifier("myStuff.retryTeamFutures")
+            }
+            .accessibilityIdentifier("myStuff.teamFuturesEmptyError")
+            .noteReviewPromptTrouble12304()
+        } else {
+            ProgressView("Loading your teams' futures…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     /// With pins on screen, an unloaded / failed / empty team feed is one row
     /// under them instead of a full-screen state that would hide them.
     @ViewBuilder
@@ -556,7 +737,49 @@ struct MyStuffView: View {
                 if vm.loading {
                     HStack(spacing: 8) { ProgressView(); Text("Loading your teams…").foregroundStyle(.secondary) }
                 } else if vm.error != nil {
-                    Text("Couldn't load your teams' games. Pull down to refresh.").foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        Text("Couldn't load your teams' games.")
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Button("Try again") {
+                            Task { await vm.startLoad() }
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("myStuff.retryStatusRowFeed")
+                    }
+                    .noteReviewPromptTrouble12304()
+                } else if vm.teamFuturesFailed {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Couldn't load your teams' futures")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Your teams are still saved. This part didn't load.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Button {
+                            Task { await vm.retryTeamFutures() }
+                        } label: {
+                            if vm.teamFuturesLoading {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text("Try again")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(vm.teamFuturesLoading)
+                        .accessibilityIdentifier("myStuff.retryStatusRowFutures")
+                    }
+                    .noteReviewPromptTrouble12304()
+                } else if vm.teamFuturesLoading {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading your teams' futures…")
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Text("Your teams don't have any games coming up.").foregroundStyle(.secondary)
                 }
@@ -564,137 +787,175 @@ struct MyStuffView: View {
         }
     }
 
+    private var teamFuturesErrorSection: some View {
+        Section {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Couldn't load your teams' futures")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Your teams are still saved. This part didn't load.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    Task { await vm.retryTeamFutures() }
+                } label: {
+                    if vm.teamFuturesLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Try again")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(vm.teamFuturesLoading)
+                .accessibilityIdentifier("myStuff.retrySectionFutures")
+            }
+            .noteReviewPromptTrouble12304()
+        } header: {
+            Label("Futures", systemImage: "trophy.fill")
+        }
+    }
+
 
     private var teamFeedList: some View {
-        List {
-            // #6445: the same unfinished experience Discover's challenge card
-            // and resolution digest promote. See `ReleaseSurfaces` — saved
-            // predictions and history are untouched, only this summary is.
-            if ReleaseSurfaces.predictionsExperienceEnabled,
-               let stats = predictionStats, stats.total > 0 {
-                Section {
-                    NavigationLink(value: Route.predictionStats) {
-                        HStack(spacing: 16) {
-                            VStack(spacing: 2) {
-                                Text("\(Int(stats.accuracy * 100))%")
-                                    .font(.title2.weight(.black).monospacedDigit())
-                                    .foregroundStyle(stats.accuracy >= 0.6 ? .green : stats.accuracy >= 0.45 ? .primary : .red)
-                                Text("Accuracy")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(width: 70)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 12) {
-                                    Label("\(stats.total) predictions", systemImage: "target")
-                                    if stats.currentStreak > 1 {
-                                        Label("\(stats.currentStreak) streak", systemImage: "flame.fill")
-                                            .foregroundStyle(.orange)
-                                    }
-                                }
-                                .font(.caption.weight(.semibold))
-
-                                if stats.bestStreak > 1 {
-                                    Text("Best streak: \(stats.bestStreak)")
+        GeometryReader { geo in
+            let innerWidth = RegularWidthTwoColumnGrid108.innerWidth(containerWidth: geo.size.width)
+            let twoColumns = RegularWidthTwoColumnGrid108.columnCount(
+                horizontalSizeClass: sizeClass,
+                dynamicTypeSize: dynamicTypeSize,
+                availableWidth: innerWidth
+            ) == 2
+            List {
+                // #6445: the same unfinished experience Discover's challenge card
+                // and resolution digest promote. See `ReleaseSurfaces` — saved
+                // predictions and history are untouched, only this summary is.
+                if ReleaseSurfaces.predictionsExperienceEnabled,
+                   let stats = predictionStats, stats.total > 0 {
+                    Section {
+                        NavigationLink(value: Route.predictionStats) {
+                            HStack(spacing: 16) {
+                                VStack(spacing: 2) {
+                                    Text("\(Int(stats.accuracy * 100))%")
+                                        .font(.title2.weight(.black).monospacedDigit())
+                                        .foregroundStyle(stats.accuracy >= 0.6 ? .green : stats.accuracy >= 0.45 ? .primary : .red)
+                                    Text("Accuracy")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
+                                .frame(width: 70)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 12) {
+                                        Label("\(stats.total) predictions", systemImage: "target")
+                                        if stats.currentStreak > 1 {
+                                            Label("\(stats.currentStreak) streak", systemImage: "flame.fill")
+                                                .foregroundStyle(.orange)
+                                        }
+                                    }
+                                    .font(.caption.weight(.semibold))
+
+                                    if stats.bestStreak > 1 {
+                                        Text("Best streak: \(stats.bestStreak)")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                Spacer()
                             }
-
-                            Spacer()
+                            .padding(.vertical, 4)
                         }
-                        .padding(.vertical, 4)
-                    }
-                } header: {
-                    Label("Predictions", systemImage: "chart.bar.fill")
-                }
-            }
-
-            pinnedListSections
-            teamFeedStatusRow
-            if !vm.liveNow.isEmpty {
-                // live/048 — the header reads the bucket. See `EventState`.
-                feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.liveNowHasSuspended), systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)
-            }
-            if !vm.justHappened.isEmpty {
-                feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: vm.justHappened)
-            }
-            if !vm.upcoming.isEmpty {
-                feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: vm.upcoming)
-            }
-            if !vm.topMarkets.isEmpty {
-                feedSection(title: "Your Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets)
-            }
-            if let futures = vm.teamFutures, !futures.items.isEmpty {
-                TeamFuturesSection(futures: futures, path: $path)
-            }
-
-            Section {
-                if authManager.isAdmin {
-                    NavigationLink(value: Route.discoverLabeling) {
-                        Label("Discover Labeling", systemImage: "tag.circle.fill")
+                    } header: {
+                        Label("Predictions", systemImage: "chart.bar.fill")
                     }
                 }
-                NavigationLink(value: Route.about) {
-                    Label("About Bain Luck", systemImage: "info.circle")
+
+                pinnedListSections(twoColumns: twoColumns)
+                teamFeedStatusRow
+                if !vm.liveNow.isEmpty {
+                    // live/048 — the header reads the bucket. See `EventState`.
+                    feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.liveNowHasSuspended), systemImage: "circle.fill", imageColor: .red, items: vm.liveNow, twoColumns: twoColumns)
+                }
+                if !vm.justHappened.isEmpty {
+                    feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: vm.justHappened, twoColumns: twoColumns)
+                }
+                if !vm.upcoming.isEmpty {
+                    feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: vm.upcoming, twoColumns: twoColumns)
+                }
+                if !vm.topMarkets.isEmpty {
+                    feedSection(title: "Your Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets, twoColumns: twoColumns)
+                }
+                if let futures = vm.teamFutures, !futures.items.isEmpty {
+                    TeamFuturesSection(futures: futures, path: $path, twoColumns: twoColumns)
+                } else if vm.teamFuturesFailed {
+                    teamFuturesErrorSection
+                }
+
+                Section {
+                    if authManager.isAdmin {
+                        NavigationLink(value: Route.discoverLabeling) {
+                            Label("Discover Labeling", systemImage: "tag.circle.fill")
+                        }
+                    }
+                    NavigationLink(value: Route.about) {
+                        Label("About Bain Luck", systemImage: "info.circle")
+                    }
                 }
             }
-        }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #endif
-        .refreshable {
-            async let pins: Void = pinContent.load(pinManager.savedPins, refresh: true)
-            await vm.startLoad()
-            await pins
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             #if os(iOS)
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            .listStyle(.insetGrouped)
             #endif
+            .refreshable {
+                async let pins: Void = pinContent.load(pinManager.savedPins, refresh: true)
+                await vm.startLoad()
+                await pins
+                #if os(iOS)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                #endif
+            }
+            .macReadingOffset(macPlace)
         }
-        .macReadingOffset(macPlace)
     }
 
     // MARK: - Section Builder
 
-    private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem], count: Int? = nil) -> some View {
+    private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem], count: Int? = nil, twoColumns: Bool = false) -> some View {
         Section {
             if sizeClass == .regular {
-                // iPad: multi-column masonry with context menu for pin.
-                //
-                // #3709 — this was a `LazyVGrid` over
-                // `GridItem(.adaptive(minimum: 340), spacing: 12)`, the same
-                // shape #3651 fixed in Discover, and it fails the same way:
-                // `LazyVGrid` lays out in ROWS and pads every cell to the
-                // tallest cell in its row. A My Stuff section mixes the tall
-                // `EventCardView` with the short `FuturesCardView` /
-                // `MyTeamFuturesCard` strip, so the pairs are exactly the ones
-                // that show it. The surplus lands as dead space BELOW the
-                // shorter card in its column — the cell content is top-aligned
-                // in the padded row and `.background` wraps the content, not
-                // the row frame, so the card does not stretch, the gap under it
-                // grows. Measured on the photographed sibling surface: 50 px of
-                // right-column gap against the left column's 28 px.
-                //
-                // `DiscoverMasonry` deals the cards into per-column stacks,
-                // which pack at exactly their spacing, so no cell is ever
-                // padded to a neighbour's height. At one column that is one
-                // stack in the order the view model served — but the phone
-                // never reaches this branch at all (`sizeClass == .regular`).
-                //
-                // `VStack`, not `LazyVStack`: this whole grid is a single
-                // `List` row, so the List has already sized it and there is
-                // nothing left to be lazy about. A My Stuff section is a
-                // handful of items, not Discover's paged hundreds.
-                let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+                let detectedColumns = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+                let columnCount = (dynamicTypeSize.isAccessibilitySize || !twoColumns)
+                    ? 1
+                    : min(2, detectedColumns)
                 let masonryColumns = DiscoverMasonry.columns(
                     cardCount: items.count,
                     columnCount: columnCount
                 )
-                HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
-                    ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
+                let rankOrder = (0..<(masonryColumns.map(\.count).max() ?? 0)).flatMap { row in
+                    masonryColumns.compactMap { row < $0.count ? $0[row] : nil }
+                }
+                Group {
+                    if columnCount == 2 {
+                        // Regular width >= 700 pt inner, non-AX: lay out cards round-robin in two
+                        // top-aligned columns while keeping source rank order for VoiceOver.
+                        TwoColumnMasonryLayout108(spacing: DiscoverMasonry.listCardSpacing) {
+                            ForEach(Array(rankOrder.enumerated()), id: \.element) { rank, idx in
+                                feedRow(items[idx])
+                                    .padding(12)
+                                    .background(Color.cardBackgroundDark)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .contextMenu { pinContextMenu(items[idx]) }
+                                    .onAppear { emitMyStuffFirstRenderIfNeeded() }
+                                    .accessibilitySortPriority(RegularWidthTwoColumnGrid108.sortPriority(index: rank))
+                            }
+                        }
+                    } else {
                         VStack(spacing: DiscoverMasonry.listCardSpacing) {
-                            ForEach(indices, id: \.self) { idx in
+                            ForEach(rankOrder, id: \.self) { idx in
                                 feedRow(items[idx])
                                     .padding(12)
                                     .background(Color.cardBackgroundDark)
@@ -706,11 +967,6 @@ struct MyStuffView: View {
                         .frame(maxWidth: .infinity)
                     }
                 }
-                // The card area's own width, which is what decides the column
-                // count. Read from a `.background` so it cannot influence the
-                // layout it measures; there is no feedback loop, because this
-                // width comes from the enclosing List row and not from the
-                // cards, so `columnCount` never changes it.
                 .background(
                     GeometryReader { geo in
                         Color.clear
@@ -721,9 +977,12 @@ struct MyStuffView: View {
                     }
                 )
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             } else {
                 ForEach(items) { item in
                     feedRow(item)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             pinSwipeButton(item)
                         }
@@ -797,7 +1056,9 @@ struct MyStuffView: View {
     // MARK: - Context Menu Pin (iPad)
 
     static func eventCopyProbabilityText(_ event: FeedEventData) -> String? {
-        guard let probability = CompactGameCard12616.currentOddsForCard(event)?.homeProbability else {
+        guard !EventState.isFinished(event.status),
+              event.heroProbabilitySource != "settled",
+              let probability = CompactGameCard12616.currentOddsForCard(event)?.homeProbability else {
             return nil
         }
         return "\(event.homeTeam): \(Int(probability * 100))%"
@@ -891,9 +1152,9 @@ enum MyStuffTeamTextColour {
     /// it is standing in for.
     static let fallbackHex = "#6b7280"
 
-    /// The team's colour when it is readable, otherwise the row's own default.
-    static func probabilityHex(_ primaryColor: String?) -> String {
-        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    /// The team's colour when it is readable against the active card surface.
+    static func probabilityHex(_ primaryColor: String?, colorScheme: ColorScheme = .light) -> String {
+        TeamTextContrast.textHexOnSurface(primaryColor, fallback: fallbackHex, colorScheme: colorScheme)
     }
 
     /// #7036, fourth arm — the crest circle beside those same rows, and on the
@@ -913,8 +1174,8 @@ enum MyStuffTeamTextColour {
     ///
     /// Same rule and same default as `probabilityHex`, named separately so the
     /// wiring test can anchor on the site rather than on the rule.
-    static func logoTintHex(_ primaryColor: String?) -> String {
-        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    static func logoTintHex(_ primaryColor: String?, colorScheme: ColorScheme = .light) -> String {
+        TeamTextContrast.textHexOnSurface(primaryColor, fallback: fallbackHex, colorScheme: colorScheme)
     }
 
     /// #7036, sixth arm — the playoff-journey card's probability CAPSULE.
@@ -954,8 +1215,8 @@ enum MyStuffTeamTextColour {
     ///
     /// Falls back to `fallbackHex`, so a floored club's bar is drawn exactly as a
     /// club with no stored colour has always drawn it.
-    static func progressFillHex(_ primaryColor: String?) -> String {
-        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    static func progressFillHex(_ primaryColor: String?, colorScheme: ColorScheme = .light) -> String {
+        TeamTextContrast.textHexOnSurface(primaryColor, fallback: fallbackHex, colorScheme: colorScheme)
     }
 
     /// #7036, sixth arm — the journey card's 3pt leading stripe, which is the
@@ -1215,30 +1476,55 @@ private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [
 private struct PlayoffJourneyCard: View {
     private let journey: PlayoffJourney
     private let onStageTap: (Int) -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     init(journey: PlayoffJourney, onStageTap: @escaping (Int) -> Void) {
         self.journey = journey
         self.onStageTap = onStageTap
     }
 
+    private var isAX: Bool { dynamicTypeSize.isAccessibilitySize }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Header: logo + name + PLAYOFFS label
-            HStack(spacing: 8) {
-                TeamLogoView(
-                    url: journey.teamLogo,
-                    teamName: journey.teamName,
-                    color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor)),
-                    size: 28
-                )
-                Text(journey.teamName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                Spacer()
-                Text("PLAYOFFS")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+            if isAX {
+                HStack(alignment: .top, spacing: 8) {
+                    TeamLogoView(
+                        url: journey.teamLogo,
+                        teamName: journey.teamName,
+                        color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor, colorScheme: colorScheme)),
+                        size: 28
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(journey.teamName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("PLAYOFFS")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    TeamLogoView(
+                        url: journey.teamLogo,
+                        teamName: journey.teamName,
+                        color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor, colorScheme: colorScheme)),
+                        size: 28
+                    )
+                    Text(journey.teamName)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("PLAYOFFS")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             // Stage rows
@@ -1249,46 +1535,87 @@ private struct PlayoffJourneyCard: View {
                 Button {
                     onStageTap(stage.merged.primary.marketId)
                 } label: {
-                    HStack(spacing: 6) {
-                        // Status dot
-                        Circle()
-                            .fill(achieved ? Color.green : Color.secondary.opacity(0.3))
-                            .frame(width: 7, height: 7)
-
-                        // Stage label
-                        Text(stage.label)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        // Probability bar
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule()
-                                    .fill(Color.secondary.opacity(0.15))
-                                Capsule()
-                                    .fill(achieved
-                                          ? Color.green
-                                          : Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor)).opacity(0.5))
-                                    .frame(width: geo.size.width * min(prob, 1.0))
+                    if isAX {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Circle()
+                                    .fill(achieved ? Color.green : Color.secondary.opacity(0.3))
+                                    .frame(width: 7, height: 7)
+                                Text(stage.label)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(achieved ? "done" : formatProbability(prob))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(probTextColor(prob, achieved: achieved))
+                            }
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.secondary.opacity(0.15))
+                                    Capsule()
+                                        .fill(achieved
+                                              ? Color.green
+                                              : Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor, colorScheme: colorScheme)).opacity(0.65))
+                                        .frame(width: geo.size.width * min(prob, 1.0))
+                                }
+                            }
+                            .frame(height: 5)
+                            if stage.merged.sources.count > 1 {
+                                HStack(spacing: 3) {
+                                    ForEach(stage.merged.sources, id: \.source) { s in
+                                        Circle()
+                                            .fill(sourceColors[s.source] ?? .gray)
+                                            .frame(width: 4, height: 4)
+                                    }
+                                }
                             }
                         }
-                        .frame(width: 40, height: 4)
+                        .padding(.vertical, 2)
+                    } else {
+                        HStack(spacing: 6) {
+                            // Status dot
+                            Circle()
+                                .fill(achieved ? Color.green : Color.secondary.opacity(0.3))
+                                .frame(width: 7, height: 7)
 
-                        // Probability value
-                        Text(achieved ? "done" : formatProbability(prob))
-                            .font(.system(.caption, design: .monospaced))
-                            .fontWeight(.medium)
-                            .foregroundStyle(probTextColor(prob, achieved: achieved))
-                            .frame(minWidth: 34, alignment: .trailing)
+                            // Stage label
+                            Text(stage.label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
 
-                        // Source dots
-                        if stage.merged.sources.count > 1 {
-                            HStack(spacing: 2) {
-                                ForEach(stage.merged.sources, id: \.source) { s in
-                                    Circle()
-                                        .fill(sourceColors[s.source] ?? .gray)
-                                        .frame(width: 4, height: 4)
+                            // Probability bar
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.secondary.opacity(0.15))
+                                    Capsule()
+                                        .fill(achieved
+                                              ? Color.green
+                                              : Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor, colorScheme: colorScheme)).opacity(0.5))
+                                        .frame(width: geo.size.width * min(prob, 1.0))
+                                }
+                            }
+                            .frame(width: 40, height: 4)
+
+                            // Probability value
+                            Text(achieved ? "done" : formatProbability(prob))
+                                .font(.system(.caption, design: .monospaced))
+                                .fontWeight(.medium)
+                                .foregroundStyle(probTextColor(prob, achieved: achieved))
+                                .frame(minWidth: 34, alignment: .trailing)
+
+                            // Source dots
+                            if stage.merged.sources.count > 1 {
+                                HStack(spacing: 2) {
+                                    ForEach(stage.merged.sources, id: \.source) { s in
+                                        Circle()
+                                            .fill(sourceColors[s.source] ?? .gray)
+                                            .frame(width: 4, height: 4)
+                                    }
                                 }
                             }
                         }
@@ -1323,13 +1650,17 @@ private struct PlayoffJourneyCard: View {
 private struct TeamFuturesSection: View {
     private let futures: TeamFuturesResponse
     @Binding private var path: NavigationPath
+    private let twoColumns: Bool
     @State private var expanded = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     private static let initialShow = 8
 
-    init(futures: TeamFuturesResponse, path: Binding<NavigationPath>) {
+    init(futures: TeamFuturesResponse, path: Binding<NavigationPath>, twoColumns: Bool = false) {
         self.futures = futures
         self._path = path
+        self.twoColumns = twoColumns
     }
 
     private var processed: (journeys: [PlayoffJourney], awards: [MergedTeamFuture], other: [MergedTeamFuture]) {
@@ -1367,11 +1698,25 @@ private struct TeamFuturesSection: View {
         Section {
             // Progression ladder cards
             if !data.journeys.isEmpty {
-                ForEach(data.journeys) { journey in
-                    PlayoffJourneyCard(journey: journey) { marketId in
-                        path.append(Route.futuresDetail(id: marketId))
+                if twoColumns && data.journeys.count >= 2 {
+                    TwoColumnMasonryLayout108 {
+                        ForEach(Array(data.journeys.enumerated()), id: \.element.id) { index, journey in
+                            PlayoffJourneyCard(journey: journey) { marketId in
+                                path.append(Route.futuresDetail(id: marketId))
+                            }
+                            .accessibilitySortPriority(RegularWidthTwoColumnGrid108.sortPriority(index: index))
+                        }
                     }
                     .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                } else {
+                    ForEach(data.journeys) { journey in
+                        PlayoffJourneyCard(journey: journey) { marketId in
+                            path.append(Route.futuresDetail(id: marketId))
+                        }
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    }
                 }
             }
 
@@ -1447,70 +1792,144 @@ private struct TeamFuturesSection: View {
         let isMultiSource = merged.sources.count > 1
         let displayProb = isMultiSource ? merged.avgProbability : merged.primary.probability
         let item = merged.primary
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        let probHex = MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)
+        let logoHex = MyStuffTeamTextColour.logoTintHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)
 
-        return HStack(spacing: 10) {
-            // Team logo
-            TeamLogoView(
-                url: item.matchedTeam?.logoSmall,
-                teamName: item.matchedTeam?.name ?? "",
-                color: Color(hex: MyStuffTeamTextColour.logoTintHex(item.matchedTeam?.primaryColor)),
-                size: 28
-            )
+        return Group {
+            if isAX {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: 10) {
+                        TeamLogoView(
+                            url: item.matchedTeam?.logoSmall,
+                            teamName: item.matchedTeam?.name ?? "",
+                            color: Color(hex: logoHex),
+                            size: 28
+                        )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.outcomeName)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(cleanMarketName(item.marketName))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if isMultiSource {
+                                HStack(spacing: 3) {
+                                    ForEach(merged.sources, id: \.source) { s in
+                                        Circle()
+                                            .fill(sourceColors[s.source] ?? .gray)
+                                            .frame(width: 4, height: 4)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
-            // Name + market + source dots
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.outcomeName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                Text(cleanMarketName(item.marketName))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if isMultiSource {
-                    HStack(spacing: 3) {
-                        ForEach(merged.sources, id: \.source) { s in
-                            Circle()
-                                .fill(sourceColors[s.source] ?? .gray)
-                                .frame(width: 4, height: 4)
+                    HStack(spacing: 8) {
+                        if let change = merged.bestChange, abs(change) >= 0.001 {
+                            let isUp = change > 0
+                            Text("\(isUp ? "↑" : "↓")\(String(format: "%.1f", abs(change * 100)))%")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(isUp ? .green : .red)
+                        }
+                        Spacer(minLength: 0)
+                        if isMultiSource {
+                            Text(displayProb.map { formatProbability($0) } ?? "—")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
+                                .foregroundStyle(Color(hex: probHex))
+                        } else if let prob = displayProb {
+                            HStack(spacing: 4) {
+                                Text(formatProbability(prob))
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                                    .foregroundStyle(Color(hex: probHex))
+                                if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, subtitle: cleanMarketName(item.marketName), numberSize: 15, compactRow: true) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
                         }
                     }
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 4)
+            } else {
+                HStack(spacing: 10) {
+                    // Team logo
+                    TeamLogoView(
+                        url: item.matchedTeam?.logoSmall,
+                        teamName: item.matchedTeam?.name ?? "",
+                        color: Color(hex: logoHex),
+                        size: 28
+                    )
 
-            // 24h change
-            if let change = merged.bestChange, abs(change) >= 0.001 {
-                let isUp = change > 0
-                Text("\(isUp ? "↑" : "↓")\(String(format: "%.1f", abs(change * 100)))%")
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(isUp ? .green : .red)
-                    .lineLimit(1)
-            }
+                    // Name + market + source dots
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.outcomeName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                        Text(cleanMarketName(item.marketName))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if isMultiSource {
+                            HStack(spacing: 3) {
+                                ForEach(merged.sources, id: \.source) { s in
+                                    Circle()
+                                        .fill(sourceColors[s.source] ?? .gray)
+                                        .frame(width: 4, height: 4)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Probability
-            if isMultiSource {
-                Text(displayProb.map { formatProbability($0) } ?? "—")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
-                    .lineLimit(1)
-                    .frame(minWidth: 44, alignment: .trailing)
-            } else if let prob = displayProb {
-                Text(formatProbability(prob))
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
-                    .lineLimit(1)
-                    .frame(minWidth: 44, alignment: .trailing)
+                    // 24h change
+                    if let change = merged.bestChange, abs(change) >= 0.001 {
+                        let isUp = change > 0
+                        Text("\(isUp ? "↑" : "↓")\(String(format: "%.1f", abs(change * 100)))%")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(isUp ? .green : .red)
+                            .lineLimit(1)
+                    }
+
+                    // Probability
+                    if isMultiSource {
+                        Text(displayProb.map { formatProbability($0) } ?? "—")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .monospacedDigit()
+                            .foregroundStyle(Color(hex: probHex))
+                            .lineLimit(1)
+                            .frame(minWidth: 44, alignment: .trailing)
+                    } else if let prob = displayProb {
+                        HStack(spacing: 4) {
+                            Text(formatProbability(prob))
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
+                                .foregroundStyle(Color(hex: probHex))
+                                .lineLimit(1)
+                            if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, subtitle: cleanMarketName(item.marketName), numberSize: 15, compactRow: true) {
+                                mark.buttonStyle(.borderless)
+                            }
+                        }
+                        .frame(minWidth: 44, alignment: .trailing)
+                    }
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 4)
             }
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 4)
     }
 
     private func cleanMarketName(_ name: String) -> String {
@@ -1533,6 +1952,7 @@ private struct TeamFuturesSection: View {
 struct MyTeamFuturesCard: View {
     private let futures: FeedFuturesData
     private let matchedOutcomes: [MatchedOutcome]
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     init(futures: FeedFuturesData, matchedOutcomes: [MatchedOutcome]) {
         self.futures = futures
@@ -1540,7 +1960,9 @@ struct MyTeamFuturesCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        let hasAnySourceMark = futures.hasDrawableSourceMark || matchedOutcomes.contains(where: { $0.sourceMark?.draws == true })
+        return VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
                 // #5723: the shared rule, not `.capitalized` — same form as
@@ -1551,7 +1973,8 @@ struct MyTeamFuturesCard: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 PinButton(type: "future", id: futures.id, compact: true)
-                if let source = SourceLabels.cardFaceLabel(
+                if !hasAnySourceMark,
+                   let source = SourceLabels.cardFaceLabel(
                     for: futures.source,
                     sources: futures.sources,
                     sourceCount: futures.sourceCount
@@ -1566,39 +1989,70 @@ struct MyTeamFuturesCard: View {
             Text(futures.name)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .lineLimit(4)
+                .lineLimit(isAX ? nil : 4)
                 .fixedSize(horizontal: false, vertical: true)
 
             // User's matched team outcomes — shown prominently
             ForEach(matchedOutcomes) { outcome in
-                HStack(spacing: 8) {
-                    if let rank = outcome.rank {
-                        Text("#\(rank)")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.blue)
-                            .frame(width: 24, alignment: .trailing)
-                    }
-                    Text(outcome.name)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                    Spacer()
-                    if let m = outcome.movement, abs(m) >= 0.005 {
-                        HStack(spacing: 1) {
-                            Image(systemName: m > 0 ? "arrow.up" : "arrow.down")
-                                .font(.system(size: 8))
-                            Text(formatProbability(abs(m)))
-                                .font(.system(size: 9))
+                let rowLayout = isAX
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(spacing: 8))
+                rowLayout {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        if let rank = outcome.rank {
+                            Text("#\(rank)")
+                                .font(isAX ? .caption.weight(.semibold) : .system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.blue)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
-                        .foregroundStyle(m > 0 ? .green : .red)
-                    }
-                    if let prob = outcome.probability {
-                        Text(formatProbability(prob))
+                        Text(outcome.name)
                             .font(.subheadline)
-                            .fontWeight(.bold)
-                            .monospacedDigit()
+                            .fontWeight(.medium)
+                            .lineLimit(isAX ? nil : 1)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !isAX {
+                        Spacer()
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if let m = outcome.movement, abs(m) >= 0.005 {
+                            HStack(spacing: 1) {
+                                Image(systemName: m > 0 ? "arrow.up" : "arrow.down")
+                                    .font(.system(size: 8))
+                                Text(formatProbability(abs(m)))
+                                    .font(isAX ? .caption2 : .system(size: 9))
+                            }
+                            .foregroundStyle(m > 0 ? .green : .red)
+                            .fixedSize(horizontal: true, vertical: false)
+                        }
+                        if let prob = outcome.probability {
+                            let resolvedMark = outcome.sourceMark
+                                ?? futures.resolvedSourceMark(
+                                    for: futures.topOutcomes?.first(where: { $0.name == outcome.name })
+                                )
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text(formatProbability(prob))
+                                    .font(.subheadline)
+                                    .fontWeight(.bold)
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                if let mark = SourceMarkButton(
+                                    resolvedMark,
+                                    number: prob,
+                                    subject: outcome.name,
+                                    subtitle: futures.name,
+                                    numberSize: 15,
+                                    compactRow: true
+                                ) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
                 .padding(.horizontal, 8)
                 .background(Color.blue.opacity(0.06))
@@ -1608,20 +2062,64 @@ struct MyTeamFuturesCard: View {
             // Show the market leader for context (if different from matched)
             if let leader = futures.topOutcomes?.first,
                !matchedOutcomes.contains(where: { $0.name == leader.name }) {
-                HStack(spacing: 8) {
-                    Text("Leader:")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Text(leader.name)
-                        .font(.caption)
-                        .lineLimit(1)
-                    Spacer()
-                    if let prob = leader.probability {
-                        Text(formatProbability(prob))
+                let leaderMark = futures.resolvedSourceMark(for: leader)
+                if isAX {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Leader: \(leader.name)")
                             .font(.caption)
-                            .fontWeight(.semibold)
-                            .monospacedDigit()
                             .foregroundStyle(.secondary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let prob = leader.probability {
+                            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                Text(formatProbability(prob))
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                if let mark = SourceMarkButton(
+                                    leaderMark,
+                                    number: prob,
+                                    subject: leader.name,
+                                    subtitle: futures.name,
+                                    numberSize: 12,
+                                    compactRow: true
+                                ) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        Text("Leader:")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Text(leader.name)
+                            .font(.caption)
+                            .lineLimit(1)
+                        Spacer()
+                        if let prob = leader.probability {
+                            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                Text(formatProbability(prob))
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                if let mark = SourceMarkButton(
+                                    leaderMark,
+                                    number: prob,
+                                    subject: leader.name,
+                                    subtitle: futures.name,
+                                    numberSize: 12,
+                                    compactRow: true
+                                ) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
+                        }
                     }
                 }
             }

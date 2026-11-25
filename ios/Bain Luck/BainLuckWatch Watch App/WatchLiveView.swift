@@ -89,9 +89,11 @@ struct WatchLiveView: View {
                         Text("\(score)")
                             .font(.system(size: 24, weight: .heavy, design: .rounded))
                     }
-                    Text("\(game.awayProb)%")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color(hex: game.awayColor ?? "#888"))
+                    if let chance = game.awayProb {
+                        Text("\(chance)%")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color(hex: game.awayColor ?? "#888"))
+                    }
                 }
                 .frame(maxWidth: .infinity)
 
@@ -108,23 +110,33 @@ struct WatchLiveView: View {
                         Text("\(score)")
                             .font(.system(size: 24, weight: .heavy, design: .rounded))
                     }
-                    Text("\(game.homeProb)%")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color(hex: game.homeColor ?? "#888"))
+                    if let chance = game.homeProb {
+                        Text("\(chance)%")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color(hex: game.homeColor ?? "#888"))
+                    }
                 }
                 .frame(maxWidth: .infinity)
             }
 
-            GeometryReader { geo in
-                HStack(spacing: 1) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(hex: game.awayColor ?? "#888"))
-                        .frame(width: geo.size.width * CGFloat(game.awayProb) / 100)
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(hex: game.homeColor ?? "#888"))
+            if let awayChance = game.awayProb {
+                GeometryReader { geo in
+                    HStack(spacing: 1) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color(hex: game.awayColor ?? "#888"))
+                            .frame(width: geo.size.width * CGFloat(awayChance) / 100)
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color(hex: game.homeColor ?? "#888"))
+                    }
                 }
+                .frame(height: 4)
+            } else {
+                Text("Win chance unavailable")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
-            .frame(height: 4)
         }
         .padding(8)
         .background(Color.white.opacity(0.05))
@@ -136,8 +148,8 @@ struct WatchLiveGame: Identifiable {
     let id: Int
     let homeAbbrev: String
     let awayAbbrev: String
-    let homeProb: Int
-    let awayProb: Int
+    let homeProb: Int?
+    let awayProb: Int?
     let homeScore: Int?
     let awayScore: Int?
     let homeColor: String?
@@ -161,11 +173,11 @@ final class WatchLiveViewModel: ObservableObject {
         do {
             let feed = try await WatchAPIClient.shared.fetchFeed(limit: 8, forceRefresh: force)
             let newGames = feed.items.compactMap { item -> WatchLiveGame? in
-                guard let e = item.event, e.status == "live",
-                      let homeProb = e.currentOdds?.homeProbability else { return nil }
+                guard let e = item.event, e.isLive, !e.isSettled,
+                      e.currentOdds?.homeProbability != nil else { return nil }
+                let homeProb = e.currentHomeProbability
                 let homeTeam = e.homeTeam ?? "Home"
                 let awayTeam = e.awayTeam ?? "Away"
-                let awayProb = 1.0 - homeProb
                 let abbrevs = TeamShortName.abbreviationPair(
                     away: awayTeam,
                     home: homeTeam,
@@ -182,8 +194,8 @@ final class WatchLiveViewModel: ObservableObject {
                     id: e.id,
                     homeAbbrev: homeAbbrev,
                     awayAbbrev: awayAbbrev,
-                    homeProb: Int((homeProb * 100).rounded()),
-                    awayProb: Int((awayProb * 100).rounded()),
+                    homeProb: homeProb.map { Int(($0 * 100).rounded()) },
+                    awayProb: homeProb.map { Int(((1.0 - $0) * 100).rounded()) },
                     homeScore: e.homeScore,
                     awayScore: e.awayScore,
                     homeColor: e.homeTeamData?.primaryColor,

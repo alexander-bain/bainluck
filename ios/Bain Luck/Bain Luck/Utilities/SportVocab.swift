@@ -97,10 +97,16 @@ struct SportVocab: Equatable {
     /// priced 55% pregame) served ±1.5 / 2.5 from all nineteen sportsbooks, so
     /// the projected line read "Rangers by 1.5" for a coin flip.
     ///
-    /// `false` withholds the projected line; the played-score line is
-    /// untouched. Only baseball says `false`. Hockey's puck line has the same
-    /// shape but no page specimen yet, and web left its row `true` — this row
-    /// follows web, not a guess.
+    /// `false` withholds the sportsbooks' projected line; the played-score line
+    /// is untouched. Baseball (#8617) and hockey (#13007) say `false`: hockey's
+    /// puck line is pinned at ±1.5 goals whatever the price (`/events/15350374`
+    /// Avalanche @ Mammoth opened 50.9% / 49.1% with 17 books solving 6.5 total
+    /// + puck line to 3.8–2.7, and web's `projectedFinalPair.ts:156-158` cites
+    /// NHL `15333056` / `15332424` and AHL `15327140`). Note: web's
+    /// `marketMapUtils.ts:1799` intentionally stays `true` in 1.0.7 because
+    /// `eventPageProjectedPair` (`projectedFinalPair.ts:402`) relies on
+    /// `sportsbookProjectionDrawable && projectedFinalFormat === null` to
+    /// suppress hockey pregame ladders on web until Ruling 266: A (1.0.8).
     let sportsbookSpreadIsAMargin: Bool
     /// Can a game in this sport END level? (#8156 on web, #9496 here)
     ///
@@ -161,7 +167,10 @@ extension SportVocab {
             // A regular-season game that is level after overtime is decided by
             // a shootout, so the winner market has two outcomes.
             winnerMarketPricesADraw: false,
-            sportsbookSpreadIsAMargin: true,
+            // #13007: Hockey's sportsbook puck line is pinned at ±1.5 goals
+            // regardless of price (`/events/15350374`, `15333056`, `15332424`),
+            // matching baseball's run line (#8617).
+            sportsbookSpreadIsAMargin: false,
             canEndInATie: false)),
         (["soccer", "mls", "epl", "uefa", "fifa"], SportVocab(
             marginTitle: "Goal margin map", totalTitle: "Goals map",
@@ -522,5 +531,67 @@ extension SportVocab {
         return "Played \(unit) are not captured yet — the scoreboard reports "
             + "\(scoreboardUnit). The line below is the sportsbooks' projected "
             + "\(unitSingular) margin."
+    }
+}
+
+/// Ruling 240: A (#12992) — Never two winners on one card.
+/// Shared across the app, Widget, and Watch targets via `SportVocab.swift`,
+/// matching `projectedPairConflictsWithChance` in `frontend/lib/projectedFinalPair.ts`
+/// gate for gate:
+///   1. A level printed pair never conflicts (`|home - away| <= 1e-9`).
+///   2. A chance of exactly 50% (or equal two-team win shares in a 3-way market)
+///      never conflicts.
+///   3. When the printed projected pair has one team ahead and the card's chance
+///      favours the other team, `conflicts(...)` returns `true` so the surface
+///      shows the chance only.
+enum ProjectedFinalChanceGuard240A {
+    nonisolated static let tieEpsilon: Double = 1e-9
+
+    nonisolated static func conflicts(
+        projectedHome: Double,
+        projectedAway: Double,
+        homeChance: Double?,
+        awayChance: Double?,
+        sportKey: String?
+    ) -> Bool {
+        guard projectedHome.isFinite, projectedAway.isFinite else { return false }
+        if abs(projectedHome - projectedAway) <= tieEpsilon { return false }
+
+        let pricesADraw = SportVocab.forSport(sportKey).winnerMarketPricesADraw
+        let validHome: Double? = {
+            guard let h = homeChance, h.isFinite, h > 0, h < 1 else { return nil }
+            return h
+        }()
+        let validAway: Double? = {
+            guard let a = awayChance, a.isFinite, a > 0, a < 1 else { return nil }
+            return a
+        }()
+
+        if let vh = validHome, let va = validAway {
+            if abs(vh - va) <= tieEpsilon { return false }
+            let chanceFavoursHome = vh > va
+            let pairFavoursHome = projectedHome > projectedAway
+            return chanceFavoursHome != pairFavoursHome
+        }
+
+        if !pricesADraw, let vh = validHome {
+            if abs(vh - 0.5) <= tieEpsilon { return false }
+            let chanceFavoursHome = vh > 0.5
+            let pairFavoursHome = projectedHome > projectedAway
+            return chanceFavoursHome != pairFavoursHome
+        }
+
+        if !pricesADraw, let va = validAway {
+            if abs(va - 0.5) <= tieEpsilon { return false }
+            let chanceFavoursHome = va < 0.5
+            let pairFavoursHome = projectedHome > projectedAway
+            return chanceFavoursHome != pairFavoursHome
+        }
+
+        if pricesADraw, let vh = validHome, vh > 0.5 + tieEpsilon {
+            return projectedAway > projectedHome
+        }
+
+        return false
     }
 }

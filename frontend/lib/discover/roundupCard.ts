@@ -79,6 +79,15 @@ export type RoundupRefusal =
 const isPositiveInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
 const text = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
+/** Shorten "Sat Nov 21" -> "Sat 21" so 3-box strip cards never truncate dates at 288 px (#13189). */
+export function compactStripDateLabel(raw: string | null | undefined): string {
+  const s = text(raw);
+  if (!s) return "";
+  const m = s.match(/^([A-Za-z]{3})\s+[A-Za-z]{3,9}\s+(\d{1,2})$/);
+  if (m) return `${m[1]} ${m[2]}`;
+  return s;
+}
+
 export function buildRoundupCardModel(
   title: string | null | undefined,
   contract: FeedRoundupContract | null | undefined,
@@ -175,15 +184,12 @@ export function buildRoundupCardModel(
 
   const rows: RoundupRowModel[] = readable.map(({ row, rowId, kind, cadence, label }, i) => {
     const parts = probabilityParts(row.probability, {
-      rendered: typeof row.rendered_percent === "number" ? row.rendered_percent : undefined,
+      rendered: row.unfloored_percent ?? row.rendered_percent,
     });
     let secondary: RoundupSecondaryBarModel | null = null;
     if (typeof row.secondary_probability === "number") {
       const secParts = probabilityParts(row.secondary_probability, {
-        rendered:
-          typeof row.secondary_rendered_percent === "number"
-            ? row.secondary_rendered_percent
-            : undefined,
+        rendered: row.secondary_unfloored_percent ?? row.secondary_rendered_percent,
       });
       secondary = {
         marker: secParts.marker,

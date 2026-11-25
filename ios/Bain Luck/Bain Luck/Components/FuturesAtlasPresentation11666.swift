@@ -76,6 +76,7 @@ enum FuturesAtlasPresentation11666 {
         case noRecentProbability(lastRecordedText: String?)
         case won
         case lost
+        case out
         case resultUnconfirmed(lastRecordedText: String?)
 
         var primaryLabel: String {
@@ -88,6 +89,8 @@ enum FuturesAtlasPresentation11666 {
                 return EventAtlasStates11666.wonWithCheck
             case .lost:
                 return EventAtlasStates11666.lostWithCross
+            case .out:
+                return "Out"
             case .resultUnconfirmed:
                 return EventAtlasStates11666.resultNotConfirmed
             }
@@ -418,6 +421,7 @@ enum FuturesAtlasPresentation11666 {
             leaderOutcomeId = orderedOutcomes.first?.id
         case .twoWayDuel, .mutuallyExclusiveField, .participationField:
             orderedOutcomes = market.outcomes.sorted { a, b in
+                if (a.isOut == true) != (b.isOut == true) { return a.isOut != true }
                 let lhs = a.probability ?? -1
                 let rhs = b.probability ?? -1
                 if lhs != rhs { return lhs > rhs }
@@ -464,6 +468,7 @@ enum FuturesAtlasPresentation11666 {
         now: Date,
         timeZone: TimeZone
     ) -> RowDisplayValue {
+        if outcome.isOut == true { return .out }
         let rowValue = FuturesDetailRowValue.of(
             outcome,
             marketStatus: market.status,
@@ -781,9 +786,10 @@ enum FuturesAtlasPresentation11666 {
         let selectedOutcome = market.outcomes.first(where: { $0.id == presentation.header.selectedOutcomeId })
             ?? futuresDetailHeroOutcome(market)
         let effectiveProbability: Double?
-        if case .noRecentProbability = presentation.header.primaryDisplay {
+        switch presentation.header.primaryDisplay {
+        case .noRecentProbability, .out:
             effectiveProbability = nil
-        } else {
+        default:
             effectiveProbability = selectedOutcome?.probability
         }
         return VerifiedTitleChartExpectation(
@@ -969,10 +975,12 @@ struct FuturesAtlasPageView11666: View {
     var referenceNow: Date? = nil
 
     @State private var selectedOutcomeId: Int? = nil
+    @State private var loadedTimelineOutcomes: [TimelineOutcomeMeta]? = nil
     @State private var showDetailsSheet = false
     @State private var showFullFieldSheet = false
 
     var body: some View {
+        let effectiveTimelineOutcomes = preloadedTimeline?.outcomes ?? loadedTimelineOutcomes
         let presentation = FuturesAtlasPresentation11666.build(
             market: market,
             selectedOutcomeId: selectedOutcomeId,
@@ -991,11 +999,17 @@ struct FuturesAtlasPageView11666: View {
                 headlineRows: headlineRows,
                 allFieldLabel: allFieldLabel,
                 isNumericallyOrdered: presentation.body.shape.isNumericallyOrdered,
-                timelineOutcomes: preloadedTimeline?.outcomes,
+                timelineOutcomes: effectiveTimelineOutcomes,
                 onOpenDetails: { showDetailsSheet = true },
                 onOpenFullField: { showFullFieldSheet = true }
             )
             .contextualTipHero10876(type: "future", id: marketId, scrollSpace: FuturesDetailView.scrollSpace)
+
+            if market.outcomePricesAreIndependent == true {
+                Text("Each row is its own market.")
+                    .font(.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+            }
 
             if let pairedSet = pairedMetricSet, !pairedSet.entries.isEmpty {
                 DiscoverPairedMetricCardView(
@@ -1038,7 +1052,10 @@ struct FuturesAtlasPageView11666: View {
                     allFieldButtonLabel: allFieldLabel,
                     onOpenAllField: allFieldLabel != nil ? { showFullFieldSheet = true } : nil,
                     preloadedTimeline: preloadedTimeline,
-                    referenceNow: referenceNow
+                    referenceNow: referenceNow,
+                    onTimelineOutcomesLoaded: { outcomes in
+                        loadedTimelineOutcomes = outcomes
+                    }
                 )
             }
 
@@ -1063,12 +1080,15 @@ struct FuturesAtlasPageView11666: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
+        .onChange(of: marketId) { _, _ in
+            loadedTimelineOutcomes = nil
+        }
         .sheet(isPresented: $showDetailsSheet) {
             FuturesAtlasDetailsSheetView11666(details: presentation.detailsSheet)
         }
         .sheet(isPresented: $showFullFieldSheet) {
             FuturesAtlasFullFieldSheetView11666(
-                marketTitle: market.name,
+                marketTitle: presentation.header.marketTitle,
                 subtitleBadge: presentation.body.subtitleBadge,
                 rows: presentation.body.allRows,
                 selectedOutcomeId: presentation.header.selectedOutcomeId,
@@ -1117,12 +1137,44 @@ struct FuturesAtlasHeadlineCard192A: View {
         )
     }
 
-    private func badgeInitials(for name: String) -> String {
-        let core = name
-            .components(separatedBy: " · ").first?
-            .components(separatedBy: " — ").first?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
-        return TeamShortName.abbreviation(core)
+    nonisolated static func matchingTimelineOutcome(
+        for name: String,
+        outcomeId: Int? = nil,
+        in timelineOutcomes: [TimelineOutcomeMeta]?
+    ) -> TimelineOutcomeMeta? {
+        guard let timelineOutcomes else { return nil }
+        if let outcomeId, let byId = timelineOutcomes.first(where: { $0.id == outcomeId }) {
+            return byId
+        }
+        return timelineOutcomes.first(where: { $0.name == name })
+    }
+
+    /// Prefer the server-served short code (`CAR`, `COL`, `FLA`, `MIL`, `SD`)
+    /// from `/probability-timeline` outcomes when present, refusing result words
+    /// and falling back to `TeamShortName.futuresBadgeInitials` when absent.
+    nonisolated static func resolvedBadgeInitials(
+        for name: String,
+        outcomeId: Int? = nil,
+        sportKey: String? = nil,
+        timelineOutcomes: [TimelineOutcomeMeta]?
+    ) -> String {
+        if let served = matchingTimelineOutcome(for: name, outcomeId: outcomeId, in: timelineOutcomes)?
+            .abbreviation?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !served.isEmpty
+        {
+            return TeamShortName.refusingResultWord(served, name: name, sportKey: sportKey)
+        }
+        return TeamShortName.futuresBadgeInitials(name)
+    }
+
+    private func badgeInitials(for name: String, outcomeId: Int? = nil) -> String {
+        Self.resolvedBadgeInitials(
+            for: name,
+            outcomeId: outcomeId,
+            sportKey: market.sport,
+            timelineOutcomes: timelineOutcomes
+        )
     }
 
     var body: some View {
@@ -1131,7 +1183,9 @@ struct FuturesAtlasHeadlineCard192A: View {
                 Text(cleanEyebrow)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
+                    .lineLimit(nil)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Spacer(minLength: 4)
 
@@ -1220,12 +1274,24 @@ struct FuturesAtlasHeadlineCard192A: View {
         index: Int
     ) -> some View {
         let color = contenderColor(for: row, index: index)
-        let logoURL = timelineOutcomes?.first(where: { $0.name == row.name })?.logoSmall
+        let timelineMeta = Self.matchingTimelineOutcome(
+            for: row.name,
+            outcomeId: row.id,
+            in: timelineOutcomes
+        )
+        let logoURL = timelineMeta?.logoSmall
+        let servedAbbreviation = timelineMeta?.abbreviation
 
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    contenderMark(name: row.name, logoURL: logoURL, color: color)
+                    contenderMark(
+                        name: row.name,
+                        outcomeId: row.id,
+                        logoURL: logoURL,
+                        servedAbbreviation: servedAbbreviation,
+                        color: color
+                    )
                     Text(row.name)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(DS.textPrimary)
@@ -1240,7 +1306,13 @@ struct FuturesAtlasHeadlineCard192A: View {
             .padding(.vertical, 2)
         } else {
             HStack(spacing: 8) {
-                contenderMark(name: row.name, logoURL: logoURL, color: color)
+                contenderMark(
+                    name: row.name,
+                    outcomeId: row.id,
+                    logoURL: logoURL,
+                    servedAbbreviation: servedAbbreviation,
+                    color: color
+                )
                 Text(row.name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(DS.textPrimary)
@@ -1255,13 +1327,21 @@ struct FuturesAtlasHeadlineCard192A: View {
     }
 
     @ViewBuilder
-    private func contenderMark(name: String, logoURL: String?, color: Color) -> some View {
+    private func contenderMark(
+        name: String,
+        outcomeId: Int,
+        logoURL: String?,
+        servedAbbreviation: String?,
+        color: Color
+    ) -> some View {
         if let logoURL, !logoURL.isEmpty {
             TeamLogoView(
                 url: logoURL,
                 teamName: name,
                 color: color,
-                size: 22
+                size: 22,
+                sportKey: market.sport,
+                abbreviation: servedAbbreviation
             )
         } else if isNumericallyOrdered {
             Circle()
@@ -1269,9 +1349,11 @@ struct FuturesAtlasHeadlineCard192A: View {
                 .frame(width: 10, height: 10)
                 .frame(width: 16, height: 22)
         } else {
-            Text(badgeInitials(for: name))
+            Text(badgeInitials(for: name, outcomeId: outcomeId))
                 .font(.system(size: 8.5, weight: .bold))
                 .foregroundStyle(Color.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
                 .frame(width: 22, height: 22)
                 .background(Circle().fill(color))
         }
@@ -1304,7 +1386,7 @@ struct FuturesAtlasHeadlineCard192A: View {
             Text(row.displayValue.primaryLabel)
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(DS.emerald)
-        case .lost, .noRecentProbability, .resultUnconfirmed:
+        case .lost, .out, .noRecentProbability, .resultUnconfirmed:
             Text(row.displayValue.primaryLabel)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(DS.textSecondary)
@@ -1591,7 +1673,7 @@ struct FuturesAtlasHeaderCardView11666: View {
             return .system(size: 38, weight: .black, design: .rounded)
         case .won, .lost:
             return .title.weight(.bold)
-        case .noRecentProbability, .resultUnconfirmed:
+        case .out, .noRecentProbability, .resultUnconfirmed:
             return .headline.weight(.semibold)
         }
     }
@@ -1602,7 +1684,7 @@ struct FuturesAtlasHeaderCardView11666: View {
             return DS.textPrimary
         case .won:
             return DS.emerald
-        case .lost, .noRecentProbability, .resultUnconfirmed:
+        case .lost, .out, .noRecentProbability, .resultUnconfirmed:
             return DS.textSecondary
         }
     }
@@ -1833,7 +1915,7 @@ struct FuturesAtlasBodyCardView11666: View {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            if showRank {
+                            if showRank && row.displayValue != .out {
                                 Text("#\(row.rank)")
                                     .font(.caption.weight(.semibold).monospacedDigit())
                                     .foregroundStyle(isFirst ? DS.emerald : DS.textMuted)
@@ -1861,7 +1943,7 @@ struct FuturesAtlasBodyCardView11666: View {
                     }
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        if showRank {
+                        if showRank && row.displayValue != .out {
                             Text("#\(row.rank)")
                                 .font(.caption.weight(.semibold).monospacedDigit())
                                 .foregroundStyle(isFirst ? DS.emerald : DS.textMuted)
@@ -1922,7 +2004,7 @@ struct FuturesAtlasBodyCardView11666: View {
         switch value {
         case .won:
             return DS.emerald
-        case .lost, .noRecentProbability, .resultUnconfirmed:
+        case .lost, .out, .noRecentProbability, .resultUnconfirmed:
             return DS.textSecondary
         case .chance:
             return isLeading ? DS.emerald : DS.textPrimary
@@ -2075,12 +2157,23 @@ struct FuturesAtlasFullFieldSheetView11666: View {
     var body: some View {
         NavigationStack {
             List {
-                if let badge = subtitleBadge {
-                    Section {
-                        Text(badge)
-                            .font(.caption)
-                            .foregroundStyle(DS.textSecondary)
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(marketTitle)
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let badge = subtitleBadge {
+                            Text(badge)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
                 }
                 Section("All outcomes · \(filteredRows.count)") {
                     ForEach(filteredRows) { row in
@@ -2088,31 +2181,33 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                             onSelectOutcome(row.id)
                         } label: {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                if showsRank {
+                                if showsRank && row.displayValue != .out {
                                     Text("#\(row.rank)")
                                         .font(.caption.weight(.semibold).monospacedDigit())
-                                        .foregroundStyle(DS.textMuted)
-                                        .frame(width: 28, alignment: .leading)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                        .frame(minWidth: 28, alignment: .leading)
                                 }
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(row.name)
                                         .font(.subheadline.weight(row.id == selectedOutcomeId ? .semibold : .regular))
-                                        .foregroundStyle(DS.textPrimary)
+                                        .foregroundStyle(.primary)
                                     if let opening = row.openingText {
                                         Text(opening)
                                             .font(.caption2.monospacedDigit())
-                                            .foregroundStyle(DS.textMuted)
+                                            .foregroundStyle(.secondary)
                                     }
                                 }
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: 2) {
                                     Text(row.displayValue.primaryLabel)
                                         .font(.subheadline.weight(.bold).monospacedDigit())
-                                        .foregroundStyle(row.displayValue.isWon ? DS.emerald : DS.textPrimary)
+                                        .foregroundStyle(row.displayValue.isWon ? DS.emerald : Color.primary)
                                     if let asOfText = row.displayValue.asOfText {
                                         Text(asOfText)
                                             .font(.caption2.monospacedDigit())
-                                            .foregroundStyle(DS.textMuted)
+                                            .foregroundStyle(.secondary)
                                     }
                                 }
                             }
@@ -2122,7 +2217,7 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                 }
             }
             .searchable(text: $searchText, prompt: "Search outcomes")
-            .navigationTitle(marketTitle)
+            .navigationTitle("")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif

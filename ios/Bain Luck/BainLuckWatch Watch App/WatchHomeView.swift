@@ -42,7 +42,7 @@ struct WatchHomeView: View {
                 .padding(.horizontal, 4)
             }
         }
-        .navigationTitle("🍀 Bain Luck")
+        .navigationTitle("Bain Luck")
         .task { await vm.load() }
         .task(id: "home-refresh") {
             while !Task.isCancelled {
@@ -236,7 +236,16 @@ struct WatchHomeView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            splitBar(game.split)
+            if let split = game.split {
+                splitBar(split)
+            } else if let resultText = game.resultText {
+                Text(resultText)
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            } else if let scoreline = game.scoreline {
+                Text(scoreline)
+                    .font(.system(size: 12, weight: .semibold))
+            }
         }
         .padding(8)
         .background(Color.white.opacity(0.05))

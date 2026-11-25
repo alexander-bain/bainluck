@@ -211,8 +211,7 @@ struct ShareableFuturesCardView: View {
                     Text("bainluck.com")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color(red: 0.55, green: 0.55, blue: 0.60))
-                    Text("🍀")
-                        .font(.system(size: 12))
+                    BainLuckMarkView(size: 20)
                 }
             }
             .padding(18)
@@ -264,11 +263,35 @@ struct ShareableFuturesCardView: View {
 struct ShareableEventCardView: View {
     let homeTeam: String
     let awayTeam: String
+    var awayAbbreviation: String? = nil
+    var homeAbbreviation: String? = nil
 
-    /// #3430 — the share card draws two crests side by side. Two crests reading
-    /// `TIG` is a card that travels off the app saying nothing.
+    static func crestLabels(
+        awayTeam: String,
+        homeTeam: String,
+        awayAbbreviation: String? = nil,
+        homeAbbreviation: String? = nil,
+        sportKey: String? = nil
+    ) -> (away: String, home: String) {
+        TeamShortName.abbreviationPair(
+            away: awayTeam,
+            home: homeTeam,
+            awayServed: awayAbbreviation,
+            homeServed: homeAbbreviation,
+            sportKey: sportKey
+        )
+    }
+
+    /// #3430 / #13213 — use the served team abbreviations (`PHI`, `OTT`) when provided
+    /// and fall back to the shared pair rule only when absent.
     private var crests: (away: String, home: String) {
-        TeamShortName.abbreviationPair(away: awayTeam, home: homeTeam)
+        Self.crestLabels(
+            awayTeam: awayTeam,
+            homeTeam: homeTeam,
+            awayAbbreviation: awayAbbreviation,
+            homeAbbreviation: homeAbbreviation,
+            sportKey: sportKey
+        )
     }
     let homeProbability: Double
     /// #5363 — OPTIONAL, and nil means *withheld*, not *absent*.
@@ -311,6 +334,9 @@ struct ShareableEventCardView: View {
     /// image says CANCELED rather than NO RESULT REPORTED. No default, for
     /// `commenceTime`'s reason: this copy leaves the app.
     let authorityPeriod: String?
+    /// Pregame reading for finished share cards (`Final`, score, and `Pregame`, never `current_odds`).
+    var pregameReading: PrematchReading? = nil
+    var sportKey: String? = nil
 
     private var eyebrow: String {
         Self.eyebrow(
@@ -471,23 +497,31 @@ struct ShareableEventCardView: View {
                             .multilineTextAlignment(.center)
                             .lineLimit(3)
                             .foregroundStyle(Color(red: 0.10, green: 0.10, blue: 0.12))
-                        // #5363 — withheld on a draw-priced sport. The slot is
-                        // left empty rather than dashed: this image has no
-                        // legend and travels without us, so a mark a stranger
-                        // cannot interpret is worse than white space.
-                        if let awayPercent = printed.away {
-                            Text(awayPercent)
-                                .font(.system(size: 32, weight: .black).monospacedDigit())
-                                .foregroundStyle(awayColor)
-                        }
-                        if let score = awayScore {
-                            Text("\(score)")
-                                .font(.system(size: 14, weight: .heavy).monospacedDigit())
-                                .foregroundStyle(Color(red: 0.45, green: 0.45, blue: 0.50))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Color(red: 0.92, green: 0.92, blue: 0.94))
-                                .clipShape(Capsule())
+                        if EventState.isFinished(status) {
+                            if let score = awayScore {
+                                Text("\(score)")
+                                    .font(.system(size: 32, weight: .black).monospacedDigit())
+                                    .foregroundStyle(awayColor)
+                            }
+                        } else {
+                            // #5363 — withheld on a draw-priced sport. The slot is
+                            // left empty rather than dashed: this image has no
+                            // legend and travels without us, so a mark a stranger
+                            // cannot interpret is worse than white space.
+                            if let awayPercent = printed.away {
+                                Text(awayPercent)
+                                    .font(.system(size: 32, weight: .black).monospacedDigit())
+                                    .foregroundStyle(awayColor)
+                            }
+                            if let score = awayScore {
+                                Text("\(score)")
+                                    .font(.system(size: 14, weight: .heavy).monospacedDigit())
+                                    .foregroundStyle(Color(red: 0.45, green: 0.45, blue: 0.50))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color(red: 0.92, green: 0.92, blue: 0.94))
+                                    .clipShape(Capsule())
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -512,38 +546,91 @@ struct ShareableEventCardView: View {
                             .multilineTextAlignment(.center)
                             .lineLimit(3)
                             .foregroundStyle(Color(red: 0.10, green: 0.10, blue: 0.12))
-                        Text(printed.home)
-                            .font(.system(size: 32, weight: .black).monospacedDigit())
-                            .foregroundStyle(homeColor)
-                        if let score = homeScore {
-                            Text("\(score)")
-                                .font(.system(size: 14, weight: .heavy).monospacedDigit())
-                                .foregroundStyle(Color(red: 0.45, green: 0.45, blue: 0.50))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Color(red: 0.92, green: 0.92, blue: 0.94))
-                                .clipShape(Capsule())
+                        if EventState.isFinished(status) {
+                            if let score = homeScore {
+                                Text("\(score)")
+                                    .font(.system(size: 32, weight: .black).monospacedDigit())
+                                    .foregroundStyle(homeColor)
+                            }
+                        } else {
+                            Text(printed.home)
+                                .font(.system(size: 32, weight: .black).monospacedDigit())
+                                .foregroundStyle(homeColor)
+                            if let score = homeScore {
+                                Text("\(score)")
+                                    .font(.system(size: 14, weight: .heavy).monospacedDigit())
+                                    .foregroundStyle(Color(red: 0.45, green: 0.45, blue: 0.50))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color(red: 0.92, green: 0.92, blue: 0.94))
+                                    .clipShape(Capsule())
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity)
                 }
 
-                // Probability bar
-                GeometryReader { geo in
-                    HStack(spacing: 0) {
-                        Rectangle()
-                            .fill(awayProbability == nil
-                                  ? Color.secondary.opacity(0.25)
-                                  : awayColor)
-                            .frame(width: max(3, geo.size.width * awayBarShare))
-                        Rectangle()
-                            .fill(homeColor)
-                            .frame(width: max(3, geo.size.width * homeProbability))
+                // Probability bar: current reading for live/upcoming; Pregame reading for finished
+                if EventState.isFinished(status) {
+                    if let pregame = pregameReading {
+                        let awayWithheld = pregame.awayIsComplement && DrawPricedWinner.sportPricesADraw(sportKey)
+                        let awayText = awayWithheld
+                            ? nil
+                            : formatProbability(pregame.awayProbability, renderedPercent: pregame.percents.first ?? nil)
+                        let homeText = formatProbability(
+                            pregame.homeProbability,
+                            renderedPercent: pregame.percents.count > 1 ? pregame.percents[1] : nil
+                        )
+                        VStack(spacing: 8) {
+                            HStack {
+                                if let awayText {
+                                    Text(awayText)
+                                        .font(.system(size: 13, weight: .bold).monospacedDigit())
+                                        .foregroundStyle(awayColor)
+                                }
+                                Spacer()
+                                Text("Pregame")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(Color(red: 0.45, green: 0.45, blue: 0.50))
+                                Spacer()
+                                Text(homeText)
+                                    .font(.system(size: 13, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(homeColor)
+                            }
+                            .padding(.horizontal, 8)
+
+                            GeometryReader { geo in
+                                HStack(spacing: 0) {
+                                    Rectangle()
+                                        .fill(awayWithheld ? Color.secondary.opacity(0.25) : awayColor)
+                                        .frame(width: max(3, geo.size.width * pregame.awayProbability))
+                                    Rectangle()
+                                        .fill(homeColor)
+                                        .frame(width: max(3, geo.size.width * pregame.homeProbability))
+                                }
+                                .clipShape(Capsule())
+                            }
+                            .frame(height: 8)
+                            .padding(.horizontal, 4)
+                        }
                     }
-                    .clipShape(Capsule())
+                } else {
+                    GeometryReader { geo in
+                        HStack(spacing: 0) {
+                            Rectangle()
+                                .fill(awayProbability == nil
+                                      ? Color.secondary.opacity(0.25)
+                                      : awayColor)
+                                .frame(width: max(3, geo.size.width * awayBarShare))
+                            Rectangle()
+                                .fill(homeColor)
+                                .frame(width: max(3, geo.size.width * homeProbability))
+                        }
+                        .clipShape(Capsule())
+                    }
+                    .frame(height: 10)
+                    .padding(.horizontal, 4)
                 }
-                .frame(height: 10)
-                .padding(.horizontal, 4)
 
                 Spacer(minLength: 0)
 
@@ -553,8 +640,7 @@ struct ShareableEventCardView: View {
                     Text("bainluck.com")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color(red: 0.55, green: 0.55, blue: 0.60))
-                    Text("🍀")
-                        .font(.system(size: 12))
+                    BainLuckMarkView(size: 20)
                 }
             }
             .padding(22)
@@ -605,6 +691,8 @@ enum ShareCardRenderer {
     static func renderEventCard(
         homeTeam: String,
         awayTeam: String,
+        awayAbbreviation: String? = nil,
+        homeAbbreviation: String? = nil,
         homeProbability: Double,
         /// #5363 — nil withholds the away number. No default, for the reason
         /// `commenceTime` has none: a caller that forgets it would silently
@@ -625,12 +713,16 @@ enum ShareCardRenderer {
         // #4044 — no default. A caller that forgets it would silently restore the
         // clockless behaviour on the one surface whose output leaves the app.
         commenceTime: Date?,
+        pregameReading: PrematchReading? = nil,
+        sportKey: String? = nil,
         // #9208 — no default, same reason.
         authorityPeriod: String?
     ) -> PlatformImage? {
         let view = ShareableEventCardView(
             homeTeam: homeTeam,
             awayTeam: awayTeam,
+            awayAbbreviation: awayAbbreviation,
+            homeAbbreviation: homeAbbreviation,
             homeProbability: homeProbability,
             awayProbability: awayProbability,
             awayRenderedPercent: awayRenderedPercent,
@@ -642,7 +734,9 @@ enum ShareCardRenderer {
             homeScore: homeScore,
             awayScore: awayScore,
             commenceTime: commenceTime,
-            authorityPeriod: authorityPeriod
+            authorityPeriod: authorityPeriod,
+            pregameReading: pregameReading,
+            sportKey: sportKey
         )
         let renderer = ImageRenderer(content: view)
         #if canImport(UIKit)

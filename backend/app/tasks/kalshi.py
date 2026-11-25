@@ -1308,20 +1308,20 @@ def _floor_series_first(events):
     next beat and go first then, so creation is delayed a beat, never lost.
     Relative order within each group is preserved.
 
-    #10719: tonight's spread, total and player events
-    (``_OPEN_DERIVATIVE_SERIES_TICKERS``) join the floor while any of their
-    markets is still trading. Fetching them is not enough: they arrive behind
-    ~4,800 new history events from the main scan, and the loop's deadline cut
+    Tonight's spread, total and player events and the Grammy fields join
+    the floor while any of their markets is still trading. Without priority,
+    they arrive behind ~4,800 new history events, and the loop's deadline cut
     the new partition short on 20 of 24 beats in the ring. A settled event from
     those series keeps its place, so the floor-series' history does not ride
     along."""
     from app.services.kalshi_api import (
         _ALWAYS_FETCH_SERIES,
         _OPEN_DERIVATIVE_SERIES_TICKERS,
+        _OPEN_GRAMMY_SERIES_TICKERS,
         event_series_ticker,
     )
 
-    open_series = set(_OPEN_DERIVATIVE_SERIES_TICKERS)
+    open_series = set(_OPEN_DERIVATIVE_SERIES_TICKERS) | set(_OPEN_GRAMMY_SERIES_TICKERS)
 
     def _is_floor(e) -> bool:
         series = event_series_ticker(e.event_ticker)

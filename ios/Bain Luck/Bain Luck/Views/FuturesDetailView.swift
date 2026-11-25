@@ -202,6 +202,7 @@ struct FuturesDetailView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
+                .noteReviewPromptTrouble12304()
             } else if let market = viewModel.market {
                 ScrollView {
                     Group {
@@ -229,6 +230,12 @@ struct FuturesDetailView: View {
                                     .contextualTipHero10876(type: "future", id: marketId, scrollSpace: Self.scrollSpace)
 
                                 VStack(spacing: 20) {
+                                    if market.outcomePricesAreIndependent == true {
+                                        Text("Each row is its own market.")
+                                            .font(.subheadline)
+                                            .foregroundStyle(DS.textSecondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
                                     if let pairedSet = viewModel.pairedMetricSet, !pairedSet.entries.isEmpty {
                                         DiscoverPairedMetricCardView(
                                             set: pairedSet,
@@ -922,14 +929,17 @@ struct FuturesDetailView: View {
         marketStatus: String?,
         marketSource: String?
     ) -> some View {
-        let isLeader = outcome.id == leaderId
+        let isOut = outcome.isOut == true
+        let isLeader = !isOut && outcome.id == leaderId
         let probPct = (outcome.probability ?? 0) * 100
         // #10964: a graded row names its result instead of its last quote.
-        let value = FuturesDetailRowValue.of(outcome, marketStatus: marketStatus, marketSource: marketSource)
+        let value: FuturesDetailRowValue = isOut
+            ? .none
+            : .of(outcome, marketStatus: marketStatus, marketSource: marketSource)
 
         return VStack(spacing: 6) {
             HStack(alignment: .top) {
-                if showsRank {
+                if showsRank && !isOut {
                     // Rank number
                     Text("#\(rank)")
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
@@ -1022,7 +1032,11 @@ struct FuturesDetailView: View {
                     }
                     .multilineTextAlignment(.trailing)
                 case .none:
-                    EmptyView()
+                    if isOut {
+                        Text("Out")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(DS.textSecondary)
+                    }
                 }
             }
 

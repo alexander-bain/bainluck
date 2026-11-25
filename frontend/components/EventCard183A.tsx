@@ -21,12 +21,15 @@ import {
 } from "@/lib/teamColors";
 import { prematchReading } from "@/lib/prematchReading";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
+import { renderedThreeWayPercents } from "@/lib/renderedPercent";
 import {
   admittedLiveProjection,
   cardProjectedFinal,
   liveCardProjectedFinal,
   projectedFinalFormat,
+  projectedPairConflictsWithChance,
   sportsbookProjectedPair,
+  type ProjectedChancePair,
   type SportsbookProjectionFields,
 } from "@/lib/projectedFinalPair";
 import {
@@ -75,6 +78,7 @@ export interface UnifiedGameCardData {
   status: string;
   home_score: number | null;
   away_score: number | null;
+  score_source_unavailable?: boolean;
   home_color: string;
   away_color: string;
   away_secondary_color?: string | null;
@@ -87,6 +91,7 @@ export interface UnifiedGameCardData {
   draw_prob?: number | null;
   served_home_pct?: number | null;
   served_away_pct?: number | null;
+  served_draw_pct?: number | null;
   pregame_home_pct: number | null;
   pregame_away_pct: number | null;
   pregame_draw_pct?: number | null;
@@ -435,6 +440,7 @@ export function alignPregameReasonTeamNames(
 export function extractPregameProjectedPair(
   projection: PregameProjection | null | undefined,
   sportKey: string | null | undefined,
+  chance?: ProjectedChancePair | null,
 ): { home: string; away: string } | null {
   if (!projection || typeof projection !== "object" || isTennisSport(sportKey)) return null;
   if (projection.kind !== PREGAME_KIND_LAST_BEFORE_SCHEDULED_START) return null;
@@ -463,12 +469,17 @@ export function extractPregameProjectedPair(
     if (projection.projected_home_score <= 0 && projection.projected_away_score <= 0) {
       return null;
     }
+    const printedGoals = {
+      home: Math.round(projection.projected_home_score * 10) / 10,
+      away: Math.round(projection.projected_away_score * 10) / 10,
+    };
+    if (projectedPairConflictsWithChance(printedGoals, chance, sportKey)) return null;
     return {
       home: formatGameCardProjection(projection.projected_home_score, sportKey),
       away: formatGameCardProjection(projection.projected_away_score, sportKey),
     };
   }
-  const pair = cardProjectedFinal(projection, sportKey);
+  const pair = cardProjectedFinal(projection, sportKey, chance);
   return pair
     ? {
         home: formatGameCardProjection(pair.home, sportKey),
@@ -835,10 +846,12 @@ function resolveLiveClock(
 ): string | null {
   if (!source || typeof source !== "object") return null;
   const rec = source as {
+    score_source_unavailable?: unknown;
     espn?: { period?: unknown; game_clock?: unknown } | null;
     espn_data?: { period?: unknown; game_clock?: unknown } | null;
     live_clock?: unknown;
   };
+  if (rec.score_source_unavailable === true) return null;
   const fromEspn = formatLiveClockLabel(
     stringOrNull(rec.espn?.period),
     stringOrNull(rec.espn?.game_clock),
@@ -1158,8 +1171,17 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     : (event.hero_probability_away ?? event.current_odds?.away_probability ?? null);
   const rawDraw = probWithheld
     ? null
-    : ((event.current_odds as { draw_probability?: number | null } | undefined)?.draw_probability ??
-        null);
+    : (event.hero_probability_draw ?? event.current_odds?.draw_probability ?? null);
+  const heroAlignedWithOdds =
+    (event.hero_probability == null ||
+      (event.current_odds?.home_probability != null &&
+        Math.abs(event.hero_probability - event.current_odds.home_probability) < 1e-6)) &&
+    (event.hero_probability_away == null ||
+      (event.current_odds?.away_probability != null &&
+        Math.abs(event.hero_probability_away - event.current_odds.away_probability) < 1e-6)) &&
+    (event.hero_probability_draw == null ||
+      (event.current_odds?.draw_probability != null &&
+        Math.abs(event.hero_probability_draw - event.current_odds.draw_probability) < 1e-6));
 
   const eventPrematch = (event as Event & { prematch_odds?: FeedEventData["prematch_odds"] })
     .prematch_odds;
@@ -1181,8 +1203,9 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
       : null;
 
   const tennis = isTennisSport(event.sport);
+  const cardChance: ProjectedChancePair = { home: rawHome, away: rawAway };
   const proj = (() => {
-    if (tennis || isDone) return null;
+    if (tennis || isDone || (isLive && event.score_source_unavailable === true)) return null;
     if ((event.sport ?? "").toLowerCase().startsWith("soccer_")) {
       if (isLive) {
         if (event.home_score == null || event.away_score == null) return null;
@@ -1192,6 +1215,11 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
           event.commence_time,
         );
         if (!raw || raw.home < event.home_score || raw.away < event.away_score) return null;
+        const printedLive = {
+          home: Math.round(raw.home * 10) / 10,
+          away: Math.round(raw.away * 10) / 10,
+        };
+        if (projectedPairConflictsWithChance(printedLive, cardChance, event.sport)) return null;
         return {
           home: formatGameCardProjection(raw.home, event.sport),
           away: formatGameCardProjection(raw.away, event.sport),
@@ -1202,6 +1230,11 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
         event.sport,
       );
       if (!preSoccer || (preSoccer.home <= 0 && preSoccer.away <= 0)) return null;
+      const printedPre = {
+        home: Math.round(preSoccer.home * 10) / 10,
+        away: Math.round(preSoccer.away * 10) / 10,
+      };
+      if (projectedPairConflictsWithChance(printedPre, cardChance, event.sport)) return null;
       return {
         home: formatGameCardProjection(preSoccer.home, event.sport),
         away: formatGameCardProjection(preSoccer.away, event.sport),
@@ -1213,10 +1246,12 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
           event.sport,
           event.commence_time,
           { home: event.home_score, away: event.away_score },
+          cardChance,
         )
       : cardProjectedFinal(
           event.current_odds as SportsbookProjectionFields | undefined,
           event.sport,
+          cardChance,
         );
   })();
 
@@ -1224,7 +1259,11 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
 
   const tennisExtra = tennis ? extractTennisSets(event.espn) : {};
 
-  const preProj = extractPregameProjectedPair(event.pregame_projection, event.sport);
+  const preProj = extractPregameProjectedPair(
+    event.pregame_projection,
+    event.sport,
+    pre ? { home: pre.homeProbability, away: pre.awayProbability } : null,
+  );
 
   return {
     id: event.id,
@@ -1238,6 +1277,7 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     status: event.status,
     home_score: event.home_score,
     away_score: event.away_score,
+    score_source_unavailable: event.score_source_unavailable === true ? true : undefined,
     ...(() => {
       const homeKnown = lookupTeamColors(event.home_team);
       const awayKnown = lookupTeamColors(event.away_team);
@@ -1270,13 +1310,17 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     away_prob: rawAway,
     draw_prob: rawDraw,
     served_home_pct:
-      probWithheld || event.hero_probability != null || event.hero_probability_away != null
+      probWithheld || !heroAlignedWithOdds
         ? null
         : event.current_odds?.home_rendered_percent,
     served_away_pct:
-      probWithheld || event.hero_probability != null || event.hero_probability_away != null
+      probWithheld || !heroAlignedWithOdds
         ? null
         : event.current_odds?.away_rendered_percent,
+    served_draw_pct:
+      probWithheld || !heroAlignedWithOdds
+        ? null
+        : event.current_odds?.draw_rendered_percent,
     pregame_home_pct: openHome,
     pregame_away_pct: openAway,
     pregame_draw_pct: openDrawPct,
@@ -1319,8 +1363,9 @@ export function buildUnifiedCardFromFeed(
       : null;
 
   const tennis = isTennisSport(data.sport);
+  const cardChance: ProjectedChancePair = { home: rawHome, away: rawAway };
   const proj = (() => {
-    if (tennis || isDone) return null;
+    if (tennis || isDone || (isLive && data.score_source_unavailable === true)) return null;
     if ((data.sport ?? "").toLowerCase().startsWith("soccer_")) {
       if (isLive) {
         if (data.home_score == null || data.away_score == null) return null;
@@ -1330,6 +1375,11 @@ export function buildUnifiedCardFromFeed(
           data.commence_time,
         );
         if (!raw || raw.home < data.home_score || raw.away < data.away_score) return null;
+        const printedLive = {
+          home: Math.round(raw.home * 10) / 10,
+          away: Math.round(raw.away * 10) / 10,
+        };
+        if (projectedPairConflictsWithChance(printedLive, cardChance, data.sport)) return null;
         return {
           home: formatGameCardProjection(raw.home, data.sport),
           away: formatGameCardProjection(raw.away, data.sport),
@@ -1340,6 +1390,11 @@ export function buildUnifiedCardFromFeed(
         data.sport,
       );
       if (!preSoccer || (preSoccer.home <= 0 && preSoccer.away <= 0)) return null;
+      const printedPre = {
+        home: Math.round(preSoccer.home * 10) / 10,
+        away: Math.round(preSoccer.away * 10) / 10,
+      };
+      if (projectedPairConflictsWithChance(printedPre, cardChance, data.sport)) return null;
       return {
         home: formatGameCardProjection(preSoccer.home, data.sport),
         away: formatGameCardProjection(preSoccer.away, data.sport),
@@ -1351,10 +1406,12 @@ export function buildUnifiedCardFromFeed(
           data.sport,
           data.commence_time,
           { home: data.home_score, away: data.away_score },
+          cardChance,
         )
       : cardProjectedFinal(
           data.current_odds as SportsbookProjectionFields | undefined,
           data.sport,
+          cardChance,
         );
   })();
 
@@ -1362,7 +1419,11 @@ export function buildUnifiedCardFromFeed(
 
   const tennisExtra = tennis ? extractTennisSets(data.espn) : {};
 
-  const preProj = extractPregameProjectedPair(data.pregame_projection, data.sport);
+  const preProj = extractPregameProjectedPair(
+    data.pregame_projection,
+    data.sport,
+    pre ? { home: pre.homeProbability, away: pre.awayProbability } : null,
+  );
 
   return {
     id: data.id,
@@ -1376,6 +1437,7 @@ export function buildUnifiedCardFromFeed(
     status: data.status,
     home_score: data.home_score,
     away_score: data.away_score,
+    score_source_unavailable: data.score_source_unavailable === true ? true : undefined,
     ...(() => {
       const homeKnown = lookupTeamColors(data.home_team);
       const awayKnown = lookupTeamColors(data.away_team);
@@ -1411,6 +1473,7 @@ export function buildUnifiedCardFromFeed(
     draw_prob: rawDraw,
     served_home_pct: probWithheld ? null : data.current_odds?.home_rendered_percent,
     served_away_pct: probWithheld ? null : data.current_odds?.away_rendered_percent,
+    served_draw_pct: probWithheld ? null : data.current_odds?.draw_rendered_percent,
     pregame_home_pct: pre?.homePercent ?? null,
     pregame_away_pct: pre?.awayPercent ?? null,
     pregame_draw_pct: openDrawPct,
@@ -1542,6 +1605,7 @@ export function buildUnifiedCardFromTeamGame(
     status: game.status,
     home_score: game.home_score,
     away_score: game.away_score,
+    score_source_unavailable: game.score_source_unavailable === true ? true : undefined,
     home_color: pair.home || "#1d4ed8",
     away_color: pair.away || "#475569",
     away_secondary_color: awaySecondary,
@@ -1610,21 +1674,53 @@ export default function EventCard183A({
 
   const awayWithheld =
     !hasExplicitThreeWayCurrent && awayIsTheComplement(card.away_prob, card.home_prob, card.sport);
-  const [awayWholePct, homeWholePct] = servedDuelPercents(
-    card.away_prob,
-    card.home_prob,
-    card.served_away_pct,
-    card.served_home_pct,
-  );
+  let awayWholePct: number | null;
+  let homeWholePct: number | null;
+  let drawWholePct: number | null;
+  if (
+    hasExplicitThreeWayCurrent &&
+    card.home_prob != null &&
+    card.away_prob != null &&
+    inferredDraw != null
+  ) {
+    if (
+      typeof card.served_home_pct === "number" &&
+      typeof card.served_draw_pct === "number" &&
+      typeof card.served_away_pct === "number" &&
+      Number.isInteger(card.served_home_pct) &&
+      Number.isInteger(card.served_draw_pct) &&
+      Number.isInteger(card.served_away_pct) &&
+      card.served_home_pct + card.served_draw_pct + card.served_away_pct === 100
+    ) {
+      homeWholePct = card.served_home_pct;
+      drawWholePct = card.served_draw_pct;
+      awayWholePct = card.served_away_pct;
+    } else {
+      [homeWholePct, drawWholePct, awayWholePct] = renderedThreeWayPercents(
+        card.home_prob,
+        inferredDraw,
+        card.away_prob,
+      );
+    }
+  } else {
+    [awayWholePct, homeWholePct] = servedDuelPercents(
+      card.away_prob,
+      card.home_prob,
+      card.served_away_pct,
+      card.served_home_pct,
+    );
+    drawWholePct = inferredDraw != null ? Math.round(inferredDraw * 100) : null;
+  }
 
   const liveTenths = isLive
     ? formatLiveTenthsPair(card.away_prob, card.home_prob, awayWithheld)
     : { away: null, home: null };
   const liveDrawTenths =
     isLive && inferredDraw != null ? formatSingleLiveTenths(inferredDraw) : null;
-  const drawWholePct = inferredDraw != null ? Math.round(inferredDraw * 100) : null;
 
+  const scoreUnavailable = isLive && card.score_source_unavailable === true;
   const hasTennisSetBoxes =
+    !scoreUnavailable &&
     tennis &&
     (isLive || isDone) &&
     Array.isArray(card.tennis_sets) &&
@@ -1633,6 +1729,7 @@ export default function EventCard183A({
     hasTennisSetBoxes && isLive && card.tennis_game_points != null;
 
   const hasScore =
+    !scoreUnavailable &&
     !hasTennisSetBoxes &&
     isLive &&
     card.home_score != null &&
@@ -1904,7 +2001,7 @@ export default function EventCard183A({
           {isLive ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-danger/10 px-2 py-0.5 font-semibold text-accent-danger">
               <span className="h-1.5 w-1.5 rounded-full bg-accent-danger" />
-              {card.live_clock_label || "LIVE"}
+              {(card.score_source_unavailable ? null : card.live_clock_label) || "LIVE"}
             </span>
           ) : isSuspended ? (
             <span className="font-medium text-text-muted">{SUSPENDED_LABEL}</span>
@@ -2014,7 +2111,7 @@ export default function EventCard183A({
                 ✓
               </span>
             )}
-            {tennis && isLive && card.serving === "away" && (
+            {tennis && isLive && !scoreUnavailable && card.serving === "away" && (
               <span
                 className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent-brand"
                 aria-label="Serving"
@@ -2203,7 +2300,7 @@ export default function EventCard183A({
                 ✓
               </span>
             )}
-            {tennis && isLive && card.serving === "home" && (
+            {tennis && isLive && !scoreUnavailable && card.serving === "home" && (
               <span
                 className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent-brand"
                 aria-label="Serving"

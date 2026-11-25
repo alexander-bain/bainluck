@@ -62,7 +62,7 @@ ARTIFACT = "ci-shard-durations"
 MEMBER = "ci_shard_durations.json"
 DURATIONS_FILE = Path(__file__).resolve().parent / MEMBER
 API = "https://api.github.com"
-EXPECTED_SHARDS = 8
+EXPECTED_SHARDS = 16
 HOLD = 3
 
 Opener = Callable[[urllib.request.Request], bytes]

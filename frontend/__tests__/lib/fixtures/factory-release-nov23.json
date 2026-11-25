@@ -1,0 +1,72 @@
+{
+  "provenance": {
+    "master_run": "https://github.com/alexander-bain/bainluck/actions/runs/45135301312",
+    "before_publication": "https://github.com/alexander-bain/bainluck/actions/runs/45139879573",
+    "still_waiting_publication": "https://github.com/alexander-bain/bainluck/actions/runs/45187088451",
+    "pending_rows_captured_at": "2026-11-23T14:20:39.341549Z",
+    "verified_live": "https://github.com/alexander-bain/bainluck/issues/12779#issuecomment-7103951015",
+    "verified_live_commit": "41de6f5c486a131f68de63fb4b1238acf14886e4"
+  },
+  "running_since": "2026-11-23T08:01:11Z",
+  "first_publication": "2026-11-23T08:42:31.971652Z",
+  "late_publication": "2026-11-23T13:47:35.136880Z",
+  "released_at": "2026-11-23T14:18:00Z",
+  "pending": [
+    {
+      "number": 13473,
+      "merged_at": "2026-11-23T07:33:39Z"
+    },
+    {
+      "number": 13476,
+      "merged_at": "2026-11-23T07:47:20Z"
+    },
+    {
+      "number": 13478,
+      "merged_at": "2026-11-23T08:01:08Z"
+    },
+    {
+      "number": 13477,
+      "merged_at": "2026-11-23T08:05:35Z"
+    },
+    {
+      "number": 13462,
+      "merged_at": "2026-11-23T08:35:39Z"
+    },
+    {
+      "number": 13490,
+      "merged_at": "2026-11-23T10:49:53Z"
+    },
+    {
+      "number": 13487,
+      "merged_at": "2026-11-23T11:31:13Z"
+    },
+    {
+      "number": 13488,
+      "merged_at": "2026-11-23T11:32:43Z"
+    },
+    {
+      "number": 13471,
+      "merged_at": "2026-11-23T11:34:45Z"
+    },
+    {
+      "number": 13489,
+      "merged_at": "2026-11-23T11:37:40Z"
+    },
+    {
+      "number": 13482,
+      "merged_at": "2026-11-23T11:44:56Z"
+    },
+    {
+      "number": 13486,
+      "merged_at": "2026-11-23T12:00:25Z"
+    },
+    {
+      "number": 13492,
+      "merged_at": "2026-11-23T12:20:07Z"
+    },
+    {
+      "number": 13494,
+      "merged_at": "2026-11-23T13:59:52Z"
+    }
+  ]
+}

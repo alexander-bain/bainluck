@@ -43,6 +43,10 @@ from app.utils.futures_market_snapshot import (
     normalized_field_comparisons,
     reader_change_24h,
 )
+from app.utils.futures_source_mark import (
+    describe_field_normalization,
+    futures_outcome_source_mark,
+)
 from app.utils.event_completion import served_commence_time
 from app.utils.score_source_availability import score_source_unavailable_fields
 from app.utils.event_rails import (
@@ -79,7 +83,6 @@ from app.utils.event_concept_cache import (
 from app.utils.event_tennis import is_tennis_feeder_circuit
 from app.utils.event_twin_fold import fold_twin_events, twin_fold_key
 from app.utils.proven_duplicates import (
-    FoldedBlendView,
     folded_card_numbers_batch,
     not_a_proven_duplicate,
 )
@@ -1740,6 +1743,9 @@ def _format_game_brief(
     event: Event,
     sport_key: str | None = None,
     team_lookup: dict | None = None,
+    *,
+    three_way_books: tuple[float, float] | None = None,
+    unified_read: object | None = None,
 ) -> dict:
     """League-rail shape for one game — the SHARED event card's contract.
 
@@ -1768,25 +1774,52 @@ def _format_game_brief(
     the iOS decoder already types; dropping it to "clean up" would silently retier
     every league.
     """
-    source_inputs: list[tuple[str, float]] = []
-    source_method: list[str] = []
-    home_prob = _event_probability(
-        event, source_inputs=source_inputs, source_method=source_method
-    )
-    away_prob = round(1.0 - home_prob, 6) if home_prob is not None else None
-
     _now = datetime.now(timezone.utc)
     _served_status = served_event_status(event.status, event.commence_time, _now)
     # #13000 / #9634: a scheduled row held on StatPal's later-session start
     # (`upcoming_rail_condition` -> `statpal_later_session_rows`) must serve
     # StatPal's start here too, matching `/api/events/{id}` instead of printing
     # the stale venue stamp from an earlier day.
+    _unified_chance = None
+    if unified_read is not None:
+        from app.utils.unified_game_read import resolve_unified_card_chance
+
+        event = unified_read.blend_view
+        _unified_chance = resolve_unified_card_chance(
+            unified_read, sport_key=sport_key, served_status=_served_status
+        )
+        if three_way_books is None:
+            three_way_books = unified_read.three_way_books
+
     _served_start = served_commence_time(
         _served_status,
         event.commence_time,
         getattr(event, "win_probability_sources", None),
         _now,
     )
+
+    from app.utils.hero_probability import resolve_hero
+    from app.utils.settled_hero import is_finished_status, settled_current_chance
+    from app.utils.source_mark import headline_source_marks
+
+    _is_finished = is_finished_status(_served_status)
+    _finished_hero = None
+    _finished_sc = None
+    source_inputs: list[tuple[str, float]] = []
+    source_method: list[str] = []
+    home_prob = None
+    away_prob = None
+    if _unified_chance is not None:
+        home_prob = _unified_chance.home_probability
+    elif _is_finished:
+        _finished_hero = resolve_hero(event)
+        _finished_sc = settled_current_chance(_finished_hero, sport_key=sport_key)
+        home_prob = _finished_sc.home_probability if _finished_sc.resolved else None
+    else:
+        home_prob = _event_probability(
+            event, source_inputs=source_inputs, source_method=source_method
+        )
+        away_prob = round(1.0 - home_prob, 6) if home_prob is not None else None
 
     brief: dict = {
         "id": event.id,
@@ -1820,21 +1853,114 @@ def _format_game_brief(
         "home_win_probability": home_prob,
     }
 
-    # THE ONE BLEND. `home_probability` here is the same number
-    # `home_win_probability` carries — the same `compute_aggregate_probability`
-    # call, not a second derivation — because the shared card reads `current_odds`
-    # and the census reads the flat key, and the two must never be able to differ.
-    if home_prob is not None:
-        brief["current_odds"] = {
-            "home_probability": home_prob,
-            "away_probability": away_prob,
-        }
-        brief["source_mark"], brief["away_source_mark"] = blended_source_marks(
-            event,
-            source_inputs,
-            method=source_method[0] if source_method else None,
-            away_available=not sport_prices_a_draw(sport_key),
+    # THE ONE BLEND (or the resolved result on finished games, #13172 Option B).
+    # `home_probability` here is the same number `home_win_probability` carries
+    # because the shared card reads `current_odds` and the census reads the flat
+    # key, and the two must never be able to differ.
+    if _unified_chance is not None:
+        _draw_priced = sport_prices_a_draw(sport_key)
+        if _unified_chance.home_probability is not None:
+            _co_u: dict = {
+                "home_probability": _unified_chance.home_probability,
+                "away_probability": _unified_chance.away_probability,
+                "home_rendered_percent": _unified_chance.home_rendered_percent,
+                "away_rendered_percent": _unified_chance.away_rendered_percent,
+                "bookmaker_count": _unified_chance.bookmaker_count,
+            }
+            if _draw_priced:
+                _co_u["draw_probability"] = _unified_chance.draw_probability
+                _co_u["draw_rendered_percent"] = _unified_chance.draw_rendered_percent
+            brief["current_odds"] = _co_u
+        elif _unified_chance.bookmaker_count > 0:
+            brief["current_odds"] = {
+                "home_probability": None,
+                "away_probability": None,
+                "draw_probability": None,
+                "home_rendered_percent": None,
+                "away_rendered_percent": None,
+                "draw_rendered_percent": None,
+                "bookmaker_count": _unified_chance.bookmaker_count,
+            }
+        brief["source_mark"] = _unified_chance.source_mark
+        brief["away_source_mark"] = _unified_chance.away_source_mark
+    elif _is_finished:
+        _draw_priced = sport_prices_a_draw(sport_key)
+        if _finished_sc is not None and _finished_sc.resolved:
+            _co: dict = {
+                "home_probability": _finished_sc.home_probability,
+                "away_probability": _finished_sc.away_probability,
+                "home_rendered_percent": _finished_sc.home_rendered_percent,
+                "away_rendered_percent": _finished_sc.away_rendered_percent,
+            }
+            if _draw_priced:
+                _co["draw_probability"] = _finished_sc.draw_probability
+                _co["draw_rendered_percent"] = _finished_sc.draw_rendered_percent
+            brief["current_odds"] = _co
+        brief["source_mark"], brief["away_source_mark"] = headline_source_marks(
+            event, _finished_hero, []
         )
+    elif home_prob is not None:
+        from app.utils.draw_priced_winner import (
+            rendered_three_way_percents,
+            resolve_three_way_probabilities,
+        )
+
+        _draw_priced = sport_prices_a_draw(sport_key)
+        _brief_3 = None
+        if _draw_priced and _served_status in ("live", "scheduled"):
+            if _served_status == "live":
+                _bh, _ba = three_way_books if three_way_books is not None else (None, None)
+            else:
+                _oh = getattr(event, "opening_home_probability", None)
+                _oa = getattr(event, "opening_away_probability", None)
+                _bh = float(_oh) if _oh is not None else None
+                _ba = float(_oa) if _oa is not None else None
+            _brief_3 = resolve_three_way_probabilities(
+                home_prob,
+                books_home=_bh,
+                books_away=_ba,
+                sport_key=sport_key,
+            )
+        if _brief_3 is not None:
+            _h3, _a3, _d3 = _brief_3
+            _hp, _dp, _ap = rendered_three_way_percents(_h3, _d3, _a3)
+            brief["home_win_probability"] = _h3
+            brief["current_odds"] = {
+                "home_probability": _h3,
+                "away_probability": _a3,
+                "draw_probability": _d3,
+                "home_rendered_percent": _hp,
+                "away_rendered_percent": _ap,
+                "draw_rendered_percent": _dp,
+            }
+            brief["source_mark"], brief["away_source_mark"] = blended_source_marks(
+                event,
+                source_inputs,
+                method=source_method[0] if source_method else None,
+                away_available=True,
+                three_way_probs=_brief_3,
+                books_three_way=three_way_books,
+            )
+        elif _draw_priced:
+            # #13131: a draw-priced list card must show all three numbers or
+            # none — never two-way 1 - home with no draw, and never one orphan
+            # home chance.
+            from app.utils.source_mark import no_source_mark
+
+            brief["home_win_probability"] = None
+            brief["source_mark"] = no_source_mark("no_probability")
+            brief["away_source_mark"] = no_source_mark("no_probability")
+        else:
+            brief["current_odds"] = {
+                "home_probability": home_prob,
+                "away_probability": away_prob,
+            }
+            brief["source_mark"], brief["away_source_mark"] = blended_source_marks(
+                event,
+                source_inputs,
+                method=source_method[0] if source_method else None,
+                away_available=True,
+            )
 
     # Opening line — the card's live footer says "Opened 62/38" from this, and a
     # settled card falls back to it. Both columns are on the row already.
@@ -1859,8 +1985,18 @@ def _format_game_brief(
         # football games, in week 4) and North Texas from its women's basketball
         # row ("19-13"). `sport_key` is the argument this whole payload is built
         # for, so the rail always knows which league it is rendering.
-        home_team = _team_for_event(team_lookup, event.home_team_name, sport_key)
-        away_team = _team_for_event(team_lookup, event.away_team_name, sport_key)
+        home_team = _team_for_event(
+            team_lookup,
+            event.home_team_name,
+            sport_key,
+            team_id=getattr(event, "home_team_id", None),
+        )
+        away_team = _team_for_event(
+            team_lookup,
+            event.away_team_name,
+            sport_key,
+            team_id=getattr(event, "away_team_id", None),
+        )
         if home_team and (home_team.primary_color or home_team.logo_url_small):
             brief["home_team_data"] = _format_team_data(home_team)
         if away_team and (away_team.primary_color or away_team.logo_url_small):
@@ -2918,7 +3054,18 @@ def _serialize_outcomes(
             row["opening_probability"] = None
             row["movement_24h"] = None
 
-    return rows[:10]
+    preview = rows[:10]
+    for outcome, row in zip(ordered[:10], preview, strict=True):
+        mark = futures_outcome_source_mark(
+            market, outcome, row, served_settled=row["settled"]
+        )
+        describe_field_normalization(
+            mark,
+            input_probability=outcome.current_probability,
+            displayed_probability=row["probability"],
+        )
+        row["source_mark"] = mark
+    return preview
 
 
 def _competition_echoes_name(competition: str, market_name: str | None) -> bool:
@@ -3755,35 +3902,33 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # ONE lookup for all three rails, placed after both name folds so the
         # two compose (see `_tag_folded_rows` for why that order is the only one
         # that works) and before the formatter, which is the only reader.
-        _tag_folded = await _tag_folded_rows(db, [*_g_events, *_r_events, *_u_events])
+        from app.utils.unified_game_read import load_unified_game_reads
 
-        # Per-item, not per-rail (gotcha #42: "one bad item must never wipe a
-        # whole scoring pass"). This formatter reads twice as many columns since
-        # UX-P074, and the whole rails block sits under ONE except — so a single
-        # unreadable row used to take all sixteen games with it.
+        _all_rail_events = [*_g_events, *_r_events, *_u_events]
+        _unified_rails = await load_unified_game_reads(
+            db,
+            _all_rail_events,
+            sport_key=sport_key,
+            collapse_in_page=False,
+            include_same_league_external=True,
+            include_odds=True,
+            fold_card_fn=_tag_folded_rows,
+            fault_tolerant_external=True,
+            fault_tolerant_odds=True,
+        )
+
         def _format_all(events: list) -> list[dict]:
             out: list[dict] = []
             for _e in events:
                 try:
-                    # The row's OWN numbers are the default, never a blank: the
-                    # batch promises an entry per event, but a miss must degrade
-                    # to today's card rather than to one whose percentage
-                    # vanished — which is the defect this fold exists to remove,
-                    # not one it may introduce.
-                    _folded = _tag_folded.get(int(_e.id))
+                    _read = _unified_rails.by_id.get(int(_e.id))
                     out.append(
                         _format_game_brief(
-                            (
-                                FoldedBlendView(
-                                    _e,
-                                    _folded.win_probability_sources,
-                                    opening=_folded.opening,
-                                )
-                                if _folded is not None
-                                else _e
-                            ),
+                            _e,
                             sport_key,
                             _teams,
+                            three_way_books=_read.three_way_books if _read is not None else None,
+                            unified_read=_read,
                         )
                     )
                 except Exception:

@@ -135,6 +135,7 @@ class FakeEvent:
         opening_away=None,
         home_team_id=1,
         scores=(None, None),
+        completed_at=None,
     ):
         self.id = 15310077
         self.sport = FakeSport()
@@ -142,7 +143,7 @@ class FakeEvent:
         self.home_team_name = "Chicago Cubs"
         self.away_team_name = "Pittsburgh Pirates"
         self.commence_time = datetime(2026, 9, 11, 17, 40, tzinfo=timezone.utc)
-        self.completed_at = None
+        self.completed_at = completed_at
         self.status = status
         self.home_score, self.away_score = scores
         self.win_probability_sources = sources
@@ -270,19 +271,24 @@ class TestSettledMeansSettled:
                 sources=PRODUCTION_SOURCES_DISAGREEING,
                 status="completed",
                 scores=(5, 2),
+                completed_at=datetime(2026, 9, 11, 20, 40, tzinfo=timezone.utc),
+            ),
+            HOME_TEAM,
+        )["win_probability"]
+        unresolved = _format_event_brief(
+            FakeEvent(
+                sources=PRODUCTION_SOURCES_DISAGREEING,
+                status="completed",
+                scores=(5, 2),
+                completed_at=None,
             ),
             HOME_TEAM,
         )["win_probability"]
 
-        assert live is not None and completed is not None
-        assert completed != live, (
-            "the completed-status exclusion did not change the number — either "
-            "kalshi/polymarket are no longer dropped, or this fixture's sources "
-            "stopped disagreeing and the test is vacuous"
-        )
-        # Dropping the two low market readings must move the blend UP toward the
-        # models, never down.
+        assert live is not None and completed == 1.0
+        assert completed != live
         assert completed > live
+        assert unresolved is None
 
 
 class TestTheRailSurvivesBadData:
@@ -602,8 +608,8 @@ class TestTheTwinFoldReachesTheTeamCard:
                 away_team_id=AWAY_TEAM_ID,
                 sources=None,
                 when=played,
-                status="completed",
-                scores=(2, 0),
+                status="suspended",
+                scores=(1, 0),
             ),
             _event(
                 TWIN_ID,
@@ -612,7 +618,7 @@ class TestTheTwinFoldReachesTheTeamCard:
                 sources=twin_reading,
                 tags=[duplicate_tag(CANON_ID)],
                 when=played,
-                status="completed",
+                status="suspended",
             ),
             teams=TEAMS,
         )

@@ -50,6 +50,7 @@ export interface CurrentOdds {
   away_moneyline?: number | null;
   home_probability: number | null; // 0.0-1.0
   away_probability: number | null; // 0.0-1.0
+  draw_probability?: number | null; // 0.0-1.0 for three-way markets (#13131)
   // UX-P114: the whole percents the card PRINTS for the two probabilities above.
   // A game card draws both sides at once and the feed derives away as `1 - home`,
   // so rounding them independently printed 101 whenever the blend landed on a
@@ -59,6 +60,7 @@ export interface CurrentOdds {
   // pre-deploy payload will not carry it. See contracts/rendered_percent.json.
   home_rendered_percent?: number | null;
   away_rendered_percent?: number | null;
+  draw_rendered_percent?: number | null;
   spread: number | null;
   home_spread?: number | null;
   over_under: number | null;
@@ -188,6 +190,8 @@ export interface Event {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /** #13000 (`250: A`) — present and `true` when no score source carries this live match. */
+  score_source_unavailable?: boolean;
   /**
    * The per-period line under the score, when the authority holds one.
    *
@@ -281,6 +285,7 @@ export interface Event {
    * name". A client may not reconstruct it. See `lib/drawPricedWinner.ts`.
    */
   hero_probability_away?: number;
+  hero_probability_draw?: number | null;
   event_tags?: string[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */
@@ -422,6 +427,7 @@ export interface Event {
 export interface EventsResponse {
   events: Event[];
   count: number;
+  next_offset?: number | null;
 }
 
 export interface BookmakerOddsDetail {
@@ -948,6 +954,8 @@ export interface SettlementDisplay {
 
 export interface FuturesOutcome {
   rendered_percent?: number | null;
+  /** Venue-graded elimination on an otherwise open field. */
+  is_out?: boolean;
   id: number;
   name: string;
   probability: number | null;
@@ -1300,7 +1308,10 @@ export interface FuturesMarketsResponse {
 }
 
 export interface FuturesMarketDetailResponse extends FuturesMarket {
+  /** Verified title board to open for this alternate market address. */
+  canonical_market_id?: number | null;
   outcomes: FuturesOutcome[];
+  outcome_prices_are_independent?: boolean;
   display_category?: string;
   /** #8892: on a game container, the id of the match-winner outcome a hero leads
    *  with. Null everywhere else; absent on builds before #8894. */
@@ -1479,7 +1490,7 @@ export interface RelatedFuture {
   outcome_id: number;
   outcome_name: string;
   probability: number | null;
-  american_odds: number | null;
+  american_odds?: number | null;
   probability_change_24h: number | null;
   opening_probability: number | null;
   rank: number | null;
@@ -1775,6 +1786,8 @@ export interface FeedEventData {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /** #13000 (`250: A`) — present and `true` when no score source carries this live match. */
+  score_source_unavailable?: boolean;
   /**
    * #5811 — the venue already graded this scoreless row. Same keys, same
    * shared reader and same three states (absent / `false` / `true`) as
@@ -1791,6 +1804,7 @@ export interface FeedEventData {
   current_odds?: {
     home_probability: number | null;
     away_probability: number | null;
+    draw_probability?: number | null;
     // UX-P114: the whole percents the card PRINTS for the two probabilities
     // above. The feed derives away as `1 - home`, so a game card draws an exact
     // complement pair — and rounding the two independently printed 101 whenever
@@ -1801,6 +1815,7 @@ export interface FeedEventData {
     // payload carries it".
     home_rendered_percent?: number | null;
     away_rendered_percent?: number | null;
+    draw_rendered_percent?: number | null;
     bookmaker_count?: number;
     source?: string;  // "aggregate" when computed from non-sportsbook sources
     // #2920 / #9483 — the sportsbooks' projected pair `/api/events/{id}` and
@@ -1920,6 +1935,8 @@ export interface FeedFuturesOutcome {
 export interface FeedFuturesData {
   id: number;
   name: string;
+  /** #13390 / #13393: single-row bundle title already names the resolved template answer. */
+  title_states_single_answer?: boolean;
   sport: string | null;
   sport_name: string | null;
   llm_sport_category: string | null;
@@ -2305,10 +2322,12 @@ export type FeedRoundupRow = {
   probability: number;
   /** The server's whole-percent rendering of `probability`, when it sent one. */
   rendered_percent?: number | null;
+  unfloored_percent?: number | null;
   /** Optional second bar probability in [0, 1] for two-bar awards rows (e.g. nomination %). */
   secondary_probability?: number | null;
   /** The server's whole-percent rendering of `secondary_probability`, when it sent one. */
   secondary_rendered_percent?: number | null;
+  secondary_unfloored_percent?: number | null;
   /** Optional short label for the primary bar when a second bar is present (e.g. "Wins"). */
   primary_bar_label?: string | null;
   /** Optional short label for the secondary bar when present (e.g. "Nominated"). */

@@ -29,6 +29,7 @@ final class ContainerHubViewModel: ObservableObject {
 
     let slug: String
     private let service: any ContainerHubLoading
+    private let retryDelayNanoseconds: UInt64
     private var issued = 0
     private var closedThrough = 0
     private var refreshVersion = 0
@@ -40,9 +41,14 @@ final class ContainerHubViewModel: ObservableObject {
     }
     private var heldPages: [HeldPage] = []
 
-    init(slug: String, service: any ContainerHubLoading = ContainerHubService()) {
+    init(
+        slug: String,
+        service: any ContainerHubLoading = ContainerHubService(),
+        retryDelayNanoseconds: UInt64 = 350_000_000
+    ) {
         self.slug = slug
         self.service = service
+        self.retryDelayNanoseconds = retryDelayNanoseconds
     }
 
     @MainActor
@@ -55,7 +61,7 @@ final class ContainerHubViewModel: ObservableObject {
         refreshError = nil
         defer { if refreshVersion == version { isRefreshing = false } }
         do {
-            async let responseTask = service.load(slug: slug)
+            async let responseTask = loadPrimaryWithSingleTransientRetry(version: version, ticket: ticket)
             async let ceremonySetsTask = service.loadPairedMetrics(slug: slug)
             let response = try await responseTask
             let ceremonySets = await ceremonySetsTask
@@ -117,9 +123,14 @@ final class ContainerHubViewModel: ObservableObject {
 
     @MainActor
     func loadMore() async {
+        let isWeekMarkets = { (r: ContainerHubResponse) in
+            r.page?.kind == ContainerHubPage.nflWeekMarketsKind
+        }
         guard !isLoadingMore, case .loaded(let current) = state,
-              current.response.state == .published, current.response.edition?.isTheme == true,
+              current.response.state == .published,
+              current.response.edition?.isTheme == true || isWeekMarkets(current.response),
               let revision = current.response.revision, let cursor = current.response.page?.nextCursor else { return }
+        let loadWeekMarkets = isWeekMarkets(current.response)
         issued += 1
         let ticket = issued
         pageVersion += 1
@@ -128,7 +139,11 @@ final class ContainerHubViewModel: ObservableObject {
         pageError = nil
         defer { if pageVersion == version { isLoadingMore = false } }
         do {
-            let response = try await service.loadPage(slug: slug, cursor: cursor, revision: revision, limit: current.response.page?.limit ?? 50)
+            let pageLimit = current.response.page?.limit ?? 50
+            let nextUrl = current.response.page?.nextUrl
+            let response = loadWeekMarkets
+                ? try await service.loadMarketPage(slug: slug, cursor: cursor, revision: revision, limit: pageLimit, nextUrl: nextUrl)
+                : try await service.loadPage(slug: slug, cursor: cursor, revision: revision, limit: pageLimit)
             guard version == pageVersion, admitted(ticket), !Task.isCancelled else { return }
             try validate(response)
             guard revisionAdmitted(response) else { return }
@@ -170,7 +185,9 @@ final class ContainerHubViewModel: ObservableObject {
     }
     private func sameRevision(_ lhs: ContainerHubResponse, _ rhs: ContainerHubResponse) -> Bool {
         lhs.state == .published && rhs.state == .published && lhs.slug == rhs.slug && lhs.revision == rhs.revision
-            && lhs.edition == rhs.edition && lhs.counts?.shownCount == rhs.counts?.shownCount
+            && lhs.edition == rhs.edition
+            && lhs.counts?.shownCount == rhs.counts?.shownCount
+            && lhs.marketCounts?.marketCount == rhs.marketCounts?.marketCount
     }
 
     @MainActor
@@ -190,7 +207,8 @@ final class ContainerHubViewModel: ObservableObject {
             closeReads()
             heldPages = []
         } else {
-            heldPages = response.edition?.isTheme == true ? [HeldPage(cursor: nil, response: response)] : []
+            let retainsPagination = response.edition?.isTheme == true || response.page?.kind == ContainerHubPage.nflWeekMarketsKind
+            heldPages = retainsPagination ? [HeldPage(cursor: nil, response: response)] : []
         }
         let presentation = ContainerHubPresentation(response: response)
         context.accept(presentation)
@@ -246,6 +264,33 @@ final class ContainerHubViewModel: ObservableObject {
         let presentation = ContainerHubPresentation(response: combined)
         context.accept(presentation)
         state = .loaded(presentation)
+    }
+
+    @MainActor
+    private func loadPrimaryWithSingleTransientRetry(
+        version: Int,
+        ticket: Int
+    ) async throws -> ContainerHubResponse {
+        do {
+            return try await service.load(slug: slug)
+        } catch {
+            guard version == refreshVersion,
+                  admitted(ticket),
+                  !Task.isCancelled,
+                  !isCancellation(error),
+                  !isMissing(error) else {
+                throw error
+            }
+            if retryDelayNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: retryDelayNanoseconds)
+            }
+            guard version == refreshVersion,
+                  admitted(ticket),
+                  !Task.isCancelled else {
+                throw CancellationError()
+            }
+            return try await service.load(slug: slug)
+        }
     }
 
     private func isMissing(_ error: Error) -> Bool {

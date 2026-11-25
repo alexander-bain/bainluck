@@ -273,3 +273,94 @@ class TestFingerprintDedupAndDigest:
         assert "compute_fingerprint" in src
         assert "comment_on_issue" in src
         assert "deduped_onto" in src
+
+
+class TestAddToProjectBoard:
+    """#13274: GitHub GraphQL HTTP 200 null-data responses must not raise AttributeError."""
+
+    def test_null_add_mutation_and_errors_logs_graphql_message_without_raising(self, monkeypatch, caplog):
+        import logging
+        from app.tasks import bug_report_github as gh
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "data": {"addProjectV2ItemById": None},
+                    "errors": [{"message": "Resource not accessible by personal access token"}],
+                }
+
+        status_calls = []
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "test-token")
+        monkeypatch.setattr(gh.httpx, "post", lambda *a, **k: _Resp())
+        monkeypatch.setattr(gh, "_set_project_status", lambda item_id: status_calls.append(item_id))
+
+        with caplog.at_level(logging.WARNING, logger="app.tasks.bug_report_github"):
+            gh.add_to_project_board("I_node_238")
+
+        assert status_calls == []
+        assert any(
+            "Resource not accessible by personal access token" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_null_data_root_does_not_raise_attribute_error(self, monkeypatch, caplog):
+        import logging
+        from app.tasks import bug_report_github as gh
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"data": None, "errors": [{"message": "Could not resolve to a ProjectV2"}]}
+
+        status_calls = []
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "test-token")
+        monkeypatch.setattr(gh.httpx, "post", lambda *a, **k: _Resp())
+        monkeypatch.setattr(gh, "_set_project_status", lambda item_id: status_calls.append(item_id))
+
+        with caplog.at_level(logging.WARNING, logger="app.tasks.bug_report_github"):
+            gh.add_to_project_board("I_node_238")
+
+        assert status_calls == []
+        assert any("Could not resolve to a ProjectV2" in r.getMessage() for r in caplog.records)
+
+    def test_valid_item_id_sets_inbox_status(self, monkeypatch):
+        from app.tasks import bug_report_github as gh
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"data": {"addProjectV2ItemById": {"item": {"id": "PVTI_abc"}}}}
+
+        status_calls = []
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "test-token")
+        monkeypatch.setattr(gh.httpx, "post", lambda *a, **k: _Resp())
+        monkeypatch.setattr(gh, "_set_project_status", lambda item_id: status_calls.append(item_id))
+
+        gh.add_to_project_board("I_node_238")
+        assert status_calls == ["PVTI_abc"]
+
+    def test_set_project_status_logs_graphql_errors(self, monkeypatch, caplog):
+        import logging
+        from app.tasks import bug_report_github as gh
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"data": {"updateProjectV2ItemFieldValue": None}, "errors": [{"message": "Field option invalid"}]}
+
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "test-token")
+        monkeypatch.setattr(gh.httpx, "post", lambda *a, **k: _Resp())
+
+        with caplog.at_level(logging.WARNING, logger="app.tasks.bug_report_github"):
+            gh._set_project_status("PVTI_abc")
+
+        assert any("Field option invalid" in r.getMessage() for r in caplog.records)

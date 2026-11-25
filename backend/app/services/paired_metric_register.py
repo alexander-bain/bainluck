@@ -30,6 +30,11 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from app.utils.futures_source_merge import blend_with_verdict
+from app.utils.futures_source_mark import (
+    futures_outcome_source_mark,
+    verified_futures_source_mark,
+)
+from app.utils.source_mark import no_source_mark
 
 PAIRED_METRIC_REGISTER_PATH = (
     Path(__file__).resolve().parents[2]
@@ -73,6 +78,17 @@ def fold_outcome_key(text: str | None) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def clean_card_face_title(title: str | None) -> str:
+    """Strip internal merge notes, venue server notes, and market ID annotations (#5165726) from row titles (#12288)."""
+    raw = str(title or "").strip()
+    if not raw:
+        return ""
+    cleaned = re.sub(r"\s*\([^)]*(?:#\d+|averaged\s+across\s+venues|on\s+server)[^)]*\)", "", raw, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*\(#\d+(?:\s*\+\s*#\d+)*\)", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ·")
+    return cleaned
+
+
 def clean_card_face_subtitle(subtitle: str | None) -> str:
     """Strip internal market ID annotations (#5165726) and venue implementation notes."""
     raw = str(subtitle or "").strip()
@@ -92,6 +108,7 @@ def compute_server_venue_blend(
     *,
     kalshi_updated_at: str | None = None,
     polymarket_updated_at: str | None = None,
+    source_rows: list[dict] | None = None,
 ) -> tuple[float | None, str | None, dict[str, Any] | None, str | None]:
     """Compute the server-side blend for a single stage across Kalshi and Polymarket."""
     _ = (kalshi_updated_at, polymarket_updated_at)
@@ -107,7 +124,7 @@ def compute_server_venue_blend(
     if not rows:
         return None, None, None, None
 
-    blended, divergence, rule_name = blend_with_verdict(rows)
+    blended, divergence, rule_name = blend_with_verdict(rows, source_rows=source_rows)
     div_evidence = divergence.as_evidence() if divergence is not None else None
     authority = (
         SERVER_BLEND_AUTHORITY
@@ -117,55 +134,44 @@ def compute_server_venue_blend(
     return blended, rule_name, div_evidence, authority
 
 
-def hydrate_paired_metric_entry(raw_entry: Mapping[str, Any]) -> dict[str, Any]:
+def hydrate_paired_metric_entry(
+    raw_entry: Mapping[str, Any],
+    *,
+    verified_sources: Mapping[str, set[str]] | None = None,
+) -> dict[str, Any]:
     """Hydrate a single paired-metric entry with server-blended stage probabilities."""
     entry = copy.deepcopy(dict(raw_entry))
 
-    s1_k = _valid_prob(entry.get("stage_1_kalshi_probability"))
-    s1_p = _valid_prob(entry.get("stage_1_polymarket_probability"))
-    if s1_k is not None or s1_p is not None:
-        blended_s1, rule_s1, div_s1, auth_s1 = compute_server_venue_blend(
-            s1_k,
-            s1_p,
-            kalshi_updated_at=entry.get("stage_1_kalshi_updated_at"),
-            polymarket_updated_at=entry.get("stage_1_polymarket_updated_at"),
+    for stage in ("stage_1", "stage_2"):
+        kalshi = _valid_prob(entry.get(f"{stage}_kalshi_probability"))
+        polymarket = _valid_prob(entry.get(f"{stage}_polymarket_probability"))
+        source_rows: list[dict] = []
+        blended, rule, divergence, authority = compute_server_venue_blend(
+            kalshi, polymarket, source_rows=source_rows,
         )
-        entry["stage_1_probability"] = blended_s1
-        entry["stage_1_blend_rule"] = rule_s1
-        entry["stage_1_divergence"] = div_s1
-        entry["stage_1_blend_authority"] = auth_s1
-    elif _valid_prob(entry.get("stage_1_probability")) is not None:
-        entry["stage_1_blend_rule"] = None
-        entry["stage_1_divergence"] = None
-        entry["stage_1_blend_authority"] = SINGLE_VENUE_AUTHORITY
-    else:
-        entry["stage_1_probability"] = None
-        entry["stage_1_blend_rule"] = None
-        entry["stage_1_divergence"] = None
-        entry["stage_1_blend_authority"] = None
+        probability_key = f"{stage}_probability"
+        if source_rows or _valid_prob(entry.get(probability_key)) is None:
+            entry[probability_key] = blended
+        else:
+            authority = SINGLE_VENUE_AUTHORITY
+        entry[f"{stage}_blend_rule"] = rule
+        entry[f"{stage}_divergence"] = divergence
+        entry[f"{stage}_blend_authority"] = authority
 
-    s2_k = _valid_prob(entry.get("stage_2_kalshi_probability"))
-    s2_p = _valid_prob(entry.get("stage_2_polymarket_probability"))
-    if s2_k is not None or s2_p is not None:
-        blended_s2, rule_s2, div_s2, auth_s2 = compute_server_venue_blend(
-            s2_k,
-            s2_p,
-            kalshi_updated_at=entry.get("stage_2_kalshi_updated_at"),
-            polymarket_updated_at=entry.get("stage_2_polymarket_updated_at"),
-        )
-        entry["stage_2_probability"] = blended_s2
-        entry["stage_2_blend_rule"] = rule_s2
-        entry["stage_2_divergence"] = div_s2
-        entry["stage_2_blend_authority"] = auth_s2
-    elif _valid_prob(entry.get("stage_2_probability")) is not None:
-        entry["stage_2_blend_rule"] = None
-        entry["stage_2_divergence"] = None
-        entry["stage_2_blend_authority"] = SINGLE_VENUE_AUTHORITY
-    else:
-        entry["stage_2_probability"] = None
-        entry["stage_2_blend_rule"] = None
-        entry["stage_2_divergence"] = None
-        entry["stage_2_blend_authority"] = None
+        if entry[probability_key] is None:
+            mark = no_source_mark("no_probability")
+        elif not source_rows or (
+            verified_sources is not None
+            and any(row["source"] not in verified_sources[stage] for row in source_rows)
+        ):
+            mark = no_source_mark("source_evidence_incomplete")
+        else:
+            mark = verified_futures_source_mark(
+                ((row["source"], row["probability"]) for row in source_rows),
+                blended,
+                rule or "",
+            )
+        entry[f"{stage}_source_mark"] = mark
 
     return entry
 
@@ -329,7 +335,7 @@ def _compose_live_paired_title(
         and float(e["stage_1_probability"]) >= 0.75
     )
     if high_s1 >= 2:
-        return f"{leader} leads {cat_label}, with {high_s1} {unit} at 75%+ {s1_verb}"
+        return f"{leader} leads {cat_label}, with {high_s1} {unit} at 75% or better {s1_verb}"
     if len(ranked) >= 2:
         runner_up = str(ranked[1].get("subject") or "").strip()
         if runner_up:
@@ -423,18 +429,19 @@ def hydrate_paired_metric_set_from_markets(
         out_s2 = _match_outcome_in_market(
             e_s2_market, entry.get("stage_2_outcome"), entry.get("subject")
         )
+        verified_sources: dict[str, set[str]] = {"stage_1": set(), "stage_2": set()}
 
         # Populate per-venue Stage 1 probabilities based on venue source
         if out_s1_k is not None:
-            src_1 = str((e_s1_market or {}).get("source") or "kalshi").strip().lower()
+            src_1 = str((e_s1_market or {}).get("source") or "").strip().lower()
             p1 = _valid_prob(out_s1_k.get("probability"))
             obs1 = _iso_stamp(out_s1_k.get("observed_at") or out_s1_k.get("last_updated"))
             if obs1:
                 observed_stamps.append(obs1)
-            if "poly" in src_1 and out_s1_p is None:
-                entry["stage_1_polymarket_probability"] = p1
-            else:
-                entry["stage_1_kalshi_probability"] = p1
+            venue = "polymarket" if "poly" in src_1 and out_s1_p is None else "kalshi"
+            entry[f"stage_1_{venue}_probability"] = p1
+            if src_1 == venue:
+                verified_sources["stage_1"].add(venue)
             if stage_1_settled:
                 if out_s1_k.get("is_winner") is True:
                     entry["stage_1_settled_state"] = "yes"
@@ -447,22 +454,39 @@ def hydrate_paired_metric_set_from_markets(
             if obs1p:
                 observed_stamps.append(obs1p)
             entry["stage_1_polymarket_probability"] = p1_poly
+            if str((e_s1_poly_market or {}).get("source") or "").strip().lower() == "polymarket":
+                verified_sources["stage_1"].add("polymarket")
 
         if out_s2 is not None:
-            src_2 = str((e_s2_market or {}).get("source") or "kalshi").strip().lower()
+            src_2 = str((e_s2_market or {}).get("source") or "").strip().lower()
             p2 = _valid_prob(out_s2.get("probability"))
             obs2 = _iso_stamp(out_s2.get("observed_at") or out_s2.get("last_updated"))
             if obs2:
                 observed_stamps.append(obs2)
-            if "poly" in src_2:
-                entry["stage_2_polymarket_probability"] = p2
-            else:
-                entry["stage_2_kalshi_probability"] = p2
+            venue = "polymarket" if "poly" in src_2 else "kalshi"
+            entry[f"stage_2_{venue}_probability"] = p2
+            if src_2 == venue:
+                verified_sources["stage_2"].add(venue)
             entry["stage_2_outcome_id"] = out_s2.get("id")
             if stage_2_settled and out_s2.get("is_winner") is True:
                 stage_2_winner_subject = str(entry.get("subject") or "")
 
-        hydrated_entry = hydrate_paired_metric_entry(entry)
+        hydrated_entry = hydrate_paired_metric_entry(entry, verified_sources=verified_sources)
+        if out_s2 is not None and (display := out_s2.get("detail_display")) is not None:
+            hydrated_entry["stage_2_probability"] = display.get("probability")
+            hydrated_entry["stage_2_rendered_percent"] = display.get("rendered_percent")
+            hydrated_entry["stage_2_source_mark"] = (
+                display.get("source_mark") or no_source_mark("no_probability")
+            )
+        for stage, settled, outcome in (
+            ("stage_1", stage_1_settled, out_s1_k),
+            ("stage_2", stage_2_settled, out_s2),
+        ):
+            if settled:
+                mark = (outcome or {}).get("source_mark") or {}
+                hydrated_entry[f"{stage}_source_mark"] = (
+                    mark if mark.get("state") == "settled" else no_source_mark("result_unknown")
+                )
         has_s1 = (
             hydrated_entry.get("stage_1_probability") is not None
             or hydrated_entry.get("stage_1_settled_state") in {"yes", "no"}
@@ -499,6 +523,10 @@ def hydrate_paired_metric_set_from_markets(
         cleaned_sub
         or f"{raw_set.get('stage_1_label', 'Nominated')} % and {raw_set.get('stage_2_label', 'Wins')} % side by side"
     )
+    for mkey in ("stage_1_market", "stage_2_market"):
+        m_obj = hydrated.get(mkey)
+        if isinstance(m_obj, dict) and m_obj.get("name"):
+            m_obj["name"] = clean_card_face_title(str(m_obj["name"]))
     if observed_stamps:
         # #7785 floor rule: oldest observed timestamp across rendered contenders
         hydrated["as_of"] = min(observed_stamps)
@@ -513,11 +541,13 @@ def serialize_futures_market_for_pairing(fm: Any) -> dict[str, Any]:
         raw_p = getattr(o, "current_probability", None)
         if raw_p is None:
             raw_p = getattr(o, "probability", None)
+        probability = _valid_prob(raw_p)
         outs_list.append(
             {
                 "id": int(o.id),
                 "name": str(getattr(o, "name", "") or ""),
-                "probability": _valid_prob(raw_p),
+                "probability": probability,
+                "source_mark": futures_outcome_source_mark(fm, o, {"probability": probability}),
                 "is_winner": getattr(o, "is_winner", None),
                 "observed_at": _iso_stamp(getattr(o, "last_updated", None)) or mkt_obs,
             }
@@ -543,10 +573,7 @@ async def load_live_paired_metric_sets(
     prefix: str | None = None,
     register_path: Path | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Query PostgreSQL once for all referenced markets and return live-hydrated paired sets."""
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-
+    """Hydrate the paired sets, taking each winner column from its full market field."""
     from app.models.models import FuturesMarket
 
     target = register_path or PAIRED_METRIC_REGISTER_PATH
@@ -583,12 +610,48 @@ async def load_live_paired_metric_sets(
             and not isinstance(m.get("id"), bool)
         }
     elif hasattr(db, "execute"):
-        stmt = (
-            select(FuturesMarket)
-            .options(selectinload(FuturesMarket.outcomes))
-            .where(FuturesMarket.id.in_(sorted(market_ids)))
+        from app.routes.futures import (
+            _apply_verified_title_to_detail,
+            _fleet_newest_observation,
+            _format_market_detail,
+            _resolve_verified_title,
+            _verified_title_market_stmt,
+            out_legs_by_market,
+            withheld_price_outcome_ids_for_markets,
         )
-        rows = (await db.execute(stmt)).scalars().all()
+
+        stmt = _verified_title_market_stmt().where(FuturesMarket.id.in_(sorted(market_ids)))
+        rows = (await db.execute(stmt)).unique().scalars().all()
+        winner_ids = {
+            (sdata.get("stage_2_market") or {}).get("id") for sdata in selected_raw.values()
+        }
+        winner_ids.update(
+            entry.get("stage_2_market_id")
+            for sdata in selected_raw.values()
+            for entry in sdata.get("entries") or ()
+            if isinstance(entry, Mapping)
+        )
+        winner_markets = [
+            fm for fm in rows
+            if not isinstance(fm, Mapping)
+            and fm.id in winner_ids
+            and fm.status in {"open", "active"}
+            and fm.mutually_exclusive is True
+        ]
+        displayed_fields = {}
+        if winner_markets:
+            withheld = await withheld_price_outcome_ids_for_markets(db, winner_markets)
+            fleet = await _fleet_newest_observation(db, *winner_markets)
+            out_divisions = await out_legs_by_market(winner_markets)
+            for fm in winner_markets:
+                detail = _format_market_detail(
+                    fm, None, withheld.get(fm.id, set()),
+                    fleet_newest_observation=fleet,
+                    out_division_labels=out_divisions.get(fm.id),
+                    normalize_numbers=False,
+                )
+                _apply_verified_title_to_detail(detail, await _resolve_verified_title(db, fm), fm)
+                displayed_fields[fm.id] = {row["id"]: row for row in detail["outcomes"]}
         for fm in rows:
             if isinstance(fm, Mapping):
                 mid = fm.get("id")
@@ -597,7 +660,11 @@ async def load_live_paired_metric_sets(
             elif getattr(fm, "id", None) is not None:
                 mid = int(fm.id)
                 if mid in market_ids:
-                    markets_by_id[mid] = serialize_futures_market_for_pairing(fm)
+                    serialized = serialize_futures_market_for_pairing(fm)
+                    if (displayed := displayed_fields.get(mid)) is not None:
+                        for row in serialized["outcomes"]:
+                            row["detail_display"] = displayed.get(row["id"], {})
+                    markets_by_id[mid] = serialized
 
     hydrated_sets: dict[str, dict[str, Any]] = {}
     for sid, sdata in selected_raw.items():

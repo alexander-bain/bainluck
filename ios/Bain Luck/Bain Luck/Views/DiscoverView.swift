@@ -158,6 +158,10 @@ struct DiscoverView: View {
     }
     @Environment(\.scenePhase) private var priceScenePhase
     @State private var priceViewVisible = false
+
+    private var shouldDeliverLivePrices: Bool {
+        priceViewVisible && priceScenePhase == .active && navigationPath.isEmpty
+    }
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var visibleCount: Int
@@ -308,6 +312,8 @@ struct DiscoverView: View {
     @State private var profileVersion = 0
     @State private var orderingProfileVersion = 0
     @State private var pullEpoch = 0
+    @State private var firstRunPreferences = FirstRunPreferences212A.load()
+    @State private var firstRunPrefsVersion = 0
 
     /// How many times the reader's pull-to-refresh has actually run.
     ///
@@ -1111,7 +1117,7 @@ struct DiscoverView: View {
                 // so no like/unlike signal could ever be produced
                 // for them and the feed could not learn from a third
                 // of what it showed.
-                SwipeToDismiss(
+                DiscoverGroupedSwipeContainer13668(
                     onSwipeLeft: {
                         if let primary = items.first {
                             recordInteraction(for: primary, action: .unlike, source: "swipe")
@@ -1125,7 +1131,7 @@ struct DiscoverView: View {
                         hideForSession(ids: Self.dismissKeys(forGroupOf: items))
                     },
                     onRequiresSignIn: inviteSignInForFeedback
-                ) {
+                ) { tapGuard in
                     if let pairedBundle = (items.first?.bundle?.pairedMetricSet != nil ? items.first?.bundle : nil)
                         ?? vm.items.first(where: { $0.bundle?.pairedMetricSet != nil && $0.bundle?.title == title && $0.bundle?.kind == kind })?.bundle,
                        let pairedSet = pairedBundle.pairedMetricSet,
@@ -1133,19 +1139,51 @@ struct DiscoverView: View {
                         DiscoverPairedMetricCardView(
                             set: pairedSet,
                             form: PairedMetricPresentation.resolvedForm(for: pairedSet, preferred: pairedBundle.visualForm, cardIndex: idx),
+                            containerDestination: collectionRef.map { ($0.slug, $0.name) },
                             onOpenMarket: { marketId in
+                                guard tapGuard.allowsTap() else { return }
                                 if let primary = items.first {
                                     recordInteraction(for: primary, action: .detailOpen, source: "card")
                                 }
                                 navigationPath.append(Route.futuresDetail(id: marketId))
                             },
                             onOpenCollection: { slug, name in
+                                guard tapGuard.allowsTap() else { return }
                                 if let primary = items.first {
                                     recordInteraction(for: primary, action: .detailOpen, source: "card")
                                 }
                                 navigationPath.append(Route.containerHub(slug: slug, name: name))
                             }
                         )
+                    } else if KitCardStandInSwitch366B.isEnabled,
+                              kind == "roundup",
+                              let roundupBundle = Self.resolveRoundupBundle(
+                                  title: title,
+                                  collectionRef: collectionRef,
+                                  groupItems: items,
+                                  feedItems: vm.items
+                              ),
+                              case .kit(let kitSpec) = KitCardStandInSwitch366B.resolveDiscoverStandIn(
+                                  contract: roundupBundle.roundupContract
+                              ),
+                              let kitView = KitCardView366B(
+                                  spec: kitSpec,
+                                  onRoute: { kitRoute in
+                                      guard tapGuard.allowsTap() else { return }
+                                      if let primary = items.first {
+                                          recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                      }
+                                      if let dest = KitCardStandInSwitch366B.resolveRoute(
+                                          kitRoute,
+                                          fallbackCollectionRef: roundupBundle.roundupCollectionRef ?? collectionRef,
+                                          fallbackTitle: roundupBundle.title,
+                                          kitCardHeadline: kitSpec.commonHeadline
+                                      ) {
+                                          navigationPath.append(dest)
+                                      }
+                                  }
+                              ) {
+                        kitView
                     } else if kind == "roundup",
                               let roundupBundle = Self.resolveRoundupBundle(
                                   title: title,
@@ -1158,12 +1196,14 @@ struct DiscoverView: View {
                             card: machineryCard,
                             pairedMetricSet: roundupBundle.roundupContract?.pairedMetricSet ?? roundupBundle.pairedMetricSet,
                             onOpenContainer: { slug, name in
+                                guard tapGuard.allowsTap() else { return }
                                 if let primary = items.first {
                                     recordInteraction(for: primary, action: .detailOpen, source: "card")
                                 }
                                 navigationPath.append(Route.containerHub(slug: slug, name: name))
                             },
                             onOpenMarket: { marketId in
+                                guard tapGuard.allowsTap() else { return }
                                 if let primary = items.first {
                                     recordInteraction(for: primary, action: .detailOpen, source: "card")
                                 }
@@ -1180,12 +1220,16 @@ struct DiscoverView: View {
                               let roundupRef = roundupBundle.roundupCollectionRef,
                               let roundupModel = DiscoverRoundupCardModel.build(
                                   title: roundupBundle.title,
-                                  contract: roundupBundle.roundupContract
+                                  contract: roundupBundle.roundupContract,
+                                  fallbackKicker: (roundupBundle.roundupContract?.hasUnknownLookFallback == true || roundupBundle.roundupContract?.kitCard != nil) ? roundupRef.name : nil,
+                                  fallbackFooter: (roundupBundle.roundupContract?.hasUnknownLookFallback == true || roundupBundle.roundupContract?.kitCard != nil) ? DiscoverRoundupCardModel.fallbackFooter(for: roundupRef) : nil,
+                                  allowFlexibleRowCount: (roundupBundle.roundupContract?.hasUnknownLookFallback == true || roundupBundle.roundupContract?.kitCard != nil)
                               ) {
                         DiscoverRoundupCardView(
                             model: roundupModel,
                             collectionRef: roundupRef,
                             onOpenCollection: { dest in
+                                guard tapGuard.allowsTap() else { return }
                                 if let primary = items.first {
                                     recordInteraction(for: primary, action: .detailOpen, source: "card")
                                 }
@@ -1203,6 +1247,14 @@ struct DiscoverView: View {
                         )
                         NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, collectionRef: collectionRef, navigationPath: $navigationPath)
                             .environment(
+                                \.discoverGroupOnOpenCollection13094,
+                                {
+                                    if let primary = items.first {
+                                        recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                    }
+                                }
+                            )
+                            .environment(
                                 \.discoverGroupBundleArt12840,
                                 DiscoverBundleArtContext12840(
                                     imageUrl: sourceBundle?.imageUrl,
@@ -1212,9 +1264,18 @@ struct DiscoverView: View {
                             )
                     }
                 }
+                .contextMenu {
+                    discoverGroupCardMenu(
+                        title: title,
+                        items: items,
+                        kind: kind,
+                        theme: theme,
+                        collectionRef: collectionRef
+                    )
+                }
             case .single(let item):
                 if let pairedSet = item.pairedMetricSet, !pairedSet.entries.isEmpty {
-                    SwipeToDismiss(
+                    DiscoverGroupedSwipeContainer13668(
                         onSwipeLeft: {
                             recordInteraction(for: item, action: .unlike, source: "swipe")
                             hideForSession(itemId(item))
@@ -1224,15 +1285,18 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onRequiresSignIn: inviteSignInForFeedback
-                    ) {
+                    ) { tapGuard in
                         DiscoverPairedMetricCardView(
                             set: pairedSet,
                             form: PairedMetricPresentation.resolvedForm(for: pairedSet, preferred: item.visualForm, cardIndex: idx),
+                            containerDestination: (item.bundle?.themeCollectionRef ?? item.bundle?.roundupCollectionRef).map { ($0.slug, $0.name) },
                             onOpenMarket: { marketId in
+                                guard tapGuard.allowsTap() else { return }
                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                 navigationPath.append(Route.futuresDetail(id: marketId))
                             },
                             onOpenCollection: { slug, name in
+                                guard tapGuard.allowsTap() else { return }
                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                                 navigationPath.append(Route.containerHub(slug: slug, name: name))
                             }
@@ -1449,7 +1513,7 @@ struct DiscoverView: View {
                 }
             }
         }
-        .id(gi.id)
+        .modifier(ConditionalScrollAnchorModifier(anchorId: isGuessSlot ? gi.id : nil))
         .onDisappear { vm.setPriceCardsVisible(owner: gi.id, cards: [], visible: false) }
         .onChange(of: DiscoverPriceRefresh.leaves(gi.priceCards).map(\.id)) { _, _ in
             vm.updateVisiblePriceCards(owner: gi.id, cards: gi.priceCards)
@@ -1661,7 +1725,7 @@ struct DiscoverView: View {
     ///     grouping is split by. It changes only beside an `items` reassign, but
     ///     naming it keeps a record change from ever reusing a flat memo.
     private var presentationSignature: String {
-        "\(vm.itemsVersion)|\(dismissVersion)|\(orderingProfileVersion)|\(pullEpoch)|\(vm.acceptedSeatedEdition ?? "")"
+        "\(vm.itemsVersion)|\(dismissVersion)|\(orderingProfileVersion)|\(pullEpoch)|\(firstRunPrefsVersion)|\(vm.acceptedSeatedEdition ?? "")"
     }
 
     /// Cards already admitted in the current sitting since the last pull-to-refresh
@@ -1750,6 +1814,7 @@ struct DiscoverView: View {
             dismissVersion: dismissVersion,
             dismissedAt: dismissedAt,
             profile: orderingProfile ?? interactionProfile,
+            firstRunPreferences: firstRunPreferences,
             sectionOf: vm.seatedSection(of:)
         )
     }
@@ -1771,6 +1836,7 @@ struct DiscoverView: View {
         dismissVersion: Int,
         dismissedAt: [String: TimeInterval],
         profile: DiscoverInteractionProfile?,
+        firstRunPreferences: FirstRunPreferences212A = .empty,
         now: Date = Date(),
         sectionOf: (FeedItem) -> FeedSection? = { _ in nil }
     ) -> GroupedPresentation {
@@ -1935,6 +2001,29 @@ struct DiscoverView: View {
                 spaceGrouped(personalizeGrouped(Array(floored[boundary...]), profile: profile)),
                 now: now
             )
+            if !firstRunPreferences.isEmpty {
+                let matchesFirstRun: (DiscoverGroupedItem) -> Bool = { grouped in
+                    guard let item = primaryFeedItem(grouped) else { return false }
+                    return FirstRunDiscoverBoost212A.itemMatches(
+                        item,
+                        category: groupedCategoryStatic(grouped),
+                        preferences: firstRunPreferences
+                    )
+                }
+                let promotedFromOpening = openingItems.filter(matchesFirstRun)
+                let promotedFromCont = continuationItems.filter(matchesFirstRun)
+                let remainingOpening = openingItems.filter { !matchesFirstRun($0) }
+                let remainingCont = continuationItems.filter { !matchesFirstRun($0) }
+                let boostedOpening = promotedFromOpening + promotedFromCont + remainingOpening
+                return GroupedPresentation(
+                    items: boostedOpening + remainingCont,
+                    continuationStart: remainingCont.isEmpty ? nil : boostedOpening.count,
+                    admittedIds: admitted,
+                    pullEpoch: pullEpoch,
+                    dismissVersion: dismissVersion,
+                    sourceItemIds: allSourceIds
+                )
+            }
             return GroupedPresentation(
                 items: openingItems + continuationItems,
                 continuationStart: openingItems.count,
@@ -1945,7 +2034,7 @@ struct DiscoverView: View {
             )
         }
         var unused = 0
-        let fullItems = DiscoverPageTeamSeat11985.seatItems(
+        let baseFullItems = DiscoverPageTeamSeat11985.seatItems(
             spaceGrouped(
                 personalizeGrouped(
                     enforceGroupFloorTarget(
@@ -1958,6 +2047,19 @@ struct DiscoverView: View {
             ),
             now: now
         )
+        let fullItems: [DiscoverGroupedItem]
+        if firstRunPreferences.isEmpty {
+            fullItems = baseFullItems
+        } else {
+            fullItems = FirstRunDiscoverBoost212A.promotePreferredItems(baseFullItems, preferences: firstRunPreferences) { grouped, prefs in
+                guard let item = primaryFeedItem(grouped) else { return false }
+                return FirstRunDiscoverBoost212A.itemMatches(
+                    item,
+                    category: groupedCategoryStatic(grouped),
+                    preferences: prefs
+                )
+            }
+        }
         return GroupedPresentation(
             items: fullItems,
             continuationStart: nil,
@@ -2099,6 +2201,55 @@ struct DiscoverView: View {
         if let matchedByTitle = feedItems.first(where: { $0.bundle?.kind == "roundup" && $0.bundle?.title == title })?.bundle,
            matchedByTitle.admitsRoundupCard {
             return matchedByTitle
+        }
+        return nil
+    }
+
+    static func groupCollectionSlug(
+        title: String,
+        kind: String?,
+        theme: String?,
+        collectionRef: FeedThemeCollectionRef?,
+        groupItems: [FeedItem],
+        feedItems: [FeedItem]
+    ) -> String? {
+        if let slug = collectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+            return slug
+        }
+        if kind == "roundup",
+           let roundupBundle = resolveRoundupBundle(
+               title: title,
+               collectionRef: collectionRef,
+               groupItems: groupItems,
+               feedItems: feedItems
+           ) {
+            if let slug = roundupBundle.roundupContract?.machineryCard?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = roundupBundle.roundupCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+        }
+        if let groupBundle = resolveGroupBundle(
+            title: title,
+            kind: kind,
+            theme: theme,
+            collectionRef: collectionRef,
+            groupItems: groupItems,
+            feedItems: feedItems
+        ) {
+            if let slug = groupBundle.themeCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = groupBundle.roundupCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = groupBundle.roundupContract?.machineryCard?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let setId = groupBundle.pairedMetricSet?.setId, setId.hasPrefix("oscars-") {
+                return "oscars-2027"
+            }
         }
         return nil
     }
@@ -2418,6 +2569,7 @@ struct DiscoverView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 60)
+                    .noteReviewPromptTrouble12304()
                 }
 
                 // Honest staleness banner (#1465): we are showing the last-good
@@ -2451,6 +2603,7 @@ struct DiscoverView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Showing recent markets. Couldn't refresh.")
                     .accessibilityHint("Double-tap Retry to reload the latest feed")
+                    .noteReviewPromptTrouble12304()
                 }
 
                 // Swipe hint (shown once)
@@ -2541,40 +2694,44 @@ struct DiscoverView: View {
                 let blocks = Self.sectionBlocks(
                     cardCount: pageGrouped.count,
                     continuationStart: groupedPresentation.continuationStart)
-                ScrollViewReader { proxy in
-                    VStack(spacing: 0) {
-                        ForEach(blocks, id: \.range.lowerBound) { block in
-                            let range = block.range
-                            if block.isContinuation {
-                                continuationHeading(leads: range.lowerBound == 0)
-                            }
-                            HStack(alignment: .top, spacing: DiscoverMasonry.spacing) {
-                                ForEach(Array(DiscoverMasonry.columns(
-                                    cardCount: range.count, columnCount: columnCount
-                                ).enumerated()), id: \.offset) { _, indices in
-                                    LazyVStack(spacing: DiscoverMasonry.spacing) {
-                                        ForEach(indices.map { $0 + range.lowerBound }, id: \.self) { idx in
-                                            discoverCard(
-                                                idx: idx,
-                                                gi: pageGrouped[idx],
-                                                pageGrouped: pageGrouped,
-                                                totalCount: grouped.count,
-                                                proxy: proxy
-                                            )
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity)
+                VStack(spacing: 0) {
+                    ForEach(blocks, id: \.range.lowerBound) { block in
+                        let range = block.range
+                        if block.isContinuation {
+                            continuationHeading(leads: range.lowerBound == 0)
+                        }
+                        if columnCount <= 1 {
+                            LazyVStack(spacing: DiscoverMasonry.spacing) {
+                                ForEach(range, id: \.self) { idx in
+                                    discoverCard(
+                                        idx: idx,
+                                        gi: pageGrouped[idx],
+                                        pageGrouped: pageGrouped,
+                                        totalCount: grouped.count,
+                                        proxy: feedProxy
+                                    )
                                 }
+                            }
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            LazyMasonryColumns(
+                                range: range,
+                                columnCount: columnCount,
+                                spacing: DiscoverMasonry.spacing,
+                                horizontalAlignment: .center,
+                                cardAlignment: .center
+                            ) { idx in
+                                discoverCard(
+                                    idx: idx,
+                                    gi: pageGrouped[idx],
+                                    pageGrouped: pageGrouped,
+                                    totalCount: grouped.count,
+                                    proxy: feedProxy
+                                )
                             }
                         }
                     }
                 }
-                // The card area's own width, which is what decides the column
-                // count. Read from a `.background` so it cannot influence the
-                // layout it measures, and taken BEFORE `.padding(.horizontal)`
-                // so it is the width the cards actually get. There is no
-                // feedback loop: this width comes from the enclosing column, not
-                // from the cards, so `columnCount` never changes it.
                 .background(
                     GeometryReader { geo in
                         Color.clear
@@ -2641,6 +2798,7 @@ struct DiscoverView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("Couldn't find fresh markets")
                         .accessibilityHint("Double-tap to retry")
+                        .noteReviewPromptTrouble12304()
                     } else if vm.hasMore {
                         VStack(spacing: 12) {
                             ProgressView()
@@ -2775,6 +2933,7 @@ struct DiscoverView: View {
         .overlay(alignment: .topLeading) { fixedFeedReceiptBadge }
         #endif
         }
+        .environment(\.discoverWithholdUnconfirmedPhotos13670, vm.isShowingCachedContent)
         }
         .navigationTitle("Discover")
         #if os(iOS)
@@ -2801,10 +2960,13 @@ struct DiscoverView: View {
             #endif
             AnalyticsService.trackScreen(name: "discover", type: "discover")
             priceViewVisible = true
-            vm.setPriceDeliveryActive(priceScenePhase == .active)
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
         }
-        .onChange(of: priceScenePhase) { _, phase in
-            vm.setPriceDeliveryActive(priceViewVisible && phase == .active)
+        .onChange(of: priceScenePhase) { _, _ in
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
+        }
+        .onChange(of: navigationPath.isEmpty) { _, _ in
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
         }
         .task {
             if vm.items.isEmpty {
@@ -2896,8 +3058,17 @@ struct DiscoverView: View {
             await refreshFeed()
         }
         .sheet(isPresented: $showOnboarding) {
-            WelcomeView()
-                .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
+            FirstRunChecklistRootView364A(arrivedHeadline: FirstRunLinkHandoffBridge212A.currentHeadline()) {
+                firstRunPreferences = FirstRunPreferences212A.load()
+                firstRunPrefsVersion &+= 1
+                pullEpoch &+= 1
+            }
+            .onDisappear {
+                UserDefaults.standard.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
+                firstRunPreferences = FirstRunPreferences212A.load()
+                firstRunPrefsVersion &+= 1
+                pullEpoch &+= 1
+            }
         }
         .sheet(isPresented: $showFeedbackSignIn) {
             MyStuffView()
@@ -3345,6 +3516,64 @@ struct DiscoverView: View {
     }
 
     @ViewBuilder
+    private func discoverGroupCardMenu(
+        title: String,
+        items: [FeedItem],
+        kind: String?,
+        theme: String?,
+        collectionRef: FeedThemeCollectionRef?
+    ) -> some View {
+        let lessLikeThisAction: () -> Void = {
+            guard case .signedIn = feedbackAuthState else {
+                inviteSignInForFeedback()
+                return
+            }
+            if let primary = items.first {
+                recordInteraction(for: primary, action: .unlike, source: "context_menu")
+            }
+            hideForSession(ids: Self.dismissKeys(forGroupOf: items))
+        }
+
+        if let setSlug = Self.groupCollectionSlug(
+            title: title,
+            kind: kind,
+            theme: theme,
+            collectionRef: collectionRef,
+            groupItems: items,
+            feedItems: vm.items
+        ) {
+            CollectionContextMenuItems(
+                slug: setSlug,
+                onCopyLink: {
+                    if let primary = items.first {
+                        recordInteraction(for: primary, action: .share, source: "copy_link")
+                    }
+                },
+                onShare: {
+                    if let primary = items.first {
+                        recordInteraction(for: primary, action: .share, source: ShareSurface.discoverCard.rawValue)
+                    } else {
+                        ShareInstrumentation.recordShareOpened(
+                            itemType: "collection",
+                            itemId: setSlug,
+                            itemName: title,
+                            category: nil,
+                            surface: .discoverCard
+                        )
+                    }
+                },
+                onLessLikeThis: lessLikeThisAction
+            )
+        } else {
+            Button {
+                lessLikeThisAction()
+            } label: {
+                Label("Less Like This", systemImage: "hand.thumbsdown")
+            }
+        }
+    }
+
+    @ViewBuilder
     private func discoverCardMenu(_ item: FeedItem) -> some View {
         CardContextMenu(
             item: item,
@@ -3352,6 +3581,9 @@ struct DiscoverView: View {
             showsShareSectionDivider: false,
             onCopyLink: { _ in
                 recordInteraction(for: item, action: .share, source: "copy_link")
+            },
+            onShare: { _ in
+                recordInteraction(for: item, action: .share, source: ShareSurface.discoverCard.rawValue)
             },
             onLessLikeThis: {
                 guard case .signedIn = feedbackAuthState else {
@@ -3423,6 +3655,7 @@ struct NativeGroupCard: View {
     let items: [FeedItem]
     var kind: String? = nil
     var theme: String? = nil
+    var onOpenCollection: (() -> Void)? = nil
     var sharedQuestion: String? = nil
     /// #9925: present only when the server proved this theme's preview sits on a
     /// published, complete collection (`FeedBundle.themeCollectionRef`).
@@ -3437,13 +3670,32 @@ struct NativeGroupCard: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.discoverGroupBundleArt12840) private var envBundleArt
+    @Environment(\.discoverGroupOnOpenCollection13094) private var envOnOpenCollection
+    @Environment(\.discoverSwipeTapGuard13668) private var tapGuard
 
     private var category: String {
         items.first?.futures?.llmSportCategory?.lowercased() ?? ""
     }
 
     private var canExpand: Bool {
-        DiscoverGroupRows.canExpand(itemCount: items.count, kind: kind)
+        guard collectionRef == nil else { return false }
+        return DiscoverGroupRows.canExpand(itemCount: items.count, kind: kind)
+    }
+
+    static func tapDestinationRoute(collectionRef: FeedThemeCollectionRef?, marketId: Int? = nil) -> Route? {
+        if let collectionRef {
+            return DiscoverGroupRows.collectionRoute(for: collectionRef)
+        }
+        if let marketId {
+            return .futuresDetail(id: marketId)
+        }
+        return nil
+    }
+
+    private func openContainer(_ ref: FeedThemeCollectionRef) {
+        guard tapGuard?.allowsTap() != false else { return }
+        (onOpenCollection ?? envOnOpenCollection)?()
+        navigationPath.append(DiscoverGroupRows.collectionRoute(for: ref))
     }
 
     private var isDark: Bool {
@@ -3496,14 +3748,33 @@ struct NativeGroupCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            DiscoverGroupBannerView12840(
-                resolved: resolvedBanner,
-                category: category,
-                preloadedImages: preloadedBannerImages
-            )
+            if let collectionRef {
+                DiscoverGroupBannerView12840(
+                    resolved: resolvedBanner,
+                    category: category,
+                    preloadedImages: preloadedBannerImages
+                )
+                .contentShape(Rectangle())
+                .onTapGesture { openContainer(collectionRef) }
+                .accessibilityIdentifier("discover.group.banner")
+            } else {
+                DiscoverGroupBannerView12840(
+                    resolved: resolvedBanner,
+                    category: category,
+                    preloadedImages: preloadedBannerImages
+                )
+            }
 
-            if canExpand {
-                Button { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
+            if let collectionRef {
+                groupHeaderContent
+                    .onTapGesture { openContainer(collectionRef) }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("discover.group.header")
+            } else if canExpand {
+                Button {
+                    guard tapGuard?.allowsTap() != false else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                } label: {
                     groupHeaderContent
                 }
                 .buttonStyle(.plain)
@@ -3513,7 +3784,7 @@ struct NativeGroupCard: View {
             }
 
             Divider()
-            if expanded && kind != "comparison" {
+            if expanded && kind != "comparison" && collectionRef == nil {
                 // The already-hydrated members reuse their ordinary full cards,
                 // including their existing destination, imagery and live prices.
                 VStack(spacing: 12) {
@@ -3522,21 +3793,31 @@ struct NativeGroupCard: View {
                 .padding(12)
                 .background(expandedTrayColor)
             } else {
-                ForEach(Array(items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded))), id: \.id) { item in
+                let visibleItems = Array(items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded)))
+                let renderableItems = visibleItems.filter { $0.futures != nil || $0.event != nil }
+                ForEach(renderableItems, id: \.id) { item in
                     if let data = item.futures {
                         compactRow(data)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 12)
-                        if item.id != items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded)).last?.id {
-                            Divider().padding(.horizontal, 14)
-                        }
+                    } else if let event = item.event {
+                        compactEventRow(event)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                    }
+                    if item.id != renderableItems.last?.id {
+                        Divider().padding(.horizontal, 14)
                     }
                 }
             }
 
-            if let footer = DiscoverGroupRows.footerTitle(memberTypes: items.map(\.type), kind: kind, expanded: expanded) {
+            if collectionRef == nil,
+               let footer = DiscoverGroupRows.footerTitle(memberTypes: items.map(\.type), kind: kind, expanded: expanded) {
                 Divider()
-                Button { withAnimation { expanded = true } } label: {
+                Button {
+                    guard tapGuard?.allowsTap() != false else { return }
+                    withAnimation { expanded = true }
+                } label: {
                     // #12364 — readable blue, and the whole 44 pt row is the button.
                     Text(footer)
                         .font(.caption.weight(.medium))
@@ -3558,6 +3839,14 @@ struct NativeGroupCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(borderInk, lineWidth: 0.5))
         .shadow(color: .black.opacity(isDark ? 0.22 : 0.05), radius: 8, x: 0, y: 3)
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .onTapGesture {
+            if let collectionRef {
+                openContainer(collectionRef)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(collectionRef.map { "discover.group.card.\($0.slug)" } ?? "discover.group.card")
     }
 
     private var groupHeaderContent: some View {
@@ -3569,7 +3858,8 @@ struct NativeGroupCard: View {
                         .font(.caption2.weight(.bold))
                         .tracking(0.8)
                         .foregroundStyle(secondaryReadableInk)
-                        .lineLimit(2)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 0.72 : 1.0)
                         .fixedSize(horizontal: false, vertical: true)
                     if sharedQuestion?.isEmpty != false {
                         Text("\(items.count)")
@@ -3598,36 +3888,37 @@ struct NativeGroupCard: View {
 
     /// The existing hub route on the card's own stack, so Back returns to this
     /// card where the reader left it. A Button, like the footer: a
-    /// NavigationLink here turns a swipe into navigation on touch-up (#7074).
+    /// Keep an `.onTapGesture` gated by `DiscoverSwipeTapGuard13668` — both a
+    /// `NavigationLink` and a `Button` can fire on touch-up after a swipe (#7074, #13668).
     private func collectionRow(_ ref: FeedThemeCollectionRef) -> some View {
         let countOnOwnLine = dynamicTypeSize.isAccessibilitySize
         let layout = countOnOwnLine
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
             : AnyLayout(HStackLayout(spacing: 12))
-        return Button { navigationPath.append(DiscoverGroupRows.collectionRoute(for: ref)) } label: {
-            layout {
-                Text(DiscoverGroupRows.collectionTitle(for: ref))
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(accentLinkInk)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 2) {
-                    Text(DiscoverGroupRows.collectionCountLabel(for: ref))
-                        .font(.caption)
-                        .foregroundStyle(secondaryReadableInk)
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(mutedInk)
-                        .accessibilityHidden(true)
-                }
-                .fixedSize()
+        return layout {
+            Text(DiscoverGroupRows.collectionTitle(for: ref))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(accentLinkInk)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 2) {
+                Text(DiscoverGroupRows.collectionCountLabel(for: ref))
+                    .font(.caption)
+                    .foregroundStyle(secondaryReadableInk)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(mutedInk)
+                    .accessibilityHidden(true)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .fixedSize()
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture { openContainer(ref) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
         .accessibilityLabel(DiscoverGroupRows.collectionTitle(for: ref))
         .accessibilityValue(DiscoverGroupRows.collectionCountLabel(for: ref))
         .accessibilityIdentifier("discover.group.collection")
@@ -3636,31 +3927,38 @@ struct NativeGroupCard: View {
     private func compactRow(_ data: FeedFuturesData) -> some View {
         let summary = DiscoverGroupRows.compactSummary(for: data)
         let hasMark = summary.sourceMark?.draws == true
-        return HStack(alignment: .center, spacing: 12) {
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        let rowLayout = isAX
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+        return rowLayout {
             VStack(alignment: .leading, spacing: 4) {
                 Text(data.name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(primaryInk)
-                    .lineLimit(3)
+                    .lineLimit(isAX ? nil : 3)
                     .fixedSize(horizontal: false, vertical: true)
                 if let label = summary.label {
                     Text(label)
                         .font(.caption)
                         .foregroundStyle(secondaryInk)
-                        .lineLimit(2)
+                        .lineLimit(isAX ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let probability = summary.probability {
-                VStack(alignment: .trailing, spacing: 4) {
+                VStack(alignment: isAX ? .leading : .trailing, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(formatProbability(probability))
+                        Text(formatProbability(probability, renderedPercent: summary.renderedPercent))
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(primaryInk)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                         if let mark = SourceMarkButton(
                             summary.sourceMark,
                             number: summary.sourceMark?.state == .settled ? nil : probability,
+                            renderedPercent: summary.sourceMark?.state == .settled ? nil : summary.renderedPercent,
                             subject: summary.label,
                             numberSize: 18,
                             compactRow: true
@@ -3670,17 +3968,92 @@ struct NativeGroupCard: View {
                     }
                     MovementBadge(movement: summary.movement)
                 }
-                .frame(minWidth: 58, alignment: .trailing)
-                .layoutPriority(1)
+                .frame(minWidth: 58, alignment: isAX ? .leading : .trailing)
+                .layoutPriority(isAX ? 0 : 1)
             }
         }
         .contentShape(Rectangle())
         // Keep the existing tap gesture: a NavigationLink here turns a swipe
-        // into navigation on touch-up (#7074).
-        .onTapGesture { navigationPath.append(Route.futuresDetail(id: data.id)) }
+        // into navigation on touch-up (#7074). Ruling 31: A (#13094): when the
+        // grouped card has a container, tapping anywhere on the card opens it.
+        .onTapGesture {
+            guard tapGuard?.allowsTap() != false else { return }
+            if let collectionRef {
+                openContainer(collectionRef)
+            } else if let route = Self.tapDestinationRoute(collectionRef: nil, marketId: data.id) {
+                navigationPath.append(route)
+            }
+        }
         .accessibilityElement(children: hasMark ? .contain : .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier(NativeCompactFuturesRow.rowIdentifier)
+    }
+
+    private func compactEventRow(_ event: FeedEventData) -> some View {
+        let short = TeamShortName.shortPair(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport
+        )
+        let cardOdds = CompactGameCard12616.currentOddsForCard(event)
+        let isLive = event.status == "live"
+        let subtitle: String = {
+            if isLive, let awayScore = event.awayScore, let homeScore = event.homeScore {
+                return "Live · \(awayScore)–\(homeScore)"
+            }
+            return event.sportName ?? sportDisplayName(for: event.sport)
+        }()
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        return VStack(alignment: .leading, spacing: 4) {
+            if let awayProb = cardOdds?.awayProbability, let homeProb = cardOdds?.homeProbability {
+                let awayText = formatProbability(awayProb, renderedPercent: cardOdds?.awayRenderedPercent)
+                let homeText = formatProbability(homeProb, renderedPercent: cardOdds?.homeRenderedPercent)
+                if isAX {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(short.away)\u{00A0}\(awayText)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(short.home)\u{00A0}\(homeText)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    Text("\(short.away)\u{00A0}\(awayText) · \(short.home)\u{00A0}\(homeText)")
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(primaryInk)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text("\(short.away) at \(short.home)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(primaryInk)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard tapGuard?.allowsTap() != false else { return }
+            if let collectionRef {
+                openContainer(collectionRef)
+            } else {
+                navigationPath.append(Route.eventDetail(id: event.id))
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 
     @ViewBuilder
@@ -3866,6 +4239,7 @@ private struct NativeThresholdComparisonRow: View {
 private struct NativeCompactFuturesRow: View {
     let data: FeedFuturesData
     @Binding var navigationPath: NavigationPath
+    @Environment(\.discoverSwipeTapGuard13668) private var tapGuard
 
     /// What a UI test can find a group card's tappable row by (#7074).
     ///
@@ -3903,7 +4277,10 @@ private struct NativeCompactFuturesRow: View {
         // `NavigationLink`'s button area used to be, so no part of the row stops
         // being tappable.
         .contentShape(Rectangle())
-        .onTapGesture { navigationPath.append(Route.futuresDetail(id: data.id)) }
+        .onTapGesture {
+            guard tapGuard?.allowsTap() != false else { return }
+            navigationPath.append(Route.futuresDetail(id: data.id))
+        }
         // The link trait went with the link. The row is still a control and must
         // still announce itself as one; `SwipeToDismiss`'s `children: .contain`
         // keeps it individually reachable inside the card.
@@ -4523,11 +4900,31 @@ struct NativeGuessCard: View {
 
 // MARK: - Swipe to Dismiss
 
+private struct DiscoverGroupedSwipeContainer13668<Content: View>: View {
+    let onSwipeLeft: () -> Void
+    let onSwipeRight: () -> Void
+    let onRequiresSignIn: () -> Void
+    @ViewBuilder let content: (DiscoverSwipeTapGuard13668) -> Content
+    @State private var tapGuard = DiscoverSwipeTapGuard13668()
+
+    var body: some View {
+        SwipeToDismiss(
+            onSwipeLeft: onSwipeLeft,
+            onSwipeRight: onSwipeRight,
+            onRequiresSignIn: onRequiresSignIn,
+            tapGuard: tapGuard
+        ) {
+            content(tapGuard)
+        }
+    }
+}
+
 private struct SwipeToDismiss<Content: View>: View {
     @EnvironmentObject private var authManager: AuthManager
     let onSwipeLeft: () -> Void
     let onSwipeRight: () -> Void
     let onRequiresSignIn: () -> Void
+    var tapGuard: DiscoverSwipeTapGuard13668? = nil
     @ViewBuilder let content: () -> Content
     // #1773: the whole gesture is a pure, unit-tested state machine
     // (`DiscoverSwipeState`) so the axis latch and the post-commit reset are
@@ -4535,6 +4932,11 @@ private struct SwipeToDismiss<Content: View>: View {
     // defects this replaced.
     @State private var swipe = DiscoverSwipeState()
     @State private var feedbackStartedWith: DiscoverGuestFeedbackGate.AuthState?
+    @State private var ownedTapGuard = DiscoverSwipeTapGuard13668()
+
+    private var activeTapGuard: DiscoverSwipeTapGuard13668 {
+        tapGuard ?? ownedTapGuard
+    }
 
     private var feedbackAuthState: DiscoverGuestFeedbackGate.AuthState {
         DiscoverGuestFeedbackGate.authState(
@@ -4569,6 +4971,7 @@ private struct SwipeToDismiss<Content: View>: View {
 
     var body: some View {
         content()
+            .environment(\.discoverSwipeTapGuard13668, activeTapGuard)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(Self.tapTargetIdentifier)
             .offset(x: swipe.offset)
@@ -4587,16 +4990,27 @@ private struct SwipeToDismiss<Content: View>: View {
                     .padding(.horizontal, 24)
                 }
             }
+            .onDisappear {
+                activeTapGuard.cancel()
+            }
             .simultaneousGesture(
                 DragGesture(minimumDistance: DiscoverSwipeState.minimumDistance)
                     .onChanged { v in
                         if !swipe.axisLatched { feedbackStartedWith = feedbackAuthState }
                         swipe.change(width: v.translation.width, height: v.translation.height)
+                        if swipe.isHorizontal {
+                            activeTapGuard.beginHorizontalDrag()
+                        }
                     }
                     .onEnded { v in
+                        let wasHorizontalDrag = swipe.isHorizontal
+                        let commits = swipe.commits(width: v.translation.width)
+                        if wasHorizontalDrag {
+                            activeTapGuard.endHorizontalDrag(committed: commits)
+                        }
                         let startedWith = feedbackStartedWith ?? .resolving
                         feedbackStartedWith = nil
-                        if swipe.commits(width: v.translation.width),
+                        if commits,
                            !DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) {
                             withAnimation(.spring(response: 0.3)) {
                                 swipe.settleAfterCommit()
@@ -4606,7 +5020,7 @@ private struct SwipeToDismiss<Content: View>: View {
                         }
                         // Same predicate `end` uses, so the curve can never drift
                         // from the decision: fly-out on commit, spring on release.
-                        let curve: Animation = swipe.commits(width: v.translation.width)
+                        let curve: Animation = commits
                             ? .easeOut(duration: 0.2)
                             : .spring(response: 0.3)
                         let outcome = withAnimation(curve) {
@@ -4688,6 +5102,19 @@ struct MovementBadge: View {
             .padding(.vertical, 2)
             .background((up ? Color.green : Color.red).opacity(0.15))
             .clipShape(Capsule())
+        }
+    }
+}
+
+private struct ConditionalScrollAnchorModifier: ViewModifier {
+    let anchorId: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let anchorId {
+            content.id(anchorId)
+        } else {
+            content
         }
     }
 }

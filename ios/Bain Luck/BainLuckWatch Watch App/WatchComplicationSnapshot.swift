@@ -1,4 +1,7 @@
 import Foundation
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 /// Public display-only snapshot. Shared access requires the entitled App Group container.
 nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
@@ -74,6 +77,121 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
         return reading
     }
 
+    /// #13430 — Small Watch complication model (corner and circular), governed by
+    /// the exact honesty gate of `accessoryRectangular` and `LockScreenSmallSlotFit13430`.
+    /// A number that `accessoryRectangular` refuses is also refused here -> bookmark fallback.
+    func smallSlotModel(now: Date = Date()) -> LockScreenSmallSlotModel13430? {
+        guard let reading = validatedRectangularReading(now: now) else { return nil }
+        guard !WatchMatchupReading217.finalHasPassed(self, now: now) else { return nil }
+
+        func fallbackShort(_ name: String) -> String {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = trimmed.split(whereSeparator: \.isWhitespace)
+            if parts.count > 1, let last = parts.last { return String(last) }
+            return trimmed
+        }
+
+        let homeAbbr = (reading.home?.isValid == true) ? reading.home!.abbreviation : fallbackShort(reading.homeName)
+        let awayAbbr = (reading.away?.isValid == true) ? reading.away!.abbreviation : fallbackShort(reading.awayName)
+        let gameRows = [
+            LockScreenSmallSlotRow13430(label: reading.awayName, shortLabel: awayAbbr),
+            LockScreenSmallSlotRow13430(label: reading.homeName, shortLabel: homeAbbr),
+        ]
+
+        switch reading.kind {
+        case .scheduledForecast, .liveForecast:
+            if reading.kind == .scheduledForecast, let start = reading.commenceTime, now >= start {
+                return nil
+            }
+            guard let homePct = reading.homePercent, (0...100).contains(homePct) else { return nil }
+            let out = WatchMatchupReading217.resolveOutcomePresentation(
+                homePercent: homePct,
+                homeName: reading.homeName,
+                awayName: reading.awayName,
+                homeAbbreviation: homeAbbr,
+                awayAbbreviation: awayAbbr,
+                isThreeWay: matchup?.isThreeWay == true,
+                drawPercent: matchup?.drawPercent,
+                awayPercent: matchup?.awayPercent
+            )
+            let pct = Int(out.bigText.dropLast()) ?? homePct
+            let fitted = LockScreenSmallSlotFit13430.ringValue(
+                phase: .current,
+                headlineExists: true,
+                figure: out.bigText,
+                verdict: nil,
+                rows: gameRows
+            )
+            return LockScreenSmallSlotModel13430(
+                subjectLabel: out.ownerAbbr,
+                cornerLabel: out.ownerAbbr,
+                value: fitted,
+                gaugeShare: Double(pct) / 100.0,
+                isGame: true,
+                accessibilityText: "\(out.ownerName) \(fitted). \(reading.stateLabel). Open your game in Bain Luck."
+            )
+        case .futureForecast:
+            guard let homePct = reading.homePercent,
+                  (1...99).contains(homePct),
+                  let pctText = reading.formattedHomePercent else { return nil }
+            let outcome = reading.awayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !outcome.isEmpty else { return nil }
+            let fitted = LockScreenSmallSlotFit13430.ringValue(
+                phase: .current,
+                headlineExists: true,
+                figure: pctText,
+                verdict: nil,
+                rows: [LockScreenSmallSlotRow13430(label: outcome, shortLabel: outcome)]
+            )
+            let share: Double = reading.subOnePercent == true
+                ? 0.005
+                : (reading.aboveNinetyNinePercent == true ? 0.995 : Double(homePct) / 100.0)
+            return LockScreenSmallSlotModel13430(
+                subjectLabel: outcome,
+                cornerLabel: outcome,
+                value: fitted,
+                gaugeShare: share,
+                isGame: false,
+                accessibilityText: "\(reading.homeName). \(outcome) \(fitted). Open in Bain Luck."
+            )
+        case .finalResult:
+            guard now.timeIntervalSince(reading.observedAt) < WatchMatchupReading217.finalHoldSeconds,
+                  let hs = reading.homeScore, let ascore = reading.awayScore,
+                  hs >= 0, ascore >= 0 else { return nil }
+            let subject: String
+            let verdict: String
+            let speech: String
+            if hs > ascore {
+                subject = homeAbbr
+                verdict = "Won"
+                speech = "Final, \(reading.awayName) \(ascore), \(reading.homeName) \(hs). \(reading.homeName) won."
+            } else if ascore > hs {
+                subject = awayAbbr
+                verdict = "Won"
+                speech = "Final, \(reading.awayName) \(ascore), \(reading.homeName) \(hs). \(reading.awayName) won."
+            } else {
+                subject = "Draw"
+                verdict = "Draw"
+                speech = "Final draw, \(reading.awayName) \(ascore), \(reading.homeName) \(hs)."
+            }
+            let fitted = LockScreenSmallSlotFit13430.ringValue(
+                phase: .result,
+                headlineExists: true,
+                figure: nil,
+                verdict: verdict,
+                rows: gameRows
+            )
+            return LockScreenSmallSlotModel13430(
+                subjectLabel: subject,
+                cornerLabel: subject,
+                value: fitted,
+                gaugeShare: nil,
+                isGame: true,
+                accessibilityText: "\(speech) Open your game in Bain Luck."
+            )
+        }
+    }
+
     func isValid(now: Date) -> Bool {
         let observation = observedAt.timeIntervalSinceReferenceDate
         let saved = savedAt.timeIntervalSinceReferenceDate
@@ -110,8 +228,14 @@ nonisolated struct WatchCompactTeamIdentity: Codable, Sendable, Equatable {
     let abbreviation: String
     private enum CodingKeys: String, CodingKey { case teamID = "team_id", abbreviation }
     var isValid: Bool {
-        teamID > 0 && (1...4).contains(abbreviation.count)
-            && abbreviation.unicodeScalars.allSatisfy { (65...90).contains($0.value) || (48...57).contains($0.value) }
+        guard teamID > 0, (1...4).contains(abbreviation.count) else { return false }
+        let scalars = Array(abbreviation.unicodeScalars)
+        let isAlphaNum: (UnicodeScalar) -> Bool = { (65...90).contains($0.value) || (48...57).contains($0.value) }
+        guard let first = scalars.first, let last = scalars.last, isAlphaNum(first), isAlphaNum(last) else {
+            return false
+        }
+        // #13144: allow internal "&" (TA&M, W&M) and "-" (M-OH) in server-supplied short names.
+        return scalars.allSatisfy { isAlphaNum($0) || $0.value == 38 || $0.value == 45 }
     }
 }
 
@@ -328,8 +452,10 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
         }
         let fullMatchup = "\(awayName) at \(homeName)"
         let compactMatchup: String? = {
-            guard let away, let home, away.isValid, home.isValid else { return nil }
-            return "\(away.abbreviation) at \(home.abbreviation)"
+            let awayShort = away.flatMap { $0.isValid ? $0.abbreviation : nil }
+            let homeShort = home.flatMap { $0.isValid ? $0.abbreviation : nil }
+            guard awayShort != nil || homeShort != nil else { return nil }
+            return "\(awayShort ?? awayName) at \(homeShort ?? homeName)"
         }()
         let scoreSuffix: String = {
             guard kind == .liveForecast, let ascore = awayScore, let hs = homeScore else { return "" }
@@ -521,5 +647,103 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
             elapsed = nextElapsed
         }
         return Array(Set(dates)).sorted()
+    }
+}
+
+/// #13339 — Plain-English reason why a chosen pin cannot appear as a live matchup/market card on the Watch face.
+/// Every copy string avoids "Your game", "Saved", "Stale", "Checked", and "question" so "no game chosen" and
+/// "cannot show your game" never look identical.
+nonisolated enum WatchFaceUnavailableReason13339: String, Codable, Sendable, Equatable, CaseIterable {
+    case finalEnded = "final_ended"
+    case noLiveOdds = "no_live_odds"
+    case statusUnsupported = "status_unsupported"
+    case waitingForUpdate = "waiting_for_update"
+    case sharedStorageUnavailable = "shared_storage_unavailable"
+
+    var complicationHeadline: String {
+        switch self {
+        case .finalEnded: return "Game ended"
+        case .noLiveOdds: return "Waiting for odds"
+        case .statusUnsupported: return "Cannot show game"
+        case .waitingForUpdate: return "Needs refresh"
+        case .sharedStorageUnavailable: return "Cannot show game"
+        }
+    }
+
+    var complicationDetail: String {
+        "Open Bain Luck"
+    }
+
+    var appNotice: String {
+        switch self {
+        case .finalEnded:
+            return "Final games stay on your watch face for 3 hours."
+        case .noLiveOdds:
+            return "Cannot show on watch face: live win odds are unavailable."
+        case .statusUnsupported:
+            return "Cannot show on watch face in this game state."
+        case .waitingForUpdate:
+            return "Cannot show on watch face yet. Tap Refresh."
+        case .sharedStorageUnavailable:
+            return "Cannot show on watch face: shared Watch storage is unavailable."
+        }
+    }
+
+    func accessibilityDescription(title: String) -> String {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleanTitle.isEmpty {
+            return "\(complicationHeadline). \(complicationDetail)."
+        }
+        return "\(cleanTitle). \(complicationHeadline). \(complicationDetail)."
+    }
+}
+
+/// #13339 — Explicit Watch face unavailable-status record written alongside selected-game.json
+/// when a reader has chosen a game or market that cannot currently be shown on the Watch face.
+nonisolated struct WatchFaceStatusPayload13339: Codable, Sendable, Equatable {
+    static let filename = "selected-face-status.json"
+    static let maximumBytes = 4 * 1024
+
+    let version: Int
+    let targetID: Int
+    let title: String
+    let reason: WatchFaceUnavailableReason13339
+    let updatedAt: Date
+
+    init(
+        version: Int = 1,
+        targetID: Int,
+        title: String,
+        reason: WatchFaceUnavailableReason13339,
+        updatedAt: Date
+    ) {
+        self.version = version
+        self.targetID = targetID
+        self.title = title
+        self.reason = reason
+        self.updatedAt = updatedAt
+    }
+
+    var isValid: Bool {
+        version == 1
+            && targetID > 0
+            && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && updatedAt.timeIntervalSinceReferenceDate.isFinite
+    }
+
+    static func read(from directory: URL?) -> Self? {
+        guard let directory, directory.isFileURL else { return nil }
+        let file = directory.appendingPathComponent(filename, isDirectory: false)
+        do {
+            let handle = try FileHandle(forReadingFrom: file)
+            defer { try? handle.close() }
+            let data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
+            guard !data.isEmpty, data.count <= maximumBytes,
+                  let value = try? JSONDecoder().decode(Self.self, from: data),
+                  value.isValid else { return nil }
+            return value
+        } catch {
+            return nil
+        }
     }
 }

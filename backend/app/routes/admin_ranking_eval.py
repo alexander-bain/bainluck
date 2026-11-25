@@ -29,6 +29,7 @@ and ``ranking_grades``; the writes go only there.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -37,18 +38,23 @@ import math
 import os
 from pathlib import Path
 import re
+import time
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select, text
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.models import RankingGrade, RankingSlateSnapshot
+from app.models.models import Event, FuturesMarket, RankingGrade, RankingSlateSnapshot
 from app.routes.admin_utils import _check_admin_secret
 from app.services.database import get_db, get_db_rw
+from app.utils.game_nuggets import reader_league_name
+from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.ranking_eval import (
     OPENING_CARDS,
     SURFACE_DISCOVER,
@@ -62,6 +68,44 @@ router = APIRouter(prefix="/admin/ranking", tags=["admin-ranking-eval"])
 
 
 _DATE_REF = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_HEX_SLATE_REF = re.compile(r"^[a-f0-9]{8,64}$")
+SHIPPED_SLATE_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+
+
+def _load_shipped_slate_snapshot(ref: str, surface: str) -> Any:
+    """Read-only fallback to a PR-frozen slate JSON in ``backend/app/data/ranking_slate_<id>.json``."""
+    if not _HEX_SLATE_REF.match(ref or ""):
+        return None
+    path = SHIPPED_SLATE_DATA_DIR / f"ranking_slate_{ref}.json"
+    if not path.is_file():
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or doc.get("slate_id") != ref:
+        return None
+    if doc.get("surface", SURFACE_DISCOVER) != surface:
+        return None
+    from types import SimpleNamespace
+
+    captured_raw = doc.get("captured_at")
+    captured_dt = None
+    if isinstance(captured_raw, str) and captured_raw:
+        try:
+            captured_dt = datetime.fromisoformat(captured_raw.replace("Z", "+00:00"))
+        except ValueError:
+            captured_dt = None
+    return SimpleNamespace(
+        id=str(doc.get("id") or ref),
+        surface=doc.get("surface", SURFACE_DISCOVER),
+        slate_id=ref,
+        captured_at=captured_dt,
+        ranker_version=str(doc.get("ranker_version") or "shipped"),
+        served_order=list(doc.get("served_order") or []),
+        candidates=list(doc.get("candidates") or []),
+        summary=dict(doc.get("summary") or {}),
+    )
 
 
 def slate_date_bounds(ref: str) -> tuple[datetime, datetime] | None:
@@ -93,6 +137,8 @@ async def _slate_row(db: AsyncSession, ref: str, surface: str):
         )
     stmt = stmt.order_by(RankingSlateSnapshot.captured_at.desc()).limit(1)
     row = (await db.execute(stmt)).scalars().first()
+    if row is None and ref != "latest" and bounds is None:
+        row = _load_shipped_slate_snapshot(ref, surface)
     if row is None:
         raise HTTPException(status_code=404, detail=f"no {surface} slate for {ref!r}")
     return row
@@ -316,6 +362,29 @@ def deck_with_set(order: list[dict], slate_id: str, keys: list[str], *, size: in
     return mixed(deck, slate_id)
 
 
+#: Plain-English refusal when today's 7:15 AM PT Discover slate has not landed yet (#11937).
+MORNING_NOT_READY_DETAIL = "This morning's cards are not ready yet. They arrive at 7:15 AM."
+
+
+def _captured_today_pt(captured_at: Any, *, now: datetime | None = None) -> bool:
+    """Whether ``captured_at`` falls on today's calendar date in Pacific time."""
+    if not captured_at:
+        return False
+    if isinstance(captured_at, str):
+        try:
+            dt = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    elif isinstance(captured_at, datetime):
+        dt = captured_at
+    else:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    ref_now = (now or datetime.now(timezone.utc)).astimezone(TALLY_TZ)
+    return dt.astimezone(TALLY_TZ).date() == ref_now.date()
+
+
 @router.get("/grade-deck")
 async def get_grade_deck(
     request: Request,
@@ -324,6 +393,7 @@ async def get_grade_deck(
     size: int = Query(SPREAD_DECK_SIZE, ge=5, le=60),
     # `?set=` in the URL; not named `set` here, which would shadow the builtin.
     card_set: str | None = Query(None, alias="set", max_length=64),
+    today_only: bool = Query(False),
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -332,12 +402,16 @@ async def get_grade_deck(
     slate = slate if isinstance(slate, str) and slate.strip() else None
     size = size if isinstance(size, int) else SPREAD_DECK_SIZE
     set_name = card_set if isinstance(card_set, str) and card_set.strip() else None
+    require_today = today_only is True or slate == "today"
+    lookup_ref = "latest" if slate in (None, "today") else slate
     if set_name and not slate:
         raise HTTPException(status_code=422, detail="a named set needs ?slate=")
     # The grader's name comes in a header, never the URL: query strings land in
     # request logs, and the family's kids type their names on this page.
     grader = urllib.parse.unquote(request.headers.get(GRADER_HEADER) or "")[:40]
-    row = slate_row_dict(await _slate_row(db, slate or "latest", surface))
+    row = slate_row_dict(await _slate_row(db, lookup_ref, surface))
+    if require_today and not _captured_today_pt(row.get("captured_at")):
+        raise HTTPException(status_code=409, detail=MORNING_NOT_READY_DETAIL)
     out = {
         "switch_on": ranking_snapshots_enabled(),
         "slate_id": row["slate_id"],
@@ -362,6 +436,8 @@ async def get_grade_deck(
         graded = {r.item_key for r in rows}
     if set_name:
         keys = load_extra_sets().get(row["slate_id"], {}).get(set_name)
+        if keys is None and set_name in _frozen_pair_rankers():
+            keys = _resolve_pair_keys(row, set_name)
         if keys is None:
             raise HTTPException(status_code=404, detail=f"no set {set_name!r} for this slate")
         try:
@@ -496,6 +572,7 @@ async def get_grades(
         RankingGrade.surface != SURFACE_PAIR,
         # 227-A point 6: a whole-screen look is not a card grade either (/screen-grades).
         RankingGrade.surface != SURFACE_SCREENS,
+        RankingGrade.surface != SURFACE_SCREENS_UNDONE,
     )
     if slate_id:
         stmt = stmt.where(RankingGrade.slate_id == slate_id)
@@ -514,6 +591,7 @@ SURFACE_GROUPING = "grouping"
 DEFAULT_GROUPING_SLATE_ID = "grouping-candidates-2026-11"
 EXAM_TEST_GROUPING_SLATE_ID = "sibling-family-exam-test-2026-11"
 VISUAL_FORMS_LOOK_SHEET_SLATE_ID = "visual-forms-look-sheet-2026-11"
+NFL_PLAYOFFS_LOOK_SHEET_SLATE_ID = "nfl-playoffs-look-sheet-2026-11"
 GROUPING_GRADES = ("amazing", "fine", "no")
 # Lossless 1-to-1 bijection scoped to RankingGrade.surface == "grouping" so
 # writes satisfy Postgres ck_ranking_grades_grade ("grade IN ('shareable',
@@ -1132,6 +1210,27 @@ def load_grouping_grade_deck(
             "paired_metric_sets": paired_sets,
             "items": active_items,
         }
+    if slate_id == NFL_PLAYOFFS_LOOK_SHEET_SLATE_ID:
+        nfl_sheet_path = (
+            Path(__file__).resolve().parents[2]
+            / "data"
+            / "groupings"
+            / "nfl-playoffs-look-sheet.json"
+        )
+        if not nfl_sheet_path.exists():
+            raise HTTPException(
+                status_code=404, detail="nfl playoffs look sheet file not found"
+            )
+        raw_nfl_sheet = json.loads(nfl_sheet_path.read_text(encoding="utf-8"))
+        active_nfl_items = [
+            item
+            for item in raw_nfl_sheet.get("items", [])
+            if not item.get("retired")
+        ]
+        return {
+            **raw_nfl_sheet,
+            "items": active_nfl_items,
+        }
 
     target_path = candidates_path
     if target_path is None:
@@ -1353,10 +1452,41 @@ SURFACE_PAIR = "pair"
 PAIRS_PATH = Path(__file__).resolve().parents[1] / "data" / "ranking_pairs.json"
 PAIR_CHOICES = ("left", "right", "none")
 PAIR_SIZE = 10
+_PAIR_SIZES: dict[str, int] = {"p13645": 40}
+DEFAULT_MORNING_PAIR = "p3"
+MORNING_PAIR_PAUSED_ENV = "RANKING_MORNING_PAIR_PAUSED"
+MORNING_PAIR_PAUSED_DETAIL = (
+    "Nothing to grade right now. Grading is paused until the next candidate is declared."
+)
+
+
+def is_morning_pair_paused() -> bool:
+    """True by default until explicitly opened via RANKING_MORNING_PAIR_PAUSED=0 (#11937 / 277: A)."""
+    raw = os.getenv(MORNING_PAIR_PAUSED_ENV, "true")
+    return raw.strip().lower() not in ("0", "false", "no", "off")
 # Stored through ranking_grades' grade check (shareable/interesting/neither), as
 # the grouping grades are: what a pick MEANS, never which side it was on.
 _PAIR_TO_DB_GRADE: dict[str, str] = {"candidate": "shareable", "none": "interesting", "served": "neither"}
 _DB_TO_PAIR_PICK: dict[str, str] = {v: k for k, v in _PAIR_TO_DB_GRADE.items()}
+
+
+def _frozen_pair_rankers() -> dict[str, Any]:
+    """Server-side frozen candidates for opaque morning pair names (#11937).
+
+    Used only by the admin grading pair routes so morning grading works from
+    one bookmarkable link without a daily PR or attended read. Discover itself
+    never calls these while the ranking switch is off.
+    """
+    from app.utils.discover_rank import rank_c1_story, rank_c2_score
+    from app.utils.discover_rank_13645 import rank_13645_downranks
+    from app.utils.discover_rank_c3 import rank_c3_mix
+
+    return {
+        "p1": rank_c2_score,
+        "p2": rank_c1_story,
+        "p3": rank_c3_mix,
+        "p13645": rank_13645_downranks,
+    }
 
 
 def load_pairs(path: Path = PAIRS_PATH) -> dict[str, dict[str, list[str]]]:
@@ -1365,6 +1495,26 @@ def load_pairs(path: Path = PAIRS_PATH) -> dict[str, dict[str, list[str]]]:
     except FileNotFoundError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _pair_size_for(pair: str, explicit_keys: list[str] | None = None) -> int:
+    if explicit_keys is not None:
+        return max(PAIR_SIZE, len(explicit_keys))
+    return _PAIR_SIZES.get(pair, PAIR_SIZE)
+
+
+def _resolve_pair_keys(row: Mapping[str, Any], pair: str) -> list[str] | None:
+    """Explicit keys from ``ranking_pairs.json`` first, else the frozen server-side pair."""
+    explicit = load_pairs().get(row["slate_id"], {}).get(pair)
+    if explicit is not None:
+        return list(explicit)
+    ranker = _frozen_pair_rankers().get(pair)
+    if ranker is None:
+        return None
+    target_size = _pair_size_for(pair)
+    ordered = ranker(row.get("candidates") or ())
+    keys = [c.get("item_key") for c in ordered[:target_size] if c.get("item_key")]
+    return keys if len(keys) >= target_size else None
 
 
 def _side_key() -> bytes:
@@ -1380,13 +1530,18 @@ def candidate_on_left(slate_id: str, pair: str) -> bool:
 
 
 def _pair_sides(row: Mapping[str, Any], keys: list[str]) -> tuple[list[dict], list[dict]]:
+    pair_size = max(PAIR_SIZE, len(keys))
     by_key = {c.get("item_key"): c for c in row.get("candidates") or ()}
-    served = [by_key.get(k) for k in (row.get("served_order") or [])[:PAIR_SIZE]]
-    candidate = [by_key.get(k) for k in keys[:PAIR_SIZE]]
-    if any(c is None for c in served + candidate) or len(candidate) < PAIR_SIZE:
+    served = [by_key.get(k) for k in (row.get("served_order") or [])[:pair_size]]
+    candidate = [by_key.get(k) for k in keys[:pair_size]]
+    if (
+        len(served) < pair_size
+        or len(candidate) < pair_size
+        or any(c is None for c in served + candidate)
+    ):
         raise HTTPException(status_code=422, detail="the pair names cards this slate doesn't hold")
     if not all(has_drawing(c.get("card")) for c in served + candidate):
-        raise HTTPException(status_code=409, detail="a card in one of the two first tens has no stored drawing")
+        raise HTTPException(status_code=409, detail="a card in one of the two comparison lists has no stored drawing")
     # Only the drawing goes out: no positions, keys or scores that could tell a side.
     return [{"card": c["card"]} for c in served], [{"card": c["card"]} for c in candidate]
 
@@ -1394,21 +1549,40 @@ def _pair_sides(row: Mapping[str, Any], keys: list[str]) -> tuple[list[dict], li
 @router.get("/pair")
 async def get_pair(
     request: Request,
-    slate: str = Query(..., max_length=64),
-    pair: str = Query(..., max_length=64),
+    slate: str = Query("latest", max_length=64),
+    pair: str = Query(DEFAULT_MORNING_PAIR, max_length=64),
     surface: str = Query(SURFACE_DISCOVER, max_length=32),
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """#11937 (171-A): two first tens for one slate, unlabelled, sides random."""
     _check_admin_secret(secret, request=request)
-    row = slate_row_dict(await _slate_row(db, slate, surface))
-    keys = load_pairs().get(row["slate_id"], {}).get(pair)
+    # #13100 (Ruling 277: A): Candidate 2 ended after one morning; the default
+    # morning link says nothing is open to grade until Candidate 3 is declared.
+    if (
+        slate in ("latest", "today")
+        and pair == DEFAULT_MORNING_PAIR
+        and is_morning_pair_paused()
+    ):
+        raise HTTPException(status_code=409, detail=MORNING_PAIR_PAUSED_DETAIL)
+    lookup_ref = "latest" if slate in ("latest", "today") else slate
+    row = slate_row_dict(await _slate_row(db, lookup_ref, surface))
+    # Default morning link ("latest"/"today") must never serve yesterday's slate
+    # before today's 7:15 AM PT capture lands (Fable review on #13022).
+    if slate in ("latest", "today") and not _captured_today_pt(row.get("captured_at")):
+        raise HTTPException(status_code=409, detail=MORNING_NOT_READY_DETAIL)
+    keys = _resolve_pair_keys(row, pair)
     if keys is None:
         raise HTTPException(status_code=404, detail=f"no pair {pair!r} for this slate")
     served, candidate = _pair_sides(row, list(keys))
     left, right = (candidate, served) if candidate_on_left(row["slate_id"], pair) else (served, candidate)
-    return {"slate_id": row["slate_id"], "pair": pair, "left": left, "right": right}
+    return {
+        "slate_id": row["slate_id"],
+        "pair": pair,
+        "captured_at": row.get("captured_at"),
+        "left": left,
+        "right": right,
+    }
 
 
 class PairPickIn(BaseModel):
@@ -1443,7 +1617,12 @@ async def post_pair_pick(
     if not grader:
         raise HTTPException(status_code=422, detail="grader needs a name")
     if load_pairs().get(body.slate_id, {}).get(body.pair) is None:
-        raise HTTPException(status_code=404, detail="no such pair for this slate")
+        if body.pair not in _frozen_pair_rankers():
+            raise HTTPException(status_code=404, detail="no such pair for this slate")
+        # Verify the slate exists before accepting a server-computed morning pair pick.
+        row = slate_row_dict(await _slate_row(db, body.slate_id, SURFACE_DISCOVER))
+        if _resolve_pair_keys(row, body.pair) is None:
+            raise HTTPException(status_code=404, detail="no such pair for this slate")
     # The first saved pick stands: a pick made again after grading that morning's
     # deck is no longer blind.
     earlier = (await db.execute(
@@ -1526,6 +1705,7 @@ async def get_pair_picks(
 # "does a count agree with his grades" is then a table.
 
 SURFACE_SCREENS = "screens"
+SURFACE_SCREENS_UNDONE = "screens_undone"
 SCREENS_PATH = Path(__file__).resolve().parents[1] / "data" / "screen_samples.json"
 SCREEN_GRADES = ("fun", "fine", "wall")
 _SCREEN_TO_DB_GRADE: dict[str, str] = {"fun": "shareable", "fine": "interesting", "wall": "neither"}
@@ -1584,6 +1764,12 @@ class ScreenGradeIn(BaseModel):
     grade: str
 
 
+class ScreenGradeUndoIn(BaseModel):
+    week: str = Field(..., min_length=8, max_length=8)
+    n: int = Field(..., ge=1)
+    grader: str = Field(..., min_length=1, max_length=40)
+
+
 @router.post("/screen-grades")
 async def post_screen_grade(
     body: ScreenGradeIn,
@@ -1630,6 +1816,50 @@ async def post_screen_grade(
     return {"status": "ok"}
 
 
+@router.post("/screen-grades/undo")
+async def undo_last_screen_grade(
+    body: ScreenGradeUndoIn,
+    request: Request,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db_rw),
+) -> dict:
+    """Undo only the grader's single most recent screen grade in this week's deck.
+
+    Fable follow-up on #12984 (Wed Nov 18): lets a phone grader fix an accidental
+    tap before moving on, while keeping "first grade stands" for anything older.
+    """
+    _check_admin_secret(secret, request=request)
+    if not ranking_snapshots_enabled():
+        raise HTTPException(status_code=409, detail="RANKING_SNAPSHOTS is off")
+    grader = " ".join(body.grader.split())
+    if not grader:
+        raise HTTPException(status_code=422, detail="grader needs a name")
+    screens = load_screen_samples().get(body.week)
+    if screens is None or body.n > len(screens):
+        raise HTTPException(status_code=404, detail="no such screen this week")
+    screen_id = str(screens[body.n - 1]["id"])
+    rows = (await db.execute(
+        select(RankingGrade).where(
+            RankingGrade.surface == SURFACE_SCREENS,
+            RankingGrade.slate_id == _screen_slate(body.week),
+            RankingGrade.grader == grader,
+        )
+    )).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="no grade to undo")
+    latest = max(rows, key=lambda r: (r.graded_at or datetime.min, r.id or 0))
+    if latest.item_key != f"screen:{screen_id}":
+        raise HTTPException(
+            status_code=409,
+            detail="only the last grade can be undone; earlier grades stand",
+        )
+    # Non-destructive soft retraction: move the single newest row off the
+    # active screen surface so the audit trail stays intact and no row is deleted.
+    latest.surface = SURFACE_SCREENS_UNDONE
+    await db.commit()
+    return {"status": "undone", "n": body.n}
+
+
 @router.get("/screen-grades")
 async def get_screen_grades(
     request: Request,
@@ -1663,4 +1893,682 @@ async def get_screen_grades(
             "grades": {g: _DB_TO_SCREEN_GRADE.get(r.grade, r.grade) for (g, k), r in first.items() if k == key},
         })
     return {"week": week, "surface": SURFACE_SCREENS, "screens": out}
+
+
+# ---------------------------------------------------------------------------
+# #13511 (Step 1) — Game page below-the-charts nuggets grading endpoints
+# ---------------------------------------------------------------------------
+
+SURFACE_GAME_NUGGETS = "game_nuggets"
+_GAME_NUGGET_GRADES = ("yes", "no")
+
+
+class GameNuggetGradeIn(BaseModel):
+    slate_id: str = Field(..., max_length=64)
+    event_id: int
+    nugget_id: str = Field(..., min_length=1, max_length=96)
+    position: int = Field(..., ge=1, le=12)
+    grade: str = Field(..., max_length=16)
+    grader: str = Field(..., min_length=1, max_length=40)
+    note: str | None = Field(default=None, max_length=300)
+
+
+def _game_nugget_slate_id(raw: str | None, now: datetime) -> str:
+    if raw and re.match(r"^[A-Za-z0-9-]{1,64}$", raw):
+        return raw
+    return f"game-nuggets-{now.strftime('%Y-%m-%d')}"
+
+
+def _game_nugget_item_key(event_id: int, nugget_id: str) -> str:
+    return f"event:{event_id}:{nugget_id}"[:120]
+
+
+_GAME_NUGGETS_MIN_ITEMS = 6
+_GAME_NUGGETS_MIN_KINDS = 3
+_GAME_NUGGETS_MAX_PER_LEAGUE = 4
+_GAME_NUGGETS_PRE_CAP_PER_LEAGUE = 6
+_GAME_NUGGETS_EVAL_POOL_CAP = 48
+_GAME_NUGGETS_DECK_CACHE_TTL_S = 300
+_GAME_NUGGETS_OPEN_STATUS = "open"
+_GAME_NUGGETS_DECK_BUDGET_SECONDS = 8.0
+_GAME_NUGGETS_DECK_SQL_TIMEOUT_MS = 6000
+_GAME_NUGGETS_MIN_LINKED_MARKETS = 4
+_GAME_NUGGETS_MIN_LINKED_MAJOR = 3
+_GAME_NUGGETS_QUALIFY_PER_LEAGUE = 10
+_GAME_NUGGETS_QUALIFY_POOL_CAP = 80
+_GAME_NUGGETS_DECK_CACHE_KEY_VERSION = "v3"
+_GAME_NUGGETS_MOMENT_TYPES = frozenset({
+    "half_total",
+    "quarter_total",
+    "inning_total",
+    "half_spread",
+    "quarter_spread",
+    "inning_spread",
+    "period_winner",
+    "half_winner",
+    "quarter_winner",
+    "inning_winner",
+    "segment_winner",
+    "first_scorer",
+    "overtime",
+})
+_GAME_NUGGETS_MOMENT_TOKENS = (
+    "1st quarter",
+    "1st half",
+    "first quarter",
+    "first half",
+    "first td",
+    "first touchdown",
+    "first basket",
+    "first goal",
+    "overtime",
+    "go to ot",
+)
+
+_MAJOR_TIER_0_LEAGUES = frozenset({
+    "basketball_nba",
+    "americanfootball_nfl",
+    "americanfootball_ncaaf",
+    "basketball_ncaab",
+    "icehockey_nhl",
+    "baseball_mlb",
+    "soccer_epl",
+    "soccer_uefa_champs_league",
+})
+_MAJOR_TIER_1_LEAGUES = frozenset({
+    "basketball_wnba",
+    "basketball_wncaab",
+    "soccer_spain_la_liga",
+    "soccer_germany_bundesliga",
+    "soccer_italy_serie_a",
+    "soccer_france_ligue_one",
+    "soccer_usa_mls",
+    "soccer_uefa_europa_league",
+    "tennis_atp",
+    "tennis_wta",
+    "golf_pga",
+})
+
+
+def _league_coverage_tier(sport_key: str) -> int:
+    if sport_key in _MAJOR_TIER_0_LEAGUES:
+        return 0
+    if sport_key in _MAJOR_TIER_1_LEAGUES:
+        return 1
+    return 2
+
+
+def _pre_rank_eval_candidates(
+    events: list[Event],
+    *,
+    linked_counts: Mapping[int, int] | None = None,
+    max_per_league: int = _GAME_NUGGETS_PRE_CAP_PER_LEAGUE,
+    total_cap: int = _GAME_NUGGETS_EVAL_POOL_CAP,
+) -> list[Event]:
+    """Order candidate events so best-covered major/prop-rich games evaluate first."""
+    counts = linked_counts or {}
+
+    def _key(ev: Event) -> tuple[int, int, int, int, float, int]:
+        sk = ev.sport.key if getattr(ev, "sport", None) is not None else "unknown"
+        eid = int(ev.id)
+        linked = int(counts.get(eid, 0))
+        has_linked_tier = 0 if linked >= 3 else (1 if linked >= 1 else 2)
+        major_tier = _league_coverage_tier(sk)
+        wps = getattr(ev, "win_probability_sources", None)
+        src_cnt = len(wps) if isinstance(wps, Mapping) else 0
+        ct = getattr(ev, "commence_time", None)
+        ct_ts = ct.timestamp() if ct is not None else float("inf")
+        return (has_linked_tier, major_tier, -linked, -src_cnt, ct_ts, eid)
+
+    ranked = sorted(events, key=_key)
+    selected: list[Event] = []
+    league_counts: dict[str, int] = {}
+    for ev in ranked:
+        sk = ev.sport.key if getattr(ev, "sport", None) is not None else "unknown"
+        if league_counts.get(sk, 0) >= max_per_league:
+            continue
+        league_counts[sk] = league_counts.get(sk, 0) + 1
+        selected.append(ev)
+        if len(selected) >= total_cap:
+            break
+    return selected
+
+
+def _select_best_covered_qualified(
+    qualified: list[dict[str, Any]],
+    *,
+    limit: int,
+    max_per_league: int = _GAME_NUGGETS_MAX_PER_LEAGUE,
+) -> list[dict[str, Any]]:
+    """Sort qualified games best-covered first and enforce <= max_per_league in the deck."""
+    ordered = sorted(
+        qualified,
+        key=lambda row: (
+            -int(row.get("kind_count") or 0),
+            -int(row.get("nugget_count") or 0),
+            -int(row.get("_total_items") or 0),
+            -int(row.get("_linked_count") or 0),
+            int(row.get("_major_tier") if row.get("_major_tier") is not None else 2),
+            float(row.get("_commence_ts") if row.get("_commence_ts") is not None else float("inf")),
+            int(row["event_id"]),
+        ),
+    )
+    picked: list[dict[str, Any]] = []
+    per_league: dict[str, int] = {}
+    for row in ordered:
+        sk = str(row.get("sport") or "unknown")
+        if per_league.get(sk, 0) >= max_per_league:
+            continue
+        per_league[sk] = per_league.get(sk, 0) + 1
+        picked.append(row)
+        if len(picked) >= limit:
+            break
+    return picked
+
+
+def _select_eval_events(events: list[Event], *, limit: int) -> list[Event]:
+    """Select candidate events capped per league, prioritizing best-covered leagues."""
+    return _pre_rank_eval_candidates(
+        events,
+        max_per_league=_GAME_NUGGETS_MAX_PER_LEAGUE,
+        total_cap=limit,
+    )
+
+
+def _summarize_game_nugget_grades(rows: list[RankingGrade]) -> dict[str, Any]:
+    latest_by_pair: dict[tuple[str, str], RankingGrade] = {}
+    for r in sorted(rows, key=lambda x: (x.graded_at or datetime.min.replace(tzinfo=timezone.utc), x.id or 0)):
+        latest_by_pair[(str(r.grader or "").lower(), str(r.item_key or ""))] = r
+
+    yes_count = 0
+    no_count = 0
+    by_grader: dict[str, dict[str, int]] = {}
+    grades_out: list[dict[str, Any]] = []
+    for (_, item_key), r in latest_by_pair.items():
+        gval = str(r.grade or "").lower()
+        if gval == "yes":
+            yes_count += 1
+        elif gval == "no":
+            no_count += 1
+        gname = str(r.grader or "")
+        entry = by_grader.setdefault(gname, {"yes": 0, "no": 0, "total": 0})
+        if gval in ("yes", "no"):
+            entry[gval] += 1
+            entry["total"] += 1
+        grades_out.append(
+            {
+                "grader": gname,
+                "item_key": item_key,
+                "position": r.position,
+                "grade": gval,
+                "note": r.note,
+                "graded_at": r.graded_at.isoformat() if r.graded_at else None,
+            }
+        )
+
+    total = yes_count + no_count
+    rate = round(yes_count / total, 4) if total > 0 else None
+    return {
+        "graded_count": total,
+        "yes_count": yes_count,
+        "no_count": no_count,
+        "repeat_rate": rate,
+        "target_rate": 0.75,
+        "meets_target": (rate is not None and rate >= 0.75),
+        "by_grader": by_grader,
+        "grades": grades_out,
+    }
+
+
+_GAME_NUGGETS_WINNER_NOISE_RE = re.compile(
+    r"\b(?:moneyline|match winner|match result|3-way|three-way|full time result)\b",
+    re.IGNORECASE,
+)
+
+
+def _classify_market_to_nugget_kind(name: str, external_id: str | None = None) -> str | None:
+    """Map a game market title/ticker to one of the six nugget kinds (or None if skipped)."""
+    from app.routes.events import _classify_game_market
+
+    mtype = _classify_game_market(name or "", external_id=external_id)
+    if mtype in ("game_total", "spread"):
+        return "game_flow"
+    if mtype == "player_prop":
+        return "players"
+    if mtype in ("team_total", "scoring_race"):
+        return "teams"
+    low = (name or "").lower()
+    if mtype in _GAME_NUGGETS_MOMENT_TYPES or any(tok in low for tok in _GAME_NUGGETS_MOMENT_TOKENS):
+        return "moments"
+    if mtype == "moneyline" or _GAME_NUGGETS_WINNER_NOISE_RE.search(name or ""):
+        return None
+    return "oddities"
+
+
+def _estimate_event_nugget_coverage(
+    ev: Event,
+    market_rows: Sequence[tuple[str, str | None]],
+    *,
+    open_stakes_categories: set[str],
+) -> tuple[int, int, int]:
+    """Estimate (first_eight_items, kind_count, total_items) from grouped linked market metadata."""
+    kind_counts: dict[str, int] = {}
+    seen_pairs: set[tuple[str, str]] = set()
+    for mname, ext_id in market_rows:
+        norm_name = " ".join((mname or "").lower().split())
+        kind = _classify_market_to_nugget_kind(mname or "", ext_id)
+        if kind is None:
+            continue
+        dedup_key = (kind, norm_name)
+        if dedup_key in seen_pairs:
+            continue
+        seen_pairs.add(dedup_key)
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+
+    wps = getattr(ev, "win_probability_sources", None)
+    if isinstance(wps, Mapping) and wps and kind_counts.get("game_flow", 0) == 0:
+        kind_counts["game_flow"] = 1
+
+    sk = ev.sport.key if getattr(ev, "sport", None) is not None else "unknown"
+    prefix = sk.split("_")[0] if sk and sk != "unknown" else ""
+    llm_cat = SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix, prefix) if prefix else ""
+    if _league_coverage_tier(sk) == 0 and llm_cat and llm_cat in open_stakes_categories:
+        kind_counts["stakes"] = kind_counts.get("stakes", 0) + 1
+
+    estimated_kind_count = sum(1 for c in kind_counts.values() if c > 0)
+    estimated_nugget_count = min(8, sum(min(2, c) for c in kind_counts.values()))
+    total_items = sum(kind_counts.values())
+    return estimated_nugget_count, estimated_kind_count, total_items
+
+
+@router.get("/game-nuggets/deck")
+async def get_game_nuggets_deck(
+    request: Request,
+    limit: int = Query(20, ge=1, le=30),
+    slate: str | None = Query(None, max_length=64),
+    fresh: bool = Query(False),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return qualified best-covered game-nuggets slate metadata + grade summary (#13511, #13642).
+
+    Qualifies games via grouped linked-market SQL queries (never calling
+    ``build_event_nuggets`` in a loop), ordered best-covered first and capped
+    at 4 per league, under a strict 8-second ceiling that returns a short deck
+    rather than hanging past the router timeout.
+    """
+    _check_admin_secret(secret, request=request)
+    now = datetime.now(timezone.utc)
+    slate_id = _game_nugget_slate_id(slate, now)
+
+    use_redis = isinstance(db, AsyncSession)
+    cache_key = f"game_nuggets:deck:{_GAME_NUGGETS_DECK_CACHE_KEY_VERSION}:{slate_id}:{limit}"
+    built_at: str | None = None
+    deck_games_raw: list[dict[str, Any]] | None = None
+    deck_truncated = False
+
+    if use_redis and not fresh:
+        try:
+            from app.tasks.redis_state import get_redis_client
+
+            cached_raw = get_redis_client(fast_fail=True).get(cache_key)
+            if cached_raw:
+                cached_text = cached_raw.decode("utf-8") if isinstance(cached_raw, bytes) else str(cached_raw)
+                cached_obj = json.loads(cached_text)
+                if isinstance(cached_obj, dict) and isinstance(cached_obj.get("games"), list):
+                    built_at = cached_obj.get("built_at")
+                    deck_games_raw = cached_obj["games"]
+        except Exception:
+            deck_games_raw = None
+
+    if deck_games_raw is None:
+        partial_qualified: list[dict[str, Any]] = []
+        started = time.monotonic()
+
+        async def _qualify_deck_candidates() -> None:
+            nonlocal deck_truncated
+            try:
+                bind = db.get_bind() if isinstance(db, AsyncSession) else getattr(db, "bind", None)
+                if getattr(getattr(bind, "dialect", None), "name", None) == "postgresql":
+                    await db.execute(text(f"SET LOCAL statement_timeout = {int(_GAME_NUGGETS_DECK_SQL_TIMEOUT_MS)}"))
+            except Exception:
+                pass
+
+            candidate_events = list(
+                (
+                    await db.execute(
+                        select(Event)
+                        .options(selectinload(Event.sport))
+                        .where(
+                            Event.status.in_(["live", "in_progress", "scheduled", "completed"]),
+                            Event.commence_time >= now - timedelta(hours=6),
+                            Event.commence_time <= now + timedelta(days=5),
+                        )
+                        .order_by(Event.commence_time.asc(), Event.id.asc())
+                        .limit(max(limit * 40, 800))
+                    )
+                ).scalars().all()
+            )
+            if not candidate_events:
+                return
+
+            active_market_filter = or_(
+                FuturesMarket.status.in_(("open", "closed", "resolved")),
+                FuturesMarket.status.is_(None),
+            )
+            linked_counts: dict[int, int] = {}
+            cand_ids = [int(ev.id) for ev in candidate_events if getattr(ev, "id", None) is not None]
+            if cand_ids:
+                fm_rows = (
+                    await db.execute(
+                        select(FuturesMarket.event_id, func.count(FuturesMarket.id))
+                        .where(
+                            FuturesMarket.event_id.in_(cand_ids),
+                            active_market_filter,
+                        )
+                        .group_by(FuturesMarket.event_id)
+                    )
+                ).all()
+                for row in fm_rows:
+                    if (isinstance(row, (tuple, list)) or hasattr(row, "_fields")) and len(row) == 2 and row[0] is not None:
+                        linked_counts[int(row[0])] = int(row[1] or 0)
+
+            eligible_candidates = [
+                ev
+                for ev in candidate_events
+                if int(linked_counts.get(int(ev.id), 0))
+                >= (
+                    _GAME_NUGGETS_MIN_LINKED_MAJOR
+                    if _league_coverage_tier(
+                        ev.sport.key if getattr(ev, "sport", None) is not None else "unknown"
+                    )
+                    == 0
+                    else _GAME_NUGGETS_MIN_LINKED_MARKETS
+                )
+            ]
+            eval_pool = _pre_rank_eval_candidates(
+                eligible_candidates,
+                linked_counts=linked_counts,
+                max_per_league=_GAME_NUGGETS_QUALIFY_PER_LEAGUE,
+                total_cap=max(limit * 3 + 20, _GAME_NUGGETS_QUALIFY_POOL_CAP),
+            )
+            if not eval_pool:
+                return
+
+            pool_ids = [int(ev.id) for ev in eval_pool]
+            markets_by_event: dict[int, list[tuple[str, str | None]]] = {}
+            mkt_rows = (
+                await db.execute(
+                    select(FuturesMarket.event_id, FuturesMarket.name, FuturesMarket.external_id).where(
+                        FuturesMarket.event_id.in_(pool_ids),
+                        active_market_filter,
+                    )
+                )
+            ).all()
+            for row in mkt_rows:
+                if (isinstance(row, (tuple, list)) or hasattr(row, "_fields")) and len(row) >= 3 and row[0] is not None:
+                    markets_by_event.setdefault(int(row[0]), []).append(
+                        (str(row[1] or ""), str(row[2]) if row[2] is not None else None)
+                    )
+
+            tier0_categories = tuple(
+                sorted(
+                    {
+                        SPORT_PREFIX_TO_LLM_CATEGORY.get(sk.split("_")[0], sk.split("_")[0])
+                        for sk in _MAJOR_TIER_0_LEAGUES
+                    }
+                )
+            )
+            stakes_cats_raw = (
+                await db.execute(
+                    select(FuturesMarket.llm_sport_category)
+                    .where(
+                        FuturesMarket.status == _GAME_NUGGETS_OPEN_STATUS,
+                        FuturesMarket.event_id.is_(None),
+                        FuturesMarket.llm_sport_category.in_(tier0_categories),
+                        FuturesMarket.market_tier.in_([1, 2, 3]),
+                    )
+                    .distinct()
+                )
+            ).scalars().all()
+            open_stakes_categories = {str(c).strip().lower() for c in stakes_cats_raw if isinstance(c, str) and c.strip()}
+
+            for ev in eval_pool:
+                if (time.monotonic() - started) >= _GAME_NUGGETS_DECK_BUDGET_SECONDS:
+                    deck_truncated = True
+                    break
+                eid = int(ev.id)
+                sk = ev.sport.key if getattr(ev, "sport", None) is not None else None
+                linked = int(linked_counts.get(eid, 0))
+                major_tier = _league_coverage_tier(sk or "unknown")
+                nugget_count, kind_count, total_items = _estimate_event_nugget_coverage(
+                    ev,
+                    markets_by_event.get(eid, ()),
+                    open_stakes_categories=open_stakes_categories,
+                )
+                if nugget_count < _GAME_NUGGETS_MIN_ITEMS or kind_count < _GAME_NUGGETS_MIN_KINDS:
+                    continue
+                ct = getattr(ev, "commence_time", None)
+                partial_qualified.append(
+                    {
+                        "event_id": eid,
+                        "home_team": ev.home_team_name,
+                        "away_team": ev.away_team_name,
+                        "sport": sk,
+                        "sport_name": reader_league_name(getattr(ev, "sport", None)),
+                        "status": ev.status,
+                        "commence_time": ct.isoformat() if ct else None,
+                        "nugget_count": nugget_count,
+                        "kind_count": kind_count,
+                        "_total_items": total_items,
+                        "_linked_count": linked,
+                        "_major_tier": major_tier,
+                        "_commence_ts": ct.timestamp() if ct is not None else float("inf"),
+                    }
+                )
+
+        try:
+            await asyncio.wait_for(
+                _qualify_deck_candidates(),
+                timeout=_GAME_NUGGETS_DECK_BUDGET_SECONDS,
+            )
+        except (asyncio.TimeoutError, OperationalError, DBAPIError):
+            deck_truncated = True
+        except Exception as exc:
+            if "statement timeout" in str(exc).lower() or "querycanceled" in str(exc).lower():
+                deck_truncated = True
+            else:
+                raise
+
+        picked = _select_best_covered_qualified(partial_qualified, limit=limit)
+        built_at = now.isoformat()
+        deck_games_raw = [
+            {
+                "event_id": row["event_id"],
+                "home_team": row["home_team"],
+                "away_team": row["away_team"],
+                "sport": row["sport"],
+                "sport_name": row["sport_name"],
+                "status": row["status"],
+                "commence_time": row["commence_time"],
+                "nugget_count": row["nugget_count"],
+                "kind_count": row["kind_count"],
+            }
+            for row in picked
+        ]
+        if use_redis and not deck_truncated:
+            try:
+                from app.tasks.redis_state import get_redis_client
+
+                get_redis_client(fast_fail=True).set(
+                    cache_key,
+                    json.dumps({"built_at": built_at, "games": deck_games_raw}),
+                    ex=_GAME_NUGGETS_DECK_CACHE_TTL_S,
+                )
+            except Exception:
+                pass
+
+    grade_rows = (
+        await db.execute(
+            select(RankingGrade).where(
+                RankingGrade.surface == SURFACE_GAME_NUGGETS,
+                RankingGrade.slate_id == slate_id,
+            )
+        )
+    ).scalars().all()
+    summary = _summarize_game_nugget_grades(list(grade_rows))
+    grader_header = request.headers.get("X-Grader-Name")
+    active_grader = (
+        " ".join(urllib.parse.unquote(grader_header).split())
+        if grader_header
+        else None
+    )
+    graded_keys_by_event: dict[int, set[str]] = {}
+    for g in summary["grades"]:
+        if active_grader and g["grader"].lower() != active_grader.lower():
+            continue
+        ikey = str(g.get("item_key") or "")
+        if ikey.startswith("event:"):
+            parts = ikey.split(":", 2)
+            if len(parts) >= 2 and parts[1].isdigit():
+                graded_keys_by_event.setdefault(int(parts[1]), set()).add(ikey)
+
+    games: list[dict[str, Any]] = []
+    for row in deck_games_raw:
+        eid = int(row["event_id"])
+        games.append(
+            {
+                **row,
+                "graded_count": len(graded_keys_by_event.get(eid, ())),
+            }
+        )
+
+    return {
+        "slate_id": slate_id,
+        "surface": SURFACE_GAME_NUGGETS,
+        "built_at": built_at or now.isoformat(),
+        "requested_limit": limit,
+        "deck_truncated": deck_truncated,
+        "games_count": len(games),
+        "games": games,
+        "summary": {k: v for k, v in summary.items() if k != "grades"},
+    }
+
+
+@router.get("/game-nuggets/games/{event_id}")
+async def get_game_nuggets_for_event(
+    event_id: int,
+    request: Request,
+    limit: int = Query(8, ge=1, le=12),
+    slate: str | None = Query(None, max_length=64),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Build ranked nuggets + saved-grade overlay for ONE game per request (#13511)."""
+    from app.routes.events import build_event_nuggets
+
+    _check_admin_secret(secret, request=request)
+    now = datetime.now(timezone.utc)
+    slate_id = _game_nugget_slate_id(slate, now)
+    payload = await build_event_nuggets(int(event_id), db, limit=limit, now=now)
+
+    grade_rows = (
+        await db.execute(
+            select(RankingGrade).where(
+                RankingGrade.surface == SURFACE_GAME_NUGGETS,
+                RankingGrade.slate_id == slate_id,
+            )
+        )
+    ).scalars().all()
+    summary = _summarize_game_nugget_grades(list(grade_rows))
+    grader_header = request.headers.get("X-Grader-Name")
+    active_grader = (
+        " ".join(urllib.parse.unquote(grader_header).split())
+        if grader_header
+        else None
+    )
+    grades_by_key: dict[str, dict[str, Any]] = {}
+    for g in summary["grades"]:
+        if active_grader and g["grader"].lower() != active_grader.lower():
+            continue
+        grades_by_key[g["item_key"]] = g
+
+    eid = int(payload["event_id"])
+    for n in payload.get("nuggets") or ():
+        ikey = _game_nugget_item_key(eid, n["id"])
+        n["item_key"] = ikey
+        saved = grades_by_key.get(ikey)
+        if saved is not None:
+            n["saved_grade"] = saved["grade"]
+            n["saved_note"] = saved.get("note")
+
+    return {
+        "slate_id": slate_id,
+        "surface": SURFACE_GAME_NUGGETS,
+        "event_id": eid,
+        "game": payload,
+        "summary": {k: v for k, v in summary.items() if k != "grades"},
+    }
+
+
+@router.post("/game-nuggets/grades")
+async def post_game_nugget_grade(
+    body: GameNuggetGradeIn,
+    request: Request,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db_rw),
+) -> dict:
+    """Save Alex's yes/no fan-repeat grade for one game nugget (#13511)."""
+    _check_admin_secret(secret, request=request)
+    grade_val = body.grade.strip().lower()
+    if grade_val not in _GAME_NUGGET_GRADES:
+        raise HTTPException(status_code=422, detail=f"grade must be one of {_GAME_NUGGET_GRADES}")
+    grader = " ".join(body.grader.split())
+    if not grader:
+        raise HTTPException(status_code=422, detail="grader needs a name")
+    now = datetime.now(timezone.utc)
+    slate_id = _game_nugget_slate_id(body.slate_id, now)
+    item_key = _game_nugget_item_key(body.event_id, body.nugget_id)
+
+    db.add(
+        RankingGrade(
+            slate_id=slate_id,
+            surface=SURFACE_GAME_NUGGETS,
+            grader=grader,
+            expert=True,
+            position=body.position,
+            item_key=item_key,
+            grade=grade_val,
+            note=(body.note or "").strip() or None,
+        )
+    )
+    await db.commit()
+    return {"status": "ok", "item_key": item_key, "grade": grade_val, "grader": grader}
+
+
+@router.get("/game-nuggets/grades")
+async def get_game_nugget_grades(
+    request: Request,
+    slate_id: str | None = Query(None, max_length=64),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return latest per-nugget grades and 3-in-4 repeat-rate summary (#13511)."""
+    _check_admin_secret(secret, request=request)
+    now = datetime.now(timezone.utc)
+    resolved_slate = _game_nugget_slate_id(slate_id, now)
+    rows = (
+        await db.execute(
+            select(RankingGrade).where(
+                RankingGrade.surface == SURFACE_GAME_NUGGETS,
+                RankingGrade.slate_id == resolved_slate,
+            )
+        )
+    ).scalars().all()
+    summary = _summarize_game_nugget_grades(list(rows))
+    return {
+        "slate_id": resolved_slate,
+        "surface": SURFACE_GAME_NUGGETS,
+        **summary,
+    }
 

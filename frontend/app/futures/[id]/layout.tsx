@@ -22,7 +22,7 @@ import {
 } from "@/lib/unresolvedShareMeta";
 import { withSettledResultCertainty } from "@/lib/settledResultDisplay";
 import { VERIFIED_TITLE } from "@/lib/verifiedTitleDetail";
-import { APP_STORE_APP_ID } from "@/lib/brandCopy";
+import { APP_STORE_CAMPAIGNS, smartAppBannerContent } from "@/lib/brandCopy";
 
 type FuturesMarketMetadata = FuturesMarketDetailResponse & {
   image_url?: string | null;
@@ -226,7 +226,9 @@ export async function generateMetadata({
     title: titleText,
     description,
     alternates: { canonical: url },
-    itunes: { appId: APP_STORE_APP_ID, appArgument: url },
+    other: {
+      "apple-itunes-app": smartAppBannerContent(APP_STORE_CAMPAIGNS.banner, url),
+    },
     openGraph: {
       title: `${titleText} | Bain Luck`,
       description,
@@ -256,6 +258,14 @@ export default async function FuturesDetailLayout({
   // only ever taken on a market the server has positively named as a container.
   const { id } = await params;
   const lookup = await fetchMarket(id);
+  if (lookup.ok) {
+    const canonicalId = lookup.market.canonical_market_id;
+    if (typeof canonicalId === "number" && Number.isSafeInteger(canonicalId)
+        && canonicalId > 0 && canonicalId !== lookup.market.id
+        && canonicalId !== Number(id)) {
+      redirect(`/futures/${canonicalId}`);
+    }
+  }
   const target = lookup.ok ? gameContainerRedirectPath(lookup.market) : null;
   if (target) redirect(target);
   return <>{children}</>;

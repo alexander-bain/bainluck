@@ -57,6 +57,7 @@ class _SlowInspector:
 def _reset_cache():
     ac._INSPECT_CACHE["at"] = 0.0
     ac._INSPECT_CACHE["data"] = None
+    ac._INSPECT_CACHE["meta"] = {}
     ac._INSPECT_LOCK = None
     _SlowInspector.calls = 0
     # Reset the DELAY too. Leaving it as class state let one test's 0.0 leak into
@@ -66,6 +67,7 @@ def _reset_cache():
     yield
     ac._INSPECT_CACHE["at"] = 0.0
     ac._INSPECT_CACHE["data"] = None
+    ac._INSPECT_CACHE["meta"] = {}
     ac._INSPECT_LOCK = None
 
 
@@ -94,7 +96,7 @@ class TestOffTheEventLoop:
 
         fake = MagicMock()
         fake.control.inspect.side_effect = lambda **kw: _SlowInspector(**kw)
-        _SlowInspector.per_call_s = 0.08  # 5 broadcasts -> ~0.40s of blocking work
+        _SlowInspector.per_call_s = 0.35  # 5 parallel broadcasts -> ~0.35s off-loop work
 
         ticks = []
         stop = False
@@ -307,3 +309,93 @@ class TestTheMemoCannotPermanentlyHideABrokenBroker:
             return ac._INSPECT_CACHE["data"]
 
         assert _run(main()) is None
+
+
+class TestFiveSecondBudgetCap:
+    """`/api/admin/celery/inspect` must never hold web workers for 25s, while preserving >=3s reply window."""
+
+    def test_default_timeouts_keep_five_parallel_broadcasts_under_five_seconds_with_three_second_window(
+        self,
+    ):
+        from unittest.mock import MagicMock
+
+        seen_kw = {}
+
+        def _make_inspector(**kw):
+            seen_kw.update(kw)
+            return _SlowInspector(**kw)
+
+        fake = MagicMock()
+        fake.control.inspect.side_effect = _make_inspector
+        _SlowInspector.per_call_s = 0.15
+
+        t0 = time.perf_counter()
+
+        async def main():
+            with patch("app.tasks.celery_app", fake, create=True):
+                return await ac._inspect_snapshot()
+
+        _run(main())
+        elapsed = time.perf_counter() - t0
+        assert ac._INSPECT_TOTAL_TIMEOUT_S <= 5.0
+        assert seen_kw["timeout"] >= 3.0
+        assert seen_kw["timeout"] <= ac._INSPECT_TOTAL_TIMEOUT_S
+        # Parallel execution completes 5 x 0.15s broadcasts well under sequential 0.75s.
+        assert elapsed < 0.45
+
+    def test_hung_broadcasts_give_up_at_total_budget_without_caching(self):
+        from unittest.mock import MagicMock
+
+        fake = MagicMock()
+        fake.control.inspect.side_effect = lambda **kw: _SlowInspector(**kw)
+        _SlowInspector.per_call_s = 0.50
+
+        t0 = time.perf_counter()
+
+        async def main():
+            with patch("app.tasks.celery_app", fake, create=True):
+                return await ac._inspect_snapshot(timeout=0.50, total_timeout=0.15)
+
+        with pytest.raises(TimeoutError):
+            _run(main())
+
+        elapsed = time.perf_counter() - t0
+        assert elapsed < 0.8
+        assert ac._INSPECT_CACHE["data"] is None
+
+    def test_partial_worker_missing_active_is_flagged_in_cache_metadata(self):
+        from unittest.mock import MagicMock
+
+        class _PartialInspector:
+            def ping(self):
+                return {"celery@w1": {"ok": "pong"}, "celery@w2": {"ok": "pong"}}
+
+            def active(self):
+                # w2 answered ping but dropped out of active
+                return {"celery@w1": []}
+
+            def reserved(self):
+                return {"celery@w1": [], "celery@w2": []}
+
+            def registered(self):
+                return {"celery@w1": [], "celery@w2": []}
+
+            def stats(self):
+                return {"celery@w1": {}, "celery@w2": {}}
+
+        fake = MagicMock()
+        fake.control.inspect.side_effect = lambda **_kw: _PartialInspector()
+
+        async def main():
+            with patch("app.tasks.celery_app", fake, create=True):
+                fresh_snap = await ac._inspect_snapshot()
+                cached_snap = await ac._inspect_snapshot()
+                return fresh_snap, cached_snap
+
+        (snap1, state1), (_snap2, state2) = _run(main())
+        assert "celery@w1" in snap1["active"]
+        assert state1["partial"] is True
+        assert state1["missing_active_workers"] == ["celery@w2"]
+        assert state2["cached"] is True
+        assert state2["partial"] is True
+        assert state2["missing_active_workers"] == ["celery@w2"]

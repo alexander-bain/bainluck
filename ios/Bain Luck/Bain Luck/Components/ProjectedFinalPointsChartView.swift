@@ -234,6 +234,10 @@ struct ProjectedFinalPointsChartView: View {
         series.phase == .after ? "Last projection" : "Latest projection"
     }
 
+    static func wholePoints(_ value: Double) -> Int {
+        Int(value.rounded())
+    }
+
     static func projectedReadoutText(
         pagePoints: Int?,
         forecast: Double,
@@ -242,7 +246,7 @@ struct ProjectedFinalPointsChartView: View {
         if phase != .after, let pagePoints {
             return "\(pagePoints) projected"
         }
-        return "\(forecast.formatted(.number.precision(.fractionLength(0...1)))) projected"
+        return "\(wholePoints(forecast)) projected"
     }
 
     private func teamReadout(
@@ -258,7 +262,7 @@ struct ProjectedFinalPointsChartView: View {
             Text(Self.projectedReadoutText(pagePoints: pagePoints, forecast: forecast, phase: phase))
                 .font(.subheadline.monospacedDigit())
             if let actual {
-                Text("\(actual.formatted(.number.precision(.fractionLength(0...1)))) scored")
+                Text("\(Self.wholePoints(actual)) scored")
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
         }

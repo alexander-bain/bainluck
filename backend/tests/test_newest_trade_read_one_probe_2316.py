@@ -34,7 +34,6 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
-
 @compiles(JSONB, "sqlite")
 def _jsonb_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
     return "JSON"
@@ -52,6 +51,7 @@ from app.models.models import (  # noqa: E402
     FuturesOutcome,
 )
 from app.routes import futures as F  # noqa: E402
+from app.utils.futures_price_screen import _newest_capture_per_outcome  # noqa: E402
 
 T0 = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 
@@ -155,7 +155,7 @@ def _compiled(stmt) -> str:
 
 
 def test_per_leg_newest_capture_is_an_ungrouped_correlated_max():
-    sql = _compiled(F._newest_capture_per_outcome([10, 11], "kalshi").element)
+    sql = _compiled(_newest_capture_per_outcome([10, 11], "kalshi").element)
     # Driven from the outcome row by primary key …
     assert sql.startswith("SELECT futures_outcomes.id AS outcome_id, (SELECT max("), sql
     assert "FROM futures_outcomes WHERE futures_outcomes.id IN (10, 11)" in sql, sql

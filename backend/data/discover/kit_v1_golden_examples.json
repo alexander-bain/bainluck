@@ -1,0 +1,6129 @@
+{
+  "kit_version": 1,
+  "count": 17,
+  "items": [
+    {
+      "kit_version": 1,
+      "id": "kit-cfb-national-title",
+      "layout": "grid",
+      "variant": "scoreboard_grid",
+      "kicker": "SPORTS · COLLEGE FOOTBALL",
+      "common_headline": "College Football Playoff and SEC Championship leaders",
+      "stat_caption": "Georgia leads the college football national championship at 34%, with SEC contenders across the same board",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "college-football-national-championship"
+      },
+      "footnote": "Shaded cells show served chances across both title races.",
+      "disclosure": "2 more in this set",
+      "refusal_reason": null,
+      "body": {
+        "leading_label": "Contender",
+        "show_column_headers": true,
+        "row_layout": "matrix",
+        "columns": [
+          {
+            "key": "181",
+            "label": "National Title"
+          },
+          {
+            "key": "233",
+            "label": "SEC Title"
+          }
+        ],
+        "rows": [
+          {
+            "id": "cfb-1-georgia",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "1",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/61.png",
+                "alt": "Georgia",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Georgia",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "181",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.34,
+                    "top_label": null,
+                    "center_label": "34%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "233",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.68,
+                    "top_label": null,
+                    "center_label": "68%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "cfb-2-texas",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "2",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/251.png",
+                "alt": "Texas",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Texas",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "181",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.11,
+                    "top_label": null,
+                    "center_label": "11%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "233",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.26,
+                    "top_label": null,
+                    "center_label": "26%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "cfb-3-alabama",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "3",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/333.png",
+                "alt": "Alabama",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Alabama",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "181",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.1,
+                    "top_label": null,
+                    "center_label": "10%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "233",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.03,
+                    "top_label": null,
+                    "center_label": "3%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "cfb-4-tennessee",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "4",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/2633.png",
+                "alt": "Tennessee",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Tennessee",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "181",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.04,
+                    "top_label": null,
+                    "center_label": "4%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "233",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.03,
+                    "top_label": null,
+                    "center_label": "3%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-middle-east-deadlines",
+      "layout": "grid",
+      "variant": "dated_tiles",
+      "kicker": "GEOPOLITICS · MIDDLE EAST",
+      "common_headline": "Middle East ceasefire and leadership timelines",
+      "stat_caption": "US–Iran ceasefire is 81% by December 31; Iran leadership change is 24% by June 30",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "middle-east-deadlines"
+      },
+      "footnote": null,
+      "disclosure": "4 more in this set",
+      "refusal_reason": null,
+      "body": {
+        "show_column_headers": false,
+        "row_layout": "stacked_cells",
+        "columns": [
+          {
+            "key": "2026-11-30",
+            "label": "Nov 30 '26"
+          },
+          {
+            "key": "2026-12-31",
+            "label": "Dec 31 '26"
+          },
+          {
+            "key": "2027-06-30",
+            "label": "Jun 30 '27"
+          }
+        ],
+        "rows": [
+          {
+            "id": "ceasefire",
+            "leading": [
+              {
+                "mark": "picture",
+                "url": "https://flagcdn.com/w320/us.png",
+                "alt": "US–Iran effective ceasefire begins",
+                "subject_kind": "flag",
+                "size": "xs",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "US–Iran effective ceasefire begins",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "2026-11-30",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.66,
+                    "top_label": "by Nov 30 '26",
+                    "center_label": "66%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "2026-12-31",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.81,
+                    "top_label": "by Dec 31 '26",
+                    "center_label": "81%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "iran-leadership",
+            "leading": [
+              {
+                "mark": "picture",
+                "url": "https://flagcdn.com/w320/ir.png",
+                "alt": "Iran leadership change",
+                "subject_kind": "flag",
+                "size": "xs",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Iran leadership change",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "2026-11-30",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.01,
+                    "top_label": "by Nov 30 '26",
+                    "center_label": "1%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "2026-12-31",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.07,
+                    "top_label": "by Dec 31 '26",
+                    "center_label": "7%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "2027-06-30",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.24,
+                    "top_label": "by Jun 30 '27",
+                    "center_label": "24%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-by-december-31",
+      "layout": "stack",
+      "variant": "countdown",
+      "kicker": "SAME DEADLINE",
+      "common_headline": "By December 31",
+      "stat_caption": "Next Claude Opus (5.6+) release leads December 31 deadlines at 85%",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "by-december-31"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "header_layout": "banner",
+        "header_marks": [
+          {
+            "mark": "number",
+            "value": 38,
+            "display": "38",
+            "unit": "days",
+            "tone": "accent",
+            "prominence": "hero",
+            "align": "left",
+            "width": "auto",
+            "deadline_iso": "2026-12-31T23:59:59-08:00"
+          },
+          {
+            "mark": "word",
+            "text": "days left",
+            "style": "hero_label",
+            "tone": "primary",
+            "align": "left",
+            "width": "flex",
+            "bold": true,
+            "secondary_text": "all of these end on Dec 31",
+            "deadline_iso": "2026-12-31T23:59:59-08:00"
+          }
+        ],
+        "items": [
+          {
+            "id": "opus",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f7/Beautiful_technology_%28Unsplash%29.jpg/960px-Beautiful_technology_%28Unsplash%29.jpg",
+                "alt": "Next Claude Opus (5.6+) released",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Next Claude Opus (5.6+) released",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.85,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 85,
+                "display": "85%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "arena",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Rear_of_rack_at_NERSC_data_center_-_closeup.jpg/500px-Rear_of_rack_at_NERSC_data_center_-_closeup.jpg",
+                "alt": "AI model reaches 1550 Chatbot Arena score",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "AI model reaches 1550 Chatbot Arena score",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.42,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 42,
+                "display": "42%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "france",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://flagcdn.com/w320/fr.png",
+                "alt": "France passes a national budget",
+                "subject_kind": "flag",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "France passes a national budget",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.42,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 42,
+                "display": "42%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "banksy",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Confused_Neon_%28Unsplash%29.jpg/960px-Confused_Neon_%28Unsplash%29.jpg",
+                "alt": "Banksy creates a new mural or street artwork",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Banksy creates a new mural or street artwork",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.31,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 31,
+                "display": "31%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "hegseth",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2f/Pete_Hegseth_Official_Portrait.jpg/500px-Pete_Hegseth_Official_Portrait.jpg",
+                "alt": "Pete Hegseth out as Secretary of Defense",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Pete Hegseth out as Secretary of Defense",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.11,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 11,
+                "display": "11%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "x-ban",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+                "alt": "X banned in any European country",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "X banned in any European country",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.08,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 8,
+                "display": "8%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-boston-celtics-road",
+      "layout": "stack",
+      "variant": "road_ahead",
+      "kicker": "NBA · NEXT 3 GAMES",
+      "common_headline": "Boston Celtics: next 3 games",
+      "stat_caption": "Boston is 79% at Washington on Tuesday, then hosts Atlanta at 62% and visits San Antonio at 40%",
+      "source_mark": {
+        "label": "4 sources",
+        "count": 4
+      },
+      "route": {
+        "kind": "team",
+        "id": null,
+        "slug": "boston-celtics"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "header_layout": "banner",
+        "header_marks": [
+          {
+            "mark": "picture",
+            "url": "https://a.espncdn.com/i/teamlogos/nba/500/bos.png",
+            "alt": "Boston Celtics",
+            "subject_kind": "team",
+            "size": "sm",
+            "contain": true
+          },
+          {
+            "mark": "word",
+            "text": "Boston Celtics",
+            "style": "row",
+            "tone": "primary",
+            "align": "left",
+            "width": "flex",
+            "bold": true
+          }
+        ],
+        "items": [
+          {
+            "id": "g1-wsh",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Tue Nov 24",
+                "style": "meta",
+                "tone": "secondary",
+                "align": "left",
+                "width": "sm",
+                "bold": false,
+                "secondary_text": "5:00 PM PT"
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/wsh.png",
+                "alt": "Washington Wizards",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "at WSH",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.79,
+                "width": "md",
+                "fill_color": {
+                  "light": "#008348",
+                  "dark": "#269663"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 79,
+                "display": "79%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "g2-atl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Fri Nov 27",
+                "style": "meta",
+                "tone": "secondary",
+                "align": "left",
+                "width": "sm",
+                "bold": false,
+                "secondary_text": "5:00 PM PT"
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
+                "alt": "Atlanta Hawks",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "vs ATL",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.62,
+                "width": "md",
+                "fill_color": {
+                  "light": "#008348",
+                  "dark": "#269663"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 62,
+                "display": "62%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "g3-sa",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Sun Nov 29",
+                "style": "meta",
+                "tone": "secondary",
+                "align": "left",
+                "width": "sm",
+                "bold": false,
+                "secondary_text": "1:00 PM PT"
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/sa.png",
+                "alt": "San Antonio Spurs",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "at SA",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.4,
+                "width": "md",
+                "fill_color": {
+                  "light": "#008348",
+                  "dark": "#269663"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 40,
+                "display": "40%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-nhl-playoffs-bubble",
+      "layout": "axis",
+      "variant": "bubble_line",
+      "kicker": "HOCKEY · NHL PLAYOFFS",
+      "common_headline": "2026–27 NHL Playoffs picture",
+      "stat_caption": "Edmonton leads at 98%, while Washington (54%) and the Rangers (47%) sit inside the playoff bubble",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "nhl-playoffs-2027"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "scale": {
+          "scale_kind": "percent",
+          "unit": "%",
+          "min": 0,
+          "max": 100,
+          "ticks": [
+            {
+              "x": 0,
+              "label": "0%"
+            },
+            {
+              "x": 25,
+              "label": "25%"
+            },
+            {
+              "x": 50,
+              "label": "50%"
+            },
+            {
+              "x": 75,
+              "label": "75%"
+            },
+            {
+              "x": 100,
+              "label": "100%"
+            }
+          ]
+        },
+        "highlight_band": {
+          "lo": 25,
+          "hi": 75,
+          "label": "in doubt"
+        },
+        "marks": [
+          {
+            "mark": "dot",
+            "x": 6.0,
+            "y_lane": null,
+            "label": "Vancouver Canucks: 6%",
+            "color": {
+              "light": "#00205b",
+              "dark": "#7384a5"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 8.0,
+            "y_lane": null,
+            "label": "Chicago Blackhawks: 8%",
+            "color": {
+              "light": "#cf0a2c",
+              "dark": "#dd546b"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 8.0,
+            "y_lane": null,
+            "label": "Detroit Red Wings: 8%",
+            "color": {
+              "light": "#ce1126",
+              "dark": "#dd5867"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 8.0,
+            "y_lane": null,
+            "label": "Toronto Maple Leafs: 8%",
+            "color": {
+              "light": "#00205b",
+              "dark": "#7384a5"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 11.0,
+            "y_lane": null,
+            "label": "Calgary Flames: 11%",
+            "color": {
+              "light": "#c8102e",
+              "dark": "#d8586d"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 11.0,
+            "y_lane": null,
+            "label": "Pittsburgh Penguins: 11%",
+            "color": {
+              "light": "#000000",
+              "dark": "#8c8c8c"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 14.0,
+            "y_lane": null,
+            "label": "Columbus Blue Jackets: 14%",
+            "color": {
+              "light": "#002654",
+              "dark": "#7388a1"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 18.0,
+            "y_lane": null,
+            "label": "Philadelphia Flyers: 18%",
+            "color": {
+              "light": "#f74902",
+              "dark": "#f74902"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 24.0,
+            "y_lane": null,
+            "label": "San Jose Sharks: 24%",
+            "color": {
+              "light": "#006d75",
+              "dark": "#409298"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 32.0,
+            "y_lane": 0,
+            "label": "Buffalo Sabres: 32%",
+            "color": {
+              "light": "#002654",
+              "dark": "#7388a1"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/buf.png",
+              "alt": "BUF",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 33.0,
+            "y_lane": 1,
+            "label": "Seattle Kraken: 33%",
+            "color": {
+              "light": "#001628",
+              "dark": "#808a94"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/sea.png",
+              "alt": "SEA",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 34.0,
+            "y_lane": 2,
+            "label": "Los Angeles Kings: 34%",
+            "color": {
+              "light": "#111111",
+              "dark": "#888888"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/la.png",
+              "alt": "LA",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 34.0,
+            "y_lane": 3,
+            "label": "Winnipeg Jets: 34%",
+            "color": {
+              "light": "#041e42",
+              "dark": "#758397"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/wpg.png",
+              "alt": "WPG",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 38.0,
+            "y_lane": 4,
+            "label": "Anaheim Ducks: 38%",
+            "color": {
+              "light": "#fc4c02",
+              "dark": "#fc4c02"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/ana.png",
+              "alt": "ANA",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 38.0,
+            "y_lane": 5,
+            "label": "St. Louis Blues: 38%",
+            "color": {
+              "light": "#002f87",
+              "dark": "#6682b7"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/stl.png",
+              "alt": "STL",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 43.0,
+            "y_lane": 0,
+            "label": "New York Islanders: 43%",
+            "color": {
+              "light": "#00539b",
+              "dark": "#4c87b9"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nyi.png",
+              "alt": "NYI",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 46.0,
+            "y_lane": 1,
+            "label": "Nashville Predators: 46%",
+            "color": {
+              "light": "#b8881f",
+              "dark": "#ffb81c"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nsh.png",
+              "alt": "NSH",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 47.0,
+            "y_lane": 2,
+            "label": "New York Rangers: 47%",
+            "color": {
+              "light": "#0038a8",
+              "dark": "#6688cb"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nyr.png",
+              "alt": "NYR",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 54.0,
+            "y_lane": 0,
+            "label": "Washington Capitals: 54%",
+            "color": {
+              "light": "#c8102e",
+              "dark": "#d8586d"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/wsh.png",
+              "alt": "WSH",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 69.0,
+            "y_lane": 0,
+            "label": "Boston Bruins: 69%",
+            "color": {
+              "light": "#b8881f",
+              "dark": "#ffb81c"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/bos.png",
+              "alt": "BOS",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 73.0,
+            "y_lane": 1,
+            "label": "Ottawa Senators: 73%",
+            "color": {
+              "light": "#c52032",
+              "dark": "#d45865"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/ott.png",
+              "alt": "OTT",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 73.0,
+            "y_lane": 2,
+            "label": "Utah Mammoth: 73%",
+            "color": {
+              "light": "#5794c1",
+              "dark": "#69b3e7"
+            },
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/utah.png",
+              "alt": "UTAH",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
+          },
+          {
+            "mark": "dot",
+            "x": 76.0,
+            "y_lane": null,
+            "label": "Florida Panthers: 76%",
+            "color": {
+              "light": "#c8102e",
+              "dark": "#d8586d"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 81.0,
+            "y_lane": null,
+            "label": "Montreal Canadiens: 81%",
+            "color": {
+              "light": "#af1e2d",
+              "dark": "#c7626c"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 83.0,
+            "y_lane": null,
+            "label": "New Jersey Devils: 83%",
+            "color": {
+              "light": "#ce1126",
+              "dark": "#dd5867"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 85.0,
+            "y_lane": null,
+            "label": "Dallas Stars: 85%",
+            "color": {
+              "light": "#006847",
+              "dark": "#408e75"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 88.0,
+            "y_lane": null,
+            "label": "Colorado Avalanche: 88%",
+            "color": {
+              "light": "#6f263d",
+              "dark": "#a97d8b"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 90.0,
+            "y_lane": null,
+            "label": "Tampa Bay Lightning: 90%",
+            "color": {
+              "light": "#002868",
+              "dark": "#7389ac"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 94.0,
+            "y_lane": null,
+            "label": "Vegas Golden Knights: 94%",
+            "color": {
+              "light": "#ac9157",
+              "dark": "#b4975a"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 97.0,
+            "y_lane": null,
+            "label": "Carolina Hurricanes: 97%",
+            "color": {
+              "light": "#cc0000",
+              "dark": "#de5959"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 98.0,
+            "y_lane": null,
+            "label": "Edmonton Oilers: 98%",
+            "color": {
+              "light": "#041e42",
+              "dark": "#758397"
+            },
+            "in_band": false,
+            "picture": null
+          },
+          {
+            "mark": "dot",
+            "x": 98.0,
+            "y_lane": null,
+            "label": "Minnesota Wild: 98%",
+            "color": {
+              "light": "#154734",
+              "dark": "#67877b"
+            },
+            "in_band": false,
+            "picture": null
+          }
+        ],
+        "summary_marks": [
+          {
+            "mark": "word",
+            "text": "9 at 25% or less",
+            "style": "sub",
+            "tone": "secondary",
+            "align": "left",
+            "width": "auto",
+            "bold": false
+          },
+          {
+            "mark": "word",
+            "text": "10 at 75% or more",
+            "style": "sub",
+            "tone": "secondary",
+            "align": "right",
+            "width": "auto",
+            "bold": false
+          }
+        ],
+        "footer_marks": [
+          {
+            "mark": "word",
+            "text": "OTT 73% · UTAH 73% · BOS 69% · WSH 54% · NYR 47% · NSH 46% · NYI 43% · ANA 38% · STL 38% · LA 34% · WPG 34% · SEA 33% · BUF 32%",
+            "style": "pill",
+            "tone": "secondary",
+            "align": "left",
+            "width": "auto",
+            "bold": false
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-elon-side-quests",
+      "layout": "stack",
+      "variant": "one_in_n",
+      "kicker": "ODD · SIDE QUESTS",
+      "common_headline": "Elon Musk's wildest side quests",
+      "stat_caption": "Visiting Mars in his lifetime is the likeliest long shot at 12% (1 in 8), with buying Ryanair at 5% (1 in 20)",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "elon-musk-wildest-side-quests"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "header_layout": "none",
+        "header_marks": [],
+        "items": [
+          {
+            "id": "mars",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/69/NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg/1280px-NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg",
+                "alt": "Elon Musk visits Mars in his lifetime",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Elon Musk visits Mars in his lifetime",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 8,
+                "display": "1 in 8",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 12,
+                "display": "12%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "ryanair",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+                "alt": "Elon Musk purchases Ryanair",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Elon Musk purchases Ryanair",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 20,
+                "display": "1 in 20",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 5,
+                "display": "5%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "superman",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+                "alt": "Elon Musk cast in next Superman film",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Elon Musk cast in next Superman film",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 20,
+                "display": "1 in 20",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 5,
+                "display": "5%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "tesla-ceo",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+                "alt": "Elon Musk out as Tesla CEO before 2027",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Elon Musk out as Tesla CEO before 2027",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 33,
+                "display": "1 in 33",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 3,
+                "display": "3%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "optimus",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Rear_of_rack_at_NERSC_data_center_-_closeup.jpg/500px-Rear_of_rack_at_NERSC_data_center_-_closeup.jpg",
+                "alt": "Tesla Optimus released this year",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Tesla Optimus released this year",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 50,
+                "display": "1 in 50",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 2,
+                "display": "2%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "sports-team",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bd/SoFi_Stadium_%2851126606022%29.jpg/500px-SoFi_Stadium_%2851126606022%29.jpg",
+                "alt": "Elon Musk buys a major sports team before 2027",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Elon Musk buys a major sports team before 2027",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 100,
+                "display": "1 in 100",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 1,
+                "display": "1%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-nba-slate",
+      "layout": "stack",
+      "variant": "single_sport_slate",
+      "kicker": "NBA · THIS SLATE",
+      "common_headline": "NBA: the next seven games",
+      "stat_caption": "Pistons at Magic (54%–46%) headlines seven NBA matchups",
+      "source_mark": {
+        "label": "4 sources",
+        "count": 4
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "nba-slate"
+      },
+      "footnote": null,
+      "disclosure": "6 more in this set",
+      "refusal_reason": null,
+      "body": {
+        "single_sport_key": "basketball_nba",
+        "header_layout": "split",
+        "header_marks": [
+          {
+            "mark": "word",
+            "text": "NBA",
+            "style": "kicker",
+            "tone": "muted",
+            "align": "left",
+            "width": "auto",
+            "bold": true
+          },
+          {
+            "mark": "word",
+            "text": "7 GAMES",
+            "style": "kicker",
+            "tone": "muted",
+            "align": "right",
+            "width": "auto",
+            "bold": true
+          }
+        ],
+        "items": [
+          {
+            "id": "nba-mem-cha",
+            "sport_key": "basketball_nba",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/mem.png",
+                "alt": "MEM",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "MEM",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 49,
+                "display": "49%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.49,
+                    "color": {
+                      "light": "#5d76a9",
+                      "dark": "#6d84b2"
+                    },
+                    "label": "MEM"
+                  },
+                  {
+                    "fill": 0.51,
+                    "color": {
+                      "light": "#008ca8",
+                      "dark": "#0d92ac"
+                    },
+                    "label": "CHA"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 51,
+                "display": "51%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "CHA",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/cha.png",
+                "alt": "CHA",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Live · 28–32",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "id": "nba-por-phi",
+            "sport_key": "basketball_nba",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/por.png",
+                "alt": "POR",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "POR",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 47,
+                "display": "47%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.47,
+                    "color": {
+                      "light": "#e03a3e",
+                      "dark": "#e34e51"
+                    },
+                    "label": "POR"
+                  },
+                  {
+                    "fill": 0.53,
+                    "color": {
+                      "light": "#1d428a",
+                      "dark": "#6c84b3"
+                    },
+                    "label": "PHI"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 53,
+                "display": "53%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "PHI",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/phi.png",
+                "alt": "PHI",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Live · 27–28",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "id": "nba-okc-ind",
+            "sport_key": "basketball_nba",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/okc.png",
+                "alt": "OKC",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "OKC",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 63,
+                "display": "63%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.63,
+                    "color": {
+                      "light": "#007ac1",
+                      "dark": "#1a87c7"
+                    },
+                    "label": "OKC"
+                  },
+                  {
+                    "fill": 0.37,
+                    "color": {
+                      "light": "#0c2340",
+                      "dark": "#798696"
+                    },
+                    "label": "IND"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 37,
+                "display": "37%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "IND",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/ind.png",
+                "alt": "IND",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Mon Nov 23 · 4:30 PM PT",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "id": "nba-mil-tor",
+            "sport_key": "basketball_nba",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/mil.png",
+                "alt": "MIL",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "MIL",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 21,
+                "display": "21%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.21,
+                    "color": {
+                      "light": "#00471b",
+                      "dark": "#669176"
+                    },
+                    "label": "MIL"
+                  },
+                  {
+                    "fill": 0.79,
+                    "color": {
+                      "light": "#d91244",
+                      "dark": "#e24d73"
+                    },
+                    "label": "TOR"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 79,
+                "display": "79%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "TOR",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/tor.png",
+                "alt": "TOR",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Mon Nov 23 · 4:30 PM PT",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "id": "nba-bkn-min",
+            "sport_key": "basketball_nba",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/bkn.png",
+                "alt": "BKN",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "BKN",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 19,
+                "display": "19%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.19,
+                    "color": {
+                      "light": "#000000",
+                      "dark": "#8c8c8c"
+                    },
+                    "label": "BKN"
+                  },
+                  {
+                    "fill": 0.81,
+                    "color": {
+                      "light": "#266092",
+                      "dark": "#5c88ad"
+                    },
+                    "label": "MIN"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 81,
+                "display": "81%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "MIN",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/min.png",
+                "alt": "MIN",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Mon Nov 23 · 4:30 PM PT",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "id": "nba-phx-nop",
+            "sport_key": "basketball_nba",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/phx.png",
+                "alt": "PHX",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "PHX",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 58,
+                "display": "58%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.58,
+                    "color": {
+                      "light": "#29127a",
+                      "dark": "#897db6"
+                    },
+                    "label": "PHX"
+                  },
+                  {
+                    "fill": 0.42,
+                    "color": {
+                      "light": "#0a2240",
+                      "dark": "#788596"
+                    },
+                    "label": "NOP"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 42,
+                "display": "42%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "NOP",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/no.png",
+                "alt": "NOP",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Mon Nov 23 · 5:00 PM PT",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "id": "nba-det-orl",
+            "sport_key": "basketball_nba",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/det.png",
+                "alt": "DET",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "DET",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 54,
+                "display": "54%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.54,
+                    "color": {
+                      "light": "#1d428a",
+                      "dark": "#6c84b3"
+                    },
+                    "label": "DET"
+                  },
+                  {
+                    "fill": 0.46,
+                    "color": {
+                      "light": "#0150b5",
+                      "dark": "#4d84cb"
+                    },
+                    "label": "ORL"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 46,
+                "display": "46%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "ORL",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/orl.png",
+                "alt": "ORL",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Tue Nov 24 · 4:00 PM PT",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-spotify-wrapped-2026",
+      "layout": "calendar",
+      "variant": "calendar_strip",
+      "kicker": "CULTURE · 2026",
+      "common_headline": "Spotify Wrapped 2026: release day",
+      "stat_caption": "Spotify Wrapped is most likely to arrive on Wednesday, December 2 (67%)",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "how-2026-gets-summed-up"
+      },
+      "footnote": "Chance it is out before each day: 3% before Nov 27 · 12% before Dec 1 · 18% before Dec 2 · 85% before Dec 3 · 90% before Dec 4 · Dec 4 or later, 10%",
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "header_marks": [
+          {
+            "mark": "word",
+            "text": "Nov 27 – Dec 4+",
+            "style": "meta",
+            "tone": "muted",
+            "align": "left",
+            "width": "auto",
+            "bold": false
+          },
+          {
+            "mark": "word",
+            "text": "Daily chance",
+            "style": "kicker",
+            "tone": "accent",
+            "align": "right",
+            "width": "auto",
+            "bold": true
+          }
+        ],
+        "days": [
+          {
+            "date_key": "Nov-27",
+            "daily_pct": 2,
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Fri",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0299,
+                "top_label": null,
+                "center_label": "27",
+                "bottom_label": "2%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Nov",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "date_key": "Nov-28",
+            "daily_pct": 1,
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Sat",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0149,
+                "top_label": null,
+                "center_label": "28",
+                "bottom_label": "1%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Nov",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "date_key": "Nov-29",
+            "daily_pct": 6,
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Sun",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0896,
+                "top_label": null,
+                "center_label": "29",
+                "bottom_label": "6%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Nov",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "date_key": "Nov-30",
+            "daily_pct": 0,
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Mon",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0,
+                "top_label": null,
+                "center_label": "30",
+                "bottom_label": "<1%",
+                "muted": true,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Nov",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "date_key": "Dec-1",
+            "daily_pct": 6,
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Tue",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0896,
+                "top_label": null,
+                "center_label": "1",
+                "bottom_label": "6%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Dec",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "date_key": "Dec-2",
+            "daily_pct": 67,
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Wed",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 1.0,
+                "top_label": null,
+                "center_label": "2",
+                "bottom_label": "67%",
+                "muted": false,
+                "highlight_role": "day_peak"
+              },
+              {
+                "mark": "word",
+                "text": "Dec",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "date_key": "Dec-3",
+            "daily_pct": 5,
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Thu",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0746,
+                "top_label": null,
+                "center_label": "3",
+                "bottom_label": "5%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Dec",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          },
+          {
+            "date_key": "Dec+-4+",
+            "daily_pct": 10,
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Fri",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.1493,
+                "top_label": null,
+                "center_label": "4+",
+                "bottom_label": "10%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Dec+",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          }
+        ],
+        "footer_marks": [
+          {
+            "mark": "word",
+            "text": "Each day shows the chance it is out on that day; 3% falls before Nov 27 and Dec 4 or later holds 10%.",
+            "style": "sub",
+            "tone": "secondary",
+            "align": "left",
+            "width": "auto",
+            "bold": false
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-batch1-places-grid",
+      "layout": "grid",
+      "variant": "scoreboard_grid",
+      "kicker": "TECH & ECONOMICS",
+      "common_headline": "Largest company at the end of 2026",
+      "stat_caption": "Apple leads for 1st at 86%, NVIDIA leads for 2nd at 79%, and Microsoft leads for 3rd at 64% on Dec 31",
+      "source_mark": {
+        "label": "1 source",
+        "count": 1
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "largest-company-2026"
+      },
+      "footnote": "Outlined cell marks each company's highest-probability place.",
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "leading_label": "Company",
+        "show_column_headers": true,
+        "row_layout": "matrix",
+        "columns": [
+          {
+            "key": "1st",
+            "label": "1st"
+          },
+          {
+            "key": "2nd",
+            "label": "2nd"
+          },
+          {
+            "key": "3rd",
+            "label": "3rd"
+          }
+        ],
+        "rows": [
+          {
+            "id": "places-apple",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "1",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Apple_logo_black.svg/330px-Apple_logo_black.svg.png",
+                "alt": "Apple",
+                "subject_kind": "organization",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Apple",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "1st",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.86,
+                    "top_label": null,
+                    "center_label": "86%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": "row_peak"
+                  }
+                ]
+              },
+              {
+                "column_key": "2nd",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.02,
+                    "top_label": null,
+                    "center_label": "2%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "3rd",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.02,
+                    "top_label": null,
+                    "center_label": "2%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "places-nvidia",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "2",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/21/Nvidia_logo.svg/330px-Nvidia_logo.svg.png",
+                "alt": "NVIDIA",
+                "subject_kind": "organization",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "NVIDIA",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "1st",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.11,
+                    "top_label": null,
+                    "center_label": "11%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "2nd",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.79,
+                    "top_label": null,
+                    "center_label": "79%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": "row_peak"
+                  }
+                ]
+              },
+              {
+                "column_key": "3rd",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.13,
+                    "top_label": null,
+                    "center_label": "13%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "places-microsoft",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "3",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/96/Microsoft_logo_%282012%29.svg/330px-Microsoft_logo_%282012%29.svg.png",
+                "alt": "Microsoft",
+                "subject_kind": "organization",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Microsoft",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "1st",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.01,
+                    "top_label": null,
+                    "center_label": "1%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "2nd",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.16,
+                    "top_label": null,
+                    "center_label": "16%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "3rd",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.64,
+                    "top_label": null,
+                    "center_label": "64%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": "row_peak"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "places-alphabet",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "4",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/330px-Google_%22G%22_logo.svg.png",
+                "alt": "Alphabet",
+                "subject_kind": "organization",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Alphabet",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "1st",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.01,
+                    "top_label": null,
+                    "center_label": "1%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "2nd",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.03,
+                    "top_label": null,
+                    "center_label": "3%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "3rd",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.18,
+                    "top_label": null,
+                    "center_label": "18%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": "row_peak"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-batch1-ai-leaderboard",
+      "layout": "grid",
+      "variant": "scoreboard_grid",
+      "kicker": "TECH & AI",
+      "common_headline": "AI model leaderboard at year-end",
+      "stat_caption": "Google leads Overall at 81% and Video at 52%; Anthropic leads Coding at 51%",
+      "source_mark": {
+        "label": "1 source",
+        "count": 1
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "ai-model-leaderboard-2026"
+      },
+      "footnote": "Outlined cell marks the column leader across December 31 markets.",
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "leading_label": "Lab",
+        "show_column_headers": true,
+        "row_layout": "matrix",
+        "columns": [
+          {
+            "key": "overall",
+            "label": "Overall"
+          },
+          {
+            "key": "coding",
+            "label": "Coding"
+          },
+          {
+            "key": "t2v",
+            "label": "Video"
+          }
+        ],
+        "rows": [
+          {
+            "id": "ai-grid-google",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "1",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/330px-Google_%22G%22_logo.svg.png",
+                "alt": "Google",
+                "subject_kind": "organization",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Google",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "overall",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.81,
+                    "top_label": null,
+                    "center_label": "81%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": "column_peak"
+                  }
+                ]
+              },
+              {
+                "column_key": "coding",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.29,
+                    "top_label": null,
+                    "center_label": "29%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "t2v",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.52,
+                    "top_label": null,
+                    "center_label": "52%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": "column_peak"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "ai-grid-anthropic",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "2",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/330px-Claude_AI_symbol.svg.png",
+                "alt": "Anthropic",
+                "subject_kind": "organization",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Anthropic",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "overall",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.13,
+                    "top_label": null,
+                    "center_label": "13%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "coding",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.51,
+                    "top_label": null,
+                    "center_label": "51%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": "column_peak"
+                  }
+                ]
+              },
+              {
+                "column_key": "t2v",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.0,
+                    "top_label": null,
+                    "center_label": "<1%",
+                    "bottom_label": null,
+                    "muted": true,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "ai-grid-openai",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "3",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/OpenAI_logo_2025_%28symbol%29.svg/330px-OpenAI_logo_2025_%28symbol%29.svg.png",
+                "alt": "OpenAI",
+                "subject_kind": "organization",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "OpenAI",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "overall",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.04,
+                    "top_label": null,
+                    "center_label": "4%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "coding",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.16,
+                    "top_label": null,
+                    "center_label": "16%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "t2v",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.07,
+                    "top_label": null,
+                    "center_label": "7%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-batch1-nba-awards",
+      "layout": "grid",
+      "variant": "scoreboard_grid",
+      "kicker": "SPORTS · BASKETBALL",
+      "common_headline": "NBA 2026–27 major player awards",
+      "stat_caption": "Victor Wembanyama leads MVP (51%) and DPOY (59%); Shai Gilgeous-Alexander leads Clutch (26%)",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "nba-awards-2027"
+      },
+      "footnote": "Outlined cell leads each award field.",
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "leading_label": "Player",
+        "show_column_headers": true,
+        "row_layout": "matrix",
+        "columns": [
+          {
+            "key": "mvp",
+            "label": "MVP"
+          },
+          {
+            "key": "dpoy",
+            "label": "DPOY"
+          },
+          {
+            "key": "clutch",
+            "label": "Clutch"
+          }
+        ],
+        "rows": [
+          {
+            "id": "nba-award-1",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "1",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/headshots/nba/players/full/5104157.png",
+                "alt": "Victor Wembanyama",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Victor Wembanyama",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "mvp",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.51,
+                    "top_label": null,
+                    "center_label": "51%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": "column_peak"
+                  }
+                ]
+              },
+              {
+                "column_key": "dpoy",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.59,
+                    "top_label": null,
+                    "center_label": "59%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": "column_peak"
+                  }
+                ]
+              },
+              {
+                "column_key": "clutch",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.11,
+                    "top_label": null,
+                    "center_label": "11%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "nba-award-2",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "2",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png",
+                "alt": "Luka Dončić",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Luka Dončić",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "mvp",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.29,
+                    "top_label": null,
+                    "center_label": "29%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "dpoy",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.0,
+                    "top_label": null,
+                    "center_label": "<1%",
+                    "bottom_label": null,
+                    "muted": true,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "clutch",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.19,
+                    "top_label": null,
+                    "center_label": "19%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "nba-award-3",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "3",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/headshots/nba/players/full/4278073.png",
+                "alt": "Shai Gilgeous-Alexander",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Shai Gilgeous-Alexander",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "mvp",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.04,
+                    "top_label": null,
+                    "center_label": "4%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "dpoy",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.01,
+                    "top_label": null,
+                    "center_label": "1%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "clutch",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.26,
+                    "top_label": null,
+                    "center_label": "26%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": "column_peak"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "nba-award-4",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "4",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/headshots/nba/players/full/3112335.png",
+                "alt": "Nikola Jokic",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Nikola Jokic",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "mvp",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.05,
+                    "top_label": null,
+                    "center_label": "5%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "dpoy",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.0,
+                    "top_label": null,
+                    "center_label": "<1%",
+                    "bottom_label": null,
+                    "muted": true,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "clutch",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.15,
+                    "top_label": null,
+                    "center_label": "15%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "nba-award-5",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "5",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/headshots/nba/players/full/3032977.png",
+                "alt": "Giannis Antetokounmpo",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Giannis Antetokounmpo",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "mvp",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.03,
+                    "top_label": null,
+                    "center_label": "3%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "dpoy",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.04,
+                    "top_label": null,
+                    "center_label": "4%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "clutch",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.07,
+                    "top_label": null,
+                    "center_label": "7%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "nba-award-6",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "6",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/headshots/nba/players/full/4432158.png",
+                "alt": "Evan Mobley",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Evan Mobley",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "mvp",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.0,
+                    "top_label": null,
+                    "center_label": "<1%",
+                    "bottom_label": null,
+                    "muted": true,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "dpoy",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.17,
+                    "top_label": null,
+                    "center_label": "17%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "clutch",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.0,
+                    "top_label": null,
+                    "center_label": "<1%",
+                    "bottom_label": null,
+                    "muted": true,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-batch1-box-office-scale",
+      "layout": "axis",
+      "variant": "shared_scale",
+      "kicker": "ENTERTAINMENT · BOX OFFICE",
+      "common_headline": "Opening weekend box office",
+      "stat_caption": "Avengers: Doomsday peaks at $400M+ (75%), while Dune: Part Three centers on $110M–$130M (40%)",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "box-office-2026"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "scale": {
+          "scale_kind": "numeric",
+          "unit": "$M",
+          "min": 0,
+          "max": 460,
+          "ticks": [
+            {
+              "x": 0,
+              "label": "$0M"
+            },
+            {
+              "x": 115,
+              "label": "$115M"
+            },
+            {
+              "x": 230,
+              "label": "$230M"
+            },
+            {
+              "x": 345,
+              "label": "$345M"
+            },
+            {
+              "x": 460,
+              "label": "$460M"
+            }
+          ]
+        },
+        "marks": [],
+        "series": [
+          {
+            "id": "bo-avengers",
+            "leading": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w780/rObL4of4eFA8yWaN9pRFo9aOVNi.jpg",
+                "alt": "Avengers: Doomsday",
+                "subject_kind": "film",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Avengers: Doomsday",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "marks": [
+              {
+                "mark": "bar",
+                "bar_style": "range",
+                "lo": 0.8696,
+                "hi": 1.0,
+                "width": "flex"
+              },
+              {
+                "mark": "word",
+                "text": "$400M+",
+                "style": "meta",
+                "tone": "secondary",
+                "align": "left",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 75,
+                "display": "75%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "bo-dune",
+            "leading": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w342/glt0v4I89rMWstDNCaFXc5SNyO1.jpg",
+                "alt": "Dune: Part Three",
+                "subject_kind": "film",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Dune: Part Three",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "marks": [
+              {
+                "mark": "bar",
+                "bar_style": "range",
+                "lo": 0.2391,
+                "hi": 0.2826,
+                "width": "flex"
+              },
+              {
+                "mark": "word",
+                "text": "$110M–$130M",
+                "style": "meta",
+                "tone": "secondary",
+                "align": "left",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 40,
+                "display": "40%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-batch1-agi-dated-tiles",
+      "layout": "grid",
+      "variant": "dated_tiles",
+      "kicker": "TECH · MILESTONES",
+      "common_headline": "When any company achieves AGI",
+      "stat_caption": "Cumulative chance crosses 49% by Jan '28 and reaches 76% by Jan '31",
+      "source_mark": {
+        "label": "1 source",
+        "count": 1
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "when-agi-achieved"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "show_column_headers": false,
+        "row_layout": "stacked_cells",
+        "columns": [
+          {
+            "key": "jan27",
+            "label": "Jan '27"
+          },
+          {
+            "key": "apr27",
+            "label": "Apr '27"
+          },
+          {
+            "key": "jul27",
+            "label": "Jul '27"
+          },
+          {
+            "key": "oct27",
+            "label": "Oct '27"
+          }
+        ],
+        "rows": [
+          {
+            "id": "agi-near",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "Through Jan '28",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "jan27",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.05,
+                    "top_label": "by Jan '27",
+                    "center_label": "5%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "apr27",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.11,
+                    "top_label": "by Apr '27",
+                    "center_label": "11%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "jul27",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.21,
+                    "top_label": "by Jul '27",
+                    "center_label": "21%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "oct27",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.34,
+                    "top_label": "by Oct '27",
+                    "center_label": "34%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "agi-later",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "2028 to 2031",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "jan28",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.49,
+                    "top_label": "by Jan '28",
+                    "center_label": "49%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "jan29",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.7,
+                    "top_label": "by Jan '29",
+                    "center_label": "70%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "jan31",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.76,
+                    "top_label": "by Jan '31",
+                    "center_label": "76%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-batch1-deadline-race",
+      "layout": "axis",
+      "variant": "deadline_race",
+      "kicker": "TECH · AI RELEASES",
+      "common_headline": "Next flagship AI release race by Dec 31",
+      "stat_caption": "Claude Opus is at 65% vs Gemini Krypton 47% by Dec 15, and 85% vs 57% by Dec 31",
+      "source_mark": {
+        "label": "1 source",
+        "count": 1
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "flagship-ai-release-race"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "scale": {
+          "scale_kind": "percent",
+          "unit": "%",
+          "min": 0,
+          "max": 100,
+          "ticks": [
+            {
+              "x": 0,
+              "label": "0%"
+            },
+            {
+              "x": 25,
+              "label": "25%"
+            },
+            {
+              "x": 50,
+              "label": "50%"
+            },
+            {
+              "x": 75,
+              "label": "75%"
+            },
+            {
+              "x": 100,
+              "label": "100%"
+            }
+          ]
+        },
+        "marks": [],
+        "series": [
+          {
+            "id": "dr-opus-climb",
+            "leading": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/330px-Claude_AI_symbol.svg.png",
+                "alt": "Claude Opus",
+                "subject_kind": "organization",
+                "size": "xs",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Claude Opus · Nov 30 → Dec 15 (65%) → Dec 31",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "marks": [
+              {
+                "mark": "bar",
+                "bar_style": "range",
+                "lo": 0.14,
+                "hi": 0.85,
+                "pct_label": "14% → 85%",
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 85,
+                "display": "85%",
+                "unit": "%",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "dr-krypton-climb",
+            "leading": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/330px-Google_%22G%22_logo.svg.png",
+                "alt": "Gemini Krypton",
+                "subject_kind": "organization",
+                "size": "xs",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Gemini Krypton · Nov 30 → Dec 15 (47%) → Dec 31",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "marks": [
+              {
+                "mark": "bar",
+                "bar_style": "range",
+                "lo": 0.1,
+                "hi": 0.57,
+                "pct_label": "10% → 57%",
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 57,
+                "display": "57%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-batch1-next-james-bond",
+      "layout": "stack",
+      "variant": "casting_sheet",
+      "kicker": "ENTERTAINMENT · FILM",
+      "common_headline": "Next James Bond",
+      "stat_caption": "Raye leads Theme Song at 42%; Boyd Holbrook and Anthony Mackie share the lead for Felix Leiter at 11% each",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "next-james-bond"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "header_layout": "none",
+        "header_marks": [],
+        "items": [
+          {
+            "id": "bond-1",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/zA5WXnyg8iH8DPpuXvsmJpPT2n1.jpg",
+                "alt": "Raye",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Raye",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Theme Song"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.42,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 42,
+                "display": "42%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "bond-2",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/r5WeMrU4YLJqRRE3joeOrBVicAH.jpg",
+                "alt": "Margaret Qualley",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Margaret Qualley",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Bond Girl"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.31,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 31,
+                "display": "31%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "bond-3",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/lawJUdbLb1YW0niaYjiVGR9IBG8.jpg",
+                "alt": "Olivia Colman",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Olivia Colman",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "M"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.29,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 29,
+                "display": "29%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "bond-4",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/e74Cz65ifeNb9zHfUTvF5rTix0d.jpg",
+                "alt": "Ben Whishaw",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Ben Whishaw",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Q"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.25,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 25,
+                "display": "25%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "bond-5",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/2lKs67r7FI4bPu0AXxMUJZxmUXn.jpg",
+                "alt": "Cillian Murphy",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Cillian Murphy",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Villain"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.17,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 17,
+                "display": "17%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "bond-6",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/41TVAcYqKKF7PGf3x7QfaLvkLSW.jpg",
+                "alt": "Naomie Harris",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Naomie Harris",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Moneypenny"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.12,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 12,
+                "display": "12%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "bond-7",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/xmkpedcct3ey1d1HGDNsUMQPHcB.jpg",
+                "alt": "Boyd Holbrook",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Boyd Holbrook",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Felix Leiter"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.11,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 11,
+                "display": "11%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "bond-8",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/vecvTm7SimizluJkyIwBxeLbvRm.jpg",
+                "alt": "Anthony Mackie",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Anthony Mackie",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Felix Leiter"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.11,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 11,
+                "display": "11%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-batch1-oscars-casting",
+      "layout": "stack",
+      "variant": "casting_sheet",
+      "kicker": "ENTERTAINMENT · AWARDS",
+      "common_headline": "Oscars 2027 lead races",
+      "stat_caption": "Julianne Moore leads Best Actress at 85% and Anne Hathaway leads Supporting Actress at 64%",
+      "source_mark": {
+        "label": "1 source",
+        "count": 1
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "oscars-2027-lead-races"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "header_layout": "none",
+        "header_marks": [],
+        "items": [
+          {
+            "id": "oscar-1",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w342/krVa7rKCQb4OBfsr2LTJv4rTz5q.jpg",
+                "alt": "The Odyssey",
+                "subject_kind": "film",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "The Odyssey",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Best Picture"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.45,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 45,
+                "display": "45%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "oscar-2",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/7GoOdGNc4ra1L0F5nJTkmIB37iu.jpg",
+                "alt": "John Malkovich",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "John Malkovich",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Best Actor"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.49,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 49,
+                "display": "49%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "oscar-3",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/3YF19rWusxWfEI59ZM33dFhasRq.jpg",
+                "alt": "Julianne Moore",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Julianne Moore",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Best Actress"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.85,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 85,
+                "display": "85%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "oscar-4",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/xuAIuYSmsUzKlUMBFGVZaWsY3DZ.jpg",
+                "alt": "Christopher Nolan",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Christopher Nolan",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Best Director"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.62,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 62,
+                "display": "62%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "oscar-5",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/Paul_Giamatti_at_the_2026_New_York_Film_Festival-032.jpg/500px-Paul_Giamatti_at_the_2026_New_York_Film_Festival-032.jpg",
+                "alt": "Paul Giamatti",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Paul Giamatti",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Supp. Actor"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.4,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 40,
+                "display": "40%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "oscar-6",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a5/AnneHathaway-byPhilipRomano-Crop.jpg/500px-AnneHathaway-byPhilipRomano-Crop.jpg",
+                "alt": "Anne Hathaway",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Anne Hathaway",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Supp. Actress"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.64,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 64,
+                "display": "64%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "oscar-7",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w342/dNJFRtVg3xLQ7dbNIQ55cmmIniD.jpg",
+                "alt": "Wild Horse Nine",
+                "subject_kind": "film",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Wild Horse Nine",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Orig. Screenplay"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.54,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 54,
+                "display": "54%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-batch1-nhl-conference-cut",
+      "layout": "stack",
+      "variant": "the_cut",
+      "kicker": "HOCKEY · NHL PLAYOFFS",
+      "common_headline": "2026–27 NHL Playoffs: Eastern vs Western cut",
+      "stat_caption": "Top 8 per conference advance → Ducks and Blues tied 38% each for the Western final spot",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "nhl-playoffs-conference-cut"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "body": {
+        "single_sport_key": "icehockey_nhl",
+        "header_layout": "split",
+        "header_marks": [
+          {
+            "mark": "word",
+            "text": "BY CONFERENCE",
+            "style": "kicker",
+            "tone": "muted",
+            "align": "left",
+            "width": "auto",
+            "bold": true
+          },
+          {
+            "mark": "word",
+            "text": "16 → 8 PLACES",
+            "style": "kicker",
+            "tone": "muted",
+            "align": "right",
+            "width": "auto",
+            "bold": true
+          }
+        ],
+        "items": [
+          {
+            "id": "cut-east-car",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "E1",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/car.png",
+                "alt": "CAR",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Carolina Hurricanes",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.97,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#cc0000",
+                  "dark": "#de5959"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 97,
+                "display": "97%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-east-tb",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "E2",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/tb.png",
+                "alt": "TB",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Tampa Bay Lightning",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.9,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#002868",
+                  "dark": "#7389ac"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 90,
+                "display": "90%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-east-nj",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "E3",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nj.png",
+                "alt": "NJ",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "New Jersey Devils",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.83,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#ce1126",
+                  "dark": "#dd5867"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 83,
+                "display": "83%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-east-mtl",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "E4",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/mtl.png",
+                "alt": "MTL",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Montreal Canadiens",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.81,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#af1e2d",
+                  "dark": "#c7626c"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 81,
+                "display": "81%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-east-fla",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "E5",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/fla.png",
+                "alt": "FLA",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Florida Panthers",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.76,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#c8102e",
+                  "dark": "#d8586d"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 76,
+                "display": "76%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-east-ott",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "E6",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/ott.png",
+                "alt": "OTT",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Ottawa Senators",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.73,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#c52032",
+                  "dark": "#d45865"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 73,
+                "display": "73%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-east-bos",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "E7",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/bos.png",
+                "alt": "BOS",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Boston Bruins",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.69,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#b8881f",
+                  "dark": "#ffb81c"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 69,
+                "display": "69%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-east-wsh",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "E8",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/wsh.png",
+                "alt": "WSH",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Washington Capitals",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.54,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#c8102e",
+                  "dark": "#d8586d"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 54,
+                "display": "54%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ],
+            "divider_after": {
+              "label": "Top 8 in Eastern Conference advance →"
+            }
+          },
+          {
+            "id": "cut-east-nyr",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "E9",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nyr.png",
+                "alt": "NYR",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "New York Rangers",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.47,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#0038a8",
+                  "dark": "#6688cb"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 47,
+                "display": "47%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-east-nyi",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "E10",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nyi.png",
+                "alt": "NYI",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "New York Islanders",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.43,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#00539b",
+                  "dark": "#4c87b9"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 43,
+                "display": "43%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-west-edm",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "W1",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/edm.png",
+                "alt": "EDM",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Edmonton Oilers",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.98,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#041e42",
+                  "dark": "#758397"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 98,
+                "display": "98%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-west-min",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "W2",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/min.png",
+                "alt": "MIN",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Minnesota Wild",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.98,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#154734",
+                  "dark": "#67877b"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 98,
+                "display": "98%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-west-vgk",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "W3",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/vgk.png",
+                "alt": "VGK",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Vegas Golden Knights",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.94,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#ac9157",
+                  "dark": "#b4975a"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 94,
+                "display": "94%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-west-col",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "W4",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/col.png",
+                "alt": "COL",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Colorado Avalanche",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.88,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#6f263d",
+                  "dark": "#a97d8b"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 88,
+                "display": "88%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-west-dal",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "W5",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/dal.png",
+                "alt": "DAL",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Dallas Stars",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.85,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#006847",
+                  "dark": "#408e75"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 85,
+                "display": "85%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-west-utah",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "W6",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/utah.png",
+                "alt": "UTAH",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Utah Mammoth",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.73,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#5794c1",
+                  "dark": "#69b3e7"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 73,
+                "display": "73%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-west-nsh",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "W7",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nsh.png",
+                "alt": "NSH",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Nashville Predators",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.46,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#b8881f",
+                  "dark": "#ffb81c"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 46,
+                "display": "46%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-west-ana",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "W8",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/ana.png",
+                "alt": "ANA",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Anaheim Ducks",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.38,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#fc4c02",
+                  "dark": "#fc4c02"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 38,
+                "display": "38% each",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "cut-west-stl",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "W9",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/stl.png",
+                "alt": "STL",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "St. Louis Blues",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.38,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#002f87",
+                  "dark": "#6682b7"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 38,
+                "display": "38% each",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ],
+            "divider_after": {
+              "label": "Ducks & Blues tied 38% each at Western #8 cut →"
+            }
+          },
+          {
+            "id": "cut-west-la",
+            "sport_key": "icehockey_nhl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "W10",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nhl/500/la.png",
+                "alt": "LA",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Los Angeles Kings",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.34,
+                "width": "sm",
+                "fill_color": {
+                  "light": "#111111",
+                  "dark": "#888888"
+                }
+              },
+              {
+                "mark": "number",
+                "value": 34,
+                "display": "34%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "refusals": [
+    {
+      "title": "Rule 1 — No text-only fallback (casting_sheet / word_list refused without pictures)",
+      "spec": {
+        "kit_version": 1,
+        "id": "fallback-today",
+        "layout": null,
+        "variant": null,
+        "fallback_today": true,
+        "refusal_reason": "Members carry no verified artwork; keep today's standard card instead of text-only fallback."
+      }
+    },
+    {
+      "title": "Rule 6 — Mixed-sport slate refused (The closest games tonight)",
+      "spec": {
+        "kit_version": 1,
+        "id": "fallback-today",
+        "layout": null,
+        "variant": null,
+        "fallback_today": true,
+        "refusal_reason": "Slate mixes soccer, basketball, hockey, and cricket (>1 sport_key); keep today's card."
+      }
+    },
+    {
+      "title": "One-winner columns > 115 refused (2028 Presidential Race: 123% & 127%)",
+      "spec": {
+        "kit_version": 1,
+        "id": "fallback-today",
+        "layout": null,
+        "variant": null,
+        "fallback_today": true,
+        "refusal_reason": "Mutually exclusive columns sum above 115 as served (123%, 127%) and <2 valid columns remain; keep today's card."
+      }
+    }
+  ]
+}

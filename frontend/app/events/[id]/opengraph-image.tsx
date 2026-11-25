@@ -1,4 +1,6 @@
+/* eslint-disable @next/next/no-img-element */
 import { ImageResponse } from "next/og";
+import { BRAND_DRAWING_DATA_URI } from "@/lib/og/brandDrawingDataUri";
 import type { EventDetailResponse } from "@/lib/types";
 import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
@@ -317,12 +319,13 @@ export default async function Image({ params }: { params: { id: string } }) {
   // opening line; the rest get `null` here and say so by saying nothing.
   const prematch = forecastWithheld
     ? prematchReading({
-        // #8315 — served on a settled event since the page's hero needed it;
-        // absent on every other status, which keeps the fallback below.
         prematch_odds: event.prematch_odds,
         opening_odds: event.opening_odds,
       })
     : null;
+  // When the pregame reading occupies the main probability slots, name it
+  // for every source. On final cards the score occupies those slots.
+  const showPregameLabel = prematch?.awayPercent != null && (!final || prematch.label !== null);
 
   // THE BIG SLOT. On a live or scheduled game it is the probability, unchanged.
   // On a finished one it is the SCORE — "the score + bold winner tell the
@@ -472,7 +475,13 @@ export default async function Image({ params }: { params: { id: string } }) {
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ fontSize: 38 }}>🍀</div>
+            <img
+              src={BRAND_DRAWING_DATA_URI}
+              alt=""
+              width={38}
+              height={38}
+              style={{ borderRadius: 9 }}
+            />
             <div style={{ fontSize: 30, fontWeight: 800 }}>Bain Luck</div>
           </div>
           <div
@@ -603,17 +612,7 @@ export default async function Image({ params }: { params: { id: string } }) {
                   ? `${eventStatus(event)} · ${outcome.resultLine}`
                   : eventStatus(event)}
               </div>
-              {/* The rung, named once. `prematchReading` only ever sets this for
-                  a non-prediction-market reading, and Alex's rule is that such a
-                  number says so ("labelled when not a prediction market") — an
-                  unlabelled sportsbook median is the old footnote in a new
-                  shape. `sportsbooks` and never a venue name (notice 33). */}
-              {/* #6105 — `forecastWithheld`, so a no-result card's pair is
-                  labelled as the pre-match reading it is. On that card the pair
-                  is the BIG number rather than a footnote under a score, which
-                  makes the label load-bearing rather than a caveat: unlabelled,
-                  96px of "54%" over "No result reported" reads as a live call. */}
-              {forecastWithheld && prematch?.label && prematch.awayPercent != null && (
+              {showPregameLabel && (
                 <div style={{ fontSize: 20 }}>Pregame</div>
               )}
             </div>

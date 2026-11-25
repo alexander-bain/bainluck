@@ -124,7 +124,14 @@ struct FuturesCardView: View {
                         .fontWeight(.semibold)
                         .monospacedDigit()
                         .foregroundStyle(.primary)
-                    if let mark = SourceMarkButton(outcome.sourceMark ?? futures.sourceMark, number: prob, numberSize: 12, compactRow: true) {
+                    let resolvedMark = outcome.sourceMark ?? futures.sourceMark
+                    if let mark = SourceMarkButton(
+                        resolvedMark,
+                        number: resolvedMark?.state == .settled ? nil : prob,
+                        renderedPercent: resolvedMark?.state == .settled ? nil : outcome.renderedPercent,
+                        numberSize: 12,
+                        compactRow: true
+                    ) {
                         mark
                     }
                 }

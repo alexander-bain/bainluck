@@ -636,8 +636,13 @@ def _award_market(id_, name, ext, outs, source="kalshi", rd=None):
     """An award category/nominations/novelty market. `outs` is (name, prob[, won])."""
     from types import SimpleNamespace
 
-    def _o(t):
-        return _tennis_outcome(t[0], t[1], won=t[2] if len(t) > 2 else False)
+    def _o(index, row):
+        outcome = _tennis_outcome(
+            row[0], row[1], won=row[2] if len(row) > 2 else False
+        )
+        outcome.id = id_ * 100 + index
+        outcome.last_updated = None
+        return outcome
 
     return SimpleNamespace(
         id=id_,
@@ -650,7 +655,7 @@ def _award_market(id_, name, ext, outs, source="kalshi", rd=None):
         commence_time=None,
         resolution_date=rd,
         market_metadata={},
-        outcomes=[_o(t) for t in outs],
+        outcomes=[_o(index, row) for index, row in enumerate(outs)],
     )
 
 

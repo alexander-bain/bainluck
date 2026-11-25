@@ -2188,7 +2188,21 @@ def free_background_slots(
 #: and a single-flight lease, so a run never laps the next. Composed with 179-A
 #: (#12767): the census RUN over the tree merged with `2e276ac262` printed
 #: `explicit 111 implicit 38 total 149`.
-BACKGROUND_BEAT_COUNT = 149
+#: 🔴 RE-DERIVED at builder-e (2026-11-19, #13102, Ruling 276: B): 149 → 150,
+#: explicit 111 → 112, fall-through UNMOVED at 38. `discover-fun-scout-nightly`
+#: names `background` once daily at 09:00 UTC (1:00 AM PT, off-peak), on the
+#: same `bainluck` worker where `ANTHROPIC_API_KEY_SCOUT` and `grouping_sentinel`
+#: live; gated OFF by default behind `DISCOVER_FUN_SCOUT_ENABLED`. Cost: 1 fire
+#: per day (0.04/hr), no-op while disabled. Census over assembled `beat_schedule`
+#: prints `explicit 112 implicit 38 total 150`.
+#: 🔴 RE-DERIVED at speed (2026-11-20, #13241): 150 → 151, explicit 112 → 113,
+#: fall-through UNMOVED at 38. `sync-espn-standings-records`
+#: (`crontab(minute=23, hour="*/2")`) names `background` every 2 hours outside
+#: the `:31-:44` settlement sweep window (2 tiny ESPN standings GETs +
+#: existing-row `current_record` update, <0.5 s/fire, 12 fires/day). Census over
+#: assembled `beat_schedule` prints `explicit 113 implicit 38 total 151`.
+#: #13338 adds a daily onboarding membership refresh on background.
+BACKGROUND_BEAT_COUNT = 152
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

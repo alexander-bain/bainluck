@@ -189,7 +189,8 @@ struct NativeFuturesDiscoverCard: View {
     /// uppercasing a name back to `SPORTSBOOKS` would re-create the defect in a
     /// nicer font; D91 asks for a small mark that reads as sourcing, by name.
     private var sourceMark: String? {
-        SourceLabels.cardFaceLabel(
+        guard !data.hasDrawableSourceMark else { return nil }
+        return SourceLabels.cardFaceLabel(
             for: data.source,
             sources: data.sources,
             sourceCount: data.sourceCount
@@ -300,6 +301,7 @@ struct NativeFuturesDiscoverCard: View {
                         if let mark = SourceMarkButton(
                             leaderMark,
                             number: leaderMark?.state == .settled ? nil : leader.probability,
+                            renderedPercent: leaderMark?.state == .settled ? nil : (renderedPercents.first ?? nil),
                             subject: leader.name,
                             numberSize: 20,
                             compactRow: true
@@ -319,7 +321,7 @@ struct NativeFuturesDiscoverCard: View {
                     Text(leader.name)
                         .font(.headline.weight(.bold))
                         .foregroundStyle(.white.opacity(0.92))
-                        .lineLimit(3)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
                         .minimumScaleFactor(0.92)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -336,7 +338,7 @@ struct NativeFuturesDiscoverCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text(data.name)
                     .font(.headline.weight(.bold))
-                    .lineLimit(4)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 4)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let contextText {
@@ -534,7 +536,7 @@ struct NativeFuturesDiscoverCard: View {
         return HStack(spacing: FuturesOutcomeRowColumns.interColumnSpacing) {
             Text(outcome.name)
                 .font(.caption.weight(isLeader ? .semibold : .regular))
-                .lineLimit(2)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(
                     minWidth: FuturesOutcomeRowColumns.nameMinimum,
@@ -561,6 +563,7 @@ struct NativeFuturesDiscoverCard: View {
                 if let mark = SourceMarkButton(
                     outcomeMark,
                     number: outcomeMark?.state == .settled ? nil : outcome.probability,
+                    renderedPercent: outcomeMark?.state == .settled ? nil : percent,
                     subject: outcome.name,
                     numberSize: 12,
                     compactRow: true

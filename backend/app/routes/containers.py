@@ -128,6 +128,9 @@ logger = logging.getLogger(__name__)
 _stage_timings: ContextVar[Optional[dict[str, float]]] = ContextVar(
     "container_stage_timings", default=None
 )
+# The worker calls the builder directly and must finish its cache writes
+# before its event loop closes. The HTTP reader's loop stays alive.
+_container_http_read: ContextVar[bool] = ContextVar("container_http_read", default=False)
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 
@@ -280,25 +283,17 @@ async def _assemble_event_cards(
     db: AsyncSession, events: list, *, references: Optional[asyncio.Task] = None,
     compact: bool = False,
 ) -> tuple[dict, dict]:
-    from collections import defaultdict
     from datetime import datetime, timedelta, timezone
 
     from app.routes.events import (
-        _filter_stale_bookmaker_snapshots,
         _format_event_with_aggregated_odds,
-        aggregate_bookmaker_odds,
-        detect_reversed_bookmakers,
         latest_odds_per_bookmaker_query,
     )
     from app.utils.proven_duplicates import folded_card_numbers_batch
     from app.utils.settled_hero import resolve_settled_hero
+    from app.utils.unified_game_read import load_unified_game_reads
     from app.utils.venue_settlement_reader import attach_venue_settlement
 
-    # The compact finished card draws the verified score and the dedicated
-    # pre-match reading, with the recorded opening as its historical fallback.
-    # Once the recent-finish highlight window has passed, there is no reason to
-    # load a finished game's latest sportsbook table just to draw that card.
-    # Unresolved, recent and still-playing games keep the ordinary enrichment.
     finish_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     bookmaker_event_ids = [
         event.id for event in events
@@ -315,56 +310,33 @@ async def _assemble_event_cards(
             ) is not None
         )
     ]
-    snapshots_by_event: dict = defaultdict(list)
-    with _time_stage("bookmaker_odds"):
-        snapshots = []
-        if bookmaker_event_ids:
-            snapshots = (
-                await db.execute(latest_odds_per_bookmaker_query(bookmaker_event_ids))
-            ).scalars().all()
-    for snap in snapshots:
-        snapshots_by_event[snap.event_id].append(snap)
 
-    by_id = {e.id: e for e in events}
-    # #12938 / ruling 233: A: live games project from current lines only.
-    from app.utils.live_line_clock import apply_live_line_projection, event_state_clock
+    async def _timed_fold_cards(sess, evs):
+        with _time_stage("folded_numbers"):
+            return await folded_card_numbers_batch(sess, evs)
 
-    live_clocks = {e.id: event_state_clock(e) for e in events}
-    clock_now = datetime.now(timezone.utc)
-    odds_map: dict = {}
-    for event_id, snaps in snapshots_by_event.items():
-        ev = by_id.get(event_id)
-        filtered = _filter_stale_bookmaker_snapshots(
-            snaps,
-            event_status=(ev.status if ev else "scheduled"),
-            commence_time=(ev.commence_time if ev else None),
-        )
-        reversed_bks = detect_reversed_bookmakers(filtered)
-        agg = [s for s in filtered if s.bookmaker not in reversed_bks] if reversed_bks else filtered
-        odds_map[event_id] = {
-            "snapshots": filtered,
-            "all_snapshots": snaps,
-            "aggregated": apply_live_line_projection(
-                aggregate_bookmaker_odds(agg if agg else filtered),
-                agg if agg else filtered,
-                now=clock_now, state_changed_at=live_clocks.get(event_id),
-            ),
-            "captured_at": max(s.captured_at for s in filtered) if filtered else None,
-        }
-    # #12595: a scheduled game's pair comes from recent line readings.
-    from app.utils.recent_line_readings import apply_recent_line_projections
-
-    with _time_stage("recent_lines"):
-        await apply_recent_line_projections(db, events, odds_map)
+    _unified_cards = await load_unified_game_reads(
+        db,
+        events,
+        collapse_in_page=False,
+        include_same_league_external=True,
+        include_odds=True,
+        odds_event_id_filter=set(bookmaker_event_ids),
+        include_live_projections=True,
+        include_recent_projections=True,
+        fold_card_fn=_timed_fold_cards,
+        odds_query_fn=latest_odds_per_bookmaker_query,
+        stage_timer_fn=_time_stage,
+        fault_tolerant_external=True,
+        fault_tolerant_odds=False,
+    )
+    odds_map = _unified_cards.odds_map
+    folded_map = _unified_cards.folded_card_map
 
     if references is None:
         names = {n for e in events for n in (e.home_team_name, e.away_team_name) if n}
         gei_percentiles, team_lookup = await _load_event_card_references(db, sorted(names))
-        with _time_stage("folded_numbers"):
-            folded_map = await folded_card_numbers_batch(db, events)
     else:
-        with _time_stage("folded_numbers"):
-            folded_map = await folded_card_numbers_batch(db, events)
         with _time_stage("reference_wait"):
             gei_percentiles, team_lookup = await references
 
@@ -374,16 +346,28 @@ async def _assemble_event_cards(
     formatted = []
     for e in events:
         folded = folded_map.get(e.id)
+        _unified_ev = _unified_cards.by_id.get(e.id)
         # Gotcha #42: one row the serializer cannot draw is withheld with a
         # reason; it never takes the rest of the hub down with it.
         try:
             card = _format_event_with_aggregated_odds(
                 e,
-                odds_map.get(e.id),
+                _unified_ev.odds_data if _unified_ev is not None else odds_map.get(e.id),
                 gei_percentiles,
                 team_lookup=team_lookup,
-                folded_sources=folded.win_probability_sources if folded is not None else None,
-                folded_opening=folded.opening if folded is not None else None,
+                folded_sources=(
+                    _unified_ev.folded_sources
+                    if _unified_ev is not None
+                    else (folded.win_probability_sources if folded is not None else None)
+                ),
+                folded_opening=(
+                    _unified_ev.folded_opening
+                    if _unified_ev is not None
+                    else (folded.opening if folded is not None else None)
+                ),
+                three_way_books=(
+                    _unified_ev.three_way_books if _unified_ev is not None else None
+                ),
             )
         except Exception:  # noqa: BLE001 — per-item guard, logged loudly
             logger.exception("container hub: event %s card failed", e.id)
@@ -396,11 +380,17 @@ async def _assemble_event_cards(
     with _time_stage("venue_settlement"):
         await attach_venue_settlement(db, formatted_events, formatted, datetime.now(timezone.utc))
     with _time_stage("pregame"):
-        await _attach_settled_prematch(db, formatted_events, cards, folded_map)
+        await _attach_settled_prematch(
+            db, formatted_events, cards, folded_map,
+            defer_missing_cache_writes=compact and _container_http_read.get(),
+        )
     return cards, failed
 
 
-async def _attach_settled_prematch(db: AsyncSession, events: list, cards: dict, folded_map: dict) -> None:
+async def _attach_settled_prematch(
+    db: AsyncSession, events: list, cards: dict, folded_map: dict, *,
+    defer_missing_cache_writes: bool = False,
+) -> None:
     """A settled hub card's ``prematch_odds`` — the number its own page prints. #10273.
 
     The list card this hub reuses carries only ``opening_odds``, the sportsbook
@@ -431,7 +421,8 @@ async def _attach_settled_prematch(db: AsyncSession, events: list, cards: dict, 
         return (e.opening_home_probability, e.opening_away_probability)
 
     served = await settled_prematch_odds_by_event(
-        db, events, opening=_opening, surface="container hub"
+        db, events, opening=_opening, surface="container hub",
+        defer_missing_cache_writes=defer_missing_cache_writes,
     )
     for event_id, prematch_odds in served.items():
         card = cards.get(event_id)
@@ -460,6 +451,7 @@ async def _hydrate_market_cards(
     from app.routes.events import _format_futures_for_search
     from app.routes.futures import withheld_price_outcome_ids_for_markets
     from app.utils.container_game_winner import RELATED_LINK_LIMIT, related_link_presentation
+    from app.utils.market_display_name import fill_market_display_name_blank
 
     with _time_stage("market_rows"):
         markets = (
@@ -483,6 +475,17 @@ async def _hydrate_market_cards(
     for m in markets:
         try:
             card = _format_futures_for_search(m, withheld.get(m.id))
+            top_outs = card.get("top_outcomes") or ()
+            lead_out_name = (
+                top_outs[0].get("name")
+                if top_outs and isinstance(top_outs[0], dict)
+                else None
+            )
+            card["name"] = fill_market_display_name_blank(
+                card.get("name"),
+                lead_outcome_name=lead_out_name,
+                outcome_count=card.get("outcome_count"),
+            )
             if nfl_week:
                 card["collection_link_presentation"] = related_link_presentation(
                     m.market_type, m.name, m.external_id
@@ -553,6 +556,117 @@ def _base_empty(slug: str | None = None) -> dict:
     }
 
 
+_MAP_PNG_CACHE: dict[str, tuple[float, bytes]] = {}
+_MAP_PNG_TTL_S = 300.0
+
+
+@router.get("/{slug}/map.png")
+async def get_container_map_png(
+    slug: str = Path(..., min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Server-rendered U.S. snow-chance map PNG for map-look groupings (317: B).
+
+    Dynamically shades the 11 White Christmas cities from live snow probabilities
+    with zero baked numeric percentages, so readers on both the website and the
+    current iPhone build see an up-to-date map with no app change.
+    """
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        _load_last_good_roundup_copy,
+        ensure_optional_roundup_candidates,
+    )
+    from app.utils.white_christmas_map import (
+        extract_white_christmas_city_probs,
+        render_white_christmas_map_png,
+    )
+
+    if slug != "machinery-white-christmas":
+        raise HTTPException(status_code=404, detail="Not found")
+
+    ensure_optional_roundup_candidates()
+
+    now_mono = time.monotonic()
+    cached = _MAP_PNG_CACHE.get(slug)
+    if cached is not None and (now_mono - cached[0]) < _MAP_PNG_TTL_S:
+        return Response(
+            content=cached[1],
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=300"},
+        )
+
+    city_probs: dict[str, float] = {}
+    try:
+        producer = ROUNDUP_PRODUCERS.get(slug)
+        if producer is not None:
+            cached_tuple = await asyncio.wait_for(
+                _load_last_good_roundup_copy(producer, db),
+                timeout=3.0,
+            )
+            if cached_tuple is not None:
+                _fi, container_payload, _age, _keep = cached_tuple
+                sections = (container_payload or {}).get("sections") or ()
+                members = [
+                    m
+                    for sec in sections
+                    if isinstance(sec, dict)
+                    for m in (sec.get("members") or ())
+                ]
+                city_probs = extract_white_christmas_city_probs(members)
+            if not city_probs:
+                res = await asyncio.wait_for(producer.load(db), timeout=5.0)
+                if res and res.members:
+                    city_probs = extract_white_christmas_city_probs(res.members)
+    except Exception:
+        logger.warning(
+            "white christmas map live probability lookup fell back to neutral",
+            exc_info=True,
+        )
+
+    png_bytes = render_white_christmas_map_png(city_probs)
+    if city_probs:
+        _MAP_PNG_CACHE[slug] = (now_mono, png_bytes)
+        cache_control = "public, max-age=300"
+    else:
+        cache_control = "no-store"
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": cache_control},
+    )
+
+
+_CARD_ART_ASSETS: dict[str, tuple[str, str]] = {
+    # Decision 318 (Candidate B): Rawpixel #5906428, CC0 1.0 Public Domain
+    # Source: https://www.rawpixel.com/image/5906428/ring-free-public-domain-cc0-photo
+    "machinery-who-gets-engaged": ("who_gets_engaged_ring_cc0.jpg", "image/jpeg"),
+    # Carol M. Highsmith, Library of Congress (highsm.04919), Public domain ({{PD-Highsmith}})
+    # Source: https://commons.wikimedia.org/wiki/File:Aerial_view_of_the_White_House.jpg
+    "machinery-2028-presidential": ("presidential_2028_white_house_pd.jpg", "image/jpeg"),
+}
+
+
+@router.get("/{slug}/card-art.jpg")
+async def get_container_card_art_jpg(
+    slug: str = Path(..., min_length=1, max_length=200),
+) -> Response:
+    """Serve verified first-party static card art for machinery groupings."""
+    from pathlib import Path as FilePath
+
+    asset = _CARD_ART_ASSETS.get(slug)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    filename, media_type = asset
+    asset_path = FilePath(__file__).resolve().parent.parent / "data" / filename
+    if not asset_path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return Response(
+        content=asset_path.read_bytes(),
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @router.get("/{slug}/week-navigation")
 async def get_week_navigation(
     response: Response,
@@ -609,6 +723,20 @@ async def get_machinery_preview(
     }
 
 
+@router.get("/preview/kit-v1")
+async def get_kit_v1_preview(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only preview of Kit v1 (Ruling 366: B & 367: A) worked examples."""
+    from app.routes.admin_utils import _check_admin_auth
+    from app.utils.kit_v1_spec import build_kit_v1_worked_examples
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    return build_kit_v1_worked_examples()
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),
@@ -644,6 +772,7 @@ async def get_container(
     """
     timings = {} if debug_timing else None
     token = _stage_timings.set(timings)
+    http_read = _container_http_read.set(True)
     try:
         with _time_stage("total"):
             if (
@@ -746,6 +875,7 @@ async def get_container(
             ) + ";basis=overlapping_wall_ms"
         return result
     finally:
+        _container_http_read.reset(http_read)
         _stage_timings.reset(token)
 
 
@@ -817,6 +947,16 @@ async def _get_container(
                   "withheld_count": len(withheld), "assembled": bool(published.members),
                   "twin_report": twin_report}
         result["discover_pin"] = midterms_pin(result)
+        from app.utils.roundup_containers import select_more_sets
+
+        midterms_excluded = {slug} | {
+            str(ch.get("slug")) for ch in children if isinstance(ch, dict) and ch.get("slug")
+        }
+        more_sets = await select_more_sets(
+            db, exclude_slugs=midterms_excluded, current_slug=slug, current_category="politics"
+        )
+        if more_sets:
+            result["more_sets"] = more_sets
         return result
 
     if (edition or {}).get("kind") == EDITION_NFL_WEEK and any(
@@ -1070,6 +1210,20 @@ async def _build_published_payload(
         }
     if week_metadata is not None:
         result.update(week_metadata)
+    if week_page is None and published.state == READ_PUBLISHED:
+        from app.utils.roundup_containers import select_more_sets
+
+        hub_excluded = {published.slug} | {
+            str(ch.get("slug")) for ch in children if isinstance(ch, dict) and ch.get("slug")
+        }
+        more_sets = await select_more_sets(
+            db,
+            exclude_slugs=hub_excluded,
+            current_slug=published.slug,
+            current_category=(header or {}).get("category") if isinstance(header, dict) else None,
+        )
+        if more_sets:
+            result["more_sets"] = more_sets
     return result
 
 
@@ -1666,7 +1820,7 @@ async def _serve_theme_page(
         order_classes=lambda present: _theme_order_classes(present, defn),
         unclassified=CLASS_UNCLASSIFIED,
     )
-    return {
+    theme_result = {
         **_state_payload(published, edition),
         "container": _container_header(head) if head is not None else None,
         "children": [],
@@ -1690,3 +1844,16 @@ async def _serve_theme_page(
             "next_cursor": encode_theme_cursor(next_key) if next_key is not None else None,
         },
     }
+    if cursor is None and published.state == READ_PUBLISHED:
+        from app.utils.roundup_containers import select_more_sets
+
+        theme_header = theme_result["container"]
+        more_sets = await select_more_sets(
+            db,
+            exclude_slugs={published.slug},
+            current_slug=published.slug,
+            current_category=(theme_header or {}).get("category") if isinstance(theme_header, dict) else None,
+        )
+        if more_sets:
+            theme_result["more_sets"] = more_sets
+    return theme_result

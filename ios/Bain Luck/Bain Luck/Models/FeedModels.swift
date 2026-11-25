@@ -399,8 +399,20 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// True when this `roundup` bundle has both a verified `collection_ref` and a
     /// readable `FeedRoundupContract` or `MachineryCardContract` (`RoundupCard`: no container, no card).
     var admitsRoundupCard: Bool {
-        guard kind == "roundup", roundupCollectionRef != nil else { return false }
+        guard kind == "roundup", let ref = roundupCollectionRef else { return false }
         if roundupContract?.machineryCard != nil { return true }
+        if roundupContract?.hasUnknownLookFallback == true || roundupContract?.kitCard != nil {
+            if DiscoverRoundupCardModel.build(
+                title: title,
+                contract: roundupContract,
+                fallbackKicker: ref.name,
+                fallbackFooter: DiscoverRoundupCardModel.fallbackFooter(for: ref),
+                allowFlexibleRowCount: true
+            ) != nil {
+                return true
+            }
+            return items.contains { $0.futures != nil || $0.event != nil }
+        }
         return DiscoverRoundupCardModel.build(title: title, contract: roundupContract) != nil
     }
 }
@@ -881,6 +893,9 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// Score observations order independently of probability folds (#10582).
     var scoreSource: String? = nil
     var scoreObservedAt: String? = nil
+    /// #13000 (`250: A`) — `score_source_unavailable: bool` when no score source
+    /// carries this match (distinguished from `"no score yet"` before kickoff).
+    var scoreSourceUnavailable: Bool? = nil
     let blendFoldRevision: ServedFoldRevision?
     let heroProbabilitySource: String?
     let heroProbabilityObservedAt: String?
@@ -1029,7 +1044,7 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let imageUrl: String?
     var imagePresentation: String? = nil
     var imageMonogram: DiscoverImageMonogram? = nil
-    let hookDescription: String?
+    var hookDescription: String?
     let matchedOutcomes: [MatchedOutcome]?
     let discoverCard: FeedDiscoverCard?
     // #490 (L2-172 native half): confidence signal (1-3 bars). Decoded from
@@ -1114,6 +1129,15 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
             return sourceMark
         }
         return nil
+    }
+
+    /// True when any rendered number on this futures card already carries a drawable `ⓘ` source mark (`#11920`).
+    var hasDrawableSourceMark: Bool {
+        if sourceMark?.draws == true { return true }
+        if deadlineMember?.sourceMark?.draws == true || deadlineMember?.noSourceMark?.draws == true { return true }
+        if topOutcomes?.contains(where: { $0.sourceMark?.draws == true }) == true { return true }
+        if discoverCard?.distributionOutcomes?.contains(where: { $0.sourceMark?.draws == true }) == true { return true }
+        return false
     }
 }
 
@@ -1248,6 +1272,7 @@ nonisolated struct MatchedOutcome: Decodable, Identifiable, Sendable {
     let probability: Double?
     let rank: Int?
     let movement: Double?
+    var sourceMark: SourceMark? = nil
 
     var id: String { name }
 }

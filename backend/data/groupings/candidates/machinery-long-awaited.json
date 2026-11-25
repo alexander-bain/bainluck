@@ -1,0 +1,62 @@
+{
+  "slug": "machinery-long-awaited",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "same_measure",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · LONG-AWAITED",
+  "name": "Long-Awaited Releases",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Will It Finally Happen?",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": ["culture", "tech"],
+    "card_rows": 3,
+    "card_section_key": "long_awaited_releases",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1a/Old_pocket_watch_%28Unsplash_UIUgYu9bENU%29.jpg/960px-Old_pocket_watch_%28Unsplash_UIUgYu9bENU%29.jpg",
+    "card_image_alt": "Antique silver pocket watch with chain resting on dark glass",
+    "card_image_credit": "Rodion Kutsaev (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Rodion Kutsaev",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Old_pocket_watch_(Unsplash_UIUgYu9bENU).jpg",
+    "headline_predicate": "is the likeliest long-awaited release",
+    "headline_exclude_date_rows": true,
+    "sections": [
+      {
+        "key": "long_awaited_releases",
+        "title": "Will It Finally Happen?",
+        "item_noun": "releases",
+        "note": "Games, albums, books, and franchises fans have been waiting years to see.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "long-awaited",
+          "exclude_tokens": [
+            "delay",
+            "delayed",
+            "postpone",
+            "postponed",
+            "cancel",
+            "cancelled"
+          ],
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 15,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3
+        }
+      }
+    ]
+  }
+}

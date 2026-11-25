@@ -62,6 +62,7 @@ enum DiscoverGroupRows {
         let probability: Double?
         let movement: Double?
         var sourceMark: SourceMark? = nil
+        var renderedPercent: Int? = nil
     }
 
     enum FullCardStyle: Equatable { case heatmap, distribution, comparison, futures }
@@ -89,7 +90,8 @@ enum DiscoverGroupRows {
                 label: rung.label,
                 probability: rung.probability,
                 movement: matching?.movement,
-                sourceMark: data.resolvedSourceMark(for: matching)
+                sourceMark: data.resolvedSourceMark(for: matching),
+                renderedPercent: matching?.renderedPercent
             )
         }
         // Ordinary and all-below-even cards retain their served leader; missing
@@ -99,7 +101,8 @@ enum DiscoverGroupRows {
             label: leader?.name,
             probability: leader?.probability,
             movement: leader?.movement,
-            sourceMark: data.resolvedSourceMark(for: leader)
+            sourceMark: data.resolvedSourceMark(for: leader),
+            renderedPercent: leader?.renderedPercent
         )
     }
 }

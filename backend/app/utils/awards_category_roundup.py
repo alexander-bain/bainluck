@@ -38,6 +38,7 @@ from app.utils.outcome_display import (
     display_probability_divisor,
     normalize_display_probs,
 )
+from app.utils.source_mark import no_source_mark, quote_source_mark
 
 
 def _rc() -> Any:
@@ -717,6 +718,7 @@ async def _produce_registered_paired_award_category(
     rows_out: list[dict[str, Any]] = []
     for idx, e in enumerate(shown):
         win_p = float(e.get("stage_2_probability") or 0.0)
+        win_pct = e.get("stage_2_rendered_percent")
         nom_p = e.get("stage_1_probability")
         raw_oid = e.get("stage_2_outcome_id")
         outcome_id = int(raw_oid) if isinstance(raw_oid, int) and raw_oid > 0 else (w_mid * 100 + idx + 1)
@@ -725,13 +727,15 @@ async def _produce_registered_paired_award_category(
             "outcome_id": outcome_id,
             "label": str(e.get("subject") or ""),
             "probability": win_p,
-            "rendered_percent": _half_up_percent(win_p),
+            "source_mark": e["stage_2_source_mark"],
+            "rendered_percent": win_pct if win_pct is not None else _half_up_percent(win_p),
             "primary_bar_label": str(hydrated.get("stage_2_label") or "Wins"),
             "secondary_bar_label": str(hydrated.get("stage_1_label") or "Nominated"),
             "observed_at": as_of_obs,
         }
         if isinstance(nom_p, (int, float)) and math.isfinite(float(nom_p)):
             row_obj["secondary_probability"] = float(nom_p)
+            row_obj["secondary_source_mark"] = e["stage_1_source_mark"]
             row_obj["secondary_rendered_percent"] = _half_up_percent(float(nom_p))
         rows_out.append(row_obj)
 
@@ -773,6 +777,7 @@ async def _produce_registered_paired_award_category(
             continue
         raw_src = str(m.get("source") or "").strip().lower()
         src_val = raw_src if raw_src else None
+        status = str(m.get("status") or "open")
         raw_outs = [
             o
             for o in (m.get("outcomes") or ())
@@ -792,7 +797,7 @@ async def _produce_registered_paired_award_category(
                     "llm_sport_category": "entertainment",
                     "market_tier": 1,
                     "market_type": "field",
-                    "status": str(m.get("status") or "open"),
+                    "status": status,
                     "source": src_val,
                     "sources": [src_val] if src_val else [],
                     "source_count": 1 if src_val else 0,
@@ -803,6 +808,11 @@ async def _produce_registered_paired_award_category(
                             "id": int(o.get("id") or idx + 1),
                             "name": str(o.get("name") or ""),
                             "probability": float(o["probability"]),
+                            "source_mark": o.get("source_mark") or (
+                                quote_source_mark([{"key": src_val, "probability": o["probability"]}])
+                                if status.strip().lower() == "open"
+                                else no_source_mark("result_unknown")
+                            ),
                             "rendered_percent": _half_up_percent(float(o["probability"])),
                             "american_odds": None,
                             "rank": idx + 1,
