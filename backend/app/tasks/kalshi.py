@@ -11,7 +11,7 @@ from typing import Optional
 import httpx
 import sentry_sdk
 from celery.exceptions import SoftTimeLimitExceeded
-from sqlalchemy import func, delete as sa_delete, select, text, update as sa_update
+from sqlalchemy import case, func, or_, delete as sa_delete, select, text, update as sa_update
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.tasks.base import get_task_session, run_async
@@ -524,8 +524,7 @@ def _kalshi_yes_probability(
       2. else a real trade the LIVE BOOK DOES NOT REFUTE -> last_price
          (trade evidence beats a wide book, but never a book that moved past it
          — see :func:`app.utils.kalshi_empty_book.book_refutes_price`, #5121)
-      3. else longshot ask-only cap (ask > 0 AND ask <= 0.50, no/one-sided bid)
-      4. else None -> caller skips (wide/one-sided book, no trade; don't fabricate)
+      3. else None. An ask alone supplies a ceiling.
 
     All inputs are decimal probabilities (0-1), matching kalshi_api parsing.
     """
@@ -543,14 +542,46 @@ def _kalshi_yes_probability(
         and not book_refutes_price(yes_bid, yes_ask, last_price)
     ):
         return last_price
-    if (
-        yes_bid is not None
-        and yes_ask is not None
-        and yes_ask > 0
-        and yes_ask <= 0.50
-    ):
-        return yes_ask
     return None
+
+
+async def record_kalshi_ask_ceilings(
+    session, market_id: int, asks_by_ticker: dict[str, float | None], *,
+    preserve_previous_price: bool = False,
+) -> None:
+    """Record positive evidence of a zero bid without writing a price snapshot."""
+    if not asks_by_ticker:
+        return
+    from app.models import FuturesOutcome
+    from app.utils.price_change_stamp import price_changed_at_value
+
+    ask = case(asks_by_ticker, value=FuturesOutcome.external_id).cast(
+        FuturesOutcome.current_yes_ask.type
+    )
+    statement = (
+        sa_update(FuturesOutcome)
+        .where(
+            FuturesOutcome.market_id == market_id,
+            FuturesOutcome.external_id.in_(asks_by_ticker),
+            FuturesOutcome.is_winner.is_not(True),
+            FuturesOutcome.resolution_source.is_(None),
+            FuturesOutcome.calibration_probability.is_(None),
+            or_(
+                FuturesOutcome.current_yes_bid.is_distinct_from(0),
+                FuturesOutcome.current_yes_ask.is_distinct_from(ask),
+                False if preserve_previous_price else FuturesOutcome.current_probability.is_not(None),
+            ),
+        )
+        .values(current_yes_bid=0, current_yes_ask=ask)
+    )
+    if not preserve_previous_price:
+        statement = statement.values(
+            current_probability=None, current_american_odds=None, probability_change_24h=None,
+            price_changed_at=price_changed_at_value(
+                FuturesOutcome.current_probability, FuturesOutcome.price_changed_at, None,
+            ),
+        )
+    await session.execute(statement)
 
 
 #: The venue status of a leg Kalshi has WITHDRAWN. Not a lifecycle state the
@@ -2248,7 +2279,13 @@ async def _poll_kalshi_markets(event_ticker: Optional[str] = None):
                     # (calibration_probability) is past resolution — preserve its price.
                     priced_tickers = {od["market"].ticker for od in outcome_data}
                     all_tickers = {m.ticker for m in event.markets}
-                    unpriced_tickers = all_tickers - priced_tickers
+                    ask_ceilings = {
+                        row["market"].ticker: row["market"].yes_ask
+                        for row in unpriced_data
+                        if row["market"].yes_bid == 0
+                        and not all_terminal([row["market"].status])
+                    }
+                    unpriced_tickers = all_tickers - priced_tickers - ask_ceilings.keys()
                     if unpriced_tickers:
                         await session.execute(
                             sa_update(FuturesOutcome)
@@ -2547,8 +2584,8 @@ async def _poll_kalshi_markets(event_ticker: Optional[str] = None):
                                     name=_ud["outcome_name"],
                                     current_probability=None,
                                     current_american_odds=None,
-                                    current_yes_bid=None,
-                                    current_yes_ask=None,
+                                    current_yes_bid=0 if _ud["market"].ticker in ask_ceilings else None,
+                                    current_yes_ask=ask_ceilings.get(_ud["market"].ticker),
                                     rank=_rank_base + _offset,
                                     is_winner=None,
                                     resolution_source=None,
@@ -2558,6 +2595,7 @@ async def _poll_kalshi_markets(event_ticker: Optional[str] = None):
                                 )
                             )
                         stats["unpriced_outcomes_recorded"] += len(unpriced_data)
+                    await record_kalshi_ask_ceilings(session, futures_market_id, ask_ceilings)
 
                     # #6598. The three passes above each numbered their OWN
                     # population: the priced upsert ranked `outcome_data` 1..N,

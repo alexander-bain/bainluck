@@ -9448,9 +9448,23 @@ def _market_exclusivity(market) -> bool | None:
     return getattr(market, "mutually_exclusive", None)
 
 
+def _feed_display_rows(outcomes: list, market=None) -> list[dict]:
+    from app.utils.outcome_display import mark_kalshi_ask_ceilings
+
+    rows = [
+        {"id": getattr(o, "id", None), "name": getattr(o, "name", ""),
+         "probability": o.current_probability, "is_winner": getattr(o, "is_winner", None),
+         "resolution_source": getattr(o, "resolution_source", None)}
+        for o in outcomes
+    ]
+    if getattr(market, "source", None) == "kalshi":
+        mark_kalshi_ask_ceilings(market, rows, {o.id: o for o in outcomes})
+    return rows
+
+
 def _feed_display_scale(
     all_sorted_outcomes: list, question: str | None = None, *,
-    mutually_exclusive: bool | None = None, field_complete: bool = True,
+    mutually_exclusive: bool | None = None, field_complete: bool = True, market=None,
 ) -> float:
     """The detail page's full-field divisor, before the card preview (#11995)."""
     from app.utils.outcome_display import display_probability_divisor
@@ -9458,10 +9472,7 @@ def _feed_display_scale(
     if _outcomes_are_cumulative_ladder(all_sorted_outcomes, question):
         return 1.0
     return display_probability_divisor(
-        [{"name": getattr(o, "name", ""), "probability": o.current_probability,
-          "is_winner": getattr(o, "is_winner", None),
-          "resolution_source": getattr(o, "resolution_source", None)}
-         for o in all_sorted_outcomes],
+        _feed_display_rows(all_sorted_outcomes, market),
         mutually_exclusive=mutually_exclusive,
         field_complete=field_complete, question=question,
     ) or 1.0
@@ -9646,23 +9657,19 @@ def _printed_outcome_name(
 def _normalize_feed_probabilities(
     top_outcomes: list[dict], all_sorted_outcomes: list,
     question: str | None = None, *, mutually_exclusive: bool | None = None,
-    field_complete: bool = True,
+    field_complete: bool = True, market=None,
 ) -> list[dict]:
     """Normalize and allocate over the whole field, then project the preview."""
     from app.utils.outcome_display import normalize_display_probs
 
-    full = [{"id": getattr(o, "id", None), "name": getattr(o, "name", ""),
-             "probability": o.current_probability,
-             "is_winner": getattr(o, "is_winner", None),
-             "resolution_source": getattr(o, "resolution_source", None)}
-            for o in all_sorted_outcomes]
+    full = _feed_display_rows(all_sorted_outcomes, market)
     normalize_display_probs(full, mutually_exclusive=mutually_exclusive,
                             field_complete=field_complete, question=question)
     by_id = {o["id"]: o for o in full if o["id"] is not None}
     by_name = {o["name"]: o for o in full}
     scale = _feed_display_scale(all_sorted_outcomes, question,
                                 mutually_exclusive=mutually_exclusive,
-                                field_complete=field_complete)
+                                field_complete=field_complete, market=market)
     for o in top_outcomes:
         row = by_id.get(o.get("id")) or by_name.get(o.get("name"))
         if row is not None:
@@ -9682,13 +9689,13 @@ def _normalize_feed_probabilities(
 
 def _annotate_distribution_allocations(
     card: dict, outcomes: list, question: str | None, *,
-    mutually_exclusive: bool | None, field_complete: bool,
+    mutually_exclusive: bool | None, field_complete: bool, market=None,
 ) -> None:
     """Copy the full field's shared whole numbers after classification (#11995)."""
     rows = _normalize_feed_probabilities(
         [{"id": o.id, "name": o.name, "probability": o.current_probability} for o in outcomes],
         outcomes, question, mutually_exclusive=mutually_exclusive,
-        field_complete=field_complete,
+        field_complete=field_complete, market=market,
     )
     by_id = {row["id"]: row.get("rendered_percent") for row in rows}
     by_label = {_card_outcome_name(o): by_id.get(o.id) for o in outcomes}
@@ -14620,6 +14627,7 @@ async def _score_sports_mode_futures(
             market.name,
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
+            market=market,
         )
         display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
         _display_comparisons = normalized_field_comparisons(
@@ -14781,6 +14789,7 @@ async def _score_sports_mode_futures(
             market.name,
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
+            market=market,
         )
         mark_futures_card_rows(market, top_outcomes_data)
         _full_field_rendered = bool(top_outcomes_data) and all(
@@ -15004,6 +15013,7 @@ async def _score_sports_mode_futures(
             discover_card, card_outcomes, market.name,
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
+            market=market,
         )
 
         futures_data = {
@@ -16494,6 +16504,7 @@ async def _score_futures(
                 market.name,
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
+                market=market,
             )
             display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
             _display_comparisons = normalized_field_comparisons(
@@ -16766,6 +16777,7 @@ async def _score_futures(
                 market.name,
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
+                market=market,
             )
             mark_futures_card_rows(market, top_outcomes_data)
             _full_field_rendered = bool(top_outcomes_data) and all(
@@ -17325,6 +17337,7 @@ async def _score_futures(
                 discover_card, card_outcomes, market.name,
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
+                market=market,
             )
 
             futures_data = {

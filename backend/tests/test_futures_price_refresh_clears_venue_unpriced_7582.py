@@ -159,13 +159,13 @@ class _ClearSession:
     def clears(self):
         """The UPDATEs that are clears — the ones carrying the guard clause.
 
-        Selected on ``calibration_probability``, which appears in this module's
-        WHERE clauses nowhere else, so a price write can never be counted here.
+        The age predicate distinguishes the stale-price clear from the
+        current book-only write that records a zero bid and an ask.
         """
         out = []
         for st in self.updates:
             text = str(st.compile(dialect=postgresql.dialect()))
-            if "calibration_probability IS NULL" in text:
+            if "calibration_probability IS NULL" in text and "last_updated <" in text:
                 out.append(st)
         return out
 

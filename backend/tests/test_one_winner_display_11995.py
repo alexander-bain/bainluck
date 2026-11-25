@@ -10,6 +10,56 @@ from app.utils.outcome_display import normalize_display_probs
 
 
 @pytest.mark.parametrize(
+    "raw, normalize",
+    [([0.625, 0.185], False), ([0.815, 0.1, 0.05, 0.04], True),
+     ([0.90, 0.71], False)],
+)
+def test_kalshi_zero_bids_have_no_share_on_the_page_set_or_card(raw, normalize):
+    from app.routes.feed import _feed_display_scale
+    from app.utils.container_machinery import _canonical_market_outcome_map
+    from app.utils.outcome_display import mark_kalshi_ask_ceilings
+
+    market = SimpleNamespace(source="kalshi", status="open")
+    complete = [
+        SimpleNamespace(id=i, name=f"Named player {i}", current_probability=p,
+                        current_yes_bid=p - 0.001, current_yes_ask=p + 0.001)
+        for i, p in enumerate(raw)
+    ]
+    complete.extend([
+        SimpleNamespace(id=90, name="Five-cent ceiling", current_probability=0.05,
+                        current_yes_bid=0, current_yes_ask=0.05),
+        SimpleNamespace(id=91, name="One-cent ceiling", current_probability=0.01,
+                        current_yes_bid=0, current_yes_ask=0.01),
+    ])
+    page = [
+        {"id": o.id, "name": o.name, "probability": o.current_probability}
+        for o in complete
+    ]
+    card = deepcopy(page)
+    mark_kalshi_ask_ceilings(market, page, {o.id: o for o in complete})
+    expected_scale = sum(raw) if normalize else 1
+    assert normalize_display_probs(page) is normalize
+    _normalize_feed_probabilities(card, complete, market=market, mutually_exclusive=True)
+    assert _feed_display_scale(complete, market=market, mutually_exclusive=True) == pytest.approx(expected_scale)
+    set_rows, *_ = _canonical_market_outcome_map(page)
+    for surface in (page, set_rows, card):
+        assert [r["probability"] for r in surface[:-2]] == pytest.approx(
+            [p / expected_scale for p in raw]
+        )
+        assert [r["probability"] for r in surface[-2:]] == [0.05, 0.01]
+    assert [r.get("ask_ceiling") for r in page[-2:]] == [0.05, 0.01]
+    assert all("rendered_percent" not in r for r in page[-2:])
+
+
+def test_kalshi_ask_only_ceiling_is_never_a_price_input():
+    from app.tasks.kalshi import _kalshi_yes_probability
+
+    assert _kalshi_yes_probability(0, 0.01, None) is None
+    assert _kalshi_yes_probability(0, 0.05, 0.71) is None
+    assert _kalshi_yes_probability(0.01, 0.03, 0.71) == pytest.approx(0.02)
+
+
+@pytest.mark.parametrize(
     "prices",
     [[0.40, 0.39], [0.52, 0.51], [0.5, 0.4, 0.3], [0.5, 0.4, 0.004]],
 )

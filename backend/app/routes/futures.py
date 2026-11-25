@@ -5403,6 +5403,9 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
                     row["probability"],
                     overlay.aggregation_rule if overlay is not None else "unsupported",
                 )
+            if overlay is not None and overlay.probability is not None:
+                row.pop("kalshi_no_bid", None)
+                row.pop("ask_ceiling", None)
     # A source-only/refused composition can retain complete references. A
     # changed blend has no historical field with those same contributors;
     # its old source-only references are still withheld by _overlay_current.
@@ -10115,6 +10118,8 @@ def _format_market_detail(
         drop_incoherent_near_certain,
         drop_unbacked_legs,
         encode_one_cent_kalshi_bounds,
+        mark_kalshi_ask_ceilings,
+        restore_legacy_kalshi_ask_labels,
     )
 
     # Q480: one condition, one outcome. Dropped here, on the ORM rows, because the
@@ -10896,13 +10901,16 @@ def _format_market_detail(
         is_winner_of=_is_graded_winner,
     )
     raw_dominant_dropped = raw_outcome_count - len(outcomes)
+    source_outcomes = {o.id: o for o in sorted_outcomes}
+    mark_kalshi_ask_ceilings(market, outcomes, source_outcomes)
+    field_complete = not any(o["id"] in withheld and not o.get("kalshi_no_bid") for o in outcomes)
     # Ruling21-A: each end uses its own complete, recorded field. A raw
     # historical delta or today's divisor cannot stand in for that comparison.
     comparisons = (
         normalized_field_comparisons(
             market,
             outcomes,
-            field_complete=prices_withheld == 0,
+            field_complete=field_complete,
             now=datetime.now(timezone.utc),
         )
         if normalize_numbers
@@ -10911,7 +10919,7 @@ def _format_market_detail(
     scaled = normalize_numbers and normalize_display_probs(
         outcomes,
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
-        field_complete=prices_withheld == 0,
+        field_complete=field_complete,
         question=market.name,
     )
     if comparisons is not None:
@@ -11067,7 +11075,6 @@ def _format_market_detail(
         describe_field_normalization, futures_outcome_source_mark,
     )
 
-    source_outcomes = {o.id: o for o in sorted_outcomes}
     for row in outcomes:
         row["source_mark"] = futures_outcome_source_mark(
             market, source_outcomes[row["id"]], row,
@@ -11077,6 +11084,7 @@ def _format_market_detail(
             input_probability=source_outcomes[row["id"]].current_probability,
             displayed_probability=row["probability"],
         )
+    restore_legacy_kalshi_ask_labels(outcomes, withheld)
     if normalize_numbers:
         encode_one_cent_kalshi_bounds(market, outcomes, source_outcomes)
 

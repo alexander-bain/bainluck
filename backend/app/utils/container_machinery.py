@@ -2025,14 +2025,18 @@ def _canonical_market_outcome_map(
 
     rows: list[dict[str, Any]] = []
     already_has_rendered = False
+    field_complete = True
+    has_no_bid = False
     for idx, o in enumerate(raw_outcomes):
         if not isinstance(o, Mapping):
             continue
         name = str(o.get("name") or o.get("outcome_name") or "").strip()
         if not name or is_placeholder_outcome_name(name) or _PLACEHOLDER_OUTCOME_RE.match(name):
             continue
+        has_no_bid |= bool(o.get("kalshi_no_bid"))
         prob = o.get("probability")
         if not isinstance(prob, (int, float)) or not math.isfinite(float(prob)):
+            field_complete &= bool(o.get("kalshi_no_bid"))
             continue
         p = float(prob)
         if p <= 0.0 or p >= 1.0:
@@ -2051,13 +2055,16 @@ def _canonical_market_outcome_map(
             }
         )
 
-    raw_sum = sum(float(r["probability"]) for r in rows)
-    if rows and not already_has_rendered and mutually_exclusive and raw_sum > 1.005:
+    supported_sum = math.fsum(float(r["probability"]) for r in rows if not r.get("kalshi_no_bid"))
+    if (
+        rows and not already_has_rendered and mutually_exclusive
+        and (supported_sum > 1.005 or (has_no_bid and supported_sum >= 1))
+    ):
         normalize_display_probs(
             rows,
             key="probability",
             mutually_exclusive=True,
-            field_complete=True,
+            field_complete=field_complete,
             question=question,
         )
 
@@ -2066,7 +2073,11 @@ def _canonical_market_outcome_map(
     by_key: dict[str, int] = {}
     for idx, r in enumerate(rows):
         rp = r.get("rendered_percent")
-        if rp is None and idx < len(card_pcts) and card_pcts[idx] is not None:
+        if (
+            rp is None
+            and not has_no_bid
+            and idx < len(card_pcts) and card_pcts[idx] is not None
+        ):
             rp = int(card_pcts[idx])
         if rp is None:
             rp = _half_up_pct(float(r["probability"]))
@@ -3641,7 +3652,11 @@ async def _load_snapshot_from_db(
                     detail, await _resolve_verified_title(db, fm), fm
                 )
                 d_outs = list(detail.get("outcomes") or ())
-                card_pcts = rendered_card_percents([row.get("probability") for row in d_outs])
+                card_pcts = (
+                    []
+                    if any(row.get("kalshi_no_bid") for row in d_outs)
+                    else rendered_card_percents([row.get("probability") for row in d_outs])
+                )
                 by_oid: dict[int, int] = {}
                 by_key: dict[str, int] = {}
                 by_fold: dict[str, tuple[float, int]] = {}
@@ -3684,6 +3699,8 @@ async def _load_snapshot_from_db(
                             "name": r_name,
                             "probability": p_f,
                             "rendered_percent": pct_int,
+                            **({"kalshi_no_bid": row["kalshi_no_bid"]}
+                               if "kalshi_no_bid" in row else {}),
                             "opening_probability": row.get("opening_probability"),
                             "image_url": img_by_oid.get(oid),
                             "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,

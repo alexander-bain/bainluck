@@ -243,6 +243,7 @@ from app.utils.futures_quote_freshness import (
     price_refresh_due_sql,
     registered_price_refresh_market_ids,
 )
+from app.utils.kalshi_empty_book import ASK_ONLY_TRUSTED_MAX
 from app.utils.kalshi_resolution_window import derive_resolution_window  # #8871
 from app.utils.kalshi_threshold_label import (  # #9543
     THRESHOLD_LABEL_KEY,
@@ -1717,6 +1718,8 @@ async def _write_prices(
     # them under the same three id conventions as a priced item — a Polymarket
     # decomposed pair would otherwise clear its yes leg and leave the no leg.
     unpriced: list[dict] = []
+    ask_ceilings: dict[str, float | None] = {}
+    high_asks: dict[str, float | None] = {}
     #: #9220. A mixed Kalshi event's legs the venue has SETTLED, each carrying
     #: its verdict. Graded below, never priced.
     answered: list[dict] = []
@@ -1725,6 +1728,12 @@ async def _write_prices(
             answered.append(item)
             continue
         if item.get("venue_quotes_no_price"):
+            ask = item.get("yes_ask")
+            if bookmaker == "kalshi" and item.get("yes_bid") == 0 and ask is not None and ask > 0:
+                if ask <= ASK_ONLY_TRUSTED_MAX:
+                    ask_ceilings[item["external_id"]] = ask
+                    continue
+                high_asks[item["external_id"]] = ask
             unpriced.append(item)
             continue
         # #12658: a refused current quote still carries its condition to the
@@ -2031,10 +2040,18 @@ async def _write_prices(
     # So a leg the venue stops quoting keeps its last price for a week. That is
     # deliberate: a quiet book is the normal state of a season future, and one
     # unpriced pass is not evidence of anything.
+    if (ask_ceilings or high_asks) and poll is None:
+        from app.tasks.kalshi import record_kalshi_ask_ceilings
+
+        await record_kalshi_ask_ceilings(session, market_id, ask_ceilings)
+        await record_kalshi_ask_ceilings(
+            session, market_id, high_asks, preserve_previous_price=True,
+        )
+
     if written and unpriced:
         stale_before = now - timedelta(days=OBSERVATION_LAG_DAYS)
         for item in unpriced:
-            for outcome_id, _side in _legs(item):
+            for outcome_id, side in _legs(item):
                 cleared = await session.execute(
                     sa_update(FuturesOutcome)
                     .where(
@@ -2067,8 +2084,8 @@ async def _write_prices(
                     .values(
                         current_probability=None,
                         current_american_odds=None,
-                        current_yes_bid=None,
-                        current_yes_ask=None,
+                        current_yes_bid=0 if item["external_id"] in high_asks else None,
+                        current_yes_ask=side.get("yes_ask") if item["external_id"] in high_asks else None,
                         # A 24h delta describing a price that no longer exists is
                         # not a delta — the sibling clear's #2024 finding.
                         probability_change_24h=None,
