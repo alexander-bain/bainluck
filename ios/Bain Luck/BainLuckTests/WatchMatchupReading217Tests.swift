@@ -60,22 +60,24 @@ final class WatchMatchupReading217Tests: XCTestCase {
                                                                        pregameAwayPercent: pregameAway))
     }
 
-    func testBeforeKickoffTheSmallLineNamesTheFavouriteAndTheStart() throws {
+    func testBeforeKickoffTheOwnerAndChanceLeadAndSmallLineShowsTheStart() throws {
         // Sunday 5:20 PM, five days on: "Sun 5:20 PM".
         let start = Date(timeIntervalSinceReferenceDate: 6 * 86_400 + 17 * 3600 + 20 * 60)
         let home = try XCTUnwrap(WatchMatchupReading217.make(snapshot: scheduled(homePercent: 56, start: start),
                                                              now: now, timeZone: utc, crest: { _ in nil }))
         XCTAssertEqual(home.stage, .before)
         XCTAssertEqual(home.bigText, "56%")
+        XCTAssertEqual(home.bigOwnerLabel, "LAC")
         XCTAssertTrue(home.bigIsHome)
-        XCTAssertEqual(home.smallLine, "LAC · Sun 5:20 PM")
+        XCTAssertEqual(home.smallLine, "Sun 5:20 PM")
         XCTAssertNil(home.home.score)
 
         let away = try XCTUnwrap(WatchMatchupReading217.make(snapshot: scheduled(homePercent: 40, start: start),
                                                              now: now, timeZone: utc, crest: { _ in nil }))
         XCTAssertEqual(away.bigText, "60%")
+        XCTAssertEqual(away.bigOwnerLabel, "NE")
         XCTAssertFalse(away.bigIsHome)
-        XCTAssertEqual(away.smallLine, "NE · Sun 5:20 PM")
+        XCTAssertEqual(away.smallLine, "Sun 5:20 PM")
         XCTAssertTrue(away.accessibilityText.contains("New England Patriots 60% to win"))
     }
 
@@ -85,13 +87,14 @@ final class WatchMatchupReading217Tests: XCTestCase {
                                                  timeZone: utc, crest: { _ in nil }))
     }
 
-    func testDuringTheGameTheSmallLineNamesTheLeaderAndTheClock() throws {
+    func testDuringTheGameTheLeaderIsNamedBesideThePercentAndClockBelow() throws {
         let observed = now
         let reading = try XCTUnwrap(WatchMatchupReading217.make(snapshot: live(homePercent: 74, observed: observed, clock: "Q3 4:12"),
                                                                 now: now, timeZone: utc, crest: { _ in nil }))
         XCTAssertEqual(reading.stage, .during)
         XCTAssertEqual(reading.bigText, "74%")
-        XCTAssertEqual(reading.smallLine, "BAL · Q3 4:12")
+        XCTAssertEqual(reading.bigOwnerLabel, "BAL")
+        XCTAssertEqual(reading.smallLine, "Q3 4:12")
         XCTAssertEqual(reading.home.score, 17)
         XCTAssertEqual(reading.away.score, 10)
         // Ruling 221: the Ravens' purple doesn't read on black, so their gold does.
@@ -100,15 +103,17 @@ final class WatchMatchupReading217Tests: XCTestCase {
         let noClock = try XCTUnwrap(WatchMatchupReading217.make(snapshot: live(homePercent: 30, observed: observed, clock: nil),
                                                                 now: now, timeZone: utc, crest: { _ in nil }))
         XCTAssertEqual(noClock.bigText, "70%")
+        XCTAssertEqual(noClock.bigOwnerLabel, "LAC")
         XCTAssertFalse(noClock.bigIsHome)
-        XCTAssertEqual(noClock.smallLine, "LAC · Live")
+        XCTAssertEqual(noClock.smallLine, "Live")
     }
 
     func testAnOldLiveReadingSaysWhenItWasTaken() throws {
         let observed = now.addingTimeInterval(-600)
         let reading = try XCTUnwrap(WatchMatchupReading217.make(snapshot: live(homePercent: 74, observed: observed, clock: "Q3 4:12"),
                                                                 now: now, timeZone: utc, crest: { _ in nil }))
-        XCTAssertEqual(reading.smallLine, "BAL · As of 11:50 PM")
+        XCTAssertEqual(reading.bigOwnerLabel, "BAL")
+        XCTAssertEqual(reading.smallLine, "As of 11:50 PM")
     }
 
     func testAfterAFinalTheWinnersPregameChanceAndTheTeamAreNamed() throws {
@@ -116,15 +121,17 @@ final class WatchMatchupReading217Tests: XCTestCase {
                                                              now: now, timeZone: utc, crest: { _ in nil }))
         XCTAssertEqual(home.stage, .after)
         XCTAssertEqual(home.bigText, "58%")
+        XCTAssertEqual(home.bigOwnerLabel, "DET")
         XCTAssertTrue(home.bigIsHome)
-        XCTAssertEqual(home.smallLine, "DET pregame · Final")
+        XCTAssertEqual(home.smallLine, "Pregame · Final")
         XCTAssertTrue(home.home.isWinner)
         XCTAssertFalse(home.away.isWinner)
 
         let away = try XCTUnwrap(WatchMatchupReading217.make(snapshot: final(home: 10, away: 24, pregameHome: 58, pregameAway: 42),
                                                              now: now, timeZone: utc, crest: { _ in nil }))
         XCTAssertEqual(away.bigText, "42%")
-        XCTAssertEqual(away.smallLine, "NE pregame · Final")
+        XCTAssertEqual(away.bigOwnerLabel, "NE")
+        XCTAssertEqual(away.smallLine, "Pregame · Final")
         XCTAssertTrue(away.away.isWinner)
     }
 
@@ -241,7 +248,8 @@ final class WatchMatchupReading217Tests: XCTestCase {
         XCTAssertEqual(matchup.home.abbreviation, "TA&M")
         XCTAssertEqual(matchup.away.abbreviation, "M-OH")
         XCTAssertEqual(matchup.bigText, "78%")
-        XCTAssertEqual(matchup.smallLine, "TA&M · 2H 8:14")
+        XCTAssertEqual(matchup.bigOwnerLabel, "TA&M")
+        XCTAssertEqual(matchup.smallLine, "2H 8:14")
     }
 
     func testHeaderLineUsesAvailableShortNameWithoutInventingMissingOne13144() {
