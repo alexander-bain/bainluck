@@ -19,6 +19,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     @ViewBuilder let footerRow: () -> FooterRow
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.liveOddsRefreshActive) private var liveOddsRefreshActive
 
     // Unified onto HeadlineStyleTable199 (.card) so team names, scores, and chances
     // share one size and weight family with the event-page headline, feed card, widget, and Watch tile.
@@ -71,7 +72,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             event: event,
             prematch: effectivePrematch,
             showsInlinePregame: showsInlinePregame,
-            usesPictureLayout: usesPictureLayout191A
+            usesPictureLayout: usesPictureLayout191A,
+            showsLiveTenths: liveOddsRefreshActive
         )
     }
 
@@ -239,7 +241,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             canStillBeGraded: canGrade,
             currentAwayIsWithheld: currentAwayWithheld,
             prematch: effectivePrematch,
-            prematchAwayIsWithheld: prematchAwayWithheld
+            prematchAwayIsWithheld: prematchAwayWithheld,
+            showsLiveTenths: liveOddsRefreshActive
         ),
         let button = SourceMarkButton(
             resolved.mark,

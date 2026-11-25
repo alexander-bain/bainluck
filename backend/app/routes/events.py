@@ -158,7 +158,11 @@ from app.utils.draw_priced_winner import (
 )
 from app.utils.market_identity import ticker_game_date
 from app.utils.game_market_class import (
+    OU_NON_TEAM_SUBJECT_RE,
+    extract_ou_subject,
+    fold_ascii,
     is_game_winner_market,
+    is_named_team_ou_market,
     kalshi_series_period,
     names_a_scoped_segment,
     outcomes_refute_game_winner,
@@ -23684,6 +23688,11 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
             return "half_total"
         if any(x in lower for x in _QUARTER_PATTERNS):
             return "quarter_total"
+        # #13754: "A vs. B: <Team> O/U N" (without "team") is one club's scoring
+        # ladder, never the combined-game total. Period & non-scoring checks above
+        # have already run so "1st Half <Team> O/U" stays period-scoped.
+        if is_named_team_ou_market(name):
+            return "team_total"
         # Name says "total" but no period marker — check ticker for period
         ticker_type = _classify_from_ticker(external_id) if external_id else None
         if ticker_type and ticker_type.endswith("_total"):
@@ -28220,15 +28229,15 @@ async def _build_game_markets(
     # 7. Deduplicate totals — split game_total vs team_total vs period totals
     seen_thresholds: dict[float, dict] = {}
     team_total_items: list[dict] = []
-    home_lower = (event.home_team_name or "").lower()
-    away_lower = (event.away_team_name or "").lower()
+    home_lower = fold_ascii(event.home_team_name or "")
+    away_lower = fold_ascii(event.away_team_name or "")
     # A word both club names share ("york", "angeles") identifies neither.
     _home_words = {w for w in home_lower.split() if len(w) >= 4}
     _away_words = {w for w in away_lower.split() if len(w) >= 4}
     _home_words, _away_words = _home_words - _away_words, _away_words - _home_words
 
     def _clubs_named(text: str | None) -> set[str]:
-        low = (text or "").lower()
+        low = fold_ascii(text or "")
         named = set()
         if any(w in low for w in _home_words):
             named.add("home")
@@ -28255,6 +28264,16 @@ async def _build_game_markets(
             # points") or both, so only a one-club leg is left out.
             if len(_clubs_named(t.get("outcome_name"))) == 1:
                 continue
+            # #13754 fallback: a stored/market row whose O/U subject names one
+            # club of this event routes to `team_totals`, never `totals`.
+            _ou_subj = extract_ou_subject(t.get("market_name"))
+            if (
+                _ou_subj
+                and not OU_NON_TEAM_SUBJECT_RE.search(_ou_subj)
+                and len(_clubs_named(_ou_subj)) == 1
+            ):
+                t["market_type"] = "team_total"
+        if t["market_type"] == "game_total":
             key = t["threshold"]
             incumbent = seen_thresholds.get(key)
             if incumbent is None:
@@ -28283,7 +28302,12 @@ async def _build_game_markets(
             # capped Raiders rungs with Patriots prices. A text naming both clubs
             # attributes neither — an untagged row is served as it is, never
             # guessed onto a side.
-            named = _clubs_named(t.get("outcome_name")) or _clubs_named(t.get("market_name"))
+            _tt_subj = extract_ou_subject(t.get("market_name"))
+            named = (
+                _clubs_named(t.get("outcome_name"))
+                or (_clubs_named(_tt_subj) if _tt_subj else set())
+                or _clubs_named(t.get("market_name"))
+            )
             side = next(iter(named)) if len(named) == 1 else None
             if side == "home":
                 t["team_name"] = event.home_team_name
@@ -32212,15 +32236,457 @@ async def get_team_progression(
     return _response
 
 
-async def build_event_nuggets(
+NUGGETS_REQUEST_TIMEOUT_SECONDS = float(os.getenv("GAME_NUGGETS_TIMEOUT_SECONDS", "8.0"))
+NUGGETS_SQL_STATEMENT_TIMEOUT_MS = int(os.getenv("GAME_NUGGETS_SQL_TIMEOUT_MS", "6500"))
+_NUGGETS_SEASON_MARKETS_TTL = 300
+
+
+def _is_timeout_or_query_canceled(exc: BaseException) -> bool:
+    """True when an exception indicates a request deadline or SQL statement timeout."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, TimeoutError) or type(cur).__name__ == "TimeoutError":
+            return True
+        code = getattr(cur, "sqlstate", None) or getattr(cur, "pgcode", None)
+        if code == "57014":
+            return True
+        msg = str(cur).lower()
+        if "statement timeout" in msg or "querycanceled" in msg or "canceling statement" in msg:
+            return True
+        cur = getattr(cur, "orig", None) or getattr(cur, "__cause__", None)
+    return False
+
+
+def _is_nuggets_season_market_excluded(
+    sport_key: Optional[str],
+    name: Optional[str],
+    external_id: Optional[str],
+) -> bool:
+    """Filter sibling-league and wrong-gender markets in Python from cached pool."""
+    if not sport_key:
+        return False
+    from app.utils.league_scope import is_refused as _league_scope_is_refused
+
+    if _league_scope_is_refused(sport_key, name, external_id):
+        return True
+
+    key_low = sport_key.lower()
+    name_low = (name or "").lower()
+    ext_low = (external_id or "").lower()
+    is_womens_mkt = (
+        "women" in name_low
+        or "wnba" in name_low
+        or "wncaa" in name_low
+        or ext_low.startswith(("basketball_wnba", "basketball_wncaab", "kxwnba", "kxncaawb"))
+    )
+    if not key_low.endswith("_other"):
+        womens_event = _is_womens_league_key(sport_key)
+        if not womens_event and is_womens_mkt:
+            return True
+        if womens_event and not is_womens_mkt:
+            return True
+
+    if key_low == "basketball_nba" and (
+        ext_low.startswith(("kxncaa", "basketball_ncaab"))
+        or ("ncaa" in name_low and "nba" not in name_low)
+    ):
+        return True
+    if key_low == "basketball_ncaab" and (
+        ext_low.startswith(("kxnba", "basketball_nba"))
+        or (re.search(r"\bnba\b", name_low) and "ncaa" not in name_low)
+    ):
+        return True
+    return False
+
+
+async def _load_nuggets_open_season_markets(
+    db: AsyncSession,
+    sport_key: str,
+    *,
+    event_is_finished: bool = False,
+) -> list[dict[str, Any]]:
+    """Load/cache open tier 1-4 season markets using partial index ``ix_fm_feed_open_sports``."""
+    from app.utils import game_nuggets_cache
+    from app.utils import season_market_discovery as _smd
+
+    cached = game_nuggets_cache.get_season_markets_l1(sport_key)
+    if cached is not None:
+        return cached
+
+    redis_key = f"bainluck:nuggets:season_mkts:v2:{sport_key}"
+    rc = None
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client(fast_fail=True)
+        raw = rc.get(redis_key)
+        if raw:
+            parsed = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else str(raw))
+            if isinstance(parsed, list):
+                game_nuggets_cache.set_season_markets_l1(sport_key, parsed)
+                return parsed
+    except Exception:
+        rc = None
+
+    cached_ids: list[int] | None = None
+    try:
+        cached_ids = _smd.read(sport_key, event_is_finished, rc=rc)
+    except Exception:
+        cached_ids = None
+
+    if isinstance(cached_ids, list) and cached_ids:
+        pk_stmt = select(
+            FuturesMarket.id,
+            FuturesMarket.name,
+            FuturesMarket.market_tier,
+            FuturesMarket.source,
+            FuturesMarket.external_id,
+            FuturesMarket.category,
+            FuturesMarket.resolution_date,
+        ).where(FuturesMarket.id.in_(cached_ids[:400]))
+        rows = (await db.execute(pk_stmt)).all()
+    else:
+        prefix = sport_key.split("_")[0]
+        llm_category = SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix, prefix)
+        if not llm_category:
+            return []
+
+        stmt = (
+            select(
+                FuturesMarket.id,
+                FuturesMarket.name,
+                FuturesMarket.market_tier,
+                FuturesMarket.source,
+                FuturesMarket.external_id,
+                FuturesMarket.category,
+                FuturesMarket.resolution_date,
+            )
+            .where(
+                FuturesMarket.status == "open",
+                FuturesMarket.event_id.is_(None),
+                FuturesMarket.llm_sport_category == llm_category,
+                FuturesMarket.market_tier.in_([1, 2, 3, 4]),
+            )
+            .order_by(FuturesMarket.market_tier.asc(), FuturesMarket.id.desc())
+            .limit(1200)
+        )
+        rows = (await db.execute(stmt)).all()
+
+    markets: list[dict[str, Any]] = []
+    for row in rows:
+        if _is_nuggets_season_market_excluded(sport_key, row.name, row.external_id):
+            continue
+        markets.append(
+            {
+                "id": int(row.id),
+                "name": row.name or "",
+                "market_tier": row.market_tier,
+                "source": row.source or "",
+                "external_id": row.external_id or "",
+                "category": row.category or "championship",
+                "resolution_date": row.resolution_date.isoformat() if row.resolution_date else None,
+            }
+        )
+        if len(markets) >= 400:
+            break
+
+    game_nuggets_cache.set_season_markets_l1(sport_key, markets)
+    try:
+        if rc is None:
+            from app.tasks.redis_state import get_redis_client
+
+            rc = get_redis_client(fast_fail=True)
+        rc.setex(redis_key, _NUGGETS_SEASON_MARKETS_TTL, json.dumps(markets, separators=(",", ":")))
+    except Exception as exc:
+        logger.debug("nuggets: failed writing season-markets redis cache: %s", exc)
+    return markets
+
+
+def _collect_side_match_terms(
+    team_name: str,
+    team_row: Any,
+) -> tuple[list[str], list[str], dict[str, dict[str, Any]]]:
+    """Build token patterns for team/player matching from already-loaded Team metadata."""
+    base_patterns = [p.replace("\\%", "%").replace("\\_", "_") for p in _team_name_patterns(team_name or "")]
+    team_patterns = list(base_patterns)
+    all_patterns = list(base_patterns)
+    player_meta: dict[str, dict[str, Any]] = {}
+
+    seen_low = {p.lower() for p in all_patterns}
+    if team_row is not None:
+        alts = getattr(team_row, "alternate_names", None)
+        if isinstance(alts, list):
+            for alt in alts:
+                if isinstance(alt, str) and len(alt.strip()) >= 2:
+                    clean = alt.strip()
+                    if clean.lower() not in seen_low:
+                        seen_low.add(clean.lower())
+                        team_patterns.append(clean)
+                        all_patterns.append(clean)
+        roster = getattr(team_row, "roster_players", None)
+        if isinstance(roster, list):
+            for item in roster:
+                if isinstance(item, dict):
+                    pname = item.get("name")
+                    if isinstance(pname, str) and pname.strip():
+                        pclean = pname.strip()
+                        if item.get("espn_id") or item.get("headshot"):
+                            player_meta[pclean.lower()] = {
+                                k: v for k, v in item.items() if k in ("espn_id", "headshot", "name")
+                            }
+                        if len(pclean) >= 4 and pclean.lower() not in seen_low:
+                            seen_low.add(pclean.lower())
+                            all_patterns.append(pclean)
+                elif isinstance(item, str) and len(item.strip()) >= 4:
+                    pclean = item.strip()
+                    if pclean.lower() not in seen_low:
+                        seen_low.add(pclean.lower())
+                        all_patterns.append(pclean)
+    return team_patterns, all_patterns, player_meta
+
+
+async def _load_fast_nugget_stakes(
+    db: AsyncSession,
+    event: Event,
+    resolved_id: int,
+    sport_key: Optional[str],
+    by_tid: dict[int, Team],
+    *,
+    event_is_finished: bool = False,
+) -> dict[str, Any]:
+    """Load season-stakes inputs for nuggets via indexed queries + cache (no 500k scan)."""
+    from app.utils import related_futures_cache as rfc
+    from app.utils.futures_market_snapshot import reader_change_24h
+    from app.utils.market_label_normalization import normalize_market_label
+    from app.utils.team_pattern_match import any_pattern_matches_token
+
+    memo_rf = _read_related_futures_memo(resolved_id)
+    if isinstance(memo_rf, dict):
+        return memo_rf
+
+    try:
+        l2_rf, state = rfc.read(resolved_id)
+        if state in ("live", "stale_ok") and isinstance(l2_rf, dict):
+            return l2_rf
+    except Exception as exc:
+        logger.debug("nuggets: L2 related_futures cache read failed for event %s: %s", resolved_id, exc)
+
+    empty = {"home_team_futures": [], "away_team_futures": [], "series_markets": []}
+    if not sport_key:
+        return empty
+
+    season_markets = await _load_nuggets_open_season_markets(
+        db,
+        sport_key,
+        event_is_finished=event_is_finished,
+    )
+    if not season_markets:
+        return empty
+
+    market_by_id = {int(m["id"]): m for m in season_markets}
+    season_mids = list(market_by_id.keys())
+
+    outcomes = (
+        await db.execute(
+            select(FuturesOutcome).where(
+                FuturesOutcome.market_id.in_(season_mids),
+                FuturesOutcome.current_probability.isnot(None),
+            )
+        )
+    ).scalars().all()
+    if not outcomes:
+        return empty
+
+    ht = by_tid.get(event.home_team_id) if getattr(event, "home_team_id", None) else None
+    at = by_tid.get(event.away_team_id) if getattr(event, "away_team_id", None) else None
+    home_team_pat, home_all_pat, home_players = _collect_side_match_terms(
+        event.home_team_name or "", ht
+    )
+    away_team_pat, away_all_pat, away_players = _collect_side_match_terms(
+        event.away_team_name or "", at
+    )
+    player_meta = {**home_players, **away_players}
+    home_tid = getattr(event, "home_team_id", None)
+    away_tid = getattr(event, "away_team_id", None)
+
+    home_entries: list[dict[str, Any]] = []
+    away_entries: list[dict[str, Any]] = []
+
+    for o in outcomes:
+        mkt = market_by_id.get(int(o.market_id))
+        if mkt is None:
+            continue
+        prob = float(o.current_probability) if o.current_probability is not None else None
+        if prob is None:
+            continue
+        if o.current_yes_bid is not None and o.current_yes_ask is not None:
+            if float(o.current_yes_bid) <= 0.0 and float(o.current_yes_ask) >= 0.99:
+                continue
+
+        oname = o.name or ""
+        oname_low = oname.strip().lower()
+        is_home = bool(
+            (home_tid is not None and o.team_id == home_tid)
+            or any_pattern_matches_token(oname, home_all_pat)
+            or (oname_low == "yes" and any_pattern_matches_token(mkt["name"], home_team_pat))
+        )
+        is_away = bool(
+            (away_tid is not None and o.team_id == away_tid)
+            or any_pattern_matches_token(oname, away_all_pat)
+            or (oname_low == "yes" and any_pattern_matches_token(mkt["name"], away_team_pat))
+        )
+        if not is_home and not is_away:
+            continue
+
+        market_proxy = SimpleNamespace(
+            id=mkt["id"],
+            source=mkt["source"],
+            external_id=mkt["external_id"],
+            name=mkt["name"],
+            category=mkt["category"],
+            market_tier=mkt["market_tier"],
+        )
+        chg = reader_change_24h(
+            market_proxy,
+            o.id,
+            o.current_probability,
+            o.probability_change_24h,
+        )
+        clean_label = normalize_market_label(mkt["name"])
+        tier_val = mkt["market_tier"] or 4
+        tier_bonus = {1: 40.0, 2: 28.0, 3: 24.0, 4: 18.0}.get(int(tier_val), 10.0)
+        entry: dict[str, Any] = {
+            "market_id": mkt["id"],
+            "market_name": mkt["name"],
+            "clean_label": clean_label,
+            "market_tier": tier_val,
+            "category": mkt["category"],
+            "source": mkt["source"],
+            "outcome_id": o.id,
+            "outcome_name": resolve_binary_matchup_outcome_name(oname, mkt["name"]),
+            "probability": prob,
+            "probability_change_24h": float(chg) if chg is not None else None,
+            "bookmaker_count": 1,
+            "relevance_score": tier_bonus + prob * 20.0,
+            "last_updated": o.last_updated.isoformat() if o.last_updated else None,
+        }
+        matched = player_meta.get(oname.split(":")[0].strip().lower())
+        if matched:
+            entry["matched_player"] = matched
+
+        if is_home and not is_away:
+            home_entries.append(entry)
+        elif is_away and not is_home:
+            away_entries.append(entry)
+        else:
+            if home_tid is not None and o.team_id == home_tid:
+                home_entries.append(entry)
+            elif away_tid is not None and o.team_id == away_tid:
+                away_entries.append(entry)
+
+    home_entries.sort(key=lambda r: r["relevance_score"], reverse=True)
+    away_entries.sort(key=lambda r: r["relevance_score"], reverse=True)
+    return {
+        "home_team_futures": home_entries[:25],
+        "away_team_futures": away_entries[:25],
+        "series_markets": [],
+    }
+
+
+async def _load_nuggets_team_progression(
+    resolved_id: int,
+    event: Event,
+    sport_key: Optional[str],
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Read team progression from cache only; never block nuggets on cold grid rebuild."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client(fast_fail=True)
+        cached = rc.get(_team_progression_cache_key(resolved_id))
+        if cached:
+            return json.loads(cached.decode("utf-8") if isinstance(cached, bytes) else str(cached))
+    except Exception as exc:
+        logger.debug("nuggets: progression redis read failed for event %s: %s", resolved_id, exc)
+
+    if not sport_key:
+        return {}
+
+    from app.config.league_configs import LEAGUE_TO_SPORT, get_league_for_sport_key
+    from app.services.league_context import _format_event_league_context, read_cached_league_context
+
+    config = get_league_for_sport_key(sport_key)
+    if not config:
+        return {}
+
+    ctx = read_cached_league_context(config.slug)
+    if ctx is None:
+        return {"_league_context_missing": True}
+
+    league_ctx = _format_event_league_context(event, config, ctx)
+    if not league_ctx:
+        return {}
+    sport_group = LEAGUE_TO_SPORT.get(config.slug, "")
+    grid_url = f"/{sport_group}/{config.slug}" if sport_group else f"/playoffs/{config.slug}"
+
+    def _side(team_ctx_dict: Optional[dict[str, Any]], team_name: Optional[str]):
+        if not team_ctx_dict:
+            return None
+        stages = []
+        for col in league_ctx.get("columns") or ():
+            ckey = col.get("key", "")
+            prob = (team_ctx_dict.get("cells") or {}).get(ckey)
+            state = (team_ctx_dict.get("states") or {}).get(ckey)
+            if prob is not None or state:
+                stages.append(
+                    {
+                        "key": ckey,
+                        "label": col.get("label", ckey),
+                        "probability": prob,
+                        "trend_24h": (team_ctx_dict.get("changes_24h") or {}).get(ckey),
+                        "state": state,
+                        "sources": team_ctx_dict.get("sources_available") or [],
+                    }
+                )
+        if not stages:
+            return None
+        return {
+            "name": team_name,
+            "logo_url": team_ctx_dict.get("logo_url"),
+            "stages": stages,
+        }
+
+    return {
+        "event_id": resolved_id,
+        "league": config.slug,
+        "grid_url": grid_url,
+        "home_team": _side(league_ctx.get("home_team"), event.home_team_name),
+        "away_team": _side(league_ctx.get("away_team"), event.away_team_name),
+    }
+
+
+async def _build_event_nuggets_inner(
     event_id: int,
     db: AsyncSession,
     *,
-    limit: int = 12,
-    now: Optional[datetime] = None,
+    clamped_limit: int,
+    now: Optional[datetime],
+    use_cache: bool,
 ) -> dict:
     """Build ranked below-the-charts nuggets from existing event sub-surfaces (#13511)."""
+    from app.utils import game_nuggets_cache
     from app.utils.game_nuggets import NUGGET_DEFAULT_LIMIT, rank_game_nuggets, reader_league_name
+
+    try:
+        bind = db.get_bind() if isinstance(db, AsyncSession) else getattr(db, "bind", None)
+        dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
+        if dialect_name == "postgresql":
+            await db.execute(text(f"SET LOCAL statement_timeout = {int(NUGGETS_SQL_STATEMENT_TIMEOUT_MS)}"))
+    except Exception as exc:
+        logger.debug("nuggets: unable to apply statement_timeout hint: %s", exc)
 
     row = (
         await db.execute(
@@ -32235,9 +32701,20 @@ async def build_event_nuggets(
     served = await resolve_served_event(db, row, requested_id=event_id)
     event = served.event
     resolved_id = int(served.event_id)
+    clock_now = now or datetime.now(timezone.utc)
+    status_str = served_event_status(event.status, event.commence_time, clock_now)
+    is_final = game_nuggets_cache.is_final_status(status_str) or game_nuggets_cache.is_final_status(
+        getattr(event, "status", None)
+    )
+
+    if use_cache:
+        cached = game_nuggets_cache.read(resolved_id, is_final=is_final, limit=clamped_limit)
+        if cached is not None:
+            return cached
 
     home_logo: Optional[str] = None
     away_logo: Optional[str] = None
+    by_tid: dict[int, Team] = {}
     team_ids = [tid for tid in (event.home_team_id, event.away_team_id) if isinstance(tid, int)]
     if team_ids:
         teams = (await db.execute(select(Team).where(Team.id.in_(team_ids)))).scalars().all()
@@ -32245,34 +32722,84 @@ async def build_event_nuggets(
         ht = by_tid.get(event.home_team_id) if event.home_team_id else None
         at = by_tid.get(event.away_team_id) if event.away_team_id else None
         if ht is not None:
-            home_logo = getattr(ht, "logo_small", None) or getattr(ht, "logo_url", None) or getattr(ht, "logo_large", None)
+            home_logo = (
+                getattr(ht, "logo_url_small", None)
+                or getattr(ht, "logo_small", None)
+                or getattr(ht, "logo_url", None)
+                or getattr(ht, "logo_url_large", None)
+                or getattr(ht, "logo_large", None)
+            )
         if at is not None:
-            away_logo = getattr(at, "logo_small", None) or getattr(at, "logo_url", None) or getattr(at, "logo_large", None)
+            away_logo = (
+                getattr(at, "logo_url_small", None)
+                or getattr(at, "logo_small", None)
+                or getattr(at, "logo_url", None)
+                or getattr(at, "logo_url_large", None)
+                or getattr(at, "logo_large", None)
+            )
 
     safe_event_id = getattr(event, "id", None)
+    sport_key = event.sport.key if getattr(event, "sport", None) else None
+    build_complete = True
+
     try:
         game_markets = await get_game_markets(resolved_id, db=db, fresh=False, response=None)
-    except HTTPException:
-        game_markets = {}
-    except Exception:
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            game_markets = {}
+        elif exc.status_code in (503, 504):
+            raise
+        else:
+            raise
+    except Exception as exc:
+        if _is_timeout_or_query_canceled(exc):
+            raise
         logger.warning("nuggets: game_markets read failed for event %s", safe_event_id, exc_info=True)
         game_markets = {}
+        build_complete = False
 
     try:
-        related_futures = await get_related_futures(resolved_id, debug=False, db=db)
-    except HTTPException:
+        related_futures = await _load_fast_nugget_stakes(
+            db,
+            event,
+            resolved_id,
+            sport_key,
+            by_tid,
+            event_is_finished=is_final,
+        )
+    except HTTPException as exc:
+        if exc.status_code in (503, 504):
+            raise
+        logger.warning("nuggets: fast stakes HTTP error for event %s", safe_event_id, exc_info=True)
         related_futures = {}
-    except Exception:
-        logger.warning("nuggets: related_futures read failed for event %s", safe_event_id, exc_info=True)
+        build_complete = False
+    except Exception as exc:
+        if _is_timeout_or_query_canceled(exc):
+            raise
+        logger.warning("nuggets: fast stakes read failed for event %s", safe_event_id, exc_info=True)
         related_futures = {}
+        build_complete = False
 
     try:
-        team_progression = await get_team_progression(resolved_id, db=db)
-    except HTTPException:
+        team_progression = await _load_nuggets_team_progression(resolved_id, event, sport_key, db)
+    except HTTPException as exc:
+        if exc.status_code in (503, 504):
+            raise
+        logger.warning("nuggets: progression HTTP error for event %s", safe_event_id, exc_info=True)
         team_progression = {}
-    except Exception:
-        logger.warning("nuggets: team_progression read failed for event %s", safe_event_id, exc_info=True)
+        build_complete = False
+    except Exception as exc:
+        if _is_timeout_or_query_canceled(exc):
+            raise
+        logger.warning("nuggets: progression read failed for event %s", safe_event_id, exc_info=True)
         team_progression = {}
+        build_complete = False
+
+    if isinstance(team_progression, dict) and team_progression.get("_league_context_missing"):
+        build_complete = False
+        team_progression = {
+            k: v for k, v in team_progression.items() if k != "_league_context_missing"
+        }
 
     event_info = {
         "event_id": resolved_id,
@@ -32280,31 +32807,91 @@ async def build_event_nuggets(
         "away_team": event.away_team_name,
         "home_logo": home_logo,
         "away_logo": away_logo,
-        "sport": event.sport.key if event.sport else None,
+        "sport": sport_key,
         "sport_name": reader_league_name(event.sport),
-        "status": served_event_status(
-            event.status, event.commence_time, now or datetime.now(timezone.utc)
-        ),
+        "status": status_str,
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
     }
-    return rank_game_nuggets(
+    full_payload = rank_game_nuggets(
         event_info=event_info,
         game_markets=game_markets if isinstance(game_markets, dict) else {},
         related_futures=related_futures if isinstance(related_futures, dict) else {},
         team_progression=team_progression if isinstance(team_progression, dict) else {},
-        limit=max(1, min(int(limit), NUGGET_DEFAULT_LIMIT)),
-        now=now,
+        limit=NUGGET_DEFAULT_LIMIT,
+        now=clock_now,
     )
+    keep_seven_days = bool(
+        is_final
+        and build_complete
+        and game_nuggets_cache.game_markets_fully_settled(game_markets)
+    )
+    if use_cache:
+        game_nuggets_cache.write(resolved_id, full_payload, is_final=keep_seven_days)
+    return game_nuggets_cache.slice_nuggets_payload(full_payload, clamped_limit)
+
+
+async def build_event_nuggets(
+    event_id: int,
+    db: AsyncSession,
+    *,
+    limit: int = 12,
+    now: Optional[datetime] = None,
+    use_cache: bool = True,
+    timeout_seconds: Optional[float] = None,
+) -> dict:
+    """Build ranked below-the-charts nuggets with caching and pre-router timeout (#13511, #13650)."""
+    import asyncio as _nuggets_asyncio
+
+    from app.utils.game_nuggets import NUGGET_DEFAULT_LIMIT
+
+    clamped_limit = max(1, min(int(limit), NUGGET_DEFAULT_LIMIT))
+    effective_timeout = (
+        NUGGETS_REQUEST_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else max(0.01, float(timeout_seconds))
+    )
+    try:
+        return await _nuggets_asyncio.wait_for(
+            _build_event_nuggets_inner(
+                event_id,
+                db,
+                clamped_limit=clamped_limit,
+                now=now,
+                use_cache=use_cache,
+            ),
+            timeout=effective_timeout,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if _is_timeout_or_query_canceled(exc):
+            logger.warning(
+                "nuggets: request timed out after %.2fs",
+                effective_timeout,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Event nuggets timed out before completion",
+                headers={"Retry-After": "5"},
+            ) from exc
+        raise
 
 
 @router.get("/{event_id}/nuggets")
 async def get_event_nuggets(
     event_id: int,
+    request: Request,
     limit: int = Query(12, ge=1, le=12),
+    fresh: bool = Query(False),
+    secret: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Ranked below-the-charts nuggets and kind counts for an event (#13511)."""
-    return await build_event_nuggets(event_id, db, limit=limit)
+    """Ranked below-the-charts nuggets and kind counts for an event (#13511, #13650)."""
+    if fresh:
+        from app.routes.admin_utils import _check_admin_secret
+
+        _check_admin_secret(secret, request=request)
+    return await build_event_nuggets(event_id, db, limit=limit, use_cache=not fresh)
 
 
 #: Five minutes, unchanged from the inline literal this replaced.

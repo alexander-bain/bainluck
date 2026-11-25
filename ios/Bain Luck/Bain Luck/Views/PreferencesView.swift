@@ -148,6 +148,7 @@ struct PreferencesView: View {
                     systemImage: "wifi.exclamationmark",
                     description: Text(error)
                 )
+                .noteReviewPromptTrouble12304()
             } else {
                 preferencesContent
             }
@@ -753,6 +754,36 @@ struct PreferencesView: View {
             }
             .buttonStyle(.plain)
 
+            NavigationLink {
+                AboutBainLuckView212A()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "questionmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("What a percentage means")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+                        Text("How to read 64%, and why upsets happen")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(Color.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+            }
+            .buttonStyle(.plain)
+
             if authManager.isAdmin {
                 NavigationLink {
                     DiscoverLabelingView()
@@ -1157,7 +1188,39 @@ struct PreferencesView: View {
             sectionHeader(emoji: "\u{1F512}", title: "Privacy", count: nil)
             analyticsConsentRow
                 .padding(.horizontal)
+            watchDiagnosticsInfoRow
+                .padding(.horizontal)
         }
+    }
+
+    private var watchDiagnosticsInfoRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "applewatch")
+                .font(.system(size: 20))
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Apple Watch diagnostics")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.primary)
+                Text(
+                    analyticsConsentGranted
+                        ? "Requires Share Watch diagnostics on Watch (off by default on Watch)"
+                        : "Off \u{2014} allow analytics above and turn on Diagnostics on your Watch to share Watch stats"
+                )
+                .font(.caption2)
+                .foregroundStyle(Color.secondary.opacity(0.75))
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+        .accessibilityIdentifier("preferences.watchDiagnosticsInfo")
     }
 
     private var analyticsConsentSubtitle: String {

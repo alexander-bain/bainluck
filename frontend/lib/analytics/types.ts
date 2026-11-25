@@ -618,7 +618,7 @@ export interface ShareScorecardParams {
 }
 
 export interface SharedLinkOpenParams {
-  content_type: 'event' | 'futures' | 'grid';
+  content_type: 'event' | 'futures' | 'grid' | 'collection';
   item_id: number | string;
   source: string;
   medium?: string;
@@ -637,7 +637,7 @@ export interface PredictionSubmitParams extends FunnelDimensions {
 }
 
 export interface FeedCardImpressionParams extends FunnelDimensions {
-  content_type: 'event' | 'futures' | 'grid';
+  content_type: 'event' | 'futures' | 'grid' | 'bundle';
   item_id: number | string;
   category: string;
   position: number;
@@ -652,7 +652,7 @@ export interface FeedCardImpressionParams extends FunnelDimensions {
 
 export interface FeedCardActionParams {
   action: 'detail_click' | 'dismiss' | 'like' | 'unlike' | 'share' | 'group_expand' | 'context_expand' | 'context_collapse' | 'challenge_start' | 'challenge_complete';
-  content_type: 'event' | 'futures' | 'grid';
+  content_type: 'event' | 'futures' | 'grid' | 'bundle';
   item_id: number | string;
   category: string;
   position?: number;
@@ -712,7 +712,7 @@ export interface FeedCardSuppressedParams {
  * story grouping + position. Registered so the sanitation boundary keeps it.
  */
 export interface ThemeBundleExpandParams {
-  content_type?: 'event' | 'futures' | 'grid';
+  content_type?: 'event' | 'futures' | 'grid' | 'bundle';
   item_id?: number | string;
   category?: string;
   item_name?: string;

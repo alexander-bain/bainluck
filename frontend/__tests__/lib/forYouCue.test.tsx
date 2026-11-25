@@ -66,6 +66,11 @@ describe("a boost the reader can be told about", () => {
     expect(cue?.reasonId).toBe("pinned");
   });
 
+  it("no cue for removed broad category/sport follow tokens (`sport_boost`, `discover_interest` — #13644)", () => {
+    expect(forYouCue(boosted(["sport_boost:0.20"]))).toBeNull();
+    expect(forYouCue(boosted(["discover_interest:0.22"]))).toBeNull();
+  });
+
   it("reads the futures-side token spellings too", () => {
     expect(forYouCue(boosted(["your_team_futures:0.30"]))?.label).toBe("One of your teams");
     expect(forYouCue(boosted(["alma_mater_futures:0.25"]))?.label).toBe("Your alma mater");

@@ -119,8 +119,9 @@ const UPRANK_VOCABULARY: { id: string; mark: string; label: string }[] = [
   { id: "rival_losing", mark: "Rival", label: "A rival is losing" },
   { id: "rival_playing", mark: "Rival", label: "A rival of one of your teams" },
   { id: "rival_futures", mark: "Rival", label: "A rival of one of your teams" },
-  { id: "sport_boost", mark: "Your sport", label: "A sport you follow" },
-  { id: "discover_interest", mark: "Following", label: "A category you follow" },
+  // #13644 — cold read removed broad category/sport follow chips ("Your sport",
+  // "Following") from Discover cards; keep only specific team/player/alma-mater/
+  // local/rival/similar cues.
   { id: "discover_feature_interest", mark: "Similar", label: "Like others you have opened" },
 ];
 

@@ -52,9 +52,11 @@ struct Bain_LuckApp: App {
         initialBinding: PinAccountBinding(userID: APIClient.persistedLastKnownUserId(), authenticated: false)
     )
     #endif
-    /// Whether the consent ask is showing. Seeded from the authority: `true`
-    /// only when no choice has ever been recorded.
+    /// Whether the consent ask is showing. Deferred past the `212-A` first-run
+    /// onboarding so a friend's first launch never meets an up-front telemetry modal
+    /// before seeing value (off by default per ruling 007; togglable anytime in Preferences).
     @State private var showTelemetryConsent = TelemetryConsent.shared.needsChoice
+        && UserDefaults.standard.bool(forKey: FirstRunStorageKeys212A.onboardedKey)
 
 
     init() {
@@ -108,6 +110,7 @@ struct Bain_LuckApp: App {
         let defaults = UserDefaults.standard
         let sessionCount = defaults.integer(forKey: "bainluck_session_count") + 1
         defaults.set(sessionCount, forKey: "bainluck_session_count")
+        SessionOpenTracker13261.shared.recordLaunch(sessionNumber: sessionCount)
         let today = Calendar.current.startOfDay(for: Date())
         if let lastVisit = defaults.object(forKey: "bainluck_last_visit") as? Date {
             let daysSince = Calendar.current.dateComponents([.day], from: lastVisit, to: today).day ?? 0
@@ -266,6 +269,7 @@ struct Bain_LuckApp: App {
             .sheet(isPresented: $showTelemetryConsent) {
                 TelemetryConsentPrompt { _ in
                     showTelemetryConsent = false
+                    SessionOpenTracker13261.shared.handleConsentChange()
                 }
             }
             #if os(macOS)

@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Bain_Luck
 
@@ -125,5 +126,94 @@ final class ReviewPromptPolicy12304Tests: XCTestCase {
         s.recordGoodMoment()
         s.noteTrouble()
         XCTAssertFalse(policy.shouldAsk(s.state(currentVersion: "1.0.7"), now: now, calendar: calendar))
+    }
+
+    func testReadErrorTroubleModifierMarksTroubleOnlyWhenActive() {
+        let (activeSignals, activeDefaults) = signals()
+        activeDefaults.set(days(-30), forKey: ReviewPromptSignals12304.Key.installDate)
+        activeDefaults.set(10, forKey: ReviewPromptSignals12304.Key.sessionCount)
+        activeSignals.recordGoodMoment()
+        XCTAssertTrue(policy.shouldAsk(activeSignals.state(currentVersion: "1.0.8"), now: now, calendar: calendar))
+
+        let (idleSignals, idleDefaults) = signals()
+        idleDefaults.set(days(-30), forKey: ReviewPromptSignals12304.Key.installDate)
+        idleDefaults.set(10, forKey: ReviewPromptSignals12304.Key.sessionCount)
+        idleSignals.recordGoodMoment()
+
+        let activeModifier = ReviewPromptTroubleModifier12304(active: true, signals: activeSignals)
+        let idleModifier = ReviewPromptTroubleModifier12304(active: false, signals: idleSignals)
+        XCTAssertTrue(activeModifier.active)
+        XCTAssertFalse(idleModifier.active)
+
+        #if os(iOS)
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let hostActive = UIHostingController(
+            rootView: Text("Couldn't load team")
+                .noteReviewPromptTrouble12304(when: true, signals: activeSignals)
+        )
+        let winActive = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+        winActive.frame = CGRect(x: 0, y: 0, width: 320, height: 120)
+        winActive.rootViewController = hostActive
+        winActive.makeKeyAndVisible()
+        hostActive.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.08))
+        winActive.isHidden = true
+        winActive.rootViewController = nil
+
+        let hostIdle = UIHostingController(
+            rootView: Text("All loaded")
+                .noteReviewPromptTrouble12304(when: false, signals: idleSignals)
+        )
+        let winIdle = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+        winIdle.frame = CGRect(x: 0, y: 0, width: 320, height: 120)
+        winIdle.rootViewController = hostIdle
+        winIdle.makeKeyAndVisible()
+        hostIdle.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.08))
+        winIdle.isHidden = true
+        winIdle.rootViewController = nil
+
+        XCTAssertTrue(activeSignals.sessionHadTrouble, "Displaying a read error / Try again state marks sessionHadTrouble")
+        XCTAssertFalse(policy.shouldAsk(activeSignals.state(currentVersion: "1.0.8"), now: now, calendar: calendar))
+        XCTAssertFalse(idleSignals.sessionHadTrouble, "Healthy view must not mark sessionHadTrouble")
+        XCTAssertTrue(policy.shouldAsk(idleSignals.state(currentVersion: "1.0.8"), now: now, calendar: calendar))
+        #endif
+    }
+
+    func testReadErrorViewsWireReviewPromptTrouble() throws {
+        let viewsRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck")
+        let requiredCallers = [
+            "Views/TeamDetailView.swift",
+            "Views/MyStuffLandingView295A.swift",
+            "Views/MyStuffView.swift",
+            "Views/EventDetailView.swift",
+            "Views/FuturesDetailView.swift",
+            "Views/DiscoverView.swift",
+            "Views/FeedView.swift",
+            "Views/ContainerHubView.swift",
+            "Views/TournamentHubView.swift",
+            "Views/GolfTournamentView.swift",
+            "Views/ConceptCardView.swift",
+            "Views/SportCategoryView.swift",
+            "Views/GolfCategoryView.swift",
+            "Views/FuturesListView.swift",
+            "Views/SearchView.swift",
+            "Views/CalibrationView.swift",
+            "Views/PinManagementView.swift",
+            "Views/PreferencesView.swift",
+            "Views/DailyChallengeView.swift",
+            "Views/FriendChallengeView.swift",
+            "Views/DiscoverLabelingView.swift",
+            "Components/DiscoverPullRefreshNoticeRow.swift",
+            "Components/ResolutionCard.swift",
+            "Components/EvolutionChartView.swift",
+        ]
+        for rel in requiredCallers {
+            let src = try String(contentsOf: viewsRoot.appendingPathComponent(rel), encoding: .utf8)
+            XCTAssertTrue(src.contains("noteReviewPromptTrouble12304"), "\(rel) must call noteReviewPromptTrouble12304 on read errors")
+        }
     }
 }

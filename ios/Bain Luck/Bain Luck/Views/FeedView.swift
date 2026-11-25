@@ -17,6 +17,7 @@ struct FeedView: View {
     // `onChange(of:)`, and both the elapsed time and the item count reported come
     // from the frozen token, never a live `vm.items.count`.
     @State private var lastEmittedRenderGenerationId: Int?
+    @State private var pinnedSnapshot: SportsPinnedSnapshot13669?
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -57,15 +58,36 @@ struct FeedView: View {
                         Spacer()
                     }
                     .padding(.horizontal, 40)
+                    .noteReviewPromptTrouble12304()
                 case .content, .nothingInCategory, .nothingToShow:
                     feedList(state)
                 }
             }
-            .navigationTitle("🍀 Bain Luck")
+            .navigationTitle("Bain Luck")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 6) {
+                        BainLuckMarkView(size: 20)
+                        Text("Bain Luck")
+                            .font(.headline.weight(.semibold))
+                    }
+                    .lineLimit(1)
+                }
+            }
+            #endif
             .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
         }
         .onAppear {
+            syncPinnedSnapshot()
             AnalyticsService.trackScreen(name: "feed", type: "feed")
+        }
+        .onChange(of: selectedCategory) { _, _ in
+            syncPinnedSnapshot()
+        }
+        .onChange(of: pinManager.identityGeneration) { _, _ in
+            syncPinnedSnapshot()
         }
         .task {
             // Route every load through the single owned rail (L2-211 Item 1 / C73):
@@ -140,15 +162,19 @@ struct FeedView: View {
 
     private var pinnedItems: [FeedItem] { pinnedItems(for: selectedCategory) }
 
+    private func syncPinnedSnapshot() {
+        pinnedSnapshot = SportsPinnedSnapshot13669(
+            eventIDs: pinManager.pinnedEventIDs,
+            futuresIDs: pinManager.pinnedFuturesIDs
+        )
+    }
+
     private func pinnedItems(for categoryID: String) -> [FeedItem] {
-        vm.filteredItems(for: categoryID).filter { item in
-            if item.type == "event", let event = item.event {
-                return pinManager.pinnedEventIDs.contains(event.id)
-            } else if item.type == "futures", let futures = item.futures {
-                return pinManager.pinnedFuturesIDs.contains(futures.id)
-            }
-            return false
-        }
+        let activeSnapshot = pinnedSnapshot ?? SportsPinnedSnapshot13669(
+            eventIDs: pinManager.pinnedEventIDs,
+            futuresIDs: pinManager.pinnedFuturesIDs
+        )
+        return activeSnapshot.pinnedItems(in: vm.filteredItems(for: categoryID))
     }
 
     /// #11288 — see `FeedViewModel.tabState`.
@@ -183,6 +209,7 @@ struct FeedView: View {
                         .buttonStyle(.borderless)
                     }
                     .listRowSeparator(.hidden)
+                    .noteReviewPromptTrouble12304()
                 }
             }
 
@@ -210,6 +237,7 @@ struct FeedView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
                     .listRowBackground(Color.clear)
+                    .noteReviewPromptTrouble12304(when: refreshFailed)
                 }
             } else if case .nothingInCategory(let stillLoading) = state {
                 Section {
@@ -255,16 +283,23 @@ struct FeedView: View {
             }
 
             if !live.isEmpty {
-                // live/048 — the header reads the bucket. See `EventState`.
-                feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.filteredLiveNowHasSuspended(for: selectedCategory)), systemImage: "circle.fill", imageColor: .red, items: live)
+                // live/048 + 401:B — band header first, then big-leagues-first subheadings
+                // with chronological time order inside each league.
+                bandedSections(
+                    band: .live,
+                    title: EventState.liveSectionTitle(hasSuspended: vm.filteredLiveNowHasSuspended(for: selectedCategory)),
+                    systemImage: "circle.fill",
+                    imageColor: .red,
+                    items: live
+                )
             }
 
             if !up.isEmpty {
-                feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: up)
+                bandedSections(band: .upcoming, title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: up)
             }
 
             if !happened.isEmpty {
-                feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: happened)
+                bandedSections(band: .justHappened, title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: happened)
             }
 
             if !shelfLeads, !shelfCards.isEmpty {
@@ -273,9 +308,11 @@ struct FeedView: View {
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
+        .contentMargins(.top, 4, for: .scrollContent)
         #endif
         .refreshable {
             await vm.startLoad()
+            syncPinnedSnapshot()
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
@@ -308,72 +345,156 @@ struct FeedView: View {
         )
     }
 
-    // MARK: - Section Builder
+    // MARK: - Section Builders
+
+    private func bandedSections(
+        band: SportsBandKind401B,
+        title: String,
+        systemImage: String,
+        imageColor: Color,
+        items: [FeedItem]
+    ) -> some View {
+        let groups = SportsLeagueBands401B.grouped(items, band: band)
+        return ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+            Section {
+                sectionItemsBody(group.items)
+            } header: {
+                VStack(alignment: .leading, spacing: 6) {
+                    if index == 0 {
+                        bandHeaderRow(
+                            title: title,
+                            systemImage: systemImage,
+                            imageColor: imageColor,
+                            count: items.count
+                        )
+                    }
+                    leagueHeaderRow(group)
+                }
+            }
+        }
+    }
 
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
         Section {
-            if sizeClass == .regular {
-                // iPad: multi-column masonry with context menu for pin.
-                //
-                // #3709 — see `DiscoverMasonry`. `LazyVGrid` lays out in ROWS
-                // and pads every cell to the tallest in its row; `items` mixes
-                // the tall `EventCardView` with the short futures strip, so the
-                // shorter card in a row carried the surplus as dead space
-                // BELOW it.
-                let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
-                let masonryColumns = DiscoverMasonry.columns(
-                    cardCount: items.count,
-                    columnCount: columnCount
-                )
-                HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
-                    ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
-                        VStack(spacing: DiscoverMasonry.listCardSpacing) {
-                            ForEach(indices, id: \.self) { idx in
-                                gridCard(items[idx])
-                                    .onAppear { emitSportsFirstRenderIfNeeded() }
-                            }
+            sectionItemsBody(items)
+        } header: {
+            bandHeaderRow(title: title, systemImage: systemImage, imageColor: imageColor, count: items.count)
+        }
+    }
+
+    @ViewBuilder
+    private func sectionItemsBody(_ items: [FeedItem]) -> some View {
+        if sizeClass == .regular {
+            // iPad: multi-column masonry with context menu for pin.
+            //
+            // #3709 — see `DiscoverMasonry`. `LazyVGrid` lays out in ROWS
+            // and pads every cell to the tallest in its row; `items` mixes
+            // the tall `EventCardView` with the short futures strip, so the
+            // shorter card in a row carried the surplus as dead space
+            // BELOW it.
+            let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+            let masonryColumns = DiscoverMasonry.columns(
+                cardCount: items.count,
+                columnCount: columnCount
+            )
+            HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
+                ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
+                    VStack(spacing: DiscoverMasonry.listCardSpacing) {
+                        ForEach(indices, id: \.self) { idx in
+                            gridCard(items[idx])
+                                .onAppear { emitSportsFirstRenderIfNeeded() }
                         }
-                        .frame(maxWidth: .infinity)
                     }
-                }
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear { gridWidth = geo.size.width }
-                            .onChange(of: geo.size.width) { _, newValue in
-                                gridWidth = newValue
-                            }
-                    }
-                )
-                .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 10, trailing: 4))
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-            } else {
-                ForEach(items) { item in
-                    feedRow(item)
-                        .onAppear { emitSportsFirstRenderIfNeeded() }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            pinSwipeButton(item)
-                        }
+                    .frame(maxWidth: .infinity)
                 }
             }
-        } header: {
-            HStack(spacing: 6) {
-                Label(title, systemImage: systemImage)
-                    .foregroundStyle(imageColor)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .textCase(nil)
-                Text("\(items.count)")
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(Capsule())
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { gridWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, newValue in
+                            gridWidth = newValue
+                        }
+                }
+            )
+            .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 10, trailing: 4))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+        } else {
+            ForEach(items) { item in
+                feedRow(item)
+                    .onAppear { emitSportsFirstRenderIfNeeded() }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        pinSwipeButton(item)
+                    }
             }
         }
+    }
+
+    private func bandHeaderRow(
+        title: String,
+        systemImage: String,
+        imageColor: Color,
+        count: Int
+    ) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(imageColor)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(imageColor)
+                .textCase(nil)
+                .lineLimit(2)
+                .allowsTightening(true)
+                .minimumScaleFactor(0.75)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
+            Text("\(count)")
+                .font(.caption2)
+                .fontWeight(.medium)
+                .foregroundStyle(DS.textSecondaryReadable)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(Capsule())
+                .fixedSize()
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private func leagueHeaderRow(_ group: SportsLeagueGroup401B) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: group.systemImage)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(DS.textSecondaryReadable)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+            Text(group.title)
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(.primary)
+                .textCase(nil)
+                .lineLimit(2)
+                .allowsTightening(true)
+                .minimumScaleFactor(0.75)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
+            Text("\(group.items.count)")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(DS.textSecondaryReadable)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+                .fixedSize()
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(group.title), \(group.items.count) \(group.items.count == 1 ? "game" : "games")")
+        .accessibilityAddTraits(.isHeader)
     }
 
     // MARK: - Single Futures Shelf (#13013 `246: A` + `256: B`)
