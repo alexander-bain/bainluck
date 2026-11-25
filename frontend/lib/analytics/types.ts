@@ -74,6 +74,9 @@ export interface PageViewParams {
     | 'calibration'
     | 'evals'
     | 'competition_hub'
+    // /guess, the unlisted guessing game (425: C). Its own value, so its
+    // visits are never counted with another page's.
+    | 'guess'
     | 'sports'
     | 'scorecard'
     | 'bug_reports'
@@ -273,6 +276,9 @@ export interface ScrollDepthParams {
     | 'calibration'
     | 'evals'
     | 'competition_hub'
+    // /guess, the unlisted guessing game (425: C). Its own value, so its
+    // visits are never counted with another page's.
+    | 'guess'
     | 'sports'
     | 'scorecard'
     | 'bug_reports'
@@ -310,6 +316,9 @@ export interface TimeOnPageParams {
     | 'calibration'
     | 'evals'
     | 'competition_hub'
+    // /guess, the unlisted guessing game (425: C). Its own value, so its
+    // visits are never counted with another page's.
+    | 'guess'
     | 'sports'
     | 'scorecard'
     | 'bug_reports'
