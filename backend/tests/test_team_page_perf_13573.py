@@ -148,27 +148,54 @@ async def test_redis_errors_fail_open(monkeypatch):
 async def test_get_team_cache_hit_skips_build_and_debug_timing_bypasses(monkeypatch):
     monkeypatch.setenv("REDIS_URL", "")
     db = _fake_real_pg_session()
+    team_ns = SimpleNamespace(
+        id=100,
+        sport_id=1,
+        name="Boston Celtics",
+        slug="boston-celtics",
+        abbreviation="BOS",
+        logo_url=None,
+        logo_url_small=None,
+        logo_url_large=None,
+        espn_id="2",
+        primary_color="#007A33",
+        secondary_color=None,
+        alternate_names=[],
+        current_record=None,
+        location="Boston",
+        roster_players=[],
+        standings_data=None,
+        standings_updated_at=None,
+        season_stats=None,
+        season_stats_updated_at=None,
+        sport=SimpleNamespace(key="basketball_nba", name="NBA"),
+    )
+    from app.routes import user as user_route
+
+    empty_scalars = MagicMock()
+    empty_scalars.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=empty_scalars)  # type: ignore[method-assign]
+
     built_calls = 0
 
-    async def _fake_build(identifier, debug_timing, _db, *, cache_target=None):
+    async def _counting_resolve(_db, _identifier):
         nonlocal built_calls
         built_calls += 1
-        resp = {
-            "team": {"id": 100, "slug": identifier.strip().lower()},
-            "season": None,
-            "upcoming_events": [],
-            "recent_events": [],
-            "futures": [{"market_id": 1}],
-            "championship_path": [],
-            "championship_path_market_ids": [],
-        }
-        if debug_timing:
-            resp["_timings_ms"] = {"total": 1}
-        elif cache_target is not None:
-            await cache_mod.write_team_page_cache(cache_target[0], cache_target[1], resp)
-        return resp
+        return team_ns
 
-    with patch.object(teams_route, "_build_team_response", side_effect=_fake_build):
+    with (
+        patch.object(teams_route, "_resolve_team_by_identifier", side_effect=_counting_resolve),
+        patch.object(
+            teams_route,
+            "_resolve_team_family_context",
+            AsyncMock(return_value=("basketball_nba", "basketball_nba", [1], [1], {100}, {"Boston Celtics"}, [100], ["Boston Celtics"])),
+        ),
+        patch.object(teams_route, "_folded_briefs", AsyncMock(return_value=([], []))),
+        patch.object(teams_route, "_read_cached_grid", AsyncMock(return_value=None)),
+        patch.object(teams_route, "_format_team", return_value={"id": 100, "slug": "boston-celtics"}),
+        patch.object(user_route, "_query_team_futures", AsyncMock(return_value={"items": [{"market_id": 1}]})),
+        patch.object(teams_route, "_get_championship_path", AsyncMock(return_value=[])),
+    ):
         first = await teams_route.get_team("Boston-Celtics ", debug_timing=False, db=db)
         second = await teams_route.get_team("boston-celtics", debug_timing=False, db=db)
         assert built_calls == 1
