@@ -3665,7 +3665,7 @@ def classify_market_quality(
     if computed_story_key is not None and (
         computed_story_key.startswith(GOLF_TOURNAMENT_STORY_PREFIX)
         or computed_story_key.startswith(EQUITY_TICKER_STORY_PREFIX)
-        or computed_story_key == "story:middle_east_conflict"
+        or (computed_story_key == "story:middle_east_conflict" and regional_conflict_operational)
         or is_national_presidential_election_story_key(computed_story_key)
         or is_congress_control_story_key(computed_story_key)
     ):

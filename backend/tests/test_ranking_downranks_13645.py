@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,6 +25,7 @@ from app.utils.ranking_eval import RANKING_SNAPSHOTS_ENV
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXED_CASES_PATH = REPO_ROOT / "evals" / "ranking" / "fixed_cases.json"
+FROZEN_NOW = datetime(2026, 11, 24, 18, 0, tzinfo=timezone.utc)
 
 
 def _roundup_card(slug: str, title: str, *, category: str, score: float = 80.0, member_ids=(1, 2)):
@@ -223,7 +225,7 @@ class TestDownrankFamilyRules13645:
             _futures_card(901, "U.S. confirms aliens before 2027?", category="culture", score=78.0),
             _futures_card(902, "Deep fallback card", category="politics", score=60.0),
         ]
-        mixed = apply_discover_opening_mix(deck)
+        mixed = apply_discover_opening_mix(deck, now=FROZEN_NOW)
         opening_slugs = {
             (it.get("data") or {}).get("story_key") for it in mixed[:10]
         }
