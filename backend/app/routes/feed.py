@@ -339,6 +339,7 @@ from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.futures_field_coverage import (
     field_leader_is_unsupported,
     field_winner_places,
+    has_limited_field_price_coverage,
 )
 from app.utils.futures_unsupported_price import row_carries_a_verdict
 from app.utils.event_twin_fold import fold_twin_events
@@ -3184,7 +3185,8 @@ def _suppress_zero_probability_cards(feed_items: list[dict]) -> tuple[list[dict]
     violation (#240 Item 4; extended by Queue 282 / C79).
 
     A LIVE prediction card must have at least one card-renderable outcome carrying
-    a non-null, positive probability. Two failure modes are suppressed:
+    a non-null, positive probability. An open field carrying an explicit coverage
+    notice can also offer its market link. Two failure modes are suppressed:
 
     * ALL-0% cards (#240 Item 4): typically stale/settled markets that leaked with
       status still 'open' (gotcha #33) — e.g. post-tournament golf FIELD markets
@@ -3209,6 +3211,9 @@ def _suppress_zero_probability_cards(feed_items: list[dict]) -> tuple[list[dict]
     for item in feed_items:
         if item.get("type") in ("futures", "comparison"):
             data = item.get("data") or {}
+            if item["type"] == "futures" and has_limited_field_price_coverage(data):
+                kept.append(item)
+                continue
             # Result-first settled envelopes render a winner, not a live line.
             if data.get("resolved") or data.get("winner"):
                 kept.append(item)
@@ -9269,7 +9274,8 @@ def _withhold_unsupported_field_leader(
     ):
         return
 
-    shape = (market.market_metadata or {}).get("shape")
+    metadata = market.market_metadata
+    shape = metadata.get("shape") if isinstance(metadata, dict) else None
     expected = shape.get("expected_winners") if isinstance(shape, dict) else None
     places = field_winner_places(market.name, _market_exclusivity(market), expected)
     graded = {

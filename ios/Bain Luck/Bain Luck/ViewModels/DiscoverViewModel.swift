@@ -1614,7 +1614,7 @@ final class DiscoverViewModel: ObservableObject {
     /// Mirrors the web `feedItemSuppressionReason` rules so both surfaces admit the
     /// same cards:
     ///  - `event`: always renderable — a real matchup + status/score, never a bare tile.
-    ///  - `futures`: needs ≥1 outcome row OR a settled status; else `empty_futures`.
+    ///  - `futures`: needs an outcome row, a settled status or a coverage notice.
     ///  - `tournament`: needs ≥1 golfer OR a settled marquee result (`marquee_whathit`);
     ///    else `empty_tournament`.
     ///  - `concept`: a probability-free hub card, renderable ONLY with an authoritative
@@ -1630,6 +1630,7 @@ final class DiscoverViewModel: ObservableObject {
         if item.event != nil { return nil }
         if let futures = item.futures {
             if let outcomes = futures.topOutcomes, !outcomes.isEmpty { return nil }
+            if futures.status == "open", futures.fieldPriceCoverageIncomplete == true { return nil }
             if futuresIsSettled(futures) { return nil }
             return "empty_futures"
         }

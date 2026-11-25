@@ -549,6 +549,21 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
     }
 
     @MainActor
+    func testOpenFieldWithExplicitCoverageNoticeKeepsItsCard() throws {
+        let card = """
+        {
+          "type": "futures", "score": 80, "context_summary": "Limited price coverage",
+          "data": { "id": 65677910, "name": "NBA Cup finalists", "status": "open",
+                    "top_outcomes": [], "outcome_count": 28, "field_price_coverage_incomplete": true }
+        }
+        """
+        let response = try Self.pageOfRawItems([card], offset: 0, hasMore: false)
+        let item = try XCTUnwrap(response.items.first)
+        XCTAssertNil(DiscoverViewModel.suppressionReason(item))
+        XCTAssertEqual(item.contextSummary, "Limited price coverage")
+    }
+
+    @MainActor
     func testPaginationDropsLiveConceptEnvelopes() async throws {
         // The #144 page: one real market buried in six probability-free concepts.
         let (vm, _) = try await loadedVM([

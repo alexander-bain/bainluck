@@ -1,6 +1,6 @@
 """Whether a field's available prices support a leader on a card."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from decimal import Decimal
 from math import fsum, isfinite
 import re
@@ -10,6 +10,13 @@ _CHAMPIONSHIP_FINALISTS = re.compile(
     r"\bteams? to (?:reach|make|advance to)\b.*\bchampionship game\s*[?!.]?$",
     re.IGNORECASE,
 )
+
+
+def has_limited_field_price_coverage(data: Mapping[str, object]) -> bool:
+    return (
+        data.get("status") == "open"
+        and data.get("field_price_coverage_incomplete") is True
+    )
 
 
 def field_winner_places(

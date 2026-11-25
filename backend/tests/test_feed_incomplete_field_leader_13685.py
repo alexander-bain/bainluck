@@ -121,6 +121,7 @@ async def test_card_keeps_link_and_retires_the_unsupported_leader(monkeypatch, p
             *args, preloaded_base={"markets": markets, "curator_ids": set()},
             price_refresh=path == "price_refresh",
         )
+    assert feed._suppress_zero_probability_cards(items) == (items, 0)
     by_id = {item["data"]["id"]: item for item in items}
     for board in (cup, abu_dhabi):
         item = by_id[board.id]
