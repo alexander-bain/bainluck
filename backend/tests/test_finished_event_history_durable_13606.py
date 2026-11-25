@@ -9,9 +9,9 @@ Covers all five Fable approval conditions + safety invariants:
 - Condition 3: Materializer defaults to batch cap 5, honors `FINISHED_EVENT_HISTORY_BATCH_SIZE`,
   logs `build_s` per event, selects post-grace finished events without a complete durable snapshot,
   and never stores partial or pending on-demand backfill builds.
-- Condition 4: `FINISHED_EVENT_HISTORY_COLD_MISS_MODE` switches between `read_through` (default)
-  and `since_start_fallback` (enqueues materialization, serves derived `since_start` without
-  polluting durable or L1 `"all"`).
+- Condition 4: `FINISHED_EVENT_HISTORY_COLD_MISS_MODE` switches between `since_start_fallback`
+  (default: enqueues materialization, serves derived `since_start` marked with `served_range`
+  and `range_fallback` without polluting durable or L1 `"all"`) and `read_through`.
 - Condition 5: Stored `"all"` equals live `"all"` field-for-field, and `derive_since_start_payload`
   from stored `"all"` equals live `range="since_start"` field-for-field across kickoff,
   `venue_expiration`, withheld 1-point sources, and `hasPostStartData == False`.
@@ -534,8 +534,9 @@ async def test_condition5_stored_all_and_derived_since_start_match_live_field_fo
                     136061, hours=48, chart_range="since_start", response=Response(), db=db, fresh=False
                 )
 
-        # Now turn durable storage on and run the real materializer + route reads.
+        # Now turn durable storage on and run route read-through + reads.
         _install_sqlite_durable_store(monkeypatch)
+        monkeypatch.setenv("FINISHED_EVENT_HISTORY_COLD_MISS_MODE", "read_through")
         monkeypatch.setattr(events_route, "materialize_finished_event_charts", SimpleNamespace(apply_async=lambda *a, **kw: None), raising=False)
         monkeypatch.setattr("app.tasks.materialize_finished_event_charts", SimpleNamespace(apply_async=lambda *a, **kw: None), raising=False)
 
@@ -602,6 +603,7 @@ async def test_condition1_small_table_fingerprint_and_snapshot_writer_invalidati
             await db.commit()
 
         _install_sqlite_durable_store(monkeypatch)
+        monkeypatch.setenv("FINISHED_EVENT_HISTORY_COLD_MISS_MODE", "read_through")
         async with maker() as db:
             # Cold read populates durable row
             payload1 = await events_route.get_event_odds_history(
@@ -833,10 +835,10 @@ async def test_condition4_cold_miss_since_start_fallback_and_kill_switch(monkeyp
             raising=False,
         )
 
-        # Cold-miss fallback mode: cold `range=all` enqueues background materializer once,
-        # serves derived `since_start` (`pre_window_omitted=True`), skips L1 cache for `"all"`,
+        # Default when unset is `since_start_fallback`: cold `range=all` enqueues background
+        # materializer once, serves derived `since_start` marked for clients, skips L1 `"all"`,
         # and does NOT write the trimmed body to `durable_state_snapshots`.
-        monkeypatch.setenv("FINISHED_EVENT_HISTORY_COLD_MISS_MODE", "since_start_fallback")
+        monkeypatch.delenv("FINISHED_EVENT_HISTORY_COLD_MISS_MODE", raising=False)
         assert feh.cold_miss_mode() == feh.COLD_MISS_SINCE_START_FALLBACK
 
         async with maker() as db:
@@ -845,6 +847,10 @@ async def test_condition4_cold_miss_since_start_fallback_and_kill_switch(monkeyp
             )
             body = json.loads(resp.body)
             assert body["pre_window_omitted"] is True
+            assert body["served_range"] == "since_start"
+            assert body["range_fallback"] == "since_start"
+            assert resp.headers["x-history-served-range"] == "since_start"
+            assert resp.headers["x-history-range-fallback"] == "since_start"
             assert len(enqueued) == 1
             assert enqueued[0]["kwargs"] == {"event_ids": [136061]}
             assert ehc.read(ehc.finished_cache_key(136061, "all")) is None
@@ -855,12 +861,13 @@ async def test_condition4_cold_miss_since_start_fallback_and_kill_switch(monkeyp
 
         # Second cold request within cooldown does not duplicate enqueue
         async with maker() as db:
-            await events_route.get_event_odds_history_cached(
+            resp2 = await events_route.get_event_odds_history_cached(
                 136061, hours=48, chart_range="all", response=Response(), db=db, fresh=False
             )
+            assert json.loads(resp2.body)["range_fallback"] == "since_start"
             assert len(enqueued) == 1
 
-        # Back to default `read_through`, `hours` collapse shares one L1 finished key
+        # Explicit `read_through`: `hours` collapse shares one L1 finished key without fallback marker
         monkeypatch.setenv("FINISHED_EVENT_HISTORY_COLD_MISS_MODE", "read_through")
         async with maker() as db:
             r24 = await events_route.get_event_odds_history_cached(
@@ -870,8 +877,12 @@ async def test_condition4_cold_miss_since_start_fallback_and_kill_switch(monkeyp
                 136061, hours=168, chart_range="all", response=Response(), db=db, fresh=False
             )
             assert r24.headers["x-feed-cache"] == "miss"
+            assert "x-history-range-fallback" not in r24.headers
             assert r168.headers["x-feed-cache"] == "hit"
-            assert json.loads(r24.body)["pre_window_omitted"] is False
+            r24_body = json.loads(r24.body)
+            assert r24_body["pre_window_omitted"] is False
+            assert r24_body["served_range"] == "all"
+            assert r24_body["range_fallback"] is None
 
         # Kill switch disables durable read & write cleanly
         monkeypatch.setenv("FINISHED_EVENT_HISTORY_DURABLE_ENABLED", "0")
@@ -1060,3 +1071,26 @@ async def test_thin_chart_not_persisted_and_deferred_without_starving_batch(monk
         await engine.dispose()
         ehc._reset_for_tests()
         feh._reset_claims_for_tests()
+
+
+def test_no_unittest_mock_in_prod_modules_and_mock_sessions_rejected():
+    from pathlib import Path
+    from unittest.mock import MagicMock
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.tasks import snapshots as snap_mod
+
+    backend_root = Path(__file__).resolve().parents[1]
+    for rel in (
+        "app/services/finished_event_history.py",
+        "app/tasks/snapshots.py",
+    ):
+        src = (backend_root / rel).read_text()
+        assert "unittest.mock" not in src, f"unexpected unittest.mock import in {rel}"
+
+    plain_mock = MagicMock()
+    spec_mock = MagicMock(spec=AsyncSession)
+    spec_mock.get_bind.return_value = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    for bad in (None, plain_mock, spec_mock):
+        assert feh.session_supports_durable(bad) is False
+        assert feh._session_supports_invalidation(bad) is False
+        assert snap_mod._identity_map_event_finished(bad, 136061) is False

@@ -20,7 +20,8 @@ Serves BOTH `range="all"` (iPhone `?hours=N` with no `range` + Web "All") and
 - Day-1 materializer cap (Condition 3): default 5 events per run with explicit
   per-event `build_s` logging on the `background` Celery queue.
 - Cold miss on an unstored finished game (Condition 4): controlled via
-  `FINISHED_EVENT_HISTORY_COLD_MISS_MODE` (`read_through` vs `since_start_fallback`).
+  `FINISHED_EVENT_HISTORY_COLD_MISS_MODE` (`since_start_fallback` default vs
+  `read_through`).
 """
 
 from __future__ import annotations
@@ -94,12 +95,12 @@ def durable_enabled() -> bool:
 
 
 def cold_miss_mode() -> str:
-    """Condition 4 switch: `read_through` (default) or `since_start_fallback`."""
-    raw = os.getenv("FINISHED_EVENT_HISTORY_COLD_MISS_MODE", COLD_MISS_READ_THROUGH)
+    """Condition 4 switch: `since_start_fallback` (default) or `read_through`."""
+    raw = os.getenv("FINISHED_EVENT_HISTORY_COLD_MISS_MODE", COLD_MISS_SINCE_START_FALLBACK)
     norm = raw.strip().lower()
-    if norm == COLD_MISS_SINCE_START_FALLBACK:
-        return COLD_MISS_SINCE_START_FALLBACK
-    return COLD_MISS_READ_THROUGH
+    if norm == COLD_MISS_READ_THROUGH:
+        return COLD_MISS_READ_THROUGH
+    return COLD_MISS_SINCE_START_FALLBACK
 
 
 def configured_batch_size(override: Optional[int] = None) -> int:
@@ -156,43 +157,31 @@ def _iso_or_none(value: Any) -> Optional[str]:
     return str(value)
 
 
-def _is_mock_object(obj: Any) -> bool:
+def _session_dialect_name(db: Any) -> Optional[str]:
+    """Return SQLAlchemy dialect name for genuine DB sessions/shims, else `None`."""
+    if db is None or not callable(getattr(db, "begin_nested", None)) or not callable(getattr(db, "execute", None)):
+        return None
+    get_bind = getattr(db, "get_bind", None)
+    if not callable(get_bind):
+        return None
     try:
-        from unittest.mock import Base as _MockBase
-
-        return isinstance(obj, _MockBase)
-    except Exception:  # pragma: no cover
-        return False
+        bind = get_bind()
+    except Exception:
+        return None
+    if bind is None or not (getattr(type(bind), "__module__", "") or "").startswith("sqlalchemy."):
+        return None
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
+    return dialect_name if isinstance(dialect_name, str) else None
 
 
 def session_supports_durable(db: Any) -> bool:
     """True when `db` is a real PostgreSQL SQLAlchemy AsyncSession supporting savepoints."""
-    if db is None or _is_mock_object(db) or not hasattr(db, "begin_nested") or not hasattr(db, "execute"):
-        return False
-    get_bind = getattr(db, "get_bind", None)
-    if not callable(get_bind):
-        return False
-    try:
-        bind = get_bind()
-    except Exception:
-        return False
-    dialect = getattr(bind, "dialect", None)
-    return getattr(dialect, "name", None) == "postgresql"
+    return _session_dialect_name(db) == "postgresql"
 
 
 def _session_supports_invalidation(db: Any) -> bool:
     """True for any real AsyncSession/Session backed by PG or SQLite (skip test stubs/mocks)."""
-    if db is None or _is_mock_object(db) or not hasattr(db, "execute") or not hasattr(db, "begin_nested"):
-        return False
-    get_bind = getattr(db, "get_bind", None)
-    if not callable(get_bind):
-        return False
-    try:
-        bind = get_bind()
-    except Exception:
-        return False
-    dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
-    return dialect_name in ("postgresql", "sqlite")
+    return _session_dialect_name(db) in ("postgresql", "sqlite")
 
 
 def _normalized_tags(raw_tags: Any) -> list[str]:
@@ -498,6 +487,8 @@ def derive_since_start_payload(
     out["win_prob_sources"] = win_prob_sources_meta
     out["aggregate_line"] = aggregate_line if aggregate_line else None
     out["pre_window_omitted"] = bool(pre_window_omitted)
+    out["served_range"] = "since_start"
+    out["range_fallback"] = None
     out["points"] = len(history)
     out["bookmaker_count"] = len(bookmaker_history)
     return out

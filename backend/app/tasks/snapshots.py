@@ -23,23 +23,24 @@ STAT_MODEL_LIVE_HEARTBEAT_S = 60.0
 def _identity_map_event_finished(session, event_id: int) -> bool:
     """Zero-SQL check: True iff `Event(event_id)` is already loaded as completed/closed."""
     try:
-        from unittest.mock import Base as _MockBase
-
         from app.models.models import Event
 
-        if session is None or isinstance(session, _MockBase):
+        if session is None:
             return False
         imap = getattr(session, "identity_map", None)
         if imap is None:
             sync_sess = getattr(session, "sync_session", None)
-            if sync_sess is not None and not isinstance(sync_sess, _MockBase):
+            if sync_sess is not None:
                 imap = getattr(sync_sess, "identity_map", None)
-        if imap is None or isinstance(imap, _MockBase):
+        if imap is None or not (
+            getattr(type(imap), "__module__", "") or ""
+        ).startswith("sqlalchemy."):
             return False
         ev = imap.get((Event, (int(event_id),), None))
         if ev is None:
             return False
-        return getattr(ev, "status", None) in ("completed", "closed")
+        status = getattr(ev, "status", None)
+        return isinstance(status, str) and status in ("completed", "closed")
     except Exception:
         return False
 

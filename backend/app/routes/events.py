@@ -34759,13 +34759,20 @@ async def get_event_odds_history_cached(
     key = ehc.cache_key(event_id, hours, chart_range)
     finished_key = ehc.finished_cache_key(event_id, chart_range)
 
-    def _respond(body: bytes, cache_control: Optional[str], state: str) -> Response:
+    def _respond(
+        body: bytes,
+        cache_control: Optional[str],
+        state: str,
+        extra_headers: Optional[dict[str, str]] = None,
+    ) -> Response:
         headers = {"X-Feed-Cache": state}
         if cache_control:
             headers["Cache-Control"] = cache_control
+        if extra_headers:
+            headers.update(extra_headers)
         return Response(content=body, media_type="application/json", headers=headers)
 
-    async def _build(publish: bool) -> tuple[bytes, Optional[str]]:
+    async def _build(publish: bool) -> tuple[bytes, Optional[str], dict[str, str]]:
         sub = Response()
         marks, token = ehc.begin_marks()
         try:
@@ -34781,21 +34788,26 @@ async def get_event_odds_history_cached(
             ehc.end_marks(token)
         body = _encode_history_payload(payload)
         cache_control = sub.headers.get("cache-control")
+        extra_headers = {
+            name: val
+            for name in ("X-History-Served-Range", "X-History-Range-Fallback")
+            if (val := sub.headers.get(name))
+        }
         lease = ehc.lease_for(marks, payload)
         if publish and lease > 0:
             target_key = finished_key if marks.finished else key
             ehc.write(target_key, body, cache_control, lease)
-        return body, cache_control
+        return body, cache_control, extra_headers
 
     # #10090 R3: coalesced per (event, hours, range) by the #9296 barrier, and
     # still never published. A fresh history read is the other half of the
     # recovery pair, so the same broadcast that makes every open page re-read
     # detail makes every one of them re-read this.
     if fresh:
-        body, cache_control = await _coalesced_fresh_build(
+        body, cache_control, extra_headers = await _coalesced_fresh_build(
             _HISTORY_FRESH_BUILDS, key, time.time(), lambda: _build(publish=False)
         )
-        return _respond(body, cache_control, "bypass")
+        return _respond(body, cache_control, "bypass", extra_headers)
 
     flight_key = f"event_history:{key[0]}:{key[1]}:{key[2]}"
     while True:
@@ -34810,14 +34822,14 @@ async def get_event_odds_history_cached(
             # second build beside it. The leader resolves the future on every
             # exit, and its wait is never longer than building our own would be.
             try:
-                body, cache_control = await _asyncio.shield(fut)
+                body, cache_control, extra_headers = await _asyncio.shield(fut)
             except _asyncio.CancelledError:
                 raise
             except Exception:
                 # The leader exited without a body (failed, 404, or its reader
                 # went away). It is no longer running: re-check and claim.
                 continue
-            return _respond(body, cache_control, "coalesced")
+            return _respond(body, cache_control, "coalesced", extra_headers)
 
         try:
             built = await _build(publish=True)
@@ -34834,7 +34846,7 @@ async def get_event_odds_history_cached(
                 fut.exception()
             raise
         _rc.finish_build(flight_key, fut, result=built)
-        return _respond(built[0], built[1], "miss")
+        return _respond(built[0], built[1], "miss", built[2])
 
 
 async def get_event_odds_history(
@@ -35098,6 +35110,7 @@ async def get_event_odds_history(
     _finished_fp = None
     _finished_write_fn = None
     _finished_write_source = None
+    _cold_miss_since_start_fallback = False
     if is_stale_open:
         # No cutoff and no end cap — see `_event_started_long_ago_unsettled` on
         # why `commence_time` cannot be trusted to bound this cohort.
@@ -35215,7 +35228,15 @@ async def get_event_odds_history(
                     and _series_single_id is not None
                 ):
                     chart_range = EVENT_HISTORY_RANGE_SINCE_START
+                    _cold_miss_since_start_fallback = True
                     _history_mark_skip_cache()
+                    if response is not None:
+                        response.headers["X-History-Served-Range"] = (
+                            EVENT_HISTORY_RANGE_SINCE_START
+                        )
+                        response.headers["X-History-Range-Fallback"] = (
+                            EVENT_HISTORY_RANGE_SINCE_START
+                        )
 
         query = select(OddsSnapshot).where(
             OddsSnapshot.event_id.in_(oriented_series_ids)
@@ -37426,6 +37447,12 @@ async def get_event_odds_history(
         # a second request without it would tell this caller more. False on
         # every payload served today, including every `range=all` one.
         "pre_window_omitted": pre_window_omitted,
+        "served_range": chart_range,
+        "range_fallback": (
+            EVENT_HISTORY_RANGE_SINCE_START
+            if _cold_miss_since_start_fallback
+            else None
+        ),
         # #7878: false iff `commence_time` above is Kalshi's expected EXPIRATION
         # rather than a start — the venue's `occurrence_datetime`, which is
         # byte-identical to `expected_expiration_time` and is when the contract
