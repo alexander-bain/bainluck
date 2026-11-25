@@ -5,11 +5,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies.auth import get_optional_user
+from app.dependencies.auth import get_current_user, get_optional_user
 from app.models.models import DeviceToken, User
 from app.routes.admin_utils import _check_admin_secret
 from app.services.database import get_db, get_db_rw
@@ -31,6 +31,15 @@ class DeviceTokenRegistration(BaseModel):
     # defaulted so app builds shipped before Queue 311 keep registering exactly
     # as they do today, and land as `apns`, which is what they are.
     token_kind: Optional[str] = None
+
+
+class DeviceTokenUnregistration(BaseModel):
+    """Signed-in sign-out detach payload (#12569 / PR #13684)."""
+
+    device_token: str
+    platform: Optional[str] = None  # "ios" or "macos"
+    session_id: Optional[str] = None
+    token_kind: Optional[str] = None  # "apns" or "fcm"
 
 
 class TestNotificationRequest(BaseModel):
@@ -117,6 +126,46 @@ async def register_device_token(
     await db.commit()
 
     return {"status": "ok", "token_kind": token_kind}
+
+
+@router.post("/unregister")
+async def unregister_device_token(
+    request: Request,
+    body: DeviceTokenUnregistration,
+    db: AsyncSession = Depends(get_db_rw),
+    user: User = Depends(get_current_user),
+):
+    """Detach a signed-in reader's device token from their account on sign-out (#12569).
+
+    Requires valid Bearer authentication (``get_current_user``) and filters the
+    update strictly by ``DeviceToken.user_id == user.id`` so another account (or
+    an unsigned caller) can never detach a victim's device.
+
+    NOTE (#12569 rollout): ``POST /api/notifications/register`` intentionally
+    keeps the legacy unsigned detach path working until iOS 1.0.8 is live.
+    """
+    session_id = body.session_id or request.headers.get("x-session-id")
+    token_kind = {"apns": "apns", "fcm": "fcm"}.get(body.token_kind or "", "apns")
+    result = await db.execute(
+        sa_update(DeviceToken)
+        .where(
+            DeviceToken.device_token == body.device_token,
+            DeviceToken.user_id == user.id,
+        )
+        .values(
+            user_id=None,
+            updated_at=func.now(),
+        )
+    )
+    await db.commit()
+    detached = bool(getattr(result, "rowcount", 0))
+    logger.info(
+        "Device token unregistered: has_session=%s user=%d detached=%s",
+        bool(session_id),
+        int(user.id),
+        detached,
+    )
+    return {"status": "ok", "detached": detached, "token_kind": token_kind}
 
 
 @router.post("/admin/send-test")
