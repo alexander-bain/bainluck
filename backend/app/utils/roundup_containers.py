@@ -1178,13 +1178,11 @@ MACHINERY_IMMINENT_START_WINDOW_S = 180.0
 # True terminal/resulted statuses (#13718 + Fable ask 2): ONLY these qualify a
 # fixed-member standing set for the 24-hour Discover retirement skip. A market
 # with status == "closed" and no result yet is temporarily halted/non-trading
-# (`_NON_TRADING_MEMBER_STATUSES`) and must keep the ordinary short cache TTL so
-# it recovers automatically if trading resumes.
+# (see `_roundup_members_settlement_state` returning `'all_closed'`) and must
+# keep the ordinary short cache TTL so it recovers automatically if trading resumes.
 _RESULT_MEMBER_STATUSES = frozenset(
     {"settled", "completed", "final", "finished", "graded", "resolved"}
 )
-_NON_TRADING_MEMBER_STATUSES = _RESULT_MEMBER_STATUSES | {"closed"}
-_SETTLED_MEMBER_STATUSES = _RESULT_MEMBER_STATUSES
 _ROLLING_DISCOVER_PRODUCER_KINDS = frozenset(
     {
         "window_events_closest",
