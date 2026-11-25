@@ -5327,6 +5327,11 @@ async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
             if len(_VERIFIED_TITLE_CACHE.keys() | entries.keys()) > _VERIFIED_TITLE_CACHE_MAX:
                 _VERIFIED_TITLE_CACHE.clear()
         _VERIFIED_TITLE_CACHE.update({mid: (now + ttl, value) for mid, value in entries.items()})
+        super_bowl = entries.get(SUPER_BOWL_2027_BOARD_ID)
+        if isinstance(super_bowl, Composition):
+            from app.routes.title_feed_projection import remember_super_bowl_projection
+
+            await remember_super_bowl_projection(super_bowl, ttl)
     return verdict
 
 

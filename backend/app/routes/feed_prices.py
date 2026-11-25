@@ -212,8 +212,14 @@ async def _market_cards(db, ids, now):
             outcome["price_observed_at"] = outcome["price_revision_at"]  # Legacy ordering only.
         dispositions[f"futures-{market.id}"] = "updated"
     from app.routes.title_feed_projection import project_super_bowl_card
+    from app.utils.futures_verified_title import SUPER_BOWL_2027_BOARD_ID
 
-    return terminal_items + await project_super_bowl_card(items, db), dispositions
+    # A cached projection has the clocks of the earlier reading. It can fill
+    # a fresh Sports page, but must not inherit these newer row revisions.
+    projected = await project_super_bowl_card(items, db, allow_shared=False)
+    if len(projected) < len(items):
+        dispositions[f"futures-{SUPER_BOWL_2027_BOARD_ID}"] = "unresolved"
+    return terminal_items + projected, dispositions
 
 
 @router.get("/outcome-prices")
