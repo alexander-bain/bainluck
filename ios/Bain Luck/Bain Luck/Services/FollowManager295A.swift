@@ -11,6 +11,7 @@ nonisolated enum FollowedSubjectKind295A: String, Codable, Hashable, Sendable {
     case team
     case league
     case set
+    case subject
 }
 
 nonisolated enum FollowedSetKind295A: String, Codable, Hashable, Sendable {
@@ -26,6 +27,9 @@ nonisolated struct FollowedSubject295A: Codable, Identifiable, Hashable, Sendabl
     var teamId: Int? = nil
     var sportKey: String? = nil
     var setKind: FollowedSetKind295A? = nil
+    var marketId: Int? = nil
+    var affinityCategory: String? = nil
+    var searchQuery: String? = nil
     let name: String
     var logoUrl: String? = nil
     var primaryColor: String? = nil
@@ -40,6 +44,8 @@ nonisolated struct FollowedSubject295A: Codable, Identifiable, Hashable, Sendabl
         case .set:
             let subtype = setKind?.rawValue ?? "container"
             return "set:\(subtype):\(slug.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+        case .subject:
+            return "subject:\(Self.normalizeSlug(slug))"
         }
     }
 
@@ -70,6 +76,26 @@ nonisolated struct FollowedSubject295A: Codable, Identifiable, Hashable, Sendabl
             case .concept:
                 return .conceptCard(key: slug, name: name)
             }
+        case .subject:
+            if let marketId, marketId > 0 {
+                return .futuresDetail(id: marketId)
+            }
+            let key = "\(affinityCategory ?? "") \(slug) \(name)".lowercased()
+            if key.contains("entertainment") || key.contains("award") || key.contains("oscar")
+                || key.contains("culture") || key.contains("movie") || key.contains("music") {
+                return .entertainment
+            }
+            if key.contains("econ") || key.contains("macro") || key.contains("inflation")
+                || key.contains("fed") || key.contains("rate") || key.contains("finance") {
+                return .economics
+            }
+            if key.contains("politic") || key.contains("geopolitic") || key.contains("election") {
+                return .politics
+            }
+            if key.contains("weather") || key.contains("climate") {
+                return .weather
+            }
+            return .futuresList
         }
     }
 
@@ -180,8 +206,40 @@ nonisolated struct FollowedSubject295A: Codable, Identifiable, Hashable, Sendabl
         )
     }
 
+    static func subject(
+        slug: String,
+        name: String,
+        affinityCategory: String? = nil,
+        marketId: Int? = nil,
+        logoUrl: String? = nil,
+        primaryColor: String? = nil,
+        searchQuery: String? = nil
+    ) -> FollowedSubject295A {
+        FollowedSubject295A(
+            kind: .subject,
+            slug: slug.trimmingCharacters(in: .whitespacesAndNewlines),
+            teamId: nil,
+            sportKey: nil,
+            setKind: nil,
+            marketId: marketId,
+            affinityCategory: affinityCategory?.trimmingCharacters(in: .whitespacesAndNewlines),
+            searchQuery: searchQuery?.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            logoUrl: logoUrl,
+            primaryColor: primaryColor
+        )
+    }
+
     func matches(_ other: FollowedSubject295A) -> Bool {
         if id == other.id { return true }
+        if kind == .subject && other.kind == .subject {
+            if let lhsId = marketId, lhsId > 0, let rhsId = other.marketId, rhsId > 0 {
+                return lhsId == rhsId
+            }
+            let lhsSlug = Self.normalizeSlug(slug)
+            let rhsSlug = Self.normalizeSlug(other.slug)
+            return !lhsSlug.isEmpty && lhsSlug == rhsSlug
+        }
         guard kind == .team && other.kind == .team else { return false }
 
         let lhsValidId = (teamId ?? 0) > 0 ? teamId : nil
@@ -205,9 +263,9 @@ nonisolated struct FollowedSubject295A: Codable, Identifiable, Hashable, Sendabl
             return true
         }
 
-        // Name fallback is restricted strictly to subjects where NEITHER side has a teamId
-        // and BOTH sides carry matching non-empty sport keys.
-        guard lhsValidId == nil && rhsValidId == nil else { return false }
+        // Name fallback applies when at most one side carries a numeric teamId (for example
+        // an id-backed follow matched against a game card whose feed omitted `team_id`),
+        // provided BOTH sides carry non-empty matching sport families.
         guard let s1 = sportKey?.lowercased(), let s2 = other.sportKey?.lowercased(), !s1.isEmpty, !s2.isEmpty else {
             return false
         }
@@ -298,7 +356,15 @@ final class FollowManager295A: ObservableObject {
                 sportKey: fav.sportKey,
                 logoUrl: fav.logoUrl
             )
-            if !isFollowing(candidate) {
+            if let existingIdx = subjects.firstIndex(where: { $0.matches(candidate) }) {
+                if (subjects[existingIdx].teamId ?? 0) <= 0 {
+                    subjects[existingIdx].teamId = fav.teamId
+                    if subjects[existingIdx].logoUrl == nil {
+                        subjects[existingIdx].logoUrl = fav.logoUrl
+                    }
+                    changed = true
+                }
+            } else {
                 subjects.append(candidate)
                 changed = true
             }

@@ -186,7 +186,8 @@ final class ScorelessLiveTennis250ATests: XCTestCase {
         let discoverModel = DiscoverSingleGameCard190C.build(
             event: feed,
             prematch: PrematchReading.resolve(prematch: feed.prematchOdds, opening: nil),
-            showsInlinePregame: true
+            showsInlinePregame: true,
+            showsLiveTenths: true
         )
         XCTAssertTrue(discoverModel.isLive)
         XCTAssertNil(discoverModel.headers.score, "Discover card must omit Score header")

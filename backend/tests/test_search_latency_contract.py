@@ -568,9 +568,25 @@ def _enrichment_source() -> str:
 
 
 def test_the_route_uses_the_shared_enrichment_query():
-    """If the route stops calling the helper, every guard below is asserting the shape
-    of dead code while the live path does whatever it likes."""
-    assert "latest_odds_per_bookmaker_query(event_ids)" in SEARCH_CODE, (
+    """If the route stops calling the helper (directly or via the unified game read),
+    every guard below is asserting the shape of dead code while the live path does
+    whatever it likes."""
+    from app.utils import unified_game_read
+
+    direct = "latest_odds_per_bookmaker_query(event_ids)" in SEARCH_CODE
+    unified_load_src = _strip_comments(
+        _source_of(unified_game_read.load_unified_game_reads)
+    )
+    unified_fetch_src = _strip_comments(
+        _source_of(unified_game_read._fetch_odds_snapshots)
+    )
+    via_unified = (
+        "load_unified_game_reads(" in SEARCH_CODE
+        and "odds_query_fn=latest_odds_per_bookmaker_query" in SEARCH_CODE
+        and "_fetch_odds_snapshots(" in unified_load_src
+        and "odds_query_fn(odds_query_ids)" in unified_fetch_src
+    )
+    assert direct or via_unified, (
         "search_events no longer builds its odds enrichment from the shared helper — "
         "the shape guards and the real-Postgres equivalence test now cover nothing"
     )

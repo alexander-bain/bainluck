@@ -127,6 +127,21 @@ final class CompactGameCard12616Tests: XCTestCase {
             "25%"
         )
 
+        let threeWayLive = try decodeEvent("""
+        {"id": 12, "sport": "soccer_epl", "home_team": "Chelsea", "away_team": "Arsenal",
+         "status": "live", "current_odds": {"home_probability": 0.34, "away_probability": 0.41, "draw_probability": 0.254}}
+        """)
+        XCTAssertEqual(
+            CompactGameCard12616.drawChanceText(
+                event: threeWayLive, isScheduled: false, isLive: true, isFinished: false, isSuspended: false, showsLiveTenths: true),
+            "25.4%"
+        )
+        XCTAssertEqual(
+            CompactGameCard12616.drawChanceText(
+                event: threeWayLive, isScheduled: false, isLive: true, isFinished: false, isSuspended: false, showsLiveTenths: false),
+            "25%"
+        )
+
         // Three-way bar shares: 41% Arsenal (away), 25% Draw (middle, 187-A), 34% Chelsea (home).
         let shares = ProbabilityBar.normalizedShares(awayProb: 0.41, homeProb: 0.34, drawProb: 0.25)
         XCTAssertEqual(shares.away, 0.41, accuracy: 0.0001)

@@ -151,7 +151,8 @@ final class LiveCardSourceMarkSheetTenthsTests: XCTestCase {
                 canStillBeGraded: true,
                 currentAwayIsWithheld: false,
                 prematch: nil,
-                prematchAwayIsWithheld: false
+                prematchAwayIsWithheld: false,
+                showsLiveTenths: true
             )
         )
         XCTAssertTrue(resolved.showsTenths, "Live card printing 96.0% in Now must open its sheet in tenths")
@@ -255,7 +256,8 @@ final class LiveCardSourceMarkSheetTenthsTests: XCTestCase {
                 canStillBeGraded: true,
                 currentAwayIsWithheld: false,
                 prematch: nil,
-                prematchAwayIsWithheld: false
+                prematchAwayIsWithheld: false,
+                showsLiveTenths: true
             )
         )
         XCTAssertTrue(overroundResolved.showsTenths)
@@ -347,7 +349,8 @@ final class LiveCardSourceMarkSheetTenthsTests: XCTestCase {
                 canStillBeGraded: true,
                 currentAwayIsWithheld: false,
                 prematch: nil,
-                prematchAwayIsWithheld: false
+                prematchAwayIsWithheld: false,
+                showsLiveTenths: true
             )
         )
 
@@ -357,6 +360,7 @@ final class LiveCardSourceMarkSheetTenthsTests: XCTestCase {
         let pinManager = PinManager(defaults: defaults)
 
         let sportsCard = EventCardView(event: event, reason: nil)
+            .environment(\.liveOddsRefreshActive, true)
             .environmentObject(pinManager)
             .padding(16)
         let discoverCard = DiscoverCompactSingleGameCard190CView(
@@ -369,6 +373,7 @@ final class LiveCardSourceMarkSheetTenthsTests: XCTestCase {
         } footerRow: {
             EmptyView()
         }
+        .environment(\.liveOddsRefreshActive, true)
         .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 16))
         .padding(16)
 

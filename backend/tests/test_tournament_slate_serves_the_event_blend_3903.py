@@ -381,6 +381,9 @@ class _FakeResult:
     def all(self):
         return self._rows
 
+    def scalars(self):
+        return self
+
 
 class _CapturingSession:
     """Answers `execute` with prepared rows and keeps the statement it was given.
@@ -401,6 +404,8 @@ class _CapturingSession:
 
     async def execute(self, statement):
         self.statements.append(statement)
+        if "odds_bookmakers" in str(statement).lower():
+            return _FakeResult([])
         if any(
             desc["name"] == "event_tags" for desc in statement.column_descriptions
         ):
@@ -532,7 +537,7 @@ def test_live_registered_overlay_keeps_folded_inputs_on_the_correct_side(swap):
     )
     session = _CapturingSession([event], [twin])
     blends = asyncio.run(_load_blends(session, [EVENT_ID]))
-    assert len(session.statements) == 2
+    assert len(session.statements) == 3  # event query + twin fold + unified sportsbook read
     expected_hero = resolve_hero(FoldedBlendView(event, {**sources, "kalshi": kalshi}))
     assert expected_hero is not None
 

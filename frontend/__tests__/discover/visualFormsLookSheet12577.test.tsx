@@ -194,6 +194,21 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     });
   });
 
+  it.each([0, undefined])("uses the under-one label for both paired stages with allocation %s", (allocation) => {
+    const set = PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
+    const entry: PairedSubjectEntry = {
+      ...set.entries[0],
+      stage_1_settled_state: null,
+      stage_1_probability: allocation === 0 ? 0.007 : 0.003,
+      stage_2_probability: allocation === 0 ? 0.007 : 0.003,
+      stage_1_rendered_percent: allocation,
+      stage_2_rendered_percent: allocation,
+    };
+    const expected = { kind: "percent", percent: 0, label: "<1%" };
+    expect(formatStage1Display(entry, set)).toMatchObject(expected);
+    expect(formatStage2Display(entry, set)).toMatchObject(expected);
+  });
+
   it("replaces the first number with ✓ or ✗ once step 1 settles ('settled means settled')", () => {
     const bpSet = PAIRED_METRIC_REGISTER["oscars-2027-best-picture"];
     const odyssey = bpSet.entries[0];
