@@ -11,7 +11,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 import re
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from app.utils.kit_v1_spec import (
     ALLOWED_KIT_IMAGE_HOSTS,
@@ -1013,7 +1013,7 @@ def _build_countdown_section(
             "id": f"{slug}-cd-{m['id']}",
             "marks": [
                 _mark_word(title, style="row", tone="primary", align="left", width="flex"),
-                _mark_number(days, f"{days}d", unit="count", tone="muted", prominence="secondary", align="right", width="auto"),
+                _mark_number(days, f"{days}d", unit="days", tone="muted", prominence="secondary", align="right", width="auto"),
                 _mark_number(pct, f"{pct}%", unit="%", tone="primary", prominence="primary", align="right", width="auto"),
             ],
         })
