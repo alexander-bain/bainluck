@@ -211,6 +211,12 @@ final class AuthManager: ObservableObject {
                 self.lastAuthErrorDiagnostic = diagnostic
                 self.error = "No internet connection. Connect to Wi-Fi or cellular and try again."
                 self.isSigningIn = false
+                AnalyticsService.trackAuthSignInFailed(
+                    method: "apple",
+                    stage: AuthFailureStage.networkCheck.rawValue,
+                    errorDomain: "NWPathMonitor",
+                    errorCode: 0
+                )
                 logger.error("Apple sign-in failed: \(diagnostic, privacy: .public)")
                 return
             }
@@ -221,6 +227,12 @@ final class AuthManager: ObservableObject {
                 self.lastAuthErrorDiagnostic = diagnostic
                 self.error = "Cannot present sign-in. Please try again."
                 self.isSigningIn = false
+                AnalyticsService.trackAuthSignInFailed(
+                    method: "apple",
+                    stage: AuthFailureStage.presentingViewController.rawValue,
+                    errorDomain: "presenting_vc",
+                    errorCode: 0
+                )
                 logger.error("Apple sign-in failed: \(diagnostic, privacy: .public)")
                 return
             }
@@ -238,6 +250,7 @@ final class AuthManager: ObservableObject {
                         if let authError = error as? ASAuthorizationError, authError.code == .canceled {
                             return
                         }
+                        Self.handleAppleSDKFailureTelemetry(error)
                         let diagnostic = Self.describeErrorForLog(error, stage: .appleSDK)
                         self.lastAuthErrorDiagnostic = diagnostic
                         self.error = Self.userFacingAuthError(error)
@@ -455,6 +468,12 @@ final class AuthManager: ObservableObject {
         guard let identityTokenData = credential.identityToken,
               let identityToken = String(data: identityTokenData, encoding: .utf8) else {
             error = "Apple Sign-In failed: no identity token"
+            AnalyticsService.trackAuthSignInFailed(
+                method: "apple",
+                stage: AuthFailureStage.appleSDK.rawValue,
+                errorDomain: "apple_credential",
+                errorCode: 0
+            )
             logger.error("No identity token in Apple credential")
             return
         }
@@ -475,6 +494,12 @@ final class AuthManager: ObservableObject {
 
             guard let tokenData = response.idToken.data(using: .utf8) else {
                 error = "Failed to encode session token"
+                AnalyticsService.trackAuthSignInFailed(
+                    method: "apple",
+                    stage: AuthFailureStage.sessionSave.rawValue,
+                    errorDomain: "session_encode",
+                    errorCode: 0
+                )
                 return
             }
             _ = KeychainHelper.save(key: keychainTokenKey, data: tokenData)
@@ -491,6 +516,15 @@ final class AuthManager: ObservableObject {
             AnalyticsService.setUserProperty("logged_in", forName: "login_status")
             logger.info("Apple sign-in successful: user \(response.user.id)")
         } catch {
+            let metrics = Self.extractAuthFailureMetrics(from: error)
+            AnalyticsService.trackAuthSignInFailed(
+                method: "apple",
+                stage: AuthFailureStage.backendExchange.rawValue,
+                errorDomain: metrics.domain,
+                errorCode: metrics.code,
+                underlyingDomain: metrics.underlyingDomain,
+                underlyingCode: metrics.underlyingCode
+            )
             let diagnostic = Self.describeErrorForLog(error, stage: .backendExchange)
             self.lastAuthErrorDiagnostic = diagnostic
             self.error = Self.userFacingAuthError(error)
@@ -562,6 +596,12 @@ final class AuthManager: ObservableObject {
             let diagnostic = "stage=\(AuthFailureStage.networkCheck.rawValue) unavailable"
             lastAuthErrorDiagnostic = diagnostic
             error = "No internet connection. Connect to Wi-Fi or cellular and try again."
+            AnalyticsService.trackAuthSignInFailed(
+                method: "google",
+                stage: AuthFailureStage.networkCheck.rawValue,
+                errorDomain: "NWPathMonitor",
+                errorCode: 0
+            )
             logger.error("Google sign-in failed: \(diagnostic, privacy: .public)")
             return
         }
@@ -570,6 +610,12 @@ final class AuthManager: ObservableObject {
             let diagnostic = "stage=\(AuthFailureStage.googleConfig.rawValue) missing_client_id"
             lastAuthErrorDiagnostic = diagnostic
             error = "Google Sign-In not configured"
+            AnalyticsService.trackAuthSignInFailed(
+                method: "google",
+                stage: AuthFailureStage.googleConfig.rawValue,
+                errorDomain: "google_config",
+                errorCode: 0
+            )
             logger.error("Google sign-in failed: \(diagnostic, privacy: .public)")
             return
         }
@@ -582,6 +628,12 @@ final class AuthManager: ObservableObject {
                 let diagnostic = "stage=\(AuthFailureStage.presentingViewController.rawValue) nil_presenter"
                 lastAuthErrorDiagnostic = diagnostic
                 error = "Cannot present sign-in"
+                AnalyticsService.trackAuthSignInFailed(
+                    method: "google",
+                    stage: AuthFailureStage.presentingViewController.rawValue,
+                    errorDomain: "presenting_vc",
+                    errorCode: 0
+                )
                 logger.error("Google sign-in failed: \(diagnostic, privacy: .public)")
                 return
             }
@@ -590,6 +642,15 @@ final class AuthManager: ObservableObject {
             if Self.isGoogleSignInCanceled(error) {
                 return
             }
+            let metrics = Self.extractAuthFailureMetrics(from: error)
+            AnalyticsService.trackAuthSignInFailed(
+                method: "google",
+                stage: AuthFailureStage.googleSDK.rawValue,
+                errorDomain: metrics.domain,
+                errorCode: metrics.code,
+                underlyingDomain: metrics.underlyingDomain,
+                underlyingCode: metrics.underlyingCode
+            )
             let diagnostic = Self.describeErrorForLog(error, stage: .googleSDK)
             lastAuthErrorDiagnostic = diagnostic
             self.error = Self.userFacingAuthError(error)
@@ -603,6 +664,15 @@ final class AuthManager: ObservableObject {
                 try await exchangeToken(payload.accessToken)
             }
         } catch {
+            let metrics = Self.extractAuthFailureMetrics(from: error)
+            AnalyticsService.trackAuthSignInFailed(
+                method: "google",
+                stage: AuthFailureStage.backendExchange.rawValue,
+                errorDomain: metrics.domain,
+                errorCode: metrics.code,
+                underlyingDomain: metrics.underlyingDomain,
+                underlyingCode: metrics.underlyingCode
+            )
             let diagnostic = Self.describeErrorForLog(error, stage: .backendExchange)
             lastAuthErrorDiagnostic = diagnostic
             self.error = Self.userFacingAuthError(error)
@@ -614,6 +684,12 @@ final class AuthManager: ObservableObject {
             let diagnostic = "stage=\(AuthFailureStage.sessionSave.rawValue) keychain_save_failed"
             lastAuthErrorDiagnostic = diagnostic
             error = "Sign-in failed. Please try again."
+            AnalyticsService.trackAuthSignInFailed(
+                method: "google",
+                stage: AuthFailureStage.sessionSave.rawValue,
+                errorDomain: "keychain_save",
+                errorCode: 0
+            )
             logger.error("Google sign-in failed: \(diagnostic, privacy: .public)")
             return
         }
@@ -677,6 +753,43 @@ final class AuthManager: ObservableObject {
         }
         let nsError = error as NSError
         return nsError.domain == googleSignInErrorDomain && nsError.code == GIDSignInError.canceled.rawValue
+    }
+
+    static func extractAuthFailureMetrics(
+        from error: Error
+    ) -> (domain: String, code: Int, underlyingDomain: String?, underlyingCode: Int?) {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .networkError(let underlying):
+                let ns = underlying as NSError
+                return ("apiError.networkError", ns.code, ns.domain, ns.code)
+            case .httpError(let statusCode, _):
+                return ("apiError.httpError", statusCode, nil, nil)
+            case .decodingError(let underlying):
+                let ns = underlying as NSError
+                return ("apiError.decodingError", ns.code, ns.domain, ns.code)
+            case .invalidURL:
+                return ("apiError.invalidURL", 0, nil, nil)
+            }
+        }
+        let nsError = error as NSError
+        let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        return (nsError.domain, nsError.code, underlying?.domain, underlying?.code)
+    }
+
+    static func handleAppleSDKFailureTelemetry(_ error: Error) {
+        if let authError = error as? ASAuthorizationError, authError.code == .canceled {
+            return
+        }
+        let metrics = extractAuthFailureMetrics(from: error)
+        AnalyticsService.trackAuthSignInFailed(
+            method: "apple",
+            stage: AuthFailureStage.appleSDK.rawValue,
+            errorDomain: metrics.domain,
+            errorCode: metrics.code,
+            underlyingDomain: metrics.underlyingDomain,
+            underlyingCode: metrics.underlyingCode
+        )
     }
 
     /// Formats non-PII auth error details (stage, domain, code, and underlying chain)

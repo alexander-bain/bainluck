@@ -124,6 +124,31 @@ enum AnalyticsService {
         log("logout")
     }
 
+    /// Field sign-in failure measurement (#13516) — emits strictly behind consent,
+    /// carrying only bounded non-PII method/stage/domain/code fields (never descriptions
+    /// or cancellations).
+    nonisolated static func trackAuthSignInFailed(
+        method: String,
+        stage: String,
+        errorDomain: String,
+        errorCode: Int,
+        underlyingDomain: String? = nil,
+        underlyingCode: Int? = nil
+    ) {
+        let safeMethod = (method == "apple" || method == "google") ? method : "other"
+        var params: [String: Any] = [
+            "method": safeMethod,
+            "stage": stage,
+            "error_domain": AnalyticsPrivacy.sanitizeErrorDomain(errorDomain),
+            "error_code": errorCode,
+        ]
+        if let underlyingDomain, let underlyingCode {
+            params["underlying_domain"] = AnalyticsPrivacy.sanitizeErrorDomain(underlyingDomain)
+            params["underlying_code"] = underlyingCode
+        }
+        log("auth_sign_in_failed", params)
+    }
+
     // MARK: - Onboarding
 
     nonisolated static func trackOnboardingStep(step: Int, stepName: String) {

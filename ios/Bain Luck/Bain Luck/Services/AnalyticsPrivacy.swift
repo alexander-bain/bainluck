@@ -83,7 +83,7 @@ enum AnalyticsPrivacy {
         // Search
         "search", "search_result_click",
         // Auth
-        "login", "sign_up", "logout",
+        "login", "sign_up", "logout", "auth_sign_in_failed",
         // Onboarding
         "onboarding_start", "onboarding_step", "onboarding_complete", "onboarding_skip",
         // Discover
@@ -115,6 +115,8 @@ enum AnalyticsPrivacy {
         "token", "id_token", "access_token", "auth", "authorization", "password",
         "url", "link", "href", "referrer", "path",
         "phone", "address", "ip", "latitude", "longitude",
+        "error_description", "description", "message", "detail",
+        "localized_description", "debug_description",
     ]
 
     /// Every parameter key permitted to reach Firebase. Anything outside this
@@ -134,6 +136,7 @@ enum AnalyticsPrivacy {
         // Auth / onboarding
         "method", "step", "step_name", "teams_count",
         "last_step_completed", "last_step_name",
+        "error_domain", "error_code", "underlying_domain", "underlying_code",
         // Discover interaction
         "action", "position", "score", "results_count", "count",
         "affinity_count", "card_type", "suppression_reason",
@@ -222,6 +225,29 @@ enum AnalyticsPrivacy {
         guard slugPattern.firstMatch(in: value, options: [], range: range) != nil else { return false }
         return value.count < 24 || value.contains("-") || value.contains("_")
     }
+
+    private static let errorDomainPattern = try? NSRegularExpression(
+        pattern: "^[A-Za-z0-9._-]{1,64}$", options: []
+    )
+
+    /// Shape guard for bounded error domains (`ASAuthorizationErrorDomain`, `apiError.httpError`,
+    /// `NSURLErrorDomain`) before generic `scrub()` runs — generic `tokenPattern` treats any
+    /// 24+ char dot-free string such as `"ASAuthorizationErrorDomain"` as a token (#13516).
+    static func sanitizeErrorDomain(_ value: String) -> String {
+        guard let errorDomainPattern else { return "other" }
+        let range = NSRange(value.startIndex..., in: value)
+        guard errorDomainPattern.firstMatch(in: value, options: [], range: range) != nil else {
+            return "other"
+        }
+        let lower = value.lowercased()
+        if lower.contains("token") || lower.contains("secret") || lower.contains("bearer") {
+            return "other"
+        }
+        if value.filter(\.isNumber).count >= minRedactableDigits {
+            return "other"
+        }
+        return value
+    }
     private static let tokenPattern = try? NSRegularExpression(
         pattern: "[A-Za-z0-9_\\-]{24,}", options: []
     )
@@ -306,6 +332,12 @@ enum AnalyticsPrivacy {
             if key == "slug" {
                 if let string = value as? String, isSafeSlug(string) {
                     out[key] = string
+                }
+                continue
+            }
+            if key == "error_domain" || key == "underlying_domain" {
+                if let string = value as? String {
+                    out[key] = sanitizeErrorDomain(string)
                 }
                 continue
             }
