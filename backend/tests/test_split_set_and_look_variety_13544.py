@@ -91,9 +91,10 @@ def test_split_set_report_only_flags_all_11_split_cards_and_zero_keeps() -> None
     }
     assert all(
         rep["mode"] == "report_only"
+        and rep["detector"] == "detect_scout_split_set"
         and rep["is_split"] is True
         and isinstance(rep["reason"], str)
-        and rep["reason"].startswith("split_set:")
+        and bool(rep["reason"])
         for rep in split_reports.values()
     ), f"Missed split cards: {[k for k, v in split_reports.items() if not v['is_split']]}"
 
@@ -103,6 +104,19 @@ def test_split_set_report_only_flags_all_11_split_cards_and_zero_keeps() -> None
         if (rep := audit_public_set_split_report_only(cards[cid]["title"], cards[cid]["members"]))["is_split"]
     }
     assert keep_false_positives == {}, f"False positives on Keep sets: {keep_false_positives}"
+
+
+def test_split_set_audit_reports_detector_unavailable_without_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(discover_fun_scout, "detect_scout_split_set", None, raising=False)
+    cards = _deck_cards_by_id()
+    rep = audit_public_set_split_report_only(cards["blind-26"]["title"], cards["blind-26"]["members"])
+    assert rep == {
+        "mode": "report_only",
+        "detector": "unavailable",
+        "is_split": False,
+        "reason": "detector unavailable",
+        "shared_feature": None,
+    }
 
 
 def test_split_set_audit_delegates_to_builder_e_detect_scout_split_set_when_present(monkeypatch) -> None:
@@ -128,26 +142,26 @@ def test_split_set_audit_delegates_to_builder_e_detect_scout_split_set_when_pres
     assert len(captured) == 1 and all(isinstance(r, ScoutMarketRow) for r in captured[0][1])
 
 
-def test_split_set_stays_report_only_until_13703_while_price_guard_enforces() -> None:
+def test_validate_enforces_merged_split_gate_and_price_context_guard() -> None:
     cards = _deck_cards_by_id()
-    # Until #13703 lands, validate_scout_proposed_set runs no duplicate split detector of its own.
-    split_card = cards["blind-26"]
+    # Non-trimmable split sets (#13703 blind-29 skipped_ordinal_rank) fail closed in validate_scout_proposed_set.
+    split_card = cards["blind-29"]
     catalog_split = {int(m["market_id"]): _row_from_member(m) for m in split_card["members"]}
     vset_split, err_split = validate_scout_proposed_set(
         ScoutProposedSet(
-            slug="pure-long-shots-report-only-check",
+            slug="hardest-problems-in-science-split-check",
             name=split_card["title"],
-            kicker="ODD",
-            category="culture",
-            why_better_together="Earth, meteor, Mars, and Superman appear in this set.",
+            kicker="SCIENCE",
+            category="tech_business",
+            why_better_together="Millennium Prize problems grouped together.",
             look="bars",
             member_ids=tuple(catalog_split.keys()),
         ),
         catalog_split,
         now=FROZEN_NOW,
     )
-    assert err_split is None
-    assert vset_split is not None
+    assert vset_split is None
+    assert err_split is not None and err_split.startswith("split_set:")
 
     # Consumer price sets stay blocked without per-row context_line (#13544 Ask 4).
     price_card = cards["blind-13"]
