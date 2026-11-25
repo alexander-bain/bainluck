@@ -507,7 +507,13 @@ final class FeedViewModel: ObservableObject {
     /// True while a live-game auto-refresh timer is armed. Observable so a test can
     /// prove refresh is active immediately after the main publish, even while a slow
     /// sibling is still loading (L2-209 Item 2 / C68).
-    private(set) var refreshArmed = false
+    /// True while the live auto-refresh timer is armed.
+    @Published private(set) var refreshArmed = false
+
+    /// True only while live auto-refresh is actively running and healthy (#13634).
+    var liveOddsRefreshRunning: Bool {
+        refreshArmed && !refreshFailed
+    }
 
     static let autoRefreshInterval: TimeInterval = 30
 

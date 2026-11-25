@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import BainLuckMark from "@/components/BainLuckMark";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
 import { usePlayPool } from "@/lib/play/usePlayPool";
 import type { PlayPoolStatus } from "@/lib/play/poolState";
@@ -100,7 +101,10 @@ export default function PlayPage() {
       <ErrorBoundary fallback={<div className="p-8 text-center">Something went wrong</div>}>
         <main className="min-h-screen bg-surface-deep px-5 py-8">
           <div className="mx-auto max-w-md text-center">
-            <div className="text-5xl mb-2">🍀🎮</div>
+            <div className="mb-2 inline-flex items-center justify-center gap-2 text-5xl">
+              <BainLuckMark size={44} />
+              <span>🎮</span>
+            </div>
             <h1 className="text-3xl font-black text-text-primary">Bain Luck Play</h1>
             <p className="text-text-secondary mt-1 mb-6">Who&apos;s playing?</p>
 

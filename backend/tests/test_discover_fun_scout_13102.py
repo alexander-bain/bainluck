@@ -25,11 +25,15 @@ from app.services.llm_models import (
 )
 from app.services.llm_request import MemoryBudgetLedger
 from app.utils.discover_fun_scout import (
-    LICENCE_AUTO,
+    LICENCE_AWAITING_LOOK,
     LICENCE_SUSPENDED,
     SCOUT_ANTHROPIC_API_KEY_ENV,
+    SCOUT_AUTO_PROMOTE_TO_PUBLIC,
+    SCOUT_MAX_NEW_SETS_PER_DAY,
     SCOUT_MONTHLY_CAP_USD,
+    SCOUT_PUBLIC_PROMOTION_GATE,
     SCOUT_RUN_CAP_USD,
+    SCOUT_STAGED_SETS_DIR,
     FunScoutMissingKeyError,
     FunScoutSpendCapExceededError,
     ScoutLicenceState,
@@ -301,21 +305,51 @@ class TestRuleFilesLicenceAndEndToEnd:
             vsets[1], model_used=CLAUDE_SONNET_MODEL, created_at=FROZEN_NOW
         )
         assert validate_roundup_definition(faces_def)["rule"]["selector"] == {"fun_tag": "pop-stars-2025"}
+        assert faces_def["stage"] == "preview"
         assert faces_def["image_credit_required"] is True  # 195-A
         assert faces_def["novelty_seat"] is True  # 32-C
         assert faces_def["scout"]["requires_fable_look"] is True
+        assert faces_def["scout"]["auto_promote"] is False
+        assert faces_def["scout"]["requires_keep_to_publish"] is True
+        assert faces_def["scout"]["public_promotion_gate"] == "alex_keep"
 
-        # Max 2 new sets written per day
+        # Max 10 new staged sets written per day (Ruling 385: A)
+        extra_vsets = list(vsets)
+        for i in range(4, 13):
+            base = 100 + i * 3
+            extra_catalog = {
+                base: _mk(base, f"Extra set {i} row 1?"),
+                base + 1: _mk(base + 1, f"Extra set {i} row 2?"),
+                base + 2: _mk(base + 2, f"Extra set {i} row 3?"),
+            }
+            ev, eerr = validate_scout_proposed_set(
+                ScoutProposedSet(
+                    slug=f"extra-set-{i}",
+                    name=f"Extra Set {i}",
+                    kicker="FUN",
+                    category="culture",
+                    why_better_together="Better side by side.",
+                    look="bars",
+                    member_ids=(base, base + 1, base + 2),
+                ),
+                extra_catalog,
+                now=FROZEN_NOW,
+            )
+            assert eerr is None and ev is not None
+            extra_vsets.append(ev)
+
         lic = ScoutLicenceState()
         written = write_scout_rule_files(
-            vsets, tmp_path, model_used=CLAUDE_SONNET_MODEL, created_at=FROZEN_NOW, licence_state=lic
+            extra_vsets, tmp_path, model_used=CLAUDE_SONNET_MODEL, created_at=FROZEN_NOW, licence_state=lic
         )
-        assert len(written) == 2
+        assert SCOUT_MAX_NEW_SETS_PER_DAY == 10
+        assert len(written) == 10
 
-        # 7 clean days earn auto licence; 1 wrong card suspends immediately
+        # Clean days track count but never self-promote off preview; Keep is required (385: A).
         for day in range(1, 8):
             advance_scout_licence_clean_day(lic, f"2025-02-{day:02d}")
-        assert lic.status == LICENCE_AUTO
+        assert lic.clean_days == 7
+        assert lic.status == LICENCE_AWAITING_LOOK
         suspend_scout_licence_on_wrong_card(
             lic, slug="white-christmas", reason="served resolved row", at=FROZEN_NOW
         )
@@ -1971,4 +2005,101 @@ class TestScoutRecallAndPromptFixes13514:
         assert len(dumped[CLAUDE_SONNET_MODEL]) == 1
         assert dumped[CLAUDE_SONNET_MODEL][0]["slug"] == "will-it-drop"
         assert len(dumped[CLAUDE_SONNET_MODEL][0]["members"]) == 3
+
+
+def test_ruling_385a_cap_is_ten_and_staged_sets_cannot_auto_publish(tmp_path):
+    import importlib
+
+    import pytest
+    from app.utils.roundup_containers import CONTAINERS_DATA_DIR, ROUNDUP_PRODUCERS
+
+    scout_task = importlib.import_module("app.tasks.discover_fun_scout")
+
+    assert SCOUT_MAX_NEW_SETS_PER_DAY == 10
+    assert SCOUT_AUTO_PROMOTE_TO_PUBLIC is False
+    assert SCOUT_PUBLIC_PROMOTION_GATE == "alex_keep"
+
+    staged_resolved = SCOUT_STAGED_SETS_DIR.resolve()
+    containers_resolved = CONTAINERS_DATA_DIR.resolve()
+    assert staged_resolved != containers_resolved
+    assert containers_resolved not in staged_resolved.parents
+
+    twelve_sets = []
+    for i in range(1, 13):
+        base = 5000 + i * 3
+        cat = {
+            base: _mk(base, f"Staged market {i}a?"),
+            base + 1: _mk(base + 1, f"Staged market {i}b?"),
+            base + 2: _mk(base + 2, f"Staged market {i}c?"),
+        }
+        vset, err = validate_scout_proposed_set(
+            ScoutProposedSet(
+                slug=f"staged-only-{i}",
+                name=f"Staged Only {i}",
+                kicker="FUN",
+                category="culture",
+                why_better_together="Staged for morning review.",
+                look="bars",
+                member_ids=(base, base + 1, base + 2),
+            ),
+            cat,
+            now=FROZEN_NOW,
+        )
+        assert err is None and vset is not None
+        twelve_sets.append(vset)
+
+    lic = ScoutLicenceState()
+    with pytest.raises(ValueError, match="public containers dir"):
+        write_scout_rule_files(
+            twelve_sets,
+            CONTAINERS_DATA_DIR,
+            model_used=CLAUDE_SONNET_MODEL,
+            created_at=FROZEN_NOW,
+            licence_state=lic,
+        )
+    with pytest.raises(ValueError, match="public containers dir"):
+        write_scout_rule_files(
+            twelve_sets,
+            CONTAINERS_DATA_DIR / "nested",
+            model_used=CLAUDE_SONNET_MODEL,
+            created_at=FROZEN_NOW,
+            licence_state=lic,
+        )
+
+    before_producers = set(ROUNDUP_PRODUCERS.keys())
+    written = write_scout_rule_files(
+        twelve_sets,
+        tmp_path / "scout_sets",
+        model_used=CLAUDE_SONNET_MODEL,
+        created_at=FROZEN_NOW,
+        licence_state=lic,
+    )
+    assert len(written) == 10
+    assert set(ROUNDUP_PRODUCERS.keys()) == before_producers
+    for p in written:
+        payload = json.loads(p.read_text(encoding="utf-8"))
+        assert payload["stage"] == "preview"
+        assert payload["scout"]["auto_promote"] is False
+        assert payload["scout"]["requires_keep_to_publish"] is True
+        assert payload["scout"]["public_promotion_gate"] == "alex_keep"
+
+    artifact = scout_task.build_scout_nightly_artifact(
+        {
+            "spend_line": "test",
+            "actual_total_cost_usd": 0.4,
+            "set_model": CLAUDE_SONNET_MODEL,
+            "tagged_count": 55,
+            "validated_sets": twelve_sets,
+            "rejected_sets": [],
+            "verified_singles": [],
+            "licence_state": lic.to_dict(),
+        },
+        run_now=FROZEN_NOW,
+    )
+    assert artifact["max_new_sets_per_day"] == 10
+    assert len(artifact["staged_sets"]) == 10
+    assert artifact["auto_promote_to_public"] is False
+    assert artifact["public_promotion_gate"] == "alex_keep"
+    assert all(s["rule_definition"]["stage"] == "preview" for s in artifact["staged_sets"])
+
 

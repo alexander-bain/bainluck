@@ -1052,6 +1052,13 @@ const EXEMPT: Record<string, string[]> = {
   // them into a single chance for each outcome." `/about` is the page that
   // explains how Bain Luck produces one percentage.
   "app/about": ["blend"],
+  // Admin-secret-gated (`AdminAuthProvider`, `noindex`) blind-deck grading
+  // surface (#13544 / #13632). Bundles raw consumer-goods market titles from
+  // the frozen Deck 2 JSON ("Diesel price at year-end 2026", "Dozen eggs
+  // price in November?", "Costco raises hot dog combo price?"), which ruling
+  // 138 spares as real-world goods prices and cannot be altered inside a
+  // sealed blind deck.
+  "app/grade": ["price-family"],
 };
 
 /**

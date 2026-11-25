@@ -1475,9 +1475,14 @@ def _is_event_toss_up(item: Mapping[str, Any]) -> bool:
     return max(ap, hp) <= (TOSS_UP_MAX_SIDE_PROB + 1e-9)
 
 
+_DUEL_DRAW_OUTCOME_NAMES: frozenset[str] = frozenset({"tie", "draw"})
+
+
 def choose_section_form(
     atoms_kind: str,
     selected_items: Sequence[Mapping[str, Any]],
+    *,
+    allow_three_way_duel: bool = False,
 ) -> str:
     """Choose a section's visual form strictly from the shape of its atoms (zero topic checks)."""
     if atoms_kind == "paired_stage":
@@ -1503,6 +1508,18 @@ def choose_section_form(
         if len(selected_items) == 1:
             outcomes = selected_items[0].get("outcomes") or ()
             if len(outcomes) == 2:
+                return "duel_bar"
+            if (
+                allow_three_way_duel
+                and len(outcomes) == 3
+                and sum(
+                    1
+                    for o in outcomes
+                    if isinstance(o, Mapping)
+                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+                )
+                == 1
+            ):
                 return "duel_bar"
             if len(outcomes) >= 3:
                 return "contender_spotlight"
@@ -2618,6 +2635,7 @@ def _hydrate_market_visual_item(
     return {
         "market_id": mid,
         "title": display_title,
+        "_short_label_base": base_title,
         "headline_phrase": headline_phrase,
         "headline_with_phrase": headline_with_phrase,
         "raw_title": clean_raw_name,
@@ -3011,6 +3029,8 @@ _CATEGORY_LLM_POOL: dict[str, tuple[str, ...]] = {
     "football": ("football", "nfl", "americanfootball_nfl", "other"),
     "basketball": ("basketball", "nba", "basketball_nba", "basketball_ncaab", "other"),
     "hockey": ("hockey", "nhl", "icehockey_nhl", "other"),
+    "golf": ("golf", "pga", "other"),
+    "mma": ("mma", "ufc", "boxing", "other"),
     "soccer": ("soccer", "sports", "other"),
     "tech": ("tech", "technology", "ai", "science", "other"),
 }
@@ -4139,6 +4159,12 @@ _EXACT_CASE_TOKENS: dict[str, str] = {
     "millennium": "Millennium",
     "sec": "SEC",
     "pac-12": "Pac-12",
+    "ryder": "Ryder",
+    "cup": "Cup",
+    "conor": "Conor",
+    "mcgregor": "McGregor",
+    "mcgregor's": "McGregor's",
+    "mcgregor’s": "McGregor’s",
 }
 
 
@@ -4218,7 +4244,7 @@ def _prose_market_phrase(title: str, *, capitalize_first: bool = False) -> str:
                 words.append(w.lower())
         joined = " ".join(words)
         joined = re.sub(r"\bbig\s+ten\b", "Big Ten", joined, flags=re.IGNORECASE)
-        has_leading_possessive = bool(words and ("'" in words[0] or "’" in words[0]))
+        has_leading_possessive = any("'" in tok or "’" in tok for tok in words[:2])
         out = (
             joined
             if joined.lower().startswith(("the ", "a ", "an ")) or has_leading_possessive
@@ -4485,17 +4511,24 @@ def _build_dynamic_title_from_set(
         return max(outs, key=lambda o: float(o.get("probability") or 0.0))
 
     if spotlight_item is None and duel_item is not None and lead_sec_form == "duel_bar":
-        d_outs = sorted(
+        d_outs_all = sorted(
             [o for o in (duel_item.get("outcomes") or ()) if isinstance(o, Mapping)],
             key=lambda o: -float(o.get("probability") or 0.0),
         )
+        d_non_draw = [
+            o
+            for o in d_outs_all
+            if str(o.get("name") or "").strip().lower() not in _DUEL_DRAW_OUTCOME_NAMES
+        ]
+        d_outs = d_non_draw if len(d_non_draw) >= 2 else d_outs_all
         if len(d_outs) >= 2:
             lead_name = _prose_outcome_name(str(d_outs[0]["name"]))
             trail_name = _prose_outcome_name(str(d_outs[1]["name"]))
             lead_p = int(d_outs[0]["rendered_percent"])
             trail_p = int(d_outs[1]["rendered_percent"])
             du_phrase = _prose_market_phrase(str(duel_item["title"]))
-            return f"{lead_name} leads {trail_name} {lead_p}%–{trail_p}% in {du_phrase}"
+            sep = " to " if len(d_outs_all) >= 3 else "–"
+            return f"{lead_name} leads {trail_name} {lead_p}%{sep}{trail_p}% in {du_phrase}"
 
     if history_items and (
         lead_sec_form == "probability_history_chart"
@@ -4583,6 +4616,45 @@ def _build_dynamic_title_from_set(
         if sp_fav:
             sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
             return f"{_prose_rate_outcome(str(sp_fav['name']), capitalize_first=True)} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
+
+    def _sibling_headline() -> Optional[str]:
+        if not sibling_items:
+            return None
+        lead_sib = sibling_items[0]
+        lead_o = _fav_outcome(lead_sib)
+        if lead_o is None:
+            return None
+        lead_name = _prose_outcome_name(str(lead_o["name"]))
+        lead_title = str(lead_sib.get("title") or "").strip()
+        lead_p = int(lead_o["rendered_percent"])
+        _CASTING_ROLES = {
+            "james bond",
+            "m",
+            "q",
+            "moneypenny",
+            "bond girl",
+            "villain",
+            "main villain",
+        }
+        if len(sibling_items) >= 2:
+            sec_sib = sibling_items[1]
+            sec_o = _fav_outcome(sec_sib)
+            if sec_o is not None:
+                sec_name = _prose_outcome_name(str(sec_o["name"]))
+                sec_title = str(sec_sib.get("title") or "").strip()
+                sec_p = int(sec_o["rendered_percent"])
+                sec_verb = (
+                    "to play"
+                    if sec_title.lower() in _CASTING_ROLES
+                    else "leading"
+                )
+                return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
+        return f"{lead_name} leads {lead_title} at {lead_p}%"
+
+    if sibling_items and lead_sec_form == "sibling_fields_grid":
+        sib_hl = _sibling_headline()
+        if sib_hl:
+            return sib_hl
 
     if benchmark_items:
         rule_dict = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
@@ -4672,35 +4744,9 @@ def _build_dynamic_title_from_set(
             return lead_clause
 
     if sibling_items:
-        lead_sib = sibling_items[0]
-        lead_o = _fav_outcome(lead_sib)
-        if lead_o is not None:
-            lead_name = _prose_outcome_name(str(lead_o["name"]))
-            lead_title = str(lead_sib.get("title") or "").strip()
-            lead_p = int(lead_o["rendered_percent"])
-            _CASTING_ROLES = {
-                "james bond",
-                "m",
-                "q",
-                "moneypenny",
-                "bond girl",
-                "villain",
-                "main villain",
-            }
-            if len(sibling_items) >= 2:
-                sec_sib = sibling_items[1]
-                sec_o = _fav_outcome(sec_sib)
-                if sec_o is not None:
-                    sec_name = _prose_outcome_name(str(sec_o["name"]))
-                    sec_title = str(sec_sib.get("title") or "").strip()
-                    sec_p = int(sec_o["rendered_percent"])
-                    sec_verb = (
-                        "to play"
-                        if sec_title.lower() in _CASTING_ROLES
-                        else "leading"
-                    )
-                    return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
-            return f"{lead_name} leads {lead_title} at {lead_p}%"
+        sib_hl = _sibling_headline()
+        if sib_hl:
+            return sib_hl
 
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
 
@@ -5204,7 +5250,12 @@ async def produce_container_machinery(
                     fm_it["content_kind"] = "futures"
                     if isinstance(fm_it.get("card"), dict):
                         fm_it["card"]["content_kind"] = "futures"
-                form_id = choose_section_form("markets", fallback_matched)
+                sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
+                form_id = choose_section_form(
+                    "markets",
+                    fallback_matched,
+                    allow_three_way_duel=sec_allow_3way_duel,
+                )
                 if form_id in {"sibling_fields_grid", "contender_spotlight"}:
                     tile_cap = 3 if form_id == "contender_spotlight" else 1
                     all_tiles_pictured = all(
@@ -5318,8 +5369,37 @@ async def produce_container_machinery(
         matched = matched[:max_items]
         if len(matched) < min_items:
             return RoundupRefusal((("container_machinery", f"too_few_markets:{sec_key}"),))
+        if bool(aq.get("omit_shared_date_suffix_on_rows")) and matched:
+            shared_date_answers = {
+                _norm_key(str((it.get("outcomes") or [{}])[0].get("name") or ""))
+                for it in matched
+                if it.get("is_date_timing_row") and (it.get("outcomes") or ())
+            }
+            if len(shared_date_answers) == 1 and all(it.get("is_date_timing_row") for it in matched):
+                for it in matched:
+                    plain_lbl = str(it.get("_short_label_base") or "").strip()
+                    if plain_lbl:
+                        it["title"] = plain_lbl
 
-        form_id = choose_section_form("markets", matched)
+        sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
+        form_id = choose_section_form(
+            "markets",
+            matched,
+            allow_three_way_duel=sec_allow_3way_duel,
+        )
+        if form_id == "duel_bar" and sec_allow_3way_duel:
+            for it in matched:
+                for out_item in it.get("outcomes") or ():
+                    if (
+                        isinstance(out_item, dict)
+                        and str(out_item.get("name") or "").strip().lower()
+                        in _DUEL_DRAW_OUTCOME_NAMES
+                    ):
+                        art = dict(out_item.get("art") or {})
+                        art["url"] = None
+                        art["kind"] = "monogram"
+                        art["accent_color"] = "#94A3B8"
+                        out_item["art"] = art
         eff_title, eff_note = _resolve_section_heading(
             sec_cfg,
             aq_kind="markets",
@@ -5350,7 +5430,7 @@ async def produce_container_machinery(
                 {
                     k: v
                     for k, v in it.items()
-                    if k not in ("card", "_twin_market_ids", "_volume")
+                    if k not in ("card", "_twin_market_ids", "_volume", "_short_label_base")
                 }
                 for it in matched
             ],
@@ -5386,6 +5466,15 @@ async def produce_container_machinery(
         (s for s in built_sections if s["class"] == preferred_card_key),
         built_sections[0],
     )
+    card_sec_cfg = next(
+        (
+            s
+            for s in ((rule.get("sections") or ()) if isinstance(rule, Mapping) else ())
+            if isinstance(s, Mapping) and str(s.get("key") or "").strip() == str(card_sec.get("class") or "")
+        ),
+        {},
+    )
+    card_allow_3way_duel = bool(card_sec_cfg.get("allow_three_way_duel"))
     vb = card_sec["visual_block"]
     vb_form = vb["form_id"]
     card_scale_ordered = False
@@ -5536,6 +5625,19 @@ async def produce_container_machinery(
             s_idx = numerical_scale_order_indices(sliced)
             chosen_outs = [sliced[i] for i in s_idx] if s_idx is not None else sliced
             card_scale_ordered = s_idx is not None
+        elif vb_form == "duel_bar" and card_allow_3way_duel:
+            non_draw_outs = [
+                o
+                for o in all_lead_outs
+                if str(o.get("name") or "").strip().lower() not in _DUEL_DRAW_OUTCOME_NAMES
+            ]
+            draw_outs = [
+                o
+                for o in all_lead_outs
+                if str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+            ]
+            chosen_outs = (non_draw_outs + draw_outs)[:card_rows_limit]
+            card_scale_ordered = False
         else:
             chosen_outs = all_lead_outs[:card_rows_limit]
             card_scale_ordered = bool(lead_market.get("scale_ordered"))
@@ -5955,6 +6057,10 @@ def _enforce_section_all_or_nothing_art(
                 if isinstance(it, Mapping) and not it.get("scale_ordered")
                 for o in (it.get("outcomes") or ())
                 if isinstance(o, Mapping)
+                and not (
+                    s_form == "duel_bar"
+                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+                )
             ]
             should_strip = any(has_urls) and not all(has_urls)
 

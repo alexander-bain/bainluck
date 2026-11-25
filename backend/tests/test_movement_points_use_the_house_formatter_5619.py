@@ -228,8 +228,8 @@ def test_a_one_point_move_is_singular_everywhere():
         assert "1 point" in sentence, sentence
 
 
-def test_a_real_decimal_still_prints_its_decimal():
-    """The fix must route through the formatter, not round to an integer."""
+def test_a_fractional_delta_rounds_to_whole_points():
+    """#13602: Discover mover copy prints whole points, never tenths."""
     reason = generate_futures_reason(
         market_name=MARKET,
         highlight_reasons=["major_movement_24h"],
@@ -241,8 +241,10 @@ def test_a_real_decimal_still_prints_its_decimal():
         top_mover_name=STRONG_LABEL,
         top_mover_change=DECIMAL,
     )
-    assert "23.5 points" in reason, reason
-    assert "23.5 points" in headline, headline
+    assert "24 points" in reason, reason
+    assert "23.5" not in reason, reason
+    assert "24 points" in headline, headline
+    assert "23.5" not in headline, headline
 
 
 def test_no_call_site_interpolates_the_raw_float():

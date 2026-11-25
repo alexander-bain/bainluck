@@ -5038,6 +5038,14 @@ jobs:
         id: db_13606_history_since_start_pushdown
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
         run: "set -o pipefail\npython -m pytest tests/integration/test_history_since_start_pushdown_13606_pg.py \\\n  -v -rs 2>&1 | tee /tmp/historysince13606.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/historysince13606.txt; then\n  echo \"::error::#13606 history since_start gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\ngrep -qE \"[^0-9]5 passed([,[:space:]]|$)\" /tmp/historysince13606.txt || {\n  echo \"::error::#13606 history since_start gate did not run all five cases\"\n  exit 1\n}\n"
+      - name: "#13573 team futures Q1 rewrite equivalence (real Postgres)"
+        id: db_13573_team_futures_q1_pg
+        if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+        run: "python -m pytest tests/integration/test_team_futures_q1_pg_13573.py -v -rs > /tmp/teamfuturesq113573.txt 2>&1 || {\n  cat /tmp/teamfuturesq113573.txt\n  exit 1\n}\ncat /tmp/teamfuturesq113573.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/teamfuturesq113573.txt; then\n  echo \"::error::#13573 team futures Q1 gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]1 passed([,[:space:]]|$)\" /tmp/teamfuturesq113573.txt || {\n  echo \"::error::#13573 team futures Q1 gate did not execute its case\"\n  exit 1\n}\n"
+      - name: "#12818 search untraded 60-row window guard (real Postgres)"
+        id: db_12818_search_untraded_window_guard
+        if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+        run: bash ../.github/scripts/run-12612-pg-gates.sh search12818 tests/test_search_untraded_window_guard_12818.py
   # The existing required context stays non-matrix. A failed, cancelled or
   # unexpectedly skipped worker must never satisfy branch protection as green.
   # Frontend-only candidates retain the original intentional job-level skip.

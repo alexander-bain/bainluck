@@ -57,6 +57,7 @@ enum SoccerThreeLineChart211A {
         var awayCode: String = ""
         let isLive: Bool
         let isFinished: Bool
+        var showsLiveTenths: Bool = true
 
         static let drawLabel = "Draw"
 
@@ -93,7 +94,7 @@ enum SoccerThreeLineChart211A {
                 home: point.home,
                 draw: point.draw,
                 away: point.away,
-                numberStreams: isLive && !isFinished
+                numberStreams: isLive && !isFinished && showsLiveTenths
             )
         }
     }
