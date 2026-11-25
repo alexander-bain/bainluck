@@ -845,17 +845,131 @@ async def _build_live_real_sets_audit_report(
     )
 
 
+KIT_V1_REAL_SETS_PREVIEW_REDIS_KEY = "kit_v1_real_sets:preview:v1"
+KIT_V1_REAL_SETS_PREVIEW_TTL_S = 7 * 86400
+
+
+def _decode_kit_v1_preview_payload(raw: Any) -> Optional[dict]:
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", errors="replace")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def read_saved_kit_v1_real_sets_preview() -> Optional[dict]:
+    """Read the worker-built Kit v1 real-sets preview snapshot from Redis.
+
+    Never computes inline on a web worker (#13551 / H12 protection).
+    """
+    from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+    try:
+        client = await get_shared_async_redis()
+        res = await bounded_redis_call(
+            lambda: client.get(KIT_V1_REAL_SETS_PREVIEW_REDIS_KEY)
+        )
+        if res.is_ok:
+            return _decode_kit_v1_preview_payload(res.value)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — fail open to explicit not_built_yet payload
+        logger.debug("kit-v1-real-sets preview Redis read failed", exc_info=True)
+    return None
+
+
+def write_saved_kit_v1_real_sets_preview_sync(report: dict) -> bool:
+    """Persist a worker-built Kit v1 real-sets audit snapshot into Redis."""
+    from app.tasks.redis_state import get_redis_client
+
+    payload = dict(report)
+    payload.setdefault("status", "ready")
+    payload.setdefault("served_from", "worker_redis")
+    encoded = json.dumps(payload, default=str, ensure_ascii=False)
+    try:
+        client = get_redis_client()
+        client.set(
+            KIT_V1_REAL_SETS_PREVIEW_REDIS_KEY,
+            encoded,
+            ex=KIT_V1_REAL_SETS_PREVIEW_TTL_S,
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        logger.warning("kit-v1-real-sets preview Redis write failed", exc_info=True)
+        return False
+
+
+def _kit_v1_not_built_yet_payload() -> dict:
+    return {
+        "kit_version": 1,
+        "status": "not_built_yet",
+        "served_from": "none",
+        "message": (
+            "No worker-built Kit v1 real-sets snapshot is saved in Redis yet. "
+            "Trigger POST /api/containers/preview/kit-v1-real-sets/refresh "
+            "(or click 'Refresh snapshot on worker') to build it off-web."
+        ),
+        "generated_at": None,
+        "snapshot_captured_at": None,
+        "build_elapsed_s": None,
+        "total_sets": 0,
+        "fitting_count": 0,
+        "kept_today_count": 0,
+        "top_10": [],
+        "fitting_beyond_top_10": [],
+        "alex_question_examples": [],
+        "kept_today": [],
+    }
+
+
 @router.get("/preview/kit-v1-real-sets")
 async def get_kit_v1_real_sets_preview(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Admin-only live Kit v1 conversion audit over public Discover sets (#13551)."""
+    """Admin-only read of the worker-built Kit v1 real-sets preview snapshot (#13551).
+
+    Strictly reads Redis and returns `status="not_built_yet"` on miss — never runs
+    the 76-container live audit inline on the web dyno (Heroku 30s H12 budget).
+    """
     from app.routes.admin_utils import _check_admin_auth
 
     if not await _check_admin_auth(None, request, db):
         raise HTTPException(status_code=403, detail="Admin authentication required")
-    return await _build_live_real_sets_audit_report(db, request=request)
+    cached = await read_saved_kit_v1_real_sets_preview()
+    if cached is None:
+        return _kit_v1_not_built_yet_payload()
+    result = dict(cached)
+    result.setdefault("status", "ready")
+    result.setdefault("served_from", "worker_redis")
+    return result
+
+
+@router.post("/preview/kit-v1-real-sets/refresh")
+async def refresh_kit_v1_real_sets_preview_endpoint(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Enqueue background worker refresh of the Kit v1 real-sets preview (#13551)."""
+    from app.routes.admin_utils import _check_admin_auth
+    from app.tasks import refresh_kit_v1_real_sets_preview
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    task = refresh_kit_v1_real_sets_preview.delay()
+    return {
+        "status": "queued",
+        "task": "app.tasks.refresh_kit_v1_real_sets_preview",
+        "queue": "background",
+        "task_id": getattr(task, "id", None),
+        "message": "Queued worker build for the Kit v1 real-sets snapshot. Reload in ~15-30s.",
+    }
 
 
 @router.get("/{slug}")

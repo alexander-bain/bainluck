@@ -58,8 +58,12 @@ interface KeptTodayRow {
 
 interface KitV1RealSetsReport {
   kit_version: number;
-  generated_at: string;
+  status?: string;
+  served_from?: string;
+  message?: string;
+  generated_at: string | null;
   snapshot_captured_at?: string | null;
+  build_elapsed_s?: number | null;
   total_sets: number;
   fitting_count: number;
   kept_today_count: number;
@@ -200,6 +204,59 @@ function KitV1RealSetsBody() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+
+  async function handleReload() {
+    if (!secret) return;
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const res = await adminFetchJSON<KitV1RealSetsReport>(
+        "/api/containers/preview/kit-v1-real-sets",
+        secret
+      );
+      setReport(res);
+    } catch (err) {
+      if (isAdminAuthError(err)) {
+        setErrorMsg("Admin authentication required.");
+      } else {
+        setErrorMsg(err instanceof Error ? err.message : "Failed to load saved snapshot.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRefreshWorker() {
+    if (!secret || refreshing) return;
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      const res = await adminFetchJSON<{
+        status: string;
+        task_id?: string | null;
+        message?: string;
+      }>("/api/containers/preview/kit-v1-real-sets/refresh", secret, {
+        method: "POST",
+      });
+      setRefreshMsg(
+        res.message ??
+          `Queued worker build${res.task_id ? ` (${res.task_id})` : ""}. Reload in ~15-30s.`
+      );
+    } catch (err) {
+      if (isAdminAuthError(err)) {
+        setErrorMsg("Admin authentication required.");
+      } else {
+        setRefreshMsg(
+          err instanceof Error ? err.message : "Failed to enqueue worker snapshot refresh."
+        );
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   useEffect(() => {
     if (!secret) return;
     let cancelled = false;
@@ -242,7 +299,28 @@ function KitV1RealSetsBody() {
             Deterministic conversion of tonight&apos;s Top 10 Discover sets and every other fitting
             public container. Preview only — nothing changed in the live feed.
           </p>
-          {report && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleRefreshWorker()}
+              disabled={!secret || refreshing}
+              className="rounded-lg border border-accent-brand/40 bg-surface-elevated px-3 py-1.5 text-xs font-semibold text-accent-brand hover:bg-surface-card disabled:opacity-50"
+            >
+              {refreshing ? "Queueing worker build…" : "Refresh snapshot on worker"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleReload()}
+              disabled={!secret || loading}
+              className="rounded-lg border border-surface-border bg-surface-elevated px-3 py-1.5 text-xs font-semibold text-text-primary hover:bg-surface-card disabled:opacity-50"
+            >
+              Reload saved snapshot
+            </button>
+            {refreshMsg && (
+              <span className="text-[11px] text-text-secondary">{refreshMsg}</span>
+            )}
+          </div>
+          {report && report.status !== "not_built_yet" && (
             <div className="mt-2.5 flex flex-wrap gap-2 text-[11px] font-semibold">
               <span
                 data-testid="snapshot-captured-at"
@@ -251,6 +329,11 @@ function KitV1RealSetsBody() {
                 Saved set captured:{" "}
                 {formatCaptureTimePT(report.snapshot_captured_at ?? report.generated_at)}
               </span>
+              {report.build_elapsed_s != null && (
+                <span className="rounded-full border border-surface-border bg-surface-elevated px-2.5 py-0.5 text-text-secondary">
+                  Worker build: {report.build_elapsed_s.toFixed(1)}s
+                </span>
+              )}
               <span className="rounded-full border border-surface-border bg-surface-elevated px-2.5 py-0.5 text-text-primary">
                 Total sets: {report.total_sets}
               </span>
@@ -266,7 +349,7 @@ function KitV1RealSetsBody() {
 
         {loading && (
           <div className="rounded-xl border border-surface-border bg-surface-card p-4 text-xs text-text-muted">
-            Running deterministic Kit v1 audit…
+            Loading saved Kit v1 worker snapshot…
           </div>
         )}
 
@@ -276,7 +359,20 @@ function KitV1RealSetsBody() {
           </div>
         )}
 
-        {report && (
+        {report && report.status === "not_built_yet" && (
+          <div
+            data-testid="kit-v1-not-built-yet"
+            className="space-y-1.5 rounded-xl border border-surface-border bg-surface-card p-4 text-xs text-text-secondary"
+          >
+            <p className="font-semibold text-text-primary">No saved snapshot yet</p>
+            <p>
+              {report.message ??
+                "No worker snapshot is saved in Redis yet. Click 'Refresh snapshot on worker' to build it off-web."}
+            </p>
+          </div>
+        )}
+
+        {report && report.status !== "not_built_yet" && (
           <>
             <section className="space-y-3">
               <h2 className="px-1 text-xs font-bold uppercase tracking-wide text-text-muted">
