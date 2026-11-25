@@ -9280,9 +9280,10 @@ def _withhold_unsupported_field_leader(
     shape = metadata.get("shape") if isinstance(metadata, dict) else None
     expected = shape.get("expected_winners") if isinstance(shape, dict) else None
     places = field_winner_places(market.name, _market_exclusivity(market), expected)
+    field_outcomes = drop_duplicate_legs(market.outcomes, lambda outcome: outcome.external_id)
     graded = {
         outcome.id: getattr(outcome, "is_winner", None) is True
-        for outcome in drop_duplicate_legs(market.outcomes, lambda outcome: outcome.external_id)
+        for outcome in field_outcomes
         if row_carries_a_verdict(getattr(outcome, "resolution_source", None))
     }
     if places is not None:
@@ -9290,6 +9291,7 @@ def _withhold_unsupported_field_leader(
     incomplete = field_leader_is_unsupported(
         (outcome.current_probability for outcome in screened_outcomes if outcome.id not in graded),
         places,
+        open_outcome_count=len(field_outcomes) - len(graded),
         omitted_contender=field_incomplete,
     )
     data["field_price_coverage_incomplete"] = incomplete

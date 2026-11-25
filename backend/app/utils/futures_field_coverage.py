@@ -1,14 +1,19 @@
 """Whether a field's available prices support a leader on a card."""
 
+import re
 from collections.abc import Iterable, Mapping
 from decimal import Decimal
 from math import fsum, isfinite
-import re
 from typing import Any
 
 
+_TOP_PLACES = re.compile(r"^\s*top\s+([1-9][0-9]?|five)\s+\S", re.IGNORECASE)
 _CHAMPIONSHIP_FINALISTS = re.compile(
-    r"\bteams? to (?:reach|make|advance to)\b.*\bchampionship game\s*[?!.]?$",
+    r"\bteams? to (?:reach|make|advance to|qualify for)\b.*\bchampionship game\s*[?!.]?$",
+    re.IGNORECASE,
+)
+_WORLD_SERIES_FINALISTS = re.compile(
+    r"\bteams? to advance to\b.*\bworld series\s*[?!.]?$",
     re.IGNORECASE,
 )
 
@@ -24,7 +29,11 @@ def field_winner_places(
     title: str, mutually_exclusive: bool | None, expected_winners: int | None = None
 ) -> int | None:
     """Only assign a place count when the contract supplies one."""
-    if _CHAMPIONSHIP_FINALISTS.search(title):
+    top_places = _TOP_PLACES.match(title)
+    if top_places:
+        count = top_places[1]
+        return 5 if count.casefold() == "five" else int(count)
+    if _CHAMPIONSHIP_FINALISTS.search(title) or _WORLD_SERIES_FINALISTS.search(title):
         return 2
     if type(expected_winners) is int and expected_winners > 0:
         return expected_winners
@@ -35,6 +44,7 @@ def field_leader_is_unsupported(
     probabilities: Iterable[float | Decimal | None],
     remaining_places: int | None,
     *,
+    open_outcome_count: int,
     omitted_contender: bool,
 ) -> bool:
     """Use the whole screened field, never the top rows or a rescaled sum."""
@@ -47,7 +57,7 @@ def field_leader_is_unsupported(
         else:
             priced.append(float(probability))
     if remaining_places is None:
-        return omitted_contender
+        return 2 * len(priced) < open_outcome_count
 
     total = fsum(priced)
     if total < 0.5 * remaining_places:
@@ -93,4 +103,9 @@ def grouped_field_leader_is_unsupported(
             open_prices.append(row["probability"])
     # The full set has already received its verified prices. A previously
     # withheld row can have an accepted price after the venue composition.
-    return field_leader_is_unsupported(open_prices, places, omitted_contender=False)
+    return field_leader_is_unsupported(
+        open_prices,
+        places,
+        open_outcome_count=len(open_prices),
+        omitted_contender=False,
+    )
