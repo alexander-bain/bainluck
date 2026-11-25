@@ -12,16 +12,18 @@ import WidgetKit
 nonisolated struct WatchMatchupMetrics217: Equatable, Sendable {
     let crest: CGFloat
     let name: CGFloat
+    let bigOwner: CGFloat
     let big: CGFloat
     let small: CGFloat
     let rowGap: CGFloat
 
     init(slotHeight h: CGFloat) {
-        // Two crest rows fill the left column; the big number's cap height
-        // (~0.72 of its point size) stays above the crest's diameter.
+        // Two crest rows fill the left column; the primary owner + number line
+        // stays the boldest element in the tile without squeezing college short names.
         crest = (h * 0.385).rounded()
         name = (h * 0.27).rounded()
-        big = (h * 0.575).rounded()
+        bigOwner = (h * 0.30).rounded()
+        big = (h * 0.48).rounded()
         small = (h * 0.165).rounded()
         rowGap = max(3, (h * 0.05).rounded())
     }
@@ -30,6 +32,9 @@ nonisolated struct WatchMatchupMetrics217: Equatable, Sendable {
 /// The Matchup look in the big rectangular slot (`accessoryRectangular`) shared by
 /// Apple Watch and iPhone Lock Screen (#13432).
 struct WatchMatchupComplication217: View {
+    /// #13649 — at most 3% inner padding so wide crests span the white disc.
+    static let crestPaddingFraction: CGFloat = 0.03
+
     let reading: WatchMatchupReading217
     @Environment(\.widgetRenderingMode) private var mode
 
@@ -37,6 +42,10 @@ struct WatchMatchupComplication217: View {
 
     private var hasThreeDigitScore: Bool {
         (reading.away.score ?? 0) >= 100 || (reading.home.score ?? 0) >= 100
+    }
+
+    private var hasLongAbbreviation: Bool {
+        !showsScores && max(reading.away.abbreviation.count, reading.home.abbreviation.count) >= 4
     }
 
     private var hasWinnerCheckmark: Bool {
@@ -73,12 +82,18 @@ struct WatchMatchupComplication217: View {
                 }
                 .widgetAccentable()
             } else {
-                Text(reading.bigText)
-                    .font(.system(size: m.big, weight: .black, design: .rounded).monospacedDigit())
-                    .foregroundStyle(fullColor ? Self.color(reading.bigInkHex) : .primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-                    .widgetAccentable()
+                let ownerSize = reading.bigOwnerLabel.count >= 4 ? (m.bigOwner * 0.90).rounded() : m.bigOwner
+                (Text(reading.bigOwnerLabel)
+                    .font(.system(size: ownerSize, weight: .black, design: .rounded))
+                 + Text(" ")
+                    .font(.system(size: max(6, (ownerSize * 0.42).rounded()), weight: .black, design: .rounded))
+                 + Text(reading.bigText)
+                    .font(.system(size: m.big, weight: .black, design: .rounded).monospacedDigit()))
+                .foregroundStyle(fullColor ? Self.color(reading.bigInkHex) : .primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.48)
+                .allowsTightening(true)
+                .widgetAccentable()
             }
             Text(reading.smallLine)
                 .font(.system(size: m.small, weight: .semibold, design: .rounded))
@@ -122,7 +137,7 @@ struct WatchMatchupComplication217: View {
                     .accessibilityHidden(true)
             }
             Text(side.score.map(String.init) ?? side.abbreviation)
-                .font(.system(size: m.name * (hasThreeDigitScore ? 0.88 : 1.0),
+                .font(.system(size: m.name * (hasThreeDigitScore ? 0.88 : (hasLongAbbreviation ? 0.85 : 1.0)),
                               weight: side.isWinner || reading.stage != .after ? .heavy : .semibold,
                               design: .rounded).monospacedDigit())
                 .foregroundStyle(reading.stage == .after && !side.isWinner ? .secondary : .primary)
@@ -137,7 +152,8 @@ struct WatchMatchupComplication217: View {
             if let png = side.crestPNG, let cgImage = WatchMatchupCrests217.complicationCGImage(from: png) {
                 Circle().fill(fullColor ? Color.white : Color.white.opacity(0.22))
                 crestImage(cgImage)
-                    .padding(size * 0.14)
+                    .padding(size * Self.crestPaddingFraction)
+                    .clipShape(Circle())
             } else {
                 Circle().fill(fullColor ? Self.color(side.inkHex) : Color.white.opacity(0.22))
                 Text(side.abbreviation)
