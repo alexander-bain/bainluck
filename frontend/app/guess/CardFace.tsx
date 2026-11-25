@@ -1,14 +1,19 @@
 "use client";
 
-// The front of a card: its picture and the control a player answers with.
-// Each kind of card looks and works differently on purpose. Three rounds of
-// playtesting asked for "more visual diversity between cards", and a card that
-// compares two things should not look like a card that asks for one number.
+// The front of a card: its picture and the slider a player answers with.
+//
+// EVERY CARD IS A SLIDER (429: A). What changes from card to card is the
+// picture above the slider, because playtesting asked for "more visual
+// diversity between cards":
+//
+//   straight  a big picture of the subject
+//   given     the number you are told, drawn as a bar, above the one you guess
+//   rest      the three favorites crossed out, and "anyone else" lit up
+//   count     a dot for every team, filling as you slide
+//   duo       two sliders, one for each number
 
-import { useState } from "react";
-
-import { ORDER_PERMS } from "@/lib/guess/engine";
-import type { CardOption, PackCard } from "@/lib/guess/types";
+import { duoParts, isValidGuess, packDuo, startGuess } from "@/lib/guess/engine";
+import type { ChanceCard, CountCard, DuoCard, PackCard } from "@/lib/guess/types";
 
 export interface TopicTint {
   panel: string;
@@ -18,8 +23,7 @@ export interface TopicTint {
 const TINTS: Record<string, TopicTint> = {
   Sports: { panel: "bg-emerald-50 border-emerald-200", chip: "bg-emerald-100 text-emerald-900" },
   "Screen and games": { panel: "bg-fuchsia-50 border-fuchsia-200", chip: "bg-fuchsia-100 text-fuchsia-900" },
-  "Space and science": { panel: "bg-sky-50 border-sky-200", chip: "bg-sky-100 text-sky-900" },
-  "Odd ones": { panel: "bg-amber-50 border-amber-200", chip: "bg-amber-100 text-amber-900" },
+  "Stars and sky": { panel: "bg-sky-50 border-sky-200", chip: "bg-sky-100 text-sky-900" },
 };
 
 export function tintFor(topic: string): TopicTint {
@@ -28,50 +32,34 @@ export function tintFor(topic: string): TopicTint {
 
 interface FaceProps {
   card: PackCard;
-  value: number | null;
-  onChange: (value: number | null) => void;
+  value: number;
+  onChange: (value: number) => void;
 }
 
-const SELECTED = "border-text-primary bg-surface-card shadow-md ring-2 ring-text-primary";
-const IDLE = "border-surface-border bg-surface-card";
-
-function Tile({
-  option,
-  selected,
-  tall,
-  onPick,
+/** A number, the buttons that nudge it, and the slider under it. */
+function Dial({
+  value,
+  max,
+  suffix,
+  steps,
+  label,
+  testId,
+  onChange,
 }: {
-  option: CardOption;
-  selected: boolean;
-  tall: boolean;
-  onPick: () => void;
+  value: number;
+  max: number;
+  suffix: string;
+  steps: number[];
+  label: string;
+  testId: string;
+  onChange: (value: number) => void;
 }) {
-  return (
-    <button
-      type="button"
-      onClick={onPick}
-      aria-pressed={selected}
-      className={`flex w-full flex-col items-center justify-center rounded-3xl border-2 text-center transition-transform active:scale-95 ${
-        selected ? SELECTED : IDLE
-      } ${tall ? "min-h-[150px] gap-2 px-3 py-4" : "min-h-[96px] gap-1 px-2 py-2"}`}
-    >
-      <span className={tall ? "text-5xl" : "text-2xl"} aria-hidden="true">
-        {option.emoji}
-      </span>
-      <span className="text-sm font-bold leading-snug text-text-primary">{option.label}</span>
-    </button>
-  );
-}
-
-function ChanceFace({ card, value, onChange }: FaceProps & { card: Extract<PackCard, { kind: "chance" }> }) {
-  const shown = value ?? 50;
-  const nudge = (by: number) => onChange(Math.max(0, Math.min(100, shown + by)));
-  const tint = tintFor(card.topic);
+  const set = (next: number) => onChange(Math.max(0, Math.min(max, next)));
   const step = (by: number) => (
     <button
       key={by}
       type="button"
-      onClick={() => nudge(by)}
+      onClick={() => set(value + by)}
       aria-label={`${by > 0 ? "Up" : "Down"} ${Math.abs(by)}`}
       className="min-h-[44px] min-w-[44px] rounded-2xl border-2 border-surface-border bg-surface-card text-sm font-black text-text-primary active:scale-95"
     >
@@ -79,183 +67,214 @@ function ChanceFace({ card, value, onChange }: FaceProps & { card: Extract<PackC
     </button>
   );
   return (
-    <div className="space-y-2">
-      <div className={`relative flex h-24 items-center justify-center overflow-hidden rounded-3xl border-2 ${tint.panel}`} aria-hidden="true">
-        <span className="absolute left-8 top-3 -rotate-12 text-3xl">{card.extras[0]}</span>
-        <span className="text-6xl">{card.emoji}</span>
-        <span className="absolute bottom-3 right-8 rotate-12 text-3xl">{card.extras[1]}</span>
-      </div>
+    <div>
       <div className="flex items-center justify-between gap-1">
-        <div className="flex gap-1">{[-5, -1].map(step)}</div>
-        <div className="text-5xl font-black tabular-nums text-text-primary" data-testid="guess-number">
-          {shown}%
+        <div className="flex gap-1">{steps.filter((s) => s < 0).map(step)}</div>
+        <div className="text-5xl font-black tabular-nums text-text-primary" data-testid={testId}>
+          {value}
+          {suffix}
         </div>
-        <div className="flex gap-1">{[1, 5].map(step)}</div>
+        <div className="flex gap-1">{steps.filter((s) => s > 0).map(step)}</div>
       </div>
       <input
         type="range"
         min={0}
-        max={100}
+        max={max}
         step={1}
-        value={shown}
-        onChange={(e) => onChange(Number(e.target.value))}
-        aria-label="Your guess, from 0 to 100 percent"
+        value={value}
+        onChange={(e) => set(Number(e.target.value))}
+        aria-label={label}
+        data-testid={`${testId}-slider`}
         className="h-10 w-full accent-accent-brand"
       />
-      <div className="flex justify-between text-xs font-semibold text-text-secondary">
-        <span>0% never</span>
-        <span>50% coin flip</span>
-        <span>100% certain</span>
-      </div>
     </div>
   );
 }
 
-function CountFace({ card, value, onChange }: FaceProps & { card: Extract<PackCard, { kind: "count" }> }) {
-  const tint = tintFor(card.topic);
+function PercentScale() {
   return (
-    <div className="space-y-4">
-      <div className={`grid grid-cols-2 gap-2 rounded-3xl border-2 p-3 ${tint.panel}`}>
-        {card.items.map((item) => (
-          <div key={item.label} className="flex items-center gap-2 rounded-2xl bg-surface-card px-3 py-2">
-            <span className="text-xl" aria-hidden="true">
-              {item.emoji}
+    <div className="flex justify-between text-xs font-semibold text-text-secondary">
+      <span>0% never</span>
+      <span>50% coin flip</span>
+      <span>100% certain</span>
+    </div>
+  );
+}
+
+function ChancePicture({ card }: { card: ChanceCard }) {
+  const tint = tintFor(card.topic);
+
+  if (card.given) {
+    return (
+      <div className={`rounded-3xl border-2 p-3 ${tint.panel}`} data-testid="given">
+        <div className="flex items-center gap-3">
+          <span className="text-4xl" aria-hidden="true">
+            {card.emoji}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-black uppercase tracking-wide text-text-secondary">A number to go on</div>
+            <div className="text-sm font-bold leading-snug text-text-primary">{card.given.text}</div>
+          </div>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <span className="block h-3 flex-1 overflow-hidden rounded-full bg-surface-card">
+            <span className="block h-full rounded-full bg-text-primary" style={{ width: `${card.given.percent}%` }} />
+          </span>
+          <span className="shrink-0 text-base font-black tabular-nums text-text-primary">{card.given.percent}%</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (card.parts) {
+    return (
+      <div className={`grid grid-cols-4 gap-1.5 rounded-3xl border-2 p-2 ${tint.panel}`} data-testid="favorites">
+        {card.parts.map((part) => (
+          <div key={part.label} className="flex min-h-[64px] flex-col items-center justify-center rounded-2xl bg-surface-card px-1 text-center opacity-70">
+            <span className="text-lg" aria-hidden="true">
+              🚫
             </span>
-            <span className="text-sm font-bold leading-tight text-text-primary">{item.label}</span>
+            <span className="text-xs font-bold text-text-secondary line-through">{part.label}</span>
           </div>
         ))}
-      </div>
-      <div className="grid grid-cols-7 gap-1.5" role="group" aria-label="How many">
-        {Array.from({ length: card.max + 1 }, (_, n) => (
-          <button
-            key={n}
-            type="button"
-            onClick={() => onChange(n)}
-            aria-pressed={value === n}
-            className={`min-h-[52px] rounded-2xl border-2 text-xl font-black tabular-nums active:scale-95 ${
-              value === n ? "border-text-primary bg-text-primary text-white" : "border-surface-border bg-surface-card text-text-primary"
-            }`}
-          >
-            {n}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PickFace({ card, value, onChange }: FaceProps & { card: Extract<PackCard, { kind: "pick" }> }) {
-  const pair = card.options.length === 2;
-  return (
-    <div className="relative grid grid-cols-2 gap-3">
-      {card.options.map((option, index) => (
-        <Tile key={option.label} option={option} selected={value === index} tall={pair} onPick={() => onChange(index)} />
-      ))}
-      {pair && (
-        <span
-          className="pointer-events-none absolute left-1/2 top-1/2 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-text-primary text-xs font-black text-white"
-          aria-hidden="true"
-        >
-          OR
-        </span>
-      )}
-    </div>
-  );
-}
-
-function LadderFace({ card, value, onChange }: FaceProps & { card: Extract<PackCard, { kind: "ladder" }> }) {
-  const tint = tintFor(card.topic);
-  return (
-    <div className={`relative space-y-2 rounded-3xl border-2 p-3 ${tint.panel}`}>
-      {card.options.map((option, index) => (
-        // Each rung starts further in, so the list reads as steps in time.
-        <div key={option.label} style={{ paddingLeft: `${index * 22}px` }}>
-          <button
-            type="button"
-            onClick={() => onChange(index)}
-            aria-pressed={value === index}
-            className={`block min-h-[46px] w-full rounded-2xl border-2 px-4 text-left text-lg font-black active:scale-95 ${
-              value === index ? "border-text-primary bg-text-primary text-white" : "border-surface-border bg-surface-card text-text-primary"
-            }`}
-          >
-            {option.label}
-          </button>
+        <div className="flex min-h-[64px] flex-col items-center justify-center rounded-2xl border-2 border-text-primary bg-surface-card px-1 text-center">
+          <span className="text-2xl" aria-hidden="true">
+            {card.emoji}
+          </span>
+          <span className="text-xs font-black text-text-primary">Anyone else</span>
         </div>
-      ))}
-      <span className="pointer-events-none absolute bottom-3 left-3 text-4xl" aria-hidden="true">
-        {card.emoji}
-      </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`relative flex h-20 items-center justify-center overflow-hidden rounded-3xl border-2 ${tint.panel}`} aria-hidden="true">
+      <span className="absolute left-8 top-2 -rotate-12 text-3xl">{card.extras[0]}</span>
+      <span className="text-5xl">{card.emoji}</span>
+      <span className="absolute bottom-2 right-8 rotate-12 text-3xl">{card.extras[1]}</span>
     </div>
   );
 }
 
-function OrderFace({ card, onChange }: FaceProps & { card: Extract<PackCard, { kind: "order" }> }) {
-  const [picked, setPicked] = useState<number[]>([]);
-  const tap = (item: number) => {
-    if (picked.includes(item)) return;
-    const next = [...picked, item];
-    // Two taps settle all three: the one left over goes last.
-    const full = next.length === 2 ? [...next, [0, 1, 2].find((i) => !next.includes(i)) as number] : next;
-    setPicked(full);
-    if (full.length === 3) {
-      onChange(ORDER_PERMS.findIndex((perm) => perm.every((value, i) => value === full[i])));
-    }
-  };
-  const clear = () => {
-    setPicked([]);
-    onChange(null);
-  };
+function ChanceFace({ card, value, onChange }: { card: ChanceCard; value: number; onChange: (value: number) => void }) {
   return (
     <div className="space-y-2">
-      {card.items.map((item, index) => {
-        const rank = picked.indexOf(index);
-        return (
-          <button
-            key={item.label}
-            type="button"
-            onClick={() => tap(index)}
-            aria-label={rank >= 0 ? `${item.label}, number ${rank + 1}` : item.label}
-            className={`flex min-h-[60px] w-full items-center gap-3 rounded-3xl border-2 px-4 py-2 text-left active:scale-95 ${
-              rank >= 0 ? SELECTED : IDLE
-            }`}
-          >
+      <ChancePicture card={card} />
+      <Dial
+        value={value}
+        max={100}
+        suffix="%"
+        steps={[-5, -1, 1, 5]}
+        label="Your guess, from 0 to 100 percent"
+        testId="guess-number"
+        onChange={onChange}
+      />
+      <PercentScale />
+    </div>
+  );
+}
+
+function CountFace({ card, value, onChange }: { card: CountCard; value: number; onChange: (value: number) => void }) {
+  const tint = tintFor(card.topic);
+  const perRow = card.max > 20 ? Math.ceil(card.max / 2) : card.max;
+  return (
+    <div className="space-y-2">
+      <div className={`rounded-3xl border-2 p-3 ${tint.panel}`}>
+        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${perRow}, minmax(0, 1fr))` }} aria-hidden="true" data-testid="count-dots">
+          {Array.from({ length: card.max }, (_, i) => (
             <span
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base font-black ${
-                rank >= 0 ? "bg-text-primary text-white" : "border-2 border-dashed border-surface-border text-text-muted"
-              }`}
-            >
-              {rank >= 0 ? rank + 1 : ""}
-            </span>
-            <span className="text-2xl" aria-hidden="true">
-              {item.emoji}
-            </span>
-            <span className="text-sm font-bold leading-snug text-text-primary">{item.label}</span>
-          </button>
-        );
-      })}
-      <div className="flex items-center justify-between px-1 text-xs font-semibold text-text-secondary">
-        <span>Tap the surest first.</span>
-        {picked.length > 0 && (
-          <button type="button" onClick={clear} className="min-h-[32px] font-bold text-text-primary underline underline-offset-2">
-            Start again
-          </button>
-        )}
+              key={i}
+              className={`aspect-square rounded-full border-2 ${i < value ? "border-text-primary bg-text-primary" : "border-surface-border bg-surface-card"}`}
+            />
+          ))}
+        </div>
+        <div className="mt-2 flex items-center justify-center gap-2 text-sm font-bold text-text-primary">
+          <span className="text-xl" aria-hidden="true">
+            {card.emoji}
+          </span>
+          One dot for each of the {card.max} {card.noun}.
+        </div>
       </div>
+      <Dial
+        value={value}
+        max={card.max}
+        suffix=""
+        steps={[-1, 1]}
+        label={`Your guess, from 0 to ${card.max} ${card.noun}`}
+        testId="guess-number"
+        onChange={onChange}
+      />
+      <div className="flex justify-between text-xs font-semibold text-text-secondary">
+        <span>0 none</span>
+        <span>{Math.round(card.max / 2)} half</span>
+        <span>{card.max} all</span>
+      </div>
+    </div>
+  );
+}
+
+function DuoFace({ card, value, onChange }: { card: DuoCard; value: number; onChange: (value: number) => void }) {
+  const tint = tintFor(card.topic);
+  const both = duoParts(value);
+  const set = (which: number, next: number) => {
+    const clean = Math.max(0, Math.min(100, next));
+    onChange(which === 0 ? packDuo(clean, both[1]) : packDuo(both[0], clean));
+  };
+  const step = (which: number, by: number) => (
+    <button
+      type="button"
+      onClick={() => set(which, both[which] + by)}
+      aria-label={`${by > 0 ? "Up" : "Down"} ${Math.abs(by)}`}
+      className="min-h-[44px] min-w-[44px] shrink-0 rounded-2xl border-2 border-surface-border bg-surface-card text-sm font-black text-text-primary active:scale-95"
+    >
+      {by > 0 ? `+${by}` : `−${Math.abs(by)}`}
+    </button>
+  );
+  // Two sliders have to fit one phone screen, so each keeps its number beside
+  // its sentence and its nudge buttons at the ends of the slider.
+  return (
+    <div className="space-y-2">
+      {card.parts.map((part, i) => (
+        <div key={part.label} className={`rounded-3xl border-2 px-3 py-2 ${i === 0 ? tint.panel : "border-surface-border bg-surface-elevated"}`}>
+          <div className="flex items-center gap-2">
+            <span className="text-2xl" aria-hidden="true">
+              {part.emoji}
+            </span>
+            <span className="min-w-0 flex-1 text-sm font-black leading-snug text-text-primary">{part.label}</span>
+            <span className="shrink-0 text-3xl font-black tabular-nums text-text-primary" data-testid={`guess-number-${i + 1}`}>
+              {both[i]}%
+            </span>
+          </div>
+          <div className="mt-1 flex items-center gap-2">
+            {step(i, -1)}
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={both[i]}
+              onChange={(e) => set(i, Number(e.target.value))}
+              aria-label={`${part.label}: your guess, from 0 to 100 percent`}
+              data-testid={`guess-number-${i + 1}-slider`}
+              className="h-10 min-w-0 flex-1 accent-accent-brand"
+            />
+            {step(i, 1)}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 
 export default function CardFace({ card, value, onChange }: FaceProps) {
+  // A guess left over from another card never reaches a slider.
+  const safe = isValidGuess(card, value) ? value : startGuess(card);
   switch (card.kind) {
     case "chance":
-      return <ChanceFace card={card} value={value} onChange={onChange} />;
+      return <ChanceFace card={card} value={safe} onChange={onChange} />;
     case "count":
-      return <CountFace card={card} value={value} onChange={onChange} />;
-    case "pick":
-      return <PickFace card={card} value={value} onChange={onChange} />;
-    case "ladder":
-      return <LadderFace card={card} value={value} onChange={onChange} />;
-    case "order":
-      return <OrderFace card={card} value={value} onChange={onChange} />;
+      return <CountFace card={card} value={safe} onChange={onChange} />;
+    case "duo":
+      return <DuoFace card={card} value={safe} onChange={onChange} />;
   }
 }

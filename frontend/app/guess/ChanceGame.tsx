@@ -5,7 +5,11 @@
 // line after a card, the chance of winning, the link) lives in `lib/guess/`
 // and is tested there.
 //
-// What three rounds of playtesting asked for, and where it is:
+// EVERY CARD IS A SLIDER (429: A). The first set on this page mixed sliders
+// with pick-one and put-in-order cards; played for real, the sliders were the
+// fun, so the other controls are gone.
+//
+// What playtesting asked for, and where it is:
 //   • a name before the first card                      → Home
 //   • a board that is always there, with each player's
 //     chance of winning                                 → Board
@@ -31,6 +35,7 @@ import {
   pointsByCard,
   pointsFor,
   standings,
+  startGuess,
   TOGETHER_NAME,
   togetherReport,
   topicWins,
@@ -96,9 +101,11 @@ const QUIET =
   "min-h-[44px] rounded-2xl border-2 border-surface-border bg-surface-card px-4 text-sm font-bold text-text-primary active:scale-95";
 const PANEL = "rounded-3xl border-2 border-surface-border bg-surface-card p-4";
 
+// The chance of winning is an estimate from played-out games, so
+// it never prints a flat 0% or 100% while cards are still to come.
 function percent(value: number): string {
   if (value >= 0.995) return "99%+";
-  if (value > 0 && value < 0.005) return "<1%";
+  if (value < 0.005) return "<1%";
   return `${Math.round(value * 100)}%`;
 }
 
@@ -116,6 +123,8 @@ interface BoardRow {
   dot: string;
   house: boolean;
   earlier: boolean;
+  /** True for the player whose guess this is, when several people share the phone. */
+  turn: boolean;
 }
 
 function Board({ rows, wide }: { rows: BoardRow[]; wide: boolean }) {
@@ -147,7 +156,10 @@ function Board({ rows, wide }: { rows: BoardRow[]; wide: boolean }) {
       {rows.map((row) => (
         <li
           key={row.name}
-          className="flex shrink-0 items-center gap-1.5 rounded-full border-2 border-surface-border bg-surface-card py-1 pl-2 pr-3"
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border-2 bg-surface-card py-1 pl-2 pr-3 ${
+            row.turn ? "border-text-primary" : "border-surface-border"
+          }`}
+          data-turn={row.turn ? "yes" : undefined}
         >
           <span className={`h-2.5 w-2.5 rounded-full ${row.dot}`} aria-hidden="true" />
           <span className="max-w-[84px] truncate text-xs font-bold text-text-primary">{row.name}</span>
@@ -181,7 +193,7 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
   const [linkNote, setLinkNote] = useState<"" | "other-edition" | "unreadable">("");
   const [names, setNames] = useState<string[]>([]);
   const [nameDraft, setNameDraft] = useState("");
-  const [draft, setDraft] = useState<number | null>(null);
+  const [draftState, setDraftState] = useState<{ at: string; value: number }>({ at: "", value: 0 });
   const [goodDraft, setGoodDraft] = useState<boolean[]>([]);
   const [copied, setCopied] = useState<"" | "yes" | "select">("");
   const [canShare, setCanShare] = useState(false);
@@ -233,8 +245,9 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
       dot: s.entry.from === "house" ? HOUSE_DOT : dotOf(s.entry.name),
       house: s.entry.from === "house",
       earlier: s.entry.from === "link",
+      turn: game.phase === "play" && game.here.length > 1 && game.here[game.turn]?.name === s.entry.name,
     }));
-  }, [pack, board, chances, done, dotOf, total]);
+  }, [pack, board, chances, done, dotOf, total, game.phase, game.here, game.turn]);
 
   const line: RoastLine | null = useMemo(() => {
     if (game.phase !== "reveal") return null;
@@ -242,10 +255,11 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
     return history[game.index] ?? null;
   }, [pack, game.phase, game.index, people, coinOn, coin]);
 
-  // A new card or a new turn starts from a clean control.
-  useEffect(() => {
-    setDraft(card.kind === "chance" ? 50 : null);
-  }, [card, game.turn, game.phase]);
+  // Every slider starts in the middle. The guess being made belongs to one card
+  // and one turn, so a new card or a new player never inherits the last one.
+  const draftAt = `${card.id}:${game.turn}`;
+  const draft = draftState.at === draftAt ? draftState.value : startGuess(card);
+  const setDraft = useCallback((value: number) => setDraftState({ at: draftAt, value }), [draftAt]);
 
   // ---- actions -------------------------------------------------------------
 
@@ -294,7 +308,6 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
   }, []);
 
   const lockIn = useCallback(() => {
-    if (draft === null) return;
     setGame((g) => {
       const here = g.here.map((p, i) => (i === g.turn ? { ...p, guesses: p.guesses.map((v, c) => (c === g.index ? draft : v)) } : p));
       if (g.turn < g.here.length - 1) return { ...g, here, turn: g.turn + 1 };
@@ -438,11 +451,11 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
           <ul className="space-y-2 text-sm text-text-primary">
             <li className="flex gap-2">
               <span aria-hidden="true">🎚️</span>
-              <span>Slide, pick or put in order. Two rounds of {pack.perRound}.</span>
+              <span>Every card is a slider. Dead on scores 20, and the further off you are, the less you get. Two rounds of {pack.perRound}.</span>
             </li>
             <li className="flex gap-2">
               <span aria-hidden="true">🪙</span>
-              <span>The Coin plays too. It always says 50%. Beat it.</span>
+              <span>The Coin plays too. It leaves every slider in the middle. Beat it.</span>
             </li>
             <li className="flex gap-2">
               <span aria-hidden="true">🔗</span>
@@ -456,16 +469,28 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
   }
 
   const tint = tintFor(card.topic);
-  const cardHead = (
+  // The play screen has to fit a phone with the slider in view above the Lock in
+  // button, so the head is kept short: tags, the card number, the sentence.
+  const cardHead = (answered: boolean) => (
     <div>
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        <span className="rounded-full bg-text-primary px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-white">{kindLabel(card)}</span>
-        <span className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${tint.chip}`}>{card.topic}</span>
-      </div>
-      <h2 className={`font-black leading-tight text-text-primary ${card.prompt.length > 60 ? "text-xl" : "text-2xl"}`} data-testid="prompt">
+      {!answered && (
+        <div className="mb-2 flex items-center gap-1.5">
+          <span className="shrink-0 whitespace-nowrap rounded-full bg-text-primary px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-white">
+            {kindLabel(card)}
+          </span>
+          <span className={`min-w-0 truncate rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${tint.chip}`}>{card.topic}</span>
+          <span className="ml-auto shrink-0 text-xs font-bold tabular-nums text-text-secondary" data-testid="progress">
+            {game.index + 1} of {total}
+          </span>
+        </div>
+      )}
+      <h2
+        className={`font-black leading-tight text-text-primary ${answered ? "text-lg" : card.prompt.length > 36 ? "text-xl" : "text-2xl"}`}
+        data-testid="prompt"
+      >
         {card.prompt}
       </h2>
-      {card.sub && <p className="mt-1 text-sm font-semibold text-text-secondary">{card.sub}</p>}
+      {card.sub && !answered && <p className="mt-1 text-sm font-semibold text-text-secondary">{card.sub}</p>}
     </div>
   );
 
@@ -475,21 +500,22 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
     return (
       <div className="px-1 pb-4">
         <div className="mx-auto max-w-md">
-          <Header pack={pack} right={`Card ${game.index + 1} of ${total}`} />
           <Board rows={rows} wide={false} />
-          <section className={`${PANEL} mt-2 space-y-3`} data-testid="card" data-kind={card.kind}>
-            {cardHead}
-            {game.here.length > 1 && (
-              <div className="flex items-center gap-2 rounded-2xl bg-surface-elevated px-3 py-2 text-sm font-black text-text-primary" data-testid="turn">
-                <span className={`h-3 w-3 rounded-full ${dotOf(who.name)}`} aria-hidden="true" />
-                {who.name}, your guess. {game.turn > 0 ? "No peeking at the last one." : ""}
-              </div>
-            )}
+          <section className={`${PANEL} mt-2 space-y-3`} data-testid="card" data-kind={card.kind} data-flavor={card.flavor}>
+            {cardHead(false)}
             <CardFace key={`${card.id}:${game.turn}`} card={card} value={draft} onChange={setDraft} />
           </section>
           <div className="sticky bottom-20 z-30 mt-3 md:bottom-4">
-            <button type="button" className={`${PRIMARY} shadow-lg`} onClick={lockIn} disabled={draft === null} data-testid="lock-button">
-              Lock in{draft !== null && card.kind === "chance" ? ` ${draft}%` : ""}
+            <button
+              type="button"
+              className={`${PRIMARY} flex items-center justify-center gap-2 shadow-lg`}
+              onClick={lockIn}
+              data-testid="lock-button"
+            >
+              {game.here.length > 1 && <span className={`h-3 w-3 shrink-0 rounded-full border-2 border-white ${dotOf(who.name)}`} aria-hidden="true" />}
+              <span data-testid="lock-label">
+                {game.here.length > 1 ? `${who.name}: lock in ${guessLabel(card, draft)}` : `Lock in ${guessLabel(card, draft)}`}
+              </span>
             </button>
           </div>
           <details className="mt-3 rounded-2xl border-2 border-surface-border bg-surface-card px-3 py-2 text-sm text-text-primary">
@@ -522,22 +548,21 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
     return (
       <div className="px-1 pb-4">
         <div className="mx-auto max-w-md">
-          <Header pack={pack} right={`Card ${game.index + 1} of ${total}`} />
           <Board rows={rows} wide={false} />
-          <section className={`${PANEL} mt-3 space-y-4`} data-testid="reveal" data-kind={card.kind}>
-            {cardHead}
+          <section className={`${PANEL} mt-2 space-y-3`} data-testid="reveal" data-kind={card.kind} data-flavor={card.flavor}>
+            {cardHead(true)}
             <CardReveal card={card} slots={slots} />
-            <ul className="space-y-1.5" data-testid="slots">
+            <ul className="flex flex-wrap gap-1.5" data-testid="slots">
               {slots.map((slot) => (
-                <li key={slot.name} className="flex items-center gap-2 rounded-2xl bg-surface-elevated px-3 py-2">
-                  <span className={`h-3 w-3 shrink-0 rounded-full ${slot.dot}`} aria-hidden="true" />
-                  <span className="shrink-0 text-sm font-black text-text-primary">{slot.name}</span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-text-secondary">{guessLabel(card, slot.guess)}</span>
-                  <span className="shrink-0 text-base font-black tabular-nums text-text-primary">+{slot.points}</span>
+                <li key={slot.name} className="flex items-center gap-1.5 rounded-full bg-surface-elevated py-1 pl-2 pr-2.5 text-xs">
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${slot.dot}`} aria-hidden="true" />
+                  <span className="font-black text-text-primary">{slot.name}</span>
+                  <span className="text-text-secondary">{guessLabel(card, slot.guess)}</span>
+                  <span className="font-black tabular-nums text-text-primary">+{slot.points}</span>
                 </li>
               ))}
             </ul>
-            <p className="rounded-2xl border-2 border-dashed border-surface-border px-3 py-2 text-sm text-text-secondary" data-testid="context">
+            <p className="text-xs leading-snug text-text-secondary" data-testid="context">
               {card.context}
             </p>
             {line ? (
@@ -554,7 +579,7 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
                         type="button"
                         onClick={() => next(i + 1)}
                         data-testid={`rate-${i + 1}`}
-                        className="flex min-h-[64px] flex-col items-center justify-center rounded-2xl border-2 border-surface-border bg-surface-card active:scale-95"
+                        className="flex min-h-[56px] flex-col items-center justify-center rounded-2xl border-2 border-surface-border bg-surface-card active:scale-95"
                       >
                         <span className="text-2xl" aria-hidden="true">
                           {face.emoji}

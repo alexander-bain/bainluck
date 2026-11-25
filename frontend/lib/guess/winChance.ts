@@ -2,54 +2,43 @@
 // playtesting: "what are my chances of winning?"
 //
 // THIS IS AN ESTIMATE ABOUT THE GAME, NOT A NUMBER FROM THE WORLD. It is made
-// by playing the rest of the game out many times. On each card still to come, a
-// player scores a draw from their own cards so far, mixed with a plain starting
-// guess that fades as their own record grows. The page labels it as our
+// by playing the rest of the game out many times. The page labels it as our
 // estimate.
 //
+// IT LEANED TOO HARD ON A FEW CARDS, AND THIS IS THE FIX (429: A). The first
+// version treated each player's own cards so far as how they would go on
+// playing, so two bad cards made someone a no-hoper. On the first live set the
+// table's averages were within about two points a card of each other, while a
+// single card swings by eight or so: most of what looks like form early on is
+// luck. So on each card still to come a player now scores a draw from THE
+// WHOLE TABLE'S cards so far, and only now and then from their own: their own
+// record counts n / (n + OWN_AFTER), about a thirteenth after two cards and a
+// third by the last. Early on a lead is worth the points in it and little more.
+//
+// It does not flatter. Someone thirty points behind two people with ten cards
+// to go has a small chance, and the page shows a small number.
+//
 // NOBODY'S LATER CARDS ARE LOOKED AT, even when they are known. Someone who
-// played yesterday has guesses on every card, and the Coin's whole game can be
-// worked out in advance, but using them would tell a person at card 1 how the
-// people before them finished. A group plays one card at a time and learns one
-// card at a time; the estimate does too.
+// played yesterday has guesses on every card, but using them would tell a
+// person at card 1 how the people before them finished.
 //
 // The draws are seeded by the edition and the card number, so every phone shows
 // the same percentages for the same guesses, and the chart at the end matches
 // what was shown along the way.
 
 import { pointsFor, seeded } from "./engine";
-import type { GamePack, PackCard, PlayerEntry } from "./types";
+import type { GamePack, PlayerEntry } from "./types";
 
 const RUNS = 1500;
 
-/**
- * How much weight the starting guess keeps: a player's own record counts
- * n / (n + PRIOR_WEIGHT). Six means one good card does not make a favorite:
- * a player's own cards outweigh the starting guess only from the seventh on.
- */
-const PRIOR_WEIGHT = 6;
+/** How slowly a player's own cards come to count: their weight is n / (n + OWN_AFTER). */
+const OWN_AFTER = 24;
 
 /**
- * Plain starting guesses at what a card pays, before a player has a record of
- * their own. The slider list is set from playtesting, where a typical guess
- * missed by more than twenty points: most slider cards pay little or nothing.
+ * What a slider tends to pay, used until the table has cards of its own. Set
+ * from real play on the live page: a wide spread, from nothing to full marks.
  */
-const PRIOR: Record<"slider" | "two" | "four" | "order", number[]> = {
-  slider: [0, 0, 0, 0, 2, 4, 6, 9, 13, 17],
-  two: [20, 0],
-  four: [20, 8, 0, 0],
-  order: [20, 12, 12, 5, 5, 0],
-};
-
-function priorKey(card: PackCard): keyof typeof PRIOR {
-  if (card.kind === "chance" || card.kind === "count") return "slider";
-  if (card.kind === "order") return "order";
-  return card.options.length === 2 ? "two" : "four";
-}
-
-function isSlider(card: PackCard): boolean {
-  return card.kind === "chance" || card.kind === "count";
-}
+const SEED = [0, 0, 0, 3, 8, 9, 10, 12, 13, 15, 17, 18, 20, 20];
 
 /**
  * The chance each entry finishes first, given guesses on the first `upTo`
@@ -66,17 +55,12 @@ export function winChances(pack: GamePack, entries: PlayerEntry[], upTo: number)
   const done = Math.max(0, Math.min(upTo, total));
   if (done === 0) return entries.map(() => 1 / count);
 
-  const banked = entries.map((e) => {
-    let sum = 0;
-    for (let i = 0; i < done; i += 1) sum += pointsFor(cards[i], e.guesses[i] ?? null);
-    return sum;
-  });
-  const ownSlider = entries.map((e) =>
-    cards.flatMap((card, i) => (i < done && isSlider(card) && e.guesses[i] !== null ? [pointsFor(card, e.guesses[i])] : [])),
+  const own = entries.map((e) =>
+    cards.flatMap((card, i) => (i < done && e.guesses[i] !== null ? [pointsFor(card, e.guesses[i])] : [])),
   );
-  const ownChoice = entries.map((e) =>
-    cards.flatMap((card, i) => (i < done && !isSlider(card) && e.guesses[i] !== null ? [pointsFor(card, e.guesses[i])] : [])),
-  );
+  const banked = own.map((points) => points.reduce((sum, p) => sum + p, 0));
+  // The table's cards so far, topped up with the seed so a single card never stands for everyone.
+  const table = [...own.flat(), ...SEED];
 
   const random = seeded(`${pack.code}:win:${done}:${count}`);
   const wins = entries.map(() => 0);
@@ -86,10 +70,10 @@ export function winChances(pack: GamePack, entries: PlayerEntry[], upTo: number)
     let leaders: number[] = [];
     for (let p = 0; p < count; p += 1) {
       let score = banked[p];
+      const mine = own[p];
+      const useMine = mine.length / (mine.length + OWN_AFTER);
       for (let i = done; i < total; i += 1) {
-        const own = isSlider(cards[i]) ? ownSlider[p] : ownChoice[p];
-        const useOwn = own.length > 0 && random() < own.length / (own.length + PRIOR_WEIGHT);
-        const from = useOwn ? own : PRIOR[priorKey(cards[i])];
+        const from = mine.length > 0 && random() < useMine ? mine : table;
         score += from[Math.floor(random() * from.length)];
       }
       if (score > best) {
