@@ -95,8 +95,17 @@ describe("Decision 386: A (#12221) — /grade/containers-v2", () => {
 
     const ts = "2026-11-25T00:00:00Z";
     for (const [idx, grade] of (["Keep", "Fix", "Drop"] as const).entries()) {
-      const targetPage = SAMPLE_DYNAMIC_PAGES[idx % SAMPLE_DYNAMIC_PAGES.length];
-      const payload = buildContainerV2JudgmentPayload(targetPage, grade, `Note for ${grade}`, ts);
+      const targetPage = {
+        ...SAMPLE_DYNAMIC_PAGES[idx % SAMPLE_DYNAMIC_PAGES.length],
+        page_fingerprint: `deadbeef0000000${idx}`,
+      };
+      const payload = buildContainerV2JudgmentPayload(
+        targetPage,
+        grade,
+        `Note for ${grade}`,
+        ts,
+        "kit-deck-123456789abc",
+      );
       expect(payload.surface).toBe("grade_containers_v2");
       expect(payload.surface.length).toBeLessThanOrEqual(50);
       expect(payload.item_type).toBe("kit_container_v2");
@@ -105,14 +114,17 @@ describe("Decision 386: A (#12221) — /grade/containers-v2", () => {
       expect(payload.label.length).toBeLessThanOrEqual(10);
       expect(payload.reviewer.length).toBeLessThanOrEqual(100);
       expect(payload.market_name).toBe(targetPage.slug);
+      expect(payload.card_fingerprint).toBe(`deadbeef0000000${idx}`);
       expect(payload.notes).toBe(`Note for ${grade}`);
       expect(payload.label_metadata.ui_version).toBe(2);
+      expect(payload.label_metadata.deck_id).toBe("kit-deck-123456789abc");
       expect(payload.label_metadata.family_fingerprint).toBe(targetPage.family_fingerprint);
+      expect(payload.label_metadata.page_fingerprint).toBe(`deadbeef0000000${idx}`);
       expect(payload.label_metadata.grade).toBe(grade);
     }
   });
 
-  test("restores newest valid grades per slug while ignoring malformed rows", () => {
+  test("restores newest valid grades per slug while ignoring stale deck_id or changed page_fingerprint", () => {
     const restored = restoreContainerV2Grades([
       {
         market_name: "orbital-research-goals",
@@ -121,7 +133,9 @@ describe("Decision 386: A (#12221) — /grade/containers-v2", () => {
         created_at: "2026-11-25T01:00:00Z",
         label_metadata: {
           ui_version: 2,
+          deck_id: "kit-deck-live-1",
           slug: "orbital-research-goals",
+          page_fingerprint: "fp-current",
           grade: "Keep",
           note: "Strong three-view contrast",
           timestamp: "2026-11-25T01:00:00Z",
@@ -132,6 +146,24 @@ describe("Decision 386: A (#12221) — /grade/containers-v2", () => {
         label: "Fix",
         notes: "Older save that should not overwrite newest",
         created_at: "2026-11-25T00:10:00Z",
+        label_metadata: {
+          ui_version: 2,
+          deck_id: "kit-deck-live-1",
+          slug: "orbital-research-goals",
+          page_fingerprint: "fp-current",
+        },
+      },
+      {
+        market_name: "wrong-deck-slug",
+        label: "Drop",
+        notes: "From yesterday deck",
+        label_metadata: {
+          ui_version: 2,
+          deck_id: "kit-deck-old-0",
+          slug: "wrong-deck-slug",
+          page_fingerprint: "fp-old",
+          grade: "Drop",
+        },
       },
       {
         market_name: "bad-row",
@@ -140,12 +172,74 @@ describe("Decision 386: A (#12221) — /grade/containers-v2", () => {
       },
     ]);
 
-    expect(Object.keys(restored)).toEqual(["orbital-research-goals"]);
-    expect(restored["orbital-research-goals"]).toEqual({
+    expect(Object.keys(restored).sort()).toEqual(["orbital-research-goals", "wrong-deck-slug"]);
+
+    const strictRestored = restoreContainerV2Grades(
+      [
+        {
+          market_name: "orbital-research-goals",
+          label: "Drop",
+          label_metadata: {
+            ui_version: 2,
+            deck_id: "kit-deck-old-0",
+            slug: "orbital-research-goals",
+            page_fingerprint: "fp-current",
+            grade: "Drop",
+          },
+        },
+        {
+          market_name: "orbital-research-goals",
+          label: "Fix",
+          label_metadata: {
+            ui_version: 2,
+            deck_id: "kit-deck-live-1",
+            slug: "orbital-research-goals",
+            page_fingerprint: "fp-stale",
+            grade: "Fix",
+          },
+        },
+        {
+          market_name: "orbital-research-goals",
+          label: "Keep",
+          notes: "Matched current deck and fingerprint",
+          label_metadata: {
+            ui_version: 2,
+            deck_id: "kit-deck-live-1",
+            slug: "orbital-research-goals",
+            page_fingerprint: "fp-current",
+            grade: "Keep",
+            note: "Matched current deck and fingerprint",
+            timestamp: "2026-11-25T01:05:00Z",
+          },
+        },
+      ],
+      {
+        deckId: "kit-deck-live-1",
+        pages: [
+          {
+            ...SAMPLE_DYNAMIC_PAGES[0],
+            slug: "orbital-research-goals",
+            page_fingerprint: "fp-current",
+          },
+        ],
+      },
+    );
+    expect(Object.keys(strictRestored)).toEqual(["orbital-research-goals"]);
+    expect(strictRestored["orbital-research-goals"]).toEqual({
       grade: "Keep",
-      note: "Strong three-view contrast",
-      updated_at: "2026-11-25T01:00:00Z",
+      note: "Matched current deck and fingerprint",
+      updated_at: "2026-11-25T01:05:00Z",
     });
+
+    const smokePayload = buildContainerV2JudgmentPayload(
+      SAMPLE_DYNAMIC_PAGES[0],
+      "Keep",
+      "smoke test",
+      "2026-11-25T01:05:00Z",
+      "kit-deck-live-1",
+      "atlas-smoke",
+    );
+    expect(smokePayload.reviewer).toBe("atlas-smoke");
   });
 
   test("Condition 1: zero #12221 frontend files hardcode preview topic slugs or entities", () => {

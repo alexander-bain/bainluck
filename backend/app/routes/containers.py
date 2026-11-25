@@ -740,42 +740,57 @@ async def get_kit_v1_preview(
 @router.get("/preview/kit-pages")
 async def get_kit_container_pages_preview(
     request: Request,
+    deck_id: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Admin-only preview of Decision 386: A dynamic Kit container pages (preview only)."""
+    """Admin-only preview of Decision 386: A dynamic Kit container pages (read-only from Redis)."""
     import json
     from app.routes.admin_utils import _check_admin_auth
     from app.tasks.container_proposer import (
+        CONTAINER_PREVIEWS_DECK_KEY_PREFIX,
         CONTAINER_PREVIEWS_REDIS_KEY,
-        run_nightly_container_proposer,
     )
     from app.tasks.redis_state import get_redis_client
 
     if not await _check_admin_auth(None, request, db):
         raise HTTPException(status_code=403, detail="Admin authentication required")
 
+    requested_deck_id = (deck_id or "").strip() or None
+    redis_key = (
+        f"{CONTAINER_PREVIEWS_DECK_KEY_PREFIX}{requested_deck_id}"
+        if requested_deck_id
+        else CONTAINER_PREVIEWS_REDIS_KEY
+    )
+
     try:
         rc = get_redis_client()
-        cached_raw = rc.get(CONTAINER_PREVIEWS_REDIS_KEY) if rc is not None else None
+        cached_raw = rc.get(redis_key) if rc is not None else None
         if cached_raw:
             cached = json.loads(cached_raw)
             if isinstance(cached, dict) and cached.get("pages"):
+                pages = cached.get("pages") or []
                 return {
                     "kit_page_version": 1,
+                    "status": "ready",
+                    "deck_id": cached.get("deck_id"),
                     "snapshot_captured_at": cached.get("updated_at"),
-                    "count": len(cached.get("pages") or []),
-                    "pages": cached.get("pages") or [],
+                    "covered_ids_count": int(cached.get("covered_ids_count") or 0),
+                    "timings_ms": cached.get("timings_ms"),
+                    "count": len(pages),
+                    "pages": pages,
                 }
     except Exception:
         pass
 
-    res = await run_nightly_container_proposer(session=db, max_proposals=5, audit_top_n=10)
     return {
         "kit_page_version": 1,
-        "snapshot_captured_at": res["snapshot_captured_at"],
-        "count": res["proposed_count"],
-        "pages": res["pages"],
-        "ranked_audit": res["ranked_audit"],
+        "status": "not_built_yet",
+        "deck_id": requested_deck_id,
+        "snapshot_captured_at": None,
+        "covered_ids_count": 0,
+        "timings_ms": None,
+        "count": 0,
+        "pages": [],
     }
 
 

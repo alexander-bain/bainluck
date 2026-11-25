@@ -9,10 +9,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+import hashlib
+import json
 import re
 from typing import Any, Mapping, Sequence
 
+from app.utils.discover_fun_scout import _SCOUT_NON_FUN_HARM_RE
+from app.utils.discover_fun_tags import check_fun_taste_guard
+from app.utils.feed_reasons import _display_pct
+from app.utils.graded_card import rendered_percent
 from app.utils.kit_v1_spec import (
     ALLOWED_KIT_IMAGE_HOSTS,
     _is_valid_image_url,
@@ -48,7 +53,7 @@ _BEFORE_DATE_RE = re.compile(
     r"\b(Before\s+|by\s+|in\s+)?"
     r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
     r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b"
-    r"(?:\s+(\d{1,2}),?)?"
+    r"(?:\s+(?!\d{4}\b)(\d{1,2}),?)?"
     r"(?:\s+(?:(\d{4})|'(\d{2})))?",
     re.IGNORECASE,
 )
@@ -97,14 +102,46 @@ def _slugify(text: str) -> str:
     return s[:64] or "container-preview"
 
 
-def _round_pct(prob: Any) -> int:
-    if prob is None:
+def _normalize_prob(raw: Any) -> float | None:
+    """Normalize a raw probability into [0.0, 1.0] ONCE to prevent double-scaling."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if val > 1.0:
+        val /= 100.0
+    return max(0.0, min(1.0, val))
+
+
+def _pct_int(prob_frac: float | None) -> int:
+    """Whole percent computed via `rendered_percent` on a [0.0, 1.0] fraction."""
+    if prob_frac is None:
         return 0
-    val = float(prob)
-    if 0.0 <= val <= 1.0:
-        val *= 100.0
-    val = max(0.0, min(100.0, val))
-    return int(Decimal(str(val)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    val = rendered_percent(prob_frac)
+    return 0 if val is None else int(val)
+
+
+def _pct_display(prob_frac: float, pct: int | None = None) -> str:
+    """Format a [0.0, 1.0] probability via shared `feed_reasons._display_pct` ('<1%' / '>99%')."""
+    return f"{_display_pct(prob_frac, printed=pct)}%"
+
+
+def _round_pct(prob: Any) -> int:
+    """Backward-safe alias strictly over [0.0, 1.0] probabilities (uses rendered_percent)."""
+    return _pct_int(_normalize_prob(prob))
+
+
+def _passes_taste_and_harm(title: str | None, description: str | None = None) -> bool:
+    """Reuse the scout's taste and severe-harm guards verbatim."""
+    ok, _ = check_fun_taste_guard(title, description)
+    if not ok:
+        return False
+    combined = " ".join(part for part in (title or "", description or "") if part).strip()
+    if combined and _SCOUT_NON_FUN_HARM_RE.search(combined):
+        return False
+    return True
 
 
 def _parse_iso_dt(val: Any) -> datetime | None:
@@ -154,12 +191,12 @@ def _sorted_outcomes(market: Mapping[str, Any]) -> list[dict[str, Any]]:
         p_raw = o.get("current_probability")
         if p_raw is None:
             p_raw = o.get("probability")
-        if p_raw is None:
+        prob = _normalize_prob(p_raw)
+        if prob is None:
             continue
-        prob = float(p_raw)
-        if prob > 1.0:
-            prob /= 100.0
-        out.append({"name": str(o.get("name") or "").strip(), "prob": prob})
+        oid_raw = o.get("id")
+        oid = int(oid_raw) if isinstance(oid_raw, int) and not isinstance(oid_raw, bool) else None
+        out.append({"id": oid, "name": str(o.get("name") or "").strip(), "prob": prob})
     out.sort(key=lambda r: (-r["prob"], r["name"]))
     return out
 
@@ -174,18 +211,26 @@ def _is_binary_market(market: Mapping[str, Any]) -> bool:
     return len(outcomes) == 1
 
 
-def _top_probability(market: Mapping[str, Any]) -> float:
+def _top_fraction_and_outcome(market: Mapping[str, Any]) -> tuple[float, int | None]:
+    """Return (probability_in_0_to_1, outcome_id) for the market's displayed yes/top leg."""
     outcomes = _sorted_outcomes(market)
     if outcomes:
         yes = next((o for o in outcomes if o["name"].lower() == "yes"), None)
         if yes is not None:
-            return float(yes["prob"]) * 100.0
+            return float(yes["prob"]), yes.get("id")
         if len(outcomes) == 1 and outcomes[0]["name"].lower() == "no":
-            return max(0.0, (1.0 - float(outcomes[0]["prob"])) * 100.0)
-        return float(outcomes[0]["prob"]) * 100.0
-    p = market.get("current_probability") or market.get("probability") or 0.0
-    val = float(p)
-    return val * 100.0 if val <= 1.0 else val
+            return max(0.0, 1.0 - float(outcomes[0]["prob"])), outcomes[0].get("id")
+        return float(outcomes[0]["prob"]), outcomes[0].get("id")
+    p = market.get("current_probability")
+    if p is None:
+        p = market.get("probability")
+    frac = _normalize_prob(p)
+    return (0.0 if frac is None else frac), None
+
+
+def _top_probability(market: Mapping[str, Any]) -> float:
+    """Return probability in 0..100 scale for ordering comparisons only."""
+    return _top_fraction_and_outcome(market)[0] * 100.0
 
 
 def _sources_count(market: Mapping[str, Any]) -> int:
@@ -228,14 +273,26 @@ def _dedupe_twins(markets: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return deduped
 
 
+_BARE_INFINITIVE_FRAG_RE = re.compile(
+    r"(?:\bbe\b|\bjoin\b|\bpublish\b|\bannounce\b|\battend\b|\bcapture\b|\benter\b|\btarget\s+[A-Z]|\badmit(?:s)?\b|\brelease\b|\btestify\b)",
+    re.IGNORECASE,
+)
+_DANGLING_TRAILING_PREP_RE = re.compile(
+    r"\s+(?:by|before|in|on|at|for|to|with)\s*(?:\.\.\.|…)*[?!.:]*$",
+    re.IGNORECASE,
+)
+
+
 def derive_common_headline(
     family_label: str | None,
     titles: Sequence[str],
 ) -> tuple[str | None, str | None]:
-    """Derive a 2-4 word declarative common headline without stat noise or conjunctions."""
+    """Derive a 2-4 word declarative common headline without stat noise, conjunctions, or taste violations."""
     candidates: list[str] = []
     single_entity_label: str | None = None
     if family_label:
+        if not _passes_taste_and_harm(str(family_label)):
+            return None, "refused_scout_taste_or_harm_guard"
         clean_fl = re.sub(r"[?!.:]+$", "", str(family_label)).strip()
         fl_words = clean_fl.split()
         if len(fl_words) == 1 and len(fl_words[0]) >= 3 and not _STAT_NOISE_RE.search(clean_fl):
@@ -244,54 +301,82 @@ def derive_common_headline(
         candidates.append(str(family_label))
     candidates.extend(str(t) for t in titles if t)
 
+    norm_titles_low = [str(t or "").lower() for t in titles if t]
     for idx_c, raw in enumerate(candidates):
         is_fam = family_label is not None and idx_c == 0
         if idx_c == 1 and single_entity_label and not _HAS_CONJUNCTION_RE.search(single_entity_label):
-            return f"{single_entity_label} Outlook", None
+            hl_out = f"{single_entity_label} Outlook"
+            if _passes_taste_and_harm(hl_out):
+                return hl_out, None
         txt = raw.replace("{}", " ").strip()
+        txt = _DANGLING_TRAILING_PREP_RE.sub("", txt).strip()
         txt = re.sub(r"[?!.:]+$", "", txt).strip()
         txt = re.sub(r"^(?:Will|Who\s+will|What\s+will|Which|When\s+will|Does|Is|Are)\s+", "", txt, flags=re.IGNORECASE)
         txt = _HEADLINE_STRIP_SUFFIX_RE.sub("", txt).strip()
+        txt = _DANGLING_TRAILING_PREP_RE.sub("", txt).strip()
         txt = re.sub(r"\s+", " ", txt).strip(" -–—,:;")
         if not txt or _STAT_NOISE_RE.search(txt) or _HAS_CONJUNCTION_RE.search(txt):
+            continue
+        if not is_fam and _BARE_INFINITIVE_FRAG_RE.search(txt):
             continue
         words = [w for w in txt.split() if w]
         if 2 <= len(words) <= 4:
             last_low = words[-1].lower().strip("?!.,")
             if last_low in _DANGLING_HEADLINE_ENDINGS and not is_fam:
                 continue
+            if not is_fam and len(norm_titles_low) >= 2:
+                # Single candidate title only wins if its core tokens actually fit >= half of siblings.
+                sig_toks = [
+                    w.lower() for w in words
+                    if w.lower() not in _GENERIC_STOPWORDS and len(w) > 2
+                ][:2]
+                if sig_toks:
+                    matched = sum(1 for nt in norm_titles_low if all(st in nt for st in sig_toks))
+                    if matched < max(2, (len(norm_titles_low) + 1) // 2):
+                        continue
             formatted = " ".join(w if any(c.isupper() for c in w) else w.capitalize() for w in words)
-            return formatted, None
+            if _passes_taste_and_harm(formatted):
+                return formatted, None
 
     if single_entity_label and not _HAS_CONJUNCTION_RE.search(single_entity_label):
-        return f"{single_entity_label} Outlook", None
+        hl_out = f"{single_entity_label} Outlook"
+        if _passes_taste_and_harm(hl_out):
+            return hl_out, None
 
-    # Fallback: extract top 2-3 shared non-stopword content tokens across titles
-    token_counts: dict[str, int] = defaultdict(int)
-    first_order: dict[str, int] = {}
-    orig_case: dict[str, str] = {}
-    for t in titles:
-        seen_in_t: set[str] = set()
-        for tok in re.findall(r"[A-Za-z0-9'\u2019]+", t):
-            base = re.sub(r"[\'\u2019]s$", "", tok.lower())
-            if not base or base in _GENERIC_STOPWORDS or base in _DANGLING_HEADLINE_ENDINGS or len(base) <= 2 or base.isdigit():
-                continue
-            if base not in first_order:
-                first_order[base] = len(first_order)
-            clean_tok = re.sub(r"[\'\u2019]s$", "", tok)
-            if (any(c.isupper() for c in clean_tok) and not clean_tok.isupper()) or (clean_tok.isupper() and len(clean_tok) <= 4):
-                orig_case.setdefault(base, clean_tok)
-            if base not in seen_in_t:
-                token_counts[base] += 1
-                seen_in_t.add(base)
-    threshold = max(2, len(titles) // 2) if len(titles) >= 2 else 1
-    shared = [t for t, cnt in token_counts.items() if cnt >= threshold]
-    shared.sort(key=lambda t: (-token_counts[t], first_order.get(t, 999)))
-    chosen = shared[:3]
-    if len(chosen) >= 2:
-        headline = " ".join(orig_case.get(w, w.capitalize()) for w in chosen)
-        if not _HAS_CONJUNCTION_RE.search(headline) and not _STAT_NOISE_RE.search(headline):
-            return headline, None
+    # Fallback: extract contiguous common prefix across titles (never glue disjoint bare verbs/nouns)
+    if len(titles) >= 2:
+        cleaned_lists = [
+            _DANGLING_TRAILING_PREP_RE.sub(
+                "",
+                re.sub(r"^(?:Will|Who\s+will|What\s+will|When\s+will|Does|Is|Are)\s+", "", re.sub(r"[?!.:]+$", "", t or "").strip(), flags=re.IGNORECASE),
+            ).strip().split()
+            for t in titles
+            if t
+        ]
+        if len(cleaned_lists) >= 2:
+            prefix_words: list[str] = []
+            seen_prefix_bases: set[str] = set()
+            for words_at_i in zip(*cleaned_lists):
+                if len({w.lower() for w in words_at_i}) == 1:
+                    raw_w = words_at_i[0]
+                    base = re.sub(r"[\'\u2019]s$", "", raw_w.lower()).strip("?!.,")
+                    if not base or base in _GENERIC_STOPWORDS or base in seen_prefix_bases:
+                        continue
+                    seen_prefix_bases.add(base)
+                    prefix_words.append(re.sub(r"[\'\u2019]s$", "", raw_w))
+                else:
+                    break
+            while prefix_words and prefix_words[-1].lower().strip("?!.,") in (_GENERIC_STOPWORDS | _DANGLING_HEADLINE_ENDINGS):
+                prefix_words.pop()
+            if 2 <= len(prefix_words) <= 4:
+                candidate = " ".join(w if any(c.isupper() for c in w) else w.capitalize() for w in prefix_words)
+                if (
+                    not _HAS_CONJUNCTION_RE.search(candidate)
+                    and not _STAT_NOISE_RE.search(candidate)
+                    and not _BARE_INFINITIVE_FRAG_RE.search(candidate)
+                    and _passes_taste_and_harm(candidate)
+                ):
+                    return candidate, None
     return None, "refused_headline_not_2_to_4_common_thing"
 
 
@@ -354,21 +439,22 @@ def _parse_date_marker(title: str, default_year: int) -> dict[str, Any] | None:
     return None
 
 
-def _short_label(text: str, limit: int = 58) -> str:
-    txt = re.sub(r"[?!\s]+$", "", (text or "").strip())
-    if len(txt) <= limit:
+def _short_label(text: str, limit: int = 80) -> str:
+    """Return a clean full-text label with ZERO ellipsis ('…') truncation."""
+    txt = re.sub(r"\s+", " ", re.sub(r"[?!\s]+$", "", (text or "").strip()))
+    if len(txt) <= limit or " " not in txt:
         return txt
-    return txt[: limit - 1].rstrip() + "…"
+    # Keep full text so headers/rows wrap rather than cutting off with ellipsis.
+    return txt
 
 
-def _distinguishing_row_label(title: str, all_titles: Sequence[str], *, max_len: int = 44) -> str:
-    """Extract the minimal distinguishing phrase across sibling market titles."""
-    cleaned = re.sub(r"[?!.]+$", "", (title or "").strip())
-    cleaned = re.sub(r"^(?:Will|Does|Do|Is|Are)\s+", "", cleaned, flags=re.IGNORECASE).strip()
+def _distinguishing_row_label(title: str, all_titles: Sequence[str], *, max_len: int = 80) -> str:
+    """Extract a readable, full-word distinguishing phrase across sibling market titles."""
+    cleaned = _DANGLING_TRAILING_PREP_RE.sub("", re.sub(r"[?!.]+$", "", (title or "").strip())).strip()
     if len(all_titles) < 2:
         return _short_label(cleaned, max_len)
     split_lists = [
-        re.sub(r"^(?:Will|Does|Do|Is|Are)\s+", "", re.sub(r"[?!.]+$", "", t).strip(), flags=re.IGNORECASE).split()
+        _DANGLING_TRAILING_PREP_RE.sub("", re.sub(r"[?!.]+$", "", t).strip()).strip().split()
         for t in all_titles
     ]
     prefix_len = 0
@@ -388,11 +474,9 @@ def _distinguishing_row_label(title: str, all_titles: Sequence[str], *, max_len:
     if prefix_len >= end_idx:
         prefix_len = max(0, end_idx - 2)
     diff_tokens = tokens[prefix_len:end_idx]
-    # First keep 1-2 leading context tokens if stripping collapsed to a bare number
     while len(diff_tokens) == 1 and re.fullmatch(r"\$?[0-9.,]+[%KMBQT+]*", diff_tokens[0], re.IGNORECASE) and prefix_len > 0:
         prefix_len -= 1
         diff_tokens = tokens[prefix_len:end_idx]
-    # Then step back cleanly if the label begins mid-connector ("Or ...", "Least 36.0" -> "At least 36.0")
     while diff_tokens and diff_tokens[0].lower().strip("?!.,") in _DANGLING_ROW_STARTERS and prefix_len > 0:
         lead_low = diff_tokens[0].lower().strip("?!.,")
         prev_low = tokens[prefix_len - 1].lower().strip("?!.,")
@@ -400,6 +484,9 @@ def _distinguishing_row_label(title: str, all_titles: Sequence[str], *, max_len:
         diff_tokens = tokens[prefix_len:end_idx]
         if lead_low in {"least", "most"} and prev_low == "at":
             break
+    # Strip trailing auxiliary question starter only when shared across siblings and not exposing bare verb
+    if prefix_len == 0 and len(diff_tokens) >= 4 and diff_tokens[0].lower() in {"is", "are"}:
+        diff_tokens = diff_tokens[1:]
     diff = " ".join(diff_tokens).strip(" -–—:,")
     if not diff:
         diff = cleaned
@@ -412,7 +499,7 @@ def _dedupe_by_rendered_label(
     ordered_markets: Sequence[Mapping[str, Any]],
     *,
     limit: int,
-    max_len: int = 44,
+    max_len: int = 80,
 ) -> tuple[list[tuple[Mapping[str, Any], str]], list[Mapping[str, Any]]]:
     """Select up to ``limit`` rows with unique rendered labels while returning all checked twins."""
     all_titles = [str(m.get("name") or "") for m in ordered_markets[:limit]]
@@ -422,7 +509,7 @@ def _dedupe_by_rendered_label(
     for m in ordered_markets:
         raw_title = str(m.get("name") or "")
         label = _distinguishing_row_label(raw_title, all_titles, max_len=max_len)
-        lkey = label.lower().strip()
+        lkey = re.sub(r"^(?:will|does|do)\s+", "", label.lower().strip())
         consumed.append(m)
         if lkey in seen_labels:
             continue
@@ -535,6 +622,8 @@ def _lookup_subject_art(name: str, art_map: Mapping[str, Mapping[str, Any]]) -> 
 
 
 def _finalize_section(card: dict[str, Any]) -> dict[str, Any] | None:
+    if not _passes_taste_and_harm(card.get("common_headline"), card.get("stat_caption")):
+        return None
     ok, _ = validate_kit_v1_card(card)
     if not ok:
         return None
@@ -621,36 +710,65 @@ def _build_scoreboard_grid_section(
     if len(chosen_group) < 2 or len(col_names_raw) < 2:
         return None
 
-    columns = [{"key": f"col_{i}_{_slugify(c)[:16]}", "label": _short_label(c, 16)} for i, c in enumerate(col_names_raw)]
+    # Sort dated rows chronologically (earliest -> latest) and keep explicit 'YY year (#13696 Point 5).
+    dated_markers: dict[int, dict[str, Any]] = {}
+    for m, _ in chosen_group:
+        parsed_dt = _parse_date_marker(str(m.get("name") or ""), default_year=ref_year)
+        if parsed_dt is not None:
+            dated_markers[int(m["id"])] = parsed_dt
+    if len(dated_markers) >= 2:
+        chosen_group = sorted(
+            chosen_group,
+            key=lambda pair: (
+                dated_markers[int(pair[0]["id"])]["sort_dt"]
+                if int(pair[0]["id"]) in dated_markers
+                else datetime.max.replace(tzinfo=timezone.utc),
+                int(pair[0]["id"]),
+            ),
+        )
+
+    columns = [
+        {"key": f"col_{i}_{_slugify(c)[:16]}", "label": _short_label(c, 56)}
+        for i, c in enumerate(col_names_raw)
+    ]
     all_titles = [str(m.get("name") or "") for m, _ in chosen_group]
     rows: list[dict[str, Any]] = []
     lead_caption = None
     best_pct = -1
 
     for m, outs in chosen_group:
-        by_name = {o["name"].lower().strip(): o["prob"] for o in outs}
-        row_label = _distinguishing_row_label(str(m.get("name") or ""), all_titles, max_len=36)
+        mid = int(m["id"])
+        by_name = {o["name"].lower().strip(): (float(o["prob"]), o.get("id")) for o in outs}
+        row_label = _distinguishing_row_label(str(m.get("name") or ""), all_titles, max_len=80)
+        dm = dated_markers.get(mid)
+        if dm is not None:
+            yr_tok = f"'{dm['sort_dt'].year % 100:02d}"
+            yr_full = str(dm["sort_dt"].year)
+            if yr_tok not in row_label and yr_full not in row_label:
+                row_label = f"{row_label} {yr_tok}".strip()
         cells: list[dict[str, Any]] = []
-        row_probs = [by_name.get(cname.lower().strip(), 0.0) for cname in col_names_raw]
+        row_probs = [by_name.get(cname.lower().strip(), (0.0, None))[0] for cname in col_names_raw]
         row_max = max(row_probs) if row_probs else 0.0
         for col, cname in zip(columns, col_names_raw):
             clow = cname.lower().strip()
             if clow in by_name:
-                prob = by_name[clow]
-                pct = _round_pct(prob)
+                prob, oid = by_name[clow]
+                pct = _pct_int(prob)
+                pct_str = _pct_display(prob, pct)
                 is_best_in_row = prob > 0 and prob >= row_max - 1e-6 and pct >= 20
                 cells.append({
                     "column_key": col["key"],
+                    "provenance": {"market_id": mid, "outcome_id": oid},
                     "marks": [_mark_tile(
                         shade=max(0.02, min(1.0, prob)),
-                        center_label=f"{pct}%",
+                        center_label=pct_str,
                         muted=not is_best_in_row,
                         highlight_role="leader" if is_best_in_row else None,
                     )],
                 })
                 if pct > best_pct:
                     best_pct = pct
-                    lead_caption = f"{cname} leads {row_label} at {pct}%"
+                    lead_caption = f"{cname} leads {row_label} at {pct_str}"
             else:
                 cells.append({
                     "column_key": col["key"],
@@ -662,7 +780,7 @@ def _build_scoreboard_grid_section(
                     )],
                 })
         rows.append({
-            "id": f"{slug}-sb-{m['id']}",
+            "id": f"{slug}-sb-{mid}",
             "leading": [_mark_word(row_label, style="row", tone="primary", align="left", width="flex", bold=True)],
             "cells": cells,
         })
@@ -720,13 +838,13 @@ def _build_dated_tiles_section(
     binary_ladders.sort(key=lambda g: (-len(g), min(p["sort_dt"] for _, p in g)))
 
     # Multi-outcome date-rung markets ("Event by...?" with strictly open future date outcomes)
-    multi_date_entries: list[tuple[Mapping[str, Any], list[tuple[dict[str, Any], int]]]] = []
+    multi_date_entries: list[tuple[Mapping[str, Any], list[tuple[dict[str, Any], float, int | None]]]] = []
     for m in markets:
         mid = int(m["id"])
         if mid in used_ids or _is_binary_market(m):
             continue
         res_dt = _parse_iso_dt(m.get("resolution_date") or m.get("close_time"))
-        parsed_rungs: dict[str, tuple[dict[str, Any], int]] = {}
+        parsed_rungs: dict[str, tuple[dict[str, Any], float, int | None]] = {}
         for o in _sorted_outcomes(m):
             p = _parse_date_marker(o["name"], default_year=now.year)
             if p is None:
@@ -745,7 +863,7 @@ def _build_dated_tiles_section(
                     }
             if p["sort_dt"].date() < today_d:
                 continue
-            parsed_rungs[p["period"]] = (p, _round_pct(o["prob"]))
+            parsed_rungs[p["period"]] = (p, float(o["prob"]), o.get("id"))
         if len(parsed_rungs) >= 2:
             ordered_rungs = sorted(parsed_rungs.values(), key=lambda x: x[0]["sort_dt"])
             multi_date_entries.append((m, ordered_rungs))
@@ -758,7 +876,7 @@ def _build_dated_tiles_section(
     picked_markets: list[Mapping[str, Any]] = []
     max_cols = 0
     lead_caption = None
-    best_lead_pct = -1
+    best_lead_frac = -1.0
     all_titles: list[str] = []
     seen_norm_stems: set[str] = set()
 
@@ -775,7 +893,7 @@ def _build_dated_tiles_section(
         ordered = sorted(by_period.values(), key=lambda mp: mp[1]["sort_dt"])
         if len(ordered) > 3:
             ordered = [ordered[0], ordered[len(ordered) // 2], ordered[-1]]
-        stem_title = _short_label(ordered[0][1]["stem"], 54)
+        stem_title = _short_label(ordered[0][1]["stem"], 80)
         stem_key = _norm_stem_key(stem_title)
         for m, _ in ladder:
             picked_markets.append(m)
@@ -785,24 +903,27 @@ def _build_dated_tiles_section(
         max_cols = max(max_cols, len(ordered))
         all_titles.append(stem_title)
         cells: list[dict[str, Any]] = []
-        probs = [_round_pct(_top_probability(m)) for m, _ in ordered]
+        fracs_oids = [_top_fraction_and_outcome(m) for m, _ in ordered]
+        probs = [_pct_int(frac) for frac, _ in fracs_oids]
         peak_pct = max(probs) if probs else 0
 
-        for idx_c, ((m, p), pct) in enumerate(zip(ordered, probs)):
+        for idx_c, ((m, p), (frac, oid), pct) in enumerate(zip(ordered, fracs_oids, probs)):
+            pct_str = _pct_display(frac, pct)
             is_accent = pct > 0 and pct >= max(10, peak_pct - 10)
             cells.append({
                 "column_key": f"d_{idx_c}",
+                "provenance": {"market_id": int(m["id"]), "outcome_id": oid},
                 "marks": [_mark_tile(
-                    shade=max(0.02, pct / 100.0),
+                    shade=max(0.02, frac),
                     top_label=p["period"],
-                    center_label=f"{pct}%",
+                    center_label=pct_str,
                     muted=not is_accent,
                     highlight_role="peak" if pct == peak_pct and peak_pct > 0 else None,
                 )],
             })
-            if pct > best_lead_pct or (pct == best_lead_pct and idx_c == len(ordered) - 1):
-                best_lead_pct = pct
-                lead_caption = f"{stem_title} sits at {pct}% {p['phrase']}"
+            if frac > best_lead_frac or (frac == best_lead_frac and idx_c == len(ordered) - 1):
+                best_lead_frac = frac
+                lead_caption = f"{stem_title} sits at {pct_str} {p['phrase']}"
 
         rows.append({
             "id": f"{slug}-dt-{ordered[0][0]['id']}",
@@ -812,7 +933,7 @@ def _build_dated_tiles_section(
 
     rem_slots = max(0, 3 - len(rows))
     for m, rungs in multi_date_entries:
-        stem_title = _short_label(re.sub(r"\s+by\.\.\.\??$", "", str(m.get("name") or "")), 54)
+        stem_title = _short_label(re.sub(r"\s+by\.\.\.\??$", "", str(m.get("name") or "")), 80)
         stem_key = _norm_stem_key(stem_title)
         picked_markets.append(m)
         if stem_key in seen_norm_stems:
@@ -826,23 +947,26 @@ def _build_dated_tiles_section(
             ordered_r = [ordered_r[0], ordered_r[len(ordered_r) // 2], ordered_r[-1]]
         max_cols = max(max_cols, len(ordered_r))
         all_titles.append(stem_title)
-        peak_pct = max(pct for _, pct in ordered_r)
+        r_pcts = [_pct_int(frac) for _, frac, _ in ordered_r]
+        peak_pct = max(r_pcts) if r_pcts else 0
         cells = []
-        for idx_c, (p, pct) in enumerate(ordered_r):
+        for idx_c, ((p, frac, oid), pct) in enumerate(zip(ordered_r, r_pcts)):
+            pct_str = _pct_display(frac, pct)
             is_accent = pct > 0 and pct >= max(10, peak_pct - 10)
             cells.append({
                 "column_key": f"d_{idx_c}",
+                "provenance": {"market_id": int(m["id"]), "outcome_id": oid},
                 "marks": [_mark_tile(
-                    shade=max(0.02, pct / 100.0),
+                    shade=max(0.02, frac),
                     top_label=p["period"],
-                    center_label=f"{pct}%",
+                    center_label=pct_str,
                     muted=not is_accent,
                     highlight_role="peak" if pct == peak_pct and peak_pct > 0 else None,
                 )],
             })
-            if pct > best_lead_pct or (pct == best_lead_pct and idx_c == len(ordered_r) - 1):
-                best_lead_pct = pct
-                lead_caption = f"{stem_title} sits at {pct}% {p['phrase']}"
+            if frac > best_lead_frac or (frac == best_lead_frac and idx_c == len(ordered_r) - 1):
+                best_lead_frac = frac
+                lead_caption = f"{stem_title} sits at {pct_str} {p['phrase']}"
         rows.append({
             "id": f"{slug}-dtm-{m['id']}",
             "leading": [_mark_word(stem_title, style="row", tone="primary", align="left", width="flex", bold=True)],
@@ -914,27 +1038,31 @@ def _build_shared_scale_section(
     if require_cluster and not clusters:
         return None
     chosen_pool = max(clusters, key=lambda g: len(g), default=pool)
-    pcts = [_round_pct(_top_probability(m)) for m in chosen_pool]
+    pcts = [_pct_int(_top_fraction_and_outcome(m)[0]) for m in chosen_pool]
     if len(chosen_pool) < 3 or (max(pcts) - min(pcts)) < 10:
         return None
 
     ranked_all = sorted(chosen_pool, key=lambda m: (-_top_probability(m), int(m["id"])))
-    selected_rows, consumed_rows = _dedupe_by_rendered_label(ranked_all, limit=5, max_len=44)
+    selected_rows, consumed_rows = _dedupe_by_rendered_label(ranked_all, limit=5, max_len=80)
     if len(selected_rows) < 3:
         return None
     ranked = [m for m, _ in selected_rows]
     ranked_titles = [str(m.get("name") or "") for m in ranked]
-    top_pct = _round_pct(_top_probability(ranked[0]))
+    top_frac, _ = _top_fraction_and_outcome(ranked[0])
+    top_pct_str = _pct_display(top_frac)
     top_title = selected_rows[0][1]
     series: list[dict[str, Any]] = []
     for m, title in selected_rows:
-        pct = _round_pct(_top_probability(m))
+        frac, oid = _top_fraction_and_outcome(m)
+        pct = _pct_int(frac)
+        pct_str = _pct_display(frac, pct)
         series.append({
             "id": f"{slug}-ax-{m['id']}",
+            "provenance": {"market_id": int(m["id"]), "outcome_id": oid},
             "leading": [_mark_word(title, style="row", tone="primary", align="left", width="flex", bold=True)],
             "marks": [
-                _mark_bar_single(pct / 100.0, width="flex"),
-                _mark_number(pct, f"{pct}%", unit="%", tone="primary", prominence="primary", align="right", width="sm"),
+                _mark_bar_single(frac, width="flex"),
+                _mark_number(pct, pct_str, unit="%", tone="primary", prominence="primary", align="right", width="sm"),
             ],
         })
 
@@ -948,7 +1076,7 @@ def _build_shared_scale_section(
         variant="shared_scale",
         kicker=f"{kicker} · SCALE",
         common_headline=headline,
-        stat_caption=f"{top_title} leads at {top_pct}% on the shared 0–100% scale",
+        stat_caption=f"{top_title} leads at {top_pct_str} on the shared 0–100% scale",
         source_count=src_count,
         route_slug=slug,
         body={
@@ -995,7 +1123,7 @@ def _build_countdown_section(
     if len(near) < 2:
         return None
     near.sort(key=lambda t: (t[0], t[1], int(t[2]["id"])))
-    selected_rows, consumed_rows = _dedupe_by_rendered_label([t[2] for t in near], limit=4, max_len=44)
+    selected_rows, consumed_rows = _dedupe_by_rendered_label([t[2] for t in near], limit=4, max_len=80)
     if len(selected_rows) < 2:
         return None
     picked = [m for m, _ in selected_rows]
@@ -1008,17 +1136,21 @@ def _build_countdown_section(
         days = int((res_dt - now).total_seconds() // 86400) if res_dt else 1
         if idx_r == 0:
             first_days = days
-        pct = _round_pct(_top_probability(m))
+        frac, oid = _top_fraction_and_outcome(m)
+        pct = _pct_int(frac)
+        pct_str = _pct_display(frac, pct)
         items.append({
             "id": f"{slug}-cd-{m['id']}",
+            "provenance": {"market_id": int(m["id"]), "outcome_id": oid},
             "marks": [
                 _mark_word(title, style="row", tone="primary", align="left", width="flex"),
                 _mark_number(days, f"{days}d", unit="days", tone="muted", prominence="secondary", align="right", width="auto"),
-                _mark_number(pct, f"{pct}%", unit="%", tone="primary", prominence="primary", align="right", width="auto"),
+                _mark_number(pct, pct_str, unit="%", tone="primary", prominence="primary", align="right", width="auto"),
             ],
         })
 
-    first_pct = _round_pct(_top_probability(picked[0]))
+    first_frac, _ = _top_fraction_and_outcome(picked[0])
+    first_pct_str = _pct_display(first_frac)
     first_title = selected_rows[0][1]
     headline, err = derive_common_headline(None, picked_titles)
     if err or not headline:
@@ -1030,7 +1162,7 @@ def _build_countdown_section(
         variant="countdown",
         kicker=f"{kicker} · COUNTDOWN",
         common_headline=headline,
-        stat_caption=f"{first_title} sits at {first_pct}% with {first_days} days left",
+        stat_caption=f"{first_title} sits at {first_pct_str} with {first_days} days left",
         source_count=src_count,
         route_slug=slug,
         body={"header_layout": "none", "header_marks": [], "items": items},
@@ -1053,13 +1185,14 @@ def _build_one_in_n_section(
         mid = int(m["id"])
         if mid in used_ids:
             continue
-        pct = _round_pct(_top_probability(m))
+        frac, _ = _top_fraction_and_outcome(m)
+        pct = _pct_int(frac)
         if 1 <= pct <= 15:
             longshots.append((pct, m))
     if len(longshots) < 2:
         return None
     longshots.sort(key=lambda pm: (-pm[0], int(pm[1]["id"])))
-    selected_rows, consumed_rows = _dedupe_by_rendered_label([pm[1] for pm in longshots], limit=4, max_len=44)
+    selected_rows, consumed_rows = _dedupe_by_rendered_label([pm[1] for pm in longshots], limit=4, max_len=80)
     if len(selected_rows) < 2:
         return None
     picked = [m for m, _ in selected_rows]
@@ -1067,10 +1200,12 @@ def _build_one_in_n_section(
 
     items: list[dict[str, Any]] = []
     for m, title in selected_rows:
-        pct = _round_pct(_top_probability(m))
+        frac, oid = _top_fraction_and_outcome(m)
+        pct = _pct_int(frac)
         n_val = compute_one_in_n(pct)
         items.append({
             "id": f"{slug}-oin-{m['id']}",
+            "provenance": {"market_id": int(m["id"]), "outcome_id": oid},
             "marks": [
                 _mark_word(title, style="row", tone="primary", align="left", width="flex"),
                 _mark_number(n_val, f"1 in {n_val}", unit="one_in_n", tone="accent", prominence="primary", align="right", width="auto"),
@@ -1078,7 +1213,8 @@ def _build_one_in_n_section(
             ],
         })
 
-    lead_pct = _round_pct(_top_probability(picked[0]))
+    lead_frac, _ = _top_fraction_and_outcome(picked[0])
+    lead_pct = _pct_int(lead_frac)
     lead_n = compute_one_in_n(lead_pct)
     lead_title = selected_rows[0][1]
     headline, err = derive_common_headline(None, picked_titles)
@@ -1122,17 +1258,20 @@ def _build_casting_sheet_section(
             continue
         items = []
         for idx_o, (o, pic) in enumerate(zip(outs, pics)):
-            pct = _round_pct(o["prob"])
+            prob = float(o["prob"])
+            pct = _pct_int(prob)
+            pct_str = _pct_display(prob, pct)
             items.append({
                 "id": f"{slug}-cs-{mid}-{idx_o}",
+                "provenance": {"market_id": mid, "outcome_id": o.get("id")},
                 "marks": [
                     pic,
                     _mark_word(o["name"], style="row", tone="primary", align="left", width="flex", bold=(idx_o == 0)),
-                    _mark_number(pct, f"{pct}%", unit="%", tone="primary", prominence="primary", align="right", width="auto"),
+                    _mark_number(pct, pct_str, unit="%", tone="primary", prominence="primary", align="right", width="auto"),
                 ],
             })
         top_o = outs[0]
-        top_pct = _round_pct(top_o["prob"])
+        top_pct_str = _pct_display(float(top_o["prob"]))
         headline, err = derive_common_headline(str(m.get("name") or ""), [str(m.get("name") or "")])
         if err or not headline:
             headline = "Top Contenders"
@@ -1142,7 +1281,7 @@ def _build_casting_sheet_section(
             variant="casting_sheet",
             kicker=f"{kicker} · CONTENDERS",
             common_headline=headline,
-            stat_caption=f"{top_o['name']} leads at {top_pct}%",
+            stat_caption=f"{top_o['name']} leads at {top_pct_str}",
             source_count=_sources_count(m),
             route_slug=slug,
             body={"header_layout": "none", "header_marks": [], "items": items},
@@ -1182,17 +1321,20 @@ def _build_plain_bar_stack_section(
             continue
         items = []
         for idx_o, o in enumerate(outs):
-            pct = _round_pct(o["prob"])
+            prob = float(o["prob"])
+            pct = _pct_int(prob)
+            pct_str = _pct_display(prob, pct)
             items.append({
                 "id": f"{slug}-bar-m-{mid}-{idx_o}",
+                "provenance": {"market_id": mid, "outcome_id": o.get("id")},
                 "marks": [
                     _mark_word(o["name"], style="row", tone="primary", align="left", width="flex", bold=(idx_o == 0)),
-                    _mark_bar_single(pct / 100.0, width="sm"),
-                    _mark_number(pct, f"{pct}%", unit="%", tone="primary", prominence="primary", align="right", width="auto"),
+                    _mark_bar_single(prob, width="sm"),
+                    _mark_number(pct, pct_str, unit="%", tone="primary", prominence="primary", align="right", width="auto"),
                 ],
             })
         top_o = outs[0]
-        top_pct = _round_pct(top_o["prob"])
+        top_pct_str = _pct_display(float(top_o["prob"]))
         headline, err = derive_common_headline(str(m.get("name") or ""), [str(m.get("name") or "")])
         if err or not headline:
             headline = "Leading Outcomes"
@@ -1202,7 +1344,7 @@ def _build_plain_bar_stack_section(
             variant="plain_bar_stack",
             kicker=f"{kicker} · ODDS",
             common_headline=headline,
-            stat_caption=f"{top_o['name']} leads at {top_pct}%",
+            stat_caption=f"{top_o['name']} leads at {top_pct_str}",
             source_count=_sources_count(m),
             route_slug=slug,
             body={"header_layout": "none", "header_marks": [], "items": items},
@@ -1215,24 +1357,28 @@ def _build_plain_bar_stack_section(
     rem_bin.sort(key=lambda m: (-_top_probability(m), int(m["id"])))
     if len(rem_bin) < 2:
         return None
-    selected_rows, consumed_rows = _dedupe_by_rendered_label(rem_bin, limit=4, max_len=44)
+    selected_rows, consumed_rows = _dedupe_by_rendered_label(rem_bin, limit=4, max_len=80)
     if len(selected_rows) < 2:
         return None
     picked = [m for m, _ in selected_rows]
     picked_titles = [str(m.get("name") or "") for m in picked]
     items = []
     for m, title in selected_rows:
-        pct = _round_pct(_top_probability(m))
+        frac, oid = _top_fraction_and_outcome(m)
+        pct = _pct_int(frac)
+        pct_str = _pct_display(frac, pct)
         items.append({
             "id": f"{slug}-bar-b-{m['id']}",
+            "provenance": {"market_id": int(m["id"]), "outcome_id": oid},
             "marks": [
                 _mark_word(title, style="row", tone="primary", align="left", width="flex"),
-                _mark_bar_single(pct / 100.0, width="sm"),
-                _mark_number(pct, f"{pct}%", unit="%", tone="primary", prominence="primary", align="right", width="auto"),
+                _mark_bar_single(frac, width="sm"),
+                _mark_number(pct, pct_str, unit="%", tone="primary", prominence="primary", align="right", width="auto"),
             ],
         })
     lead_m = picked[0]
-    lead_pct = _round_pct(_top_probability(lead_m))
+    lead_frac, _ = _top_fraction_and_outcome(lead_m)
+    lead_pct_str = _pct_display(lead_frac)
     lead_title = selected_rows[0][1]
     headline, err = derive_common_headline(None, picked_titles)
     if err or not headline:
@@ -1243,7 +1389,7 @@ def _build_plain_bar_stack_section(
         variant="plain_bar_stack",
         kicker=f"{kicker} · ODDS",
         common_headline=headline,
-        stat_caption=f"{lead_title} leads at {lead_pct}%",
+        stat_caption=f"{lead_title} leads at {lead_pct_str}",
         source_count=max(_sources_count(m) for m in picked),
         route_slug=slug,
         body={"header_layout": "none", "header_marks": [], "items": items},
@@ -1275,7 +1421,31 @@ def propose_container_page_for_family(
             "variants": [],
         }
 
-    clean_markets = _dedupe_twins(raw_list)
+    if family_label and not _passes_taste_and_harm(family_label):
+        return {
+            "accepted": False,
+            "refusal_reason": "refused_scout_taste_or_harm_guard",
+            "family_fingerprint": family_fingerprint,
+            "market_count": len(raw_list),
+            "sections_built": 0,
+            "variants": [],
+        }
+
+    safe_list = [
+        m for m in raw_list
+        if _passes_taste_and_harm(m.get("name") or m.get("title"), m.get("description"))
+    ]
+    if len(safe_list) < len(raw_list) and len(safe_list) < 5:
+        return {
+            "accepted": False,
+            "refusal_reason": "refused_scout_taste_or_harm_guard",
+            "family_fingerprint": family_fingerprint,
+            "market_count": len(safe_list),
+            "sections_built": 0,
+            "variants": [],
+        }
+
+    clean_markets = _dedupe_twins(safe_list)
     if len(clean_markets) < 5:
         return {
             "accepted": False,
@@ -1303,6 +1473,7 @@ def propose_container_page_for_family(
     used_ids: set[int] = set()
     sections: list[dict[str, Any]] = []
     seen_variants: set[str] = set()
+    seen_headlines: set[str] = {headline.lower()}
 
     entity_tokens = {
         t.lower() for t in re.findall(r"[A-Za-z0-9]+", headline)
@@ -1319,8 +1490,9 @@ def propose_container_page_for_family(
         if not variant or variant in seen_variants:
             return
         sec_hl = str(sec.get("common_headline") or "").strip()
-        if not sec_hl or sec_hl.lower() == headline.lower():
+        if not sec_hl or sec_hl.lower() in seen_headlines:
             sec = {**sec, "common_headline": _SECTION_FALLBACK_TITLES.get(variant, sec_hl or headline)}
+        seen_headlines.add(str(sec.get("common_headline") or "").strip().lower())
         seen_variants.add(variant)
         sections.append(sec)
 
@@ -1332,7 +1504,7 @@ def propose_container_page_for_family(
     _try_append(_build_one_in_n_section, slug, resolved_kicker, clean_markets, used_ids)
     _try_append(_build_casting_sheet_section, slug, resolved_kicker, clean_markets, used_ids)
 
-    if len(sections) < 3:
+    if len(sections) < 3 and "shared_scale" not in seen_variants:
         _try_append(_build_shared_scale_section, slug, resolved_kicker, clean_markets, used_ids, require_cluster=False, entity_tokens=entity_tokens)
     if len(sections) < 3:
         _try_append(_build_plain_bar_stack_section, slug, resolved_kicker, clean_markets, used_ids, now=ref_now)
@@ -1350,6 +1522,18 @@ def propose_container_page_for_family(
             "variants": [str(s.get("variant") or "") for s in sections],
         }
 
+    page_fp_payload = {
+        "slug": slug,
+        "title": headline,
+        "kicker": resolved_kicker,
+        "family_fingerprint": family_fingerprint,
+        "covered_market_ids": sorted(used_ids),
+        "sections": sections,
+    }
+    page_fingerprint = hashlib.sha256(
+        json.dumps(page_fp_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+
     page = {
         "kit_page_version": 1,
         "state": "preview",
@@ -1358,6 +1542,7 @@ def propose_container_page_for_family(
         "kicker": resolved_kicker,
         "caption": f"{len(sections)} disjoint views across {len(used_ids)} open markets",
         "family_fingerprint": family_fingerprint,
+        "page_fingerprint": page_fingerprint,
         "snapshot_captured_at": ref_now.isoformat(),
         "covered_market_ids": sorted(used_ids),
         "market_count": len(used_ids),

@@ -52,6 +52,9 @@ function ContainersV2Session() {
   const { secret, clearSecret } = useAdminAuth();
 
   const [pages, setPages] = useState<KitContainerPageSpec[]>([]);
+  const [deckStatus, setDeckStatus] = useState<"ready" | "not_built_yet" | null>(null);
+  const [deckId, setDeckId] = useState<string | null>(null);
+  const [reviewer, setReviewer] = useState<string>("alex");
   const [snapshotAt, setSnapshotAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
@@ -64,19 +67,10 @@ function ContainersV2Session() {
   const [frozenSha, setFrozenSha] = useState<string | null>(null);
   const [copiedSha, setCopiedSha] = useState(false);
 
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(CONTAINERS_V2_DRAFT_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Record<string, ContainerGradeEntry>;
-        if (parsed && typeof parsed === "object") {
-          setGrades(parsed);
-        }
-      }
-    } catch {
-      // storage unavailable
-    }
-  }, []);
+  const storageBase = deckId
+    ? `${CONTAINERS_V2_DRAFT_STORAGE_KEY}:${deckId}`
+    : CONTAINERS_V2_DRAFT_STORAGE_KEY;
+  const storageKey = reviewer !== "alex" ? `${storageBase}:${reviewer}` : storageBase;
 
   useEffect(() => {
     if (!secret) return;
@@ -84,8 +78,17 @@ function ContainersV2Session() {
     setLoading(true);
     setErrorMsg(null);
 
+    const searchParams =
+      typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const requestedDeckId = searchParams?.get("deck_id")?.trim() || null;
+    const resolvedReviewer = searchParams?.get("reviewer")?.trim() || "alex";
+    setReviewer(resolvedReviewer);
+    const previewEndpoint = requestedDeckId
+      ? `/api/containers/preview/kit-pages?deck_id=${encodeURIComponent(requestedDeckId)}`
+      : "/api/containers/preview/kit-pages";
+
     Promise.all([
-      adminFetchJSON<KitContainerPagesPreviewResponse>("/api/containers/preview/kit-pages", secret),
+      adminFetchJSON<KitContainerPagesPreviewResponse>(previewEndpoint, secret),
       adminFetchJSON<{ judgments?: SavedContainerV2JudgmentRow[] }>(
         `/api/admin/ranking-judgments?surface=${CONTAINERS_V2_SURFACE}&limit=100`,
         secret,
@@ -93,12 +96,36 @@ function ContainersV2Session() {
     ])
       .then(([previewRes, judgmentsRes]) => {
         if (cancelled) return;
-        setPages(previewRes.pages || []);
+        const resolvedPages = previewRes.pages || [];
+        const resolvedDeckId = previewRes.deck_id ?? null;
+        setPages(resolvedPages);
+        setDeckId(resolvedDeckId);
+        setDeckStatus(previewRes.status || (resolvedPages.length > 0 ? "ready" : "not_built_yet"));
         setSnapshotAt(previewRes.snapshot_captured_at || null);
-        const restored = restoreContainerV2Grades(judgmentsRes.judgments || []);
-        if (Object.keys(restored).length > 0) {
-          setGrades((prev) => ({ ...prev, ...restored }));
+
+        const baseDraftKey = resolvedDeckId
+          ? `${CONTAINERS_V2_DRAFT_STORAGE_KEY}:${resolvedDeckId}`
+          : CONTAINERS_V2_DRAFT_STORAGE_KEY;
+        const activeDraftKey =
+          resolvedReviewer !== "alex" ? `${baseDraftKey}:${resolvedReviewer}` : baseDraftKey;
+        let localDraft: Record<string, ContainerGradeEntry> = {};
+        try {
+          const raw = localStorage.getItem(activeDraftKey);
+          if (raw) {
+            const parsed = JSON.parse(raw) as Record<string, ContainerGradeEntry>;
+            if (parsed && typeof parsed === "object") {
+              localDraft = parsed;
+            }
+          }
+        } catch {
+          // storage unavailable
         }
+        const restored = restoreContainerV2Grades(judgmentsRes.judgments || [], {
+          deckId: resolvedDeckId,
+          pages: resolvedPages,
+          reviewer: resolvedReviewer,
+        });
+        setGrades({ ...localDraft, ...restored });
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -128,14 +155,18 @@ function ContainersV2Session() {
   }, [currentSlug, grades]);
 
   useEffect(() => {
+    if (loading || pages.length === 0) {
+      setFrozenSha(null);
+      return;
+    }
     try {
-      localStorage.setItem(CONTAINERS_V2_DRAFT_STORAGE_KEY, JSON.stringify(grades));
+      localStorage.setItem(storageKey, JSON.stringify(grades));
     } catch {
       // ignore
     }
     const gradedNow = pages.filter((p) => Boolean(grades[p.slug])).length;
     if (pages.length > 0 && gradedNow === pages.length) {
-      const deckKey = `kit-containers-v2-${snapshotAt || "preview"}`;
+      const deckKey = deckId || `kit-containers-v2-${snapshotAt || "preview"}`;
       const filtered: Record<string, ContainerGradeEntry> = {};
       for (const p of pages) {
         if (grades[p.slug]) filtered[p.slug] = grades[p.slug];
@@ -145,7 +176,7 @@ function ContainersV2Session() {
     } else {
       setFrozenSha(null);
     }
-  }, [grades, pages, snapshotAt]);
+  }, [grades, pages, snapshotAt, deckId, loading, storageKey]);
 
   const counts = useMemo(() => {
     const out: Record<ContainerGrade, number> = { Keep: 0, Fix: 0, Drop: 0 };
@@ -164,7 +195,7 @@ function ContainersV2Session() {
     setErrorMsg(null);
     setStatusMsg(null);
     const ts = new Date().toISOString();
-    const payload = buildContainerV2JudgmentPayload(currentPage, grade, noteInput, ts);
+    const payload = buildContainerV2JudgmentPayload(currentPage, grade, noteInput, ts, deckId, reviewer);
 
     try {
       const res = await adminFetch("/api/admin/ranking-judgments", secret, {
@@ -226,9 +257,11 @@ function ContainersV2Session() {
           <p className="mt-1 text-xs leading-relaxed text-text-secondary">
             Keep, Fix or Drop each page, with a note.
           </p>
-          {snapshotAt && (
+          {(snapshotAt || deckId || reviewer !== "alex") && (
             <p className="mt-1 text-[11px] font-medium text-text-muted">
-              Snapshot: {snapshotAt}
+              {snapshotAt ? `Snapshot: ${snapshotAt}` : "Snapshot: pending"}
+              {deckId ? ` · Deck ${deckId}` : ""}
+              {reviewer !== "alex" ? ` · Grader: ${reviewer}` : ""}
             </p>
           )}
           <div className="mt-3 flex items-center justify-between gap-2 border-t border-surface-border pt-2.5 text-xs">
@@ -305,9 +338,12 @@ function ContainersV2Session() {
           </div>
         )}
 
-        {!loading && !errorMsg && pages.length === 0 && (
-          <div className="rounded-xl border border-surface-border bg-surface-card p-6 text-center text-sm text-text-secondary">
-            No preview container pages are staged yet.
+        {!loading && !errorMsg && (deckStatus === "not_built_yet" || pages.length === 0) && (
+          <div
+            data-testid="deck-status-not-built"
+            className="rounded-xl border border-surface-border bg-surface-card p-6 text-center text-sm text-text-secondary"
+          >
+            Preview deck has not been built yet. Run the nightly container proposer worker to populate Redis.
           </div>
         )}
 

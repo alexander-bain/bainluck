@@ -196,5 +196,20 @@ describe("Item 9 KitContainerPageView & preview page", () => {
     }
     const pageHtml = renderToStaticMarkup(<AdminContainersKitPreviewPage />);
     expect(pageHtml).toContain("Kit Container Pages Preview (#12221 Item 9)");
+    expect(compSrc).toContain("page_fingerprint");
+    expect(pageSrc).toContain("not_built_yet");
+  });
+
+  test("KitContainerPagesPreviewResponse supports status=not_built_yet and frozen deck_id", () => {
+    const emptyDeck: import("@/components/collections/KitContainerPageView").KitContainerPagesPreviewResponse = {
+      kit_page_version: 1,
+      status: "not_built_yet",
+      deck_id: null,
+      snapshot_captured_at: null,
+      count: 0,
+      pages: [],
+    };
+    expect(emptyDeck.status).toBe("not_built_yet");
+    expect(emptyDeck.pages).toEqual([]);
   });
 });

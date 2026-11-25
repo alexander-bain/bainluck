@@ -151,7 +151,7 @@ function validateMarksRecursive(node: unknown, insideMarksArray: boolean): boole
     }
   }
   for (const [key, val] of Object.entries(obj)) {
-    if (key === "route") continue;
+    if (key === "route" || key === "provenance") continue;
     if (!validateMarksRecursive(val, MARKS_ARRAY_KEYS.has(key))) {
       return false;
     }
@@ -615,7 +615,7 @@ function GridLayout({ body }: { body: KitV1GridBody }) {
       firstLeading[0]?.mark === "word" &&
       firstLeading[0]?.style === "rank";
     const isDenseMatrix = body.columns.length >= 3;
-    const colWidthPx = isDenseMatrix ? "40px" : "66px";
+    const colWidthPx = isDenseMatrix ? "minmax(54px, 76px)" : "minmax(66px, 92px)";
     const gridCols = hasRank
       ? `18px minmax(0,1fr) repeat(${body.columns.length}, ${colWidthPx})`
       : `minmax(0,1fr) repeat(${body.columns.length}, ${colWidthPx})`;
@@ -630,7 +630,7 @@ function GridLayout({ body }: { body: KitV1GridBody }) {
             {hasRank && <span>#</span>}
             <span>{body.leading_label ?? "Item"}</span>
             {body.columns.map((c) => (
-              <span key={c.key} className="text-center">
+              <span key={c.key} className="break-words text-center">
                 {c.label}
               </span>
             ))}

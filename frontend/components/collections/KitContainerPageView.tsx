@@ -10,10 +10,12 @@ export interface KitContainerPageSpec {
   state: "preview" | "published";
   slug: string;
   family_fingerprint?: string | null;
+  page_fingerprint?: string | null;
   title: string;
   kicker: string;
   caption?: string;
-  snapshot_captured_at: string;
+  snapshot_captured_at?: string;
+  covered_market_ids?: number[];
   market_count: number;
   section_count: number;
   variants: string[];
@@ -22,7 +24,11 @@ export interface KitContainerPageSpec {
 
 export interface KitContainerPagesPreviewResponse {
   kit_page_version: number;
-  snapshot_captured_at: string;
+  status?: "ready" | "not_built_yet";
+  deck_id?: string | null;
+  snapshot_captured_at: string | null;
+  covered_ids_count?: number;
+  timings_ms?: Record<string, number> | null;
   count: number;
   pages: KitContainerPageSpec[];
 }

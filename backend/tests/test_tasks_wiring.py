@@ -577,6 +577,9 @@ class TestBeatScheduleCompleteness:
         # #13241 — periodic ESPN standings record refresh for college basketball
         # teams (existing rows by verified espn_id only, never creates teams).
         "sync-espn-standings-records",
+        # #12221 / Decision 386: A — nightly uncovered-family Kit container
+        # page preview builder (Redis preview only, never auto-published).
+        "propose-uncovered-containers-nightly",
     }
 
     def test_no_missing_entries(self):

@@ -75,6 +75,7 @@ function ContainersKitPreviewContent() {
           {payload?.snapshot_captured_at && (
             <p className="mt-1.5 text-[11px] font-medium text-text-muted">
               Snapshot captured: {payload.snapshot_captured_at}
+              {payload.deck_id ? ` · Deck ${payload.deck_id}` : ""}
             </p>
           )}
         </header>
@@ -91,7 +92,16 @@ function ContainersKitPreviewContent() {
           </div>
         )}
 
-        {payload && (
+        {!loading && !errorMsg && payload && (payload.status === "not_built_yet" || payload.pages.length === 0) && (
+          <div
+            data-testid="kit-preview-not-built"
+            className="rounded-xl border border-surface-border bg-surface-card p-6 text-center text-sm text-text-secondary"
+          >
+            Preview deck has not been built yet. Run the nightly container proposer worker to populate Redis.
+          </div>
+        )}
+
+        {payload && payload.pages.length > 0 && (
           <div className="space-y-8">
             {payload.pages.map((page) => (
               <div key={page.slug} className="space-y-2">

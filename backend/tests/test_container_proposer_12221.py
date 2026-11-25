@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import re
 
@@ -495,10 +496,10 @@ def test_missing_external_id_no_mkt_collapse_and_rendered_row_dedup():
     fams, _ = discover_candidate_families(unrelated, now=REF_NOW, min_markets=5)
     assert all(f.key.upper() != "MKT" and f.label.upper() != "MKT" for f in fams), fams
 
-    # 2. Countdown deduplicates truncated near-duplicate row labels cleanly
+    # 2. Countdown deduplicates identical rendered row labels without slicing dissimilar suffixes
     dup_cands = [
-        _bin(97101, "Will Apex Executive rank in SearchEngine Global Top 5 Most Searched People in US of 2027?", 66, category="tech", res_days=20),
-        _bin(97102, "Will Apex Executive rank in SearchEngine Global Top 5 Most Searched People of 2027?", 66, category="tech", res_days=20),
+        _bin(97101, "Will Apex Executive rank in SearchEngine Top 5 Global Searches of 2027?", 66, category="tech", res_days=20),
+        _bin(97102, "Apex Executive rank in SearchEngine Top 5 Global Searches of 2027", 66, category="tech", res_days=20),
         _bin(97103, "Will Apex Executive launch new hardware keynote?", 55, category="tech", res_days=10),
     ]
     cd = _build_countdown_section("apex", "TECH", dup_cands, set(), now=REF_NOW)
@@ -514,3 +515,377 @@ def test_missing_external_id_no_mkt_collapse_and_rendered_row_dedup():
     assert parsed is not None
     assert not parsed["stem"].lower().endswith((" on", " at", " in", " by", " before")), parsed
     assert parsed["stem"].lower() == "it rain in new york city", parsed
+
+
+def test_every_built_cell_carries_provenance_and_matches_market_page(monkeypatch):
+    """Every rendered container cell carries (market_id, outcome_id) matching _format_market_detail."""
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.routes.futures import _format_market_detail
+    from app.utils import kit_container_page_builder as builder_mod
+    from app.utils.graded_card import rendered_percent
+    from app.utils.kit_container_page_builder import _pct_display
+    from app.utils.kit_v1_spec import ALLOWED_KIT_IMAGE_HOSTS, compute_one_in_n
+
+    img_host = sorted(ALLOWED_KIT_IMAGE_HOSTS)[0]
+    monkeypatch.setattr(
+        builder_mod,
+        "_verified_art_by_key",
+        lambda: {
+            "elena vance": {"url": f"https://{img_host}/verified/elena.png", "source": "Wikimedia"},
+            "marcus cole": {"url": f"https://{img_host}/verified/marcus.png", "source": "Wikimedia"},
+            "nadia lin": {"url": f"https://{img_host}/verified/nadia.png", "source": "Wikimedia"},
+        },
+    )
+
+    def _m(
+        mid: int,
+        name: str,
+        outcomes: list[tuple[int, str, float]],
+        *,
+        cat: str = "tech",
+        series: str = "KXCELL",
+        res_days: int | None = None,
+    ) -> dict:
+        m = {
+            "id": mid,
+            "source": "kalshi",
+            "external_id": f"{series}-{mid}",
+            "name": name,
+            "category": cat,
+            "llm_sport_category": cat,
+            "status": "open",
+            "resolution_date": REF_NOW + timedelta(days=res_days) if res_days is not None else REF_NOW + timedelta(days=90),
+            "volume_24h": 5000 + mid % 100,
+            "outcomes": [
+                {"id": oid, "name": oname, "current_probability": prob}
+                for oid, oname, prob in outcomes
+            ],
+        }
+        return m
+
+    def _to_orm(m: dict) -> FuturesMarket:
+        fm = FuturesMarket(
+            id=m["id"],
+            name=m["name"],
+            description="",
+            category=m["category"],
+            llm_sport_category=m["llm_sport_category"],
+            source=m["source"],
+            external_id=m["external_id"],
+            status="open",
+            volume_24h=m["volume_24h"],
+            liquidity=1000.0,
+            resolution_date=m["resolution_date"],
+            settled_at=None,
+            created_at=REF_NOW - timedelta(days=5),
+            updated_at=REF_NOW,
+            market_tier=2,
+            market_metadata={},
+        )
+        fm.outcomes = [
+            FuturesOutcome(
+                id=o["id"],
+                external_id=f"{m['external_id']}-{o['id']}",
+                name=o["name"],
+                current_probability=o["current_probability"],
+                opening_probability=o["current_probability"],
+                probability_change_24h=0.0,
+                rank=idx + 1,
+                is_winner=False,
+                last_updated=REF_NOW,
+            )
+            for idx, o in enumerate(m["outcomes"])
+        ]
+        return fm
+
+    # Family A: exercises scoreboard_grid (dated YY rows with contender columns), dated_tiles,
+    # shared_scale, countdown, one_in_n — PLUS sub-0.5% (0.003 -> <1%), sub-1% rounded (0.006, 0.008 -> 1%),
+    # and high-precision 0.9985 (rendered_percent -> 100, _display_pct -> >99%).
+    family_a = [
+        _m(98100, "Helios Reactor Policy Decision in Mar 2026", [(1001, "Hold", 0.91), (1002, "Raise", 0.06), (1003, "Pause", 0.03)], series="KXHEL", res_days=40),
+        _m(98101, "Helios Reactor Policy Decision in Dec 2026", [(1011, "Hold", 0.62), (1012, "Raise", 0.24), (1013, "Pause", 0.14)], series="KXHEL", res_days=45),
+        _m(98102, "Helios Reactor Policy Decision in Mar 2027", [(1021, "Hold", 0.34), (1022, "Raise", 0.48), (1023, "Pause", 0.18)], series="KXHEL", res_days=55),
+        _m(98103, "Helios Reactor target by Feb 14 2027", [(1031, "Yes", 0.008), (1032, "No", 0.992)], series="KXHEL", res_days=22),
+        _m(98104, "Helios Reactor target by Apr 30 2027", [(1041, "Yes", 0.9985), (1042, "No", 0.0015)], series="KXHEL", res_days=140),
+        _m(98105, "Helios Reactor output exceeds 500 MW", [(1051, "Yes", 0.62), (1052, "No", 0.38)], series="KXHEL", res_days=80),
+        _m(98110, "Helios Reactor output exceeds 700 MW", [(1101, "Yes", 0.31), (1102, "No", 0.69)], series="KXHEL", res_days=80),
+        _m(98106, "Helios Reactor output exceeds 900 MW", [(1061, "Yes", 0.003), (1062, "No", 0.997)], series="KXHEL", res_days=80),
+        _m(98107, "Helios Reactor cooling permit approved", [(1071, "Yes", 0.006), (1072, "No", 0.994)], series="KXHEL", res_days=12),
+        _m(98109, "Helios Reactor pressure valve inspected", [(1091, "Yes", 0.77), (1092, "No", 0.23)], series="KXHEL", res_days=18),
+        _m(98108, "Helios Reactor extreme surge outlier", [(1081, "Yes", 0.04), (1082, "No", 0.96)], series="KXHEL", res_days=90),
+    ]
+    # Family B: exercises casting_sheet + shared_scale + plain_bar_stack (multi-outcome & binary fallback)
+    family_b = [
+        _m(98201, "Vertex Studio Awards: Best Direction", [(2011, "Elena Vance", 0.44), (2012, "Marcus Cole", 0.31), (2013, "Nadia Lin", 0.16), (2014, "Other", 0.09)], cat="entertainment", series="KXVTX", res_days=60),
+        _m(98202, "Vertex Studio box office at least $400M", [(2021, "Yes", 0.72), (2022, "No", 0.28)], cat="entertainment", series="KXVTX", res_days=75),
+        _m(98203, "Vertex Studio box office at least $800M", [(2031, "Yes", 0.24), (2032, "No", 0.76)], cat="entertainment", series="KXVTX", res_days=75),
+        _m(98206, "Vertex Studio box office at least $1200M", [(2061, "Yes", 0.08), (2062, "No", 0.92)], cat="entertainment", series="KXVTX", res_days=75),
+        _m(98204, "Vertex Studio wins critic guild honor", [(2041, "Yes", 0.51), (2042, "No", 0.49)], cat="entertainment", series="KXVTX", res_days=85),
+        _m(98205, "Vertex Studio sequel greenlit", [(2051, "Yes", 0.63), (2052, "No", 0.37)], cat="entertainment", series="KXVTX", res_days=120),
+    ]
+
+    page_a = propose_container_page_for_family("Helios Reactor", family_a, now=REF_NOW, kicker="TECH", family_fingerprint="fam-a")
+    page_b = propose_container_page_for_family("Vertex Studio", family_b, now=REF_NOW, kicker="ENTERTAINMENT", family_fingerprint="fam-b")
+    assert page_a["accepted"] is True, page_a
+    assert page_b["accepted"] is True, page_b
+
+    all_pages = [page_a["page"], page_b["page"]]
+    variants_seen = {v for p in all_pages for v in p["variants"]}
+    assert {"scoreboard_grid", "dated_tiles", "shared_scale", "countdown", "casting_sheet", "plain_bar_stack"} <= variants_seen, variants_seen
+
+    market_by_id = {m["id"]: m for m in [*family_a, *family_b]}
+    detail_by_id = {
+        mid: _format_market_detail(_to_orm(m), normalize_numbers=False)
+        for mid, m in market_by_id.items()
+    }
+
+    verified_cells = 0
+    seen_pct_displays: list[str] = []
+
+    def _assert_unit_matches(container_obj: dict) -> None:
+        nonlocal verified_cells
+        marks = container_obj.get("marks") or []
+        tile_marks = [mk for mk in marks if isinstance(mk, dict) and mk.get("mark") == "tile"]
+        if tile_marks and all(mk.get("center_label") == "—" for mk in tile_marks) and "provenance" not in container_obj:
+            return
+        prov = container_obj.get("provenance")
+        assert isinstance(prov, dict), f"Missing provenance on {container_obj}"
+        mid = prov.get("market_id")
+        oid = prov.get("outcome_id")
+        assert isinstance(mid, int) and mid in detail_by_id, prov
+        served_outcomes = detail_by_id[mid]["outcomes"]
+        matched_out = next((o for o in served_outcomes if o.get("id") == oid), None)
+        assert matched_out is not None, f"Missing outcome {oid} on market {mid}: {served_outcomes}"
+        served_prob = float(matched_out["probability"])
+        expected_int = rendered_percent(served_prob)
+        expected_disp = _pct_display(served_prob)
+
+        pct_marks = [
+            mk for mk in marks
+            if isinstance(mk, dict) and mk.get("mark") == "number" and mk.get("unit") == "%"
+        ]
+        oin_marks = [
+            mk for mk in marks
+            if isinstance(mk, dict) and mk.get("mark") == "number" and mk.get("unit") == "one_in_n"
+        ]
+        if oin_marks:
+            expected_n = compute_one_in_n(expected_int)
+            for mk in oin_marks:
+                assert int(mk["value"]) == int(expected_n), (mid, oid, mk, expected_n)
+        if pct_marks:
+            for mk in pct_marks:
+                assert int(mk["value"]) == int(expected_int), (mid, oid, mk, expected_int)
+                assert mk["display"] == expected_disp, (mid, oid, mk, expected_disp)
+                assert mk["display"] != "80%" or abs(served_prob - 0.8) < 0.01
+                seen_pct_displays.append(mk["display"])
+        elif tile_marks:
+            for mk in tile_marks:
+                assert mk["center_label"] == expected_disp, (mid, oid, mk, expected_disp)
+                assert mk["center_label"] != "80%" or abs(served_prob - 0.8) < 0.01
+                seen_pct_displays.append(mk["center_label"])
+        else:
+            raise AssertionError(f"Expected % number or tile mark alongside provenance on {container_obj}")
+        verified_cells += 1
+
+    for page in all_pages:
+        assert len(str(page.get("page_fingerprint") or "")) == 16
+        for sec in page["sections"]:
+            body = sec["body"]
+            layout = sec["layout"]
+            if layout == "grid":
+                for row in body.get("rows") or []:
+                    for cell in row.get("cells") or []:
+                        _assert_unit_matches(cell)
+            elif layout == "stack":
+                for item in body.get("items") or []:
+                    _assert_unit_matches(item)
+            elif layout == "axis":
+                for series in body.get("series") or []:
+                    _assert_unit_matches(series)
+
+    # Confirm 0.008 became 1% (not 80%), 0.003 became <1%, and 0.9985 became >99% (via shared _display_pct)
+    assert verified_cells >= 20, verified_cells
+    assert "<1%" in seen_pct_displays, seen_pct_displays
+    assert "1%" in seen_pct_displays, seen_pct_displays
+    assert ">99%" in seen_pct_displays, seen_pct_displays
+    assert rendered_percent(0.9985) == 100
+    assert _pct_display(0.9985) == ">99%"
+    print(f"[cell-equals-page verified_cells={verified_cells}]")
+
+
+def test_kit_pages_route_is_strict_redis_read_only(monkeypatch):
+    """Web route reads Redis only; never executes proposer or DB snapshot when Redis is cold."""
+    import asyncio
+    from types import SimpleNamespace
+    from app.routes import containers as containers_route
+    from app.tasks import container_proposer as cp_task
+
+    class FakeRedis:
+        def __init__(self, initial=None):
+            self.store = dict(initial or {})
+
+        def get(self, key):
+            return self.store.get(key)
+
+        def set(self, key, val, ex=None):
+            self.store[key] = val
+
+    async def _admin_ok(*_a, **_kw):
+        return True
+
+    def _boom(*_a, **_kw):
+        raise AssertionError("Web route MUST NOT execute proposer or DB snapshot")
+
+    fake_rc = FakeRedis()
+    monkeypatch.setattr("app.routes.admin_utils._check_admin_auth", _admin_ok)
+    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: fake_rc)
+    monkeypatch.setattr(cp_task, "run_nightly_container_proposer", _boom)
+    monkeypatch.setattr(cp_task, "load_open_markets_snapshot", _boom)
+
+    req = SimpleNamespace(headers={}, query_params={})
+    cold = asyncio.run(containers_route.get_kit_container_pages_preview(request=req, db=None))
+    assert cold["status"] == "not_built_yet"
+    assert cold["deck_id"] is None
+    assert cold["pages"] == []
+    assert cold["count"] == 0
+
+    # When populated, default route returns ready + deck_id; explicit ?deck_id= pins frozen deck
+    deck_payload = cp_task.merge_preview_store(
+        None,
+        [{"slug": "alpha-set", "family_fingerprint": "fp1", "page_fingerprint": "deadbeef12345678", "title": "Alpha Set", "kicker": "TECH", "market_count": 5, "section_count": 3, "variants": ["a", "b", "c"], "sections": []}],
+        now=REF_NOW,
+        covered_ids_count=42,
+        timings_ms={"total_ms": 12.5},
+    )
+    fake_rc.set(cp_task.CONTAINER_PREVIEWS_REDIS_KEY, json.dumps(deck_payload))
+    fake_rc.set(f"{cp_task.CONTAINER_PREVIEWS_DECK_KEY_PREFIX}{deck_payload['deck_id']}", json.dumps(deck_payload))
+
+    ready = asyncio.run(containers_route.get_kit_container_pages_preview(request=req, db=None))
+    assert ready["status"] == "ready"
+    assert ready["deck_id"] == deck_payload["deck_id"]
+    assert ready["covered_ids_count"] == 42
+    assert ready["count"] == 1
+
+    pinned = asyncio.run(
+        containers_route.get_kit_container_pages_preview(request=req, deck_id=deck_payload["deck_id"], db=None)
+    )
+    assert pinned["status"] == "ready"
+    assert pinned["deck_id"] == deck_payload["deck_id"]
+
+    missing_pin = asyncio.run(
+        containers_route.get_kit_container_pages_preview(request=req, deck_id="kit-deck-expired0000", db=None)
+    )
+    assert missing_pin["status"] == "not_built_yet"
+    assert missing_pin["pages"] == []
+
+
+def test_frozen_deck_id_covered_ids_and_timings_in_task(monkeypatch):
+    """Worker loads covered_ids automatically when omitted, records timings, and freezes deck_id."""
+    import asyncio
+    from app.tasks import container_proposer as cp_task
+
+    class FakeRedis:
+        def __init__(self):
+            self.store = {}
+
+        def get(self, key):
+            return self.store.get(key)
+
+        def set(self, key, val, ex=None):
+            self.store[key] = val
+
+    mkts = [
+        _bin(99101, "Alpha Horizon launch Before Feb 1 2027", 35, category="tech", series="KXAL", res_days=30),
+        _bin(99102, "Alpha Horizon launch Before Jun 1 2027", 72, category="tech", series="KXAL", res_days=140),
+        _bin(99103, "Alpha Horizon budget at least $200M", 61, category="tech", series="KXAL", res_days=90),
+        _bin(99104, "Alpha Horizon budget at least $500M", 29, category="tech", series="KXAL", res_days=90),
+        _bin(99105, "Alpha Horizon safety audit passed", 8, category="tech", series="KXAL", res_days=20),
+        _bin(99106, "Alpha Horizon booster reuse achieved", 44, category="tech", series="KXAL", res_days=25),
+    ]
+
+    async def _fake_covered(_sess):
+        return {99101, 99102}  # Excludes 2 markets so Alpha Horizon drops below 5
+
+    monkeypatch.setattr(cp_task, "load_covered_market_ids", _fake_covered)
+    rc = FakeRedis()
+    res_filtered = asyncio.run(
+        cp_task.run_nightly_container_proposer(
+            session=object(),
+            markets=mkts,
+            covered_ids=None,
+            now=REF_NOW,
+            redis_client=rc,
+        )
+    )
+    assert res_filtered["covered_ids_count"] == 2
+    assert res_filtered["proposed_count"] == 0
+    assert res_filtered["timings_ms"]["total_ms"] >= 0.0
+
+    # With empty covered_ids, Alpha Horizon proposes and freezes deck_id in Redis
+    res_open = asyncio.run(
+        cp_task.run_nightly_container_proposer(
+            markets=mkts,
+            covered_ids=frozenset(),
+            now=REF_NOW,
+            redis_client=rc,
+        )
+    )
+    assert res_open["proposed_count"] == 1
+    deck_id = res_open["deck_id"]
+    assert deck_id.startswith("kit-deck-")
+    assert f"{cp_task.CONTAINER_PREVIEWS_DECK_KEY_PREFIX}{deck_id}" in rc.store
+
+
+def test_taste_harm_guards_zero_ellipsis_chronological_matrix_and_natural_headlines():
+    """Enforces taste/harm guard, zero '...', chronological 'YY grid columns, and natural headlines."""
+    from app.utils.kit_container_page_builder import _build_scoreboard_grid_section
+
+    # 1. Scout taste & harm guards refuse inappropriate families cleanly
+    harm_mkts = [
+        _bin(99301 + i, f"Regional nuclear weapon test Before {m} 2027", 20 + i * 10, category="world", series="KXHARM", res_days=30 + i * 20)
+        for i, m in enumerate(["Feb", "Mar", "Apr", "May", "Jun", "Jul"])
+    ]
+    assert propose_container_page_for_family("Regional Nuclear Tests", harm_mkts, now=REF_NOW)["refusal_reason"] == "refused_scout_taste_or_harm_guard"
+
+    taste_mkts = [
+        _bin(99351 + i, f"Apex Celebrity arrested or admits to another affair before {m} 2027", 20 + i * 10, category="culture", series="KXTASTE", res_days=30 + i * 20)
+        for i, m in enumerate(["Feb", "Mar", "Apr", "May", "Jun", "Jul"])
+    ]
+    assert propose_container_page_for_family("Apex Celebrity", taste_mkts, now=REF_NOW)["refusal_reason"] == "refused_scout_taste_or_harm_guard"
+
+    from app.utils.discover_fun_tags import check_fun_taste_guard
+    assert check_fun_taste_guard("Person admits to another affair with a woman by Dec 31")[0] is False
+    assert check_fun_taste_guard("Foreign affairs ministry summit held by Dec 31")[0] is True
+
+    # 2. Dated rows in scoreboard_grid sort chronologically and keep explicit year (2026 / '26 before 2027)
+    dated_grid_mkts = [
+        _multi(99401, "Photon Chip Policy Decision in Mar 2027", {"Hold": 72, "Cut": 28}, category="tech", series="KXPH"),
+        _multi(99402, "Photon Chip Policy Decision in Dec 2026", {"Hold": 54, "Cut": 46}, category="tech", series="KXPH"),
+        _multi(99403, "Photon Chip Policy Decision in Mar 2026", {"Hold": 88, "Cut": 12}, category="tech", series="KXPH"),
+    ]
+    sb = _build_scoreboard_grid_section("photon", "TECH", dated_grid_mkts, set(), now=REF_NOW)
+    assert sb is not None
+    row_labels = [r["leading"][0]["text"] for r in sb["body"]["rows"]]
+    assert len(row_labels) == 3, row_labels
+    assert "Mar 2026" in row_labels[0] and "Dec 2026" in row_labels[1] and "Mar 2027" in row_labels[2], row_labels
+
+    # 3. No broken verb-fragment headlines ('X Be Arrested', single-title 'X Join', 'The Fed publish')
+    hl1, _ = derive_common_headline("Cobalt Director", ["Will Cobalt Director be arrested?", "Will Cobalt Director step down?"])
+    assert hl1 == "Cobalt Director", hl1
+
+    hl2, _ = derive_common_headline(None, ["Will Executive A join Board B?", "Will Board B announce Q4 earnings?"])
+    assert hl2 is None or "join" not in hl2.lower(), hl2
+
+    # 4. Zero '...' ellipsis anywhere in rendered cards
+    ok_mkts = [
+        _bin(99501, "Northstar Rocket orbital flight Before Feb 1 2027", 35, category="tech", series="KXNS", res_days=25),
+        _bin(99502, "Northstar Rocket orbital flight Before Aug 1 2027", 74, category="tech", series="KXNS", res_days=190),
+        _bin(99503, "Northstar Rocket payload above 40 tons", 58, category="tech", series="KXNS", res_days=90),
+        _bin(99504, "Northstar Rocket payload above 80 tons", 21, category="tech", series="KXNS", res_days=90),
+        _bin(99505, "Northstar Rocket fairing recovery test", 14, category="tech", series="KXNS", res_days=18),
+        _bin(99506, "Northstar Rocket static fire test complete", 68, category="tech", series="KXNS", res_days=12),
+    ]
+    ok_res = propose_container_page_for_family("Northstar Rocket", ok_mkts, now=REF_NOW, kicker="TECH")
+    assert ok_res["accepted"] is True, ok_res
+    serialized = json.dumps(ok_res["page"])
+    assert "\u2026" not in serialized and "..." not in serialized, serialized

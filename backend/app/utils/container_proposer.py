@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
+from app.utils.discover_fun_scout import _SCOUT_NON_FUN_HARM_RE
+from app.utils.discover_fun_tags import check_fun_taste_guard
 from app.utils.grouping_families import (
     Atom,
     Family,
@@ -113,6 +115,17 @@ def _canonical_entity_pair(tokens: Sequence[str]) -> tuple[str, str]:
     return canon, label
 
 
+def _passes_scout_taste_and_harm(title: str | None, description: str | None = None) -> bool:
+    """Reuse the fun scout's taste and severe-harm guards verbatim (Condition 1 / #13696)."""
+    ok, _ = check_fun_taste_guard(title, description)
+    if not ok:
+        return False
+    combined = " ".join(part for part in (title or "", description or "") if part).strip()
+    if combined and _SCOUT_NON_FUN_HARM_RE.search(combined):
+        return False
+    return True
+
+
 def normalize_market_record(row: Any) -> dict[str, Any]:
     """Normalize a FuturesMarket ORM object or API dict into proposer format."""
     if isinstance(row, Mapping):
@@ -122,6 +135,7 @@ def normalize_market_record(row: Any) -> dict[str, Any]:
         outcomes_raw = getattr(row, "outcomes", None) or []
         outcomes = [
             {
+                "id": getattr(o, "id", None),
                 "name": getattr(o, "name", ""),
                 "current_probability": (
                     float(o.current_probability)
@@ -138,6 +152,7 @@ def normalize_market_record(row: Any) -> dict[str, Any]:
             "external_id": getattr(row, "external_id", "") or "",
             "group_id": getattr(row, "group_id", None),
             "name": getattr(row, "name", "") or "",
+            "description": getattr(row, "description", None),
             "event_title": meta.get("event_title") if isinstance(meta, Mapping) else None,
             "category": getattr(row, "category", None),
             "llm_sport_category": getattr(row, "llm_sport_category", None),
@@ -170,6 +185,7 @@ def normalize_market_record(row: Any) -> dict[str, Any]:
             if move is None:
                 move = outcome.get("movement")
             mapped_outcomes.append({
+                "id": outcome.get("id"),
                 "name": str(outcome.get("name") or ""),
                 "current_probability": float(prob) if prob is not None else None,
                 "probability_change_24h": float(move) if move is not None else None,
@@ -346,6 +362,9 @@ def discover_candidate_families(
         if mid is None:
             continue
         title_str = str(m.get("name") or m.get("title") or "")
+        desc_str = str(m.get("description") or "") if m.get("description") else None
+        if not _passes_scout_taste_and_harm(title_str, desc_str):
+            continue
         if (
             str(m.get("category") or "").lower() == "game_prop"
             or m.get("event_id") is not None
@@ -510,7 +529,14 @@ def propose_top_containers(
     for rank_idx, (interest, fam) in enumerate(scored[:max(audit_top_n, max_proposals * 3)], 1):
         members = [by_id[mid] for mid in fam.member_ids if mid in by_id]
         kicker = resolve_kicker(members)
-        if any(is_settled_market(m, ref_now) for m in members):
+        if not _passes_scout_taste_and_harm(fam.label):
+            outcome = {
+                "accepted": False,
+                "refusal_reason": "refused_scout_taste_or_harm_guard",
+                "sections_built": 0,
+                "variants": [],
+            }
+        elif any(is_settled_market(m, ref_now) for m in members):
             outcome: dict[str, Any] = {
                 "accepted": False,
                 "refusal_reason": "refused_contains_settled_member",

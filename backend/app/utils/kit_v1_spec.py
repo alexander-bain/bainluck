@@ -621,7 +621,7 @@ def _walk_and_validate_marks(
                 _validate_adaptive_color(node.get("color"), f"{mark_val}.color", errors)
 
     for k, child in node.items():
-        if k == "route":
+        if k in {"route", "provenance"}:
             continue
         _walk_and_validate_marks(
             child,
