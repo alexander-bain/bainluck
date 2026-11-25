@@ -198,6 +198,32 @@ def test_wording_headline_over_five_lines_at_390px() -> None:
     assert not res.ok
     assert any(e.rule == "headline_too_long_390px" for e in res.errors)
 
+    # Regression (#13530): calibrated 298px inner card width sees 4L orphan-% headlines as 4L.
+    critics_4l = (
+        "Christopher Nolan leads Critics Choice Director at 75%, "
+        "with Paul Giamatti leading Oscars Supporting Actor at 41%"
+    )
+    broadway_4l = (
+        "2026\u201327 Broadway attendance finishing above 13,500,000 is at 96%, "
+        "with Mt. Joy returning to Red Rocks at 95%"
+    )
+    assert estimate_headline_lines_390px(critics_4l) == 4
+    assert estimate_headline_lines_390px(broadway_4l) == 4
+    assert (
+        estimate_headline_lines_390px(
+            "Christopher Nolan leads Critics Choice Director at 75%, "
+            "with Paul Giamatti leading Supporting Actor at 41%"
+        )
+        <= 3
+    )
+    assert (
+        estimate_headline_lines_390px(
+            "ARIRANG topping 2026 album sales is at 81%, "
+            "with Avengers: Doomsday leading box office at 89%"
+        )
+        <= 3
+    )
+
 
 @pytest.mark.asyncio
 async def test_public_rule_assembly_fails_when_public_set_comes_up_short(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,6 +416,40 @@ def test_form_rules_enforce_duel_threshold_tile_pictures_and_history_chart() -> 
     }
     assert check_machinery_form_rules(card=tight_duel).ok
 
+    three_way_duel = {
+        "slug": "test-ryder-duel",
+        "form_id": "duel_bar",
+        "title": "Team Europe leads Team USA 52%–41% in the 2027 Ryder Cup race",
+        "rows": [
+            {"label": "Team Europe", "rendered_percent": 52},
+            {"label": "Team USA", "rendered_percent": 41},
+            {"label": "Tie", "rendered_percent": 7},
+        ],
+    }
+    assert check_machinery_form_rules(card=three_way_duel).ok
+
+    weak_three_way_duel = {
+        **three_way_duel,
+        "rows": [
+            {"label": "Team Europe", "rendered_percent": 78},
+            {"label": "Team USA", "rendered_percent": 15},
+            {"label": "Tie", "rendered_percent": 7},
+        ],
+    }
+    assert {e.rule for e in check_machinery_form_rules(card=weak_three_way_duel).errors} == {
+        "form_duel_trailing_under_20"
+    }
+
+    bad_three_way_duel = {
+        **three_way_duel,
+        "rows": [
+            {"label": "Team Europe", "rendered_percent": 45},
+            {"label": "Team USA", "rendered_percent": 35},
+            {"label": "Third Team", "rendered_percent": 20},
+        ],
+    }
+    assert not check_machinery_form_rules(card=bad_three_way_duel).ok
+
     # 2. contender_spotlight & sibling_fields_grid require real pictures unless scale_ordered.
     no_pic_art = {"url": None, "kind": "monogram", "initials": "AB"}
     good_art = {"url": "https://a.espncdn.com/i/teamlogos/ncaa/500/248.png", "kind": "team_logo"}
@@ -528,3 +588,77 @@ def test_scripts_discover_changed_machinery_slugs(
     assert check_machinery_batch_pr.discover_changed_machinery_slugs(repo_root=tmp_path) == (
         "machinery-long-shots",
     )
+
+
+def test_wording_rejects_duplicate_card_headline_in_footer_or_subslots() -> None:
+    """343: A gate rule: a card must never print its headline twice."""
+    headline = (
+        "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, "
+        "with 4 contenders at 75%+ to be nominated"
+    )
+    bad_paired_feed_item = {
+        "type": "bundle",
+        "headline": headline,
+        "data": {
+            "collection_ref": {
+                "slug": "machinery-golden-globes-2027",
+                "href": "/collections/machinery-golden-globes-2027",
+                "name": headline,
+            },
+            "roundup": {
+                "paired_metric_set": {
+                    "kicker": "GOLDEN GLOBES 2027 · BEST ACTRESS",
+                    "title": headline,
+                    "subtitle": "84th Golden Globes · Nominated % beside Winner %",
+                }
+            },
+        },
+    }
+    bad_res = check_machinery_wording(
+        card={"slug": "machinery-golden-globes-2027", "title": headline, "subtitle": "84th Golden Globes"},
+        feed_item=bad_paired_feed_item,
+    )
+    assert not bad_res.ok
+    assert any(
+        err.rule == "duplicate_card_headline" and err.location == "collection_ref.name"
+        for err in bad_res.errors
+    )
+
+    good_paired_feed_item = {
+        "type": "bundle",
+        "headline": headline,
+        "data": {
+            "collection_ref": {
+                "slug": "machinery-golden-globes-2027",
+                "href": "/collections/machinery-golden-globes-2027",
+                "name": "Golden Globes 2027",
+            },
+            "roundup": {
+                "paired_metric_set": {
+                    "kicker": "GOLDEN GLOBES 2027 · BEST ACTRESS",
+                    "title": headline,
+                    "subtitle": "84th Golden Globes · Nominated % beside Winner %",
+                }
+            },
+        },
+    }
+    assert check_machinery_wording(
+        card={"slug": "machinery-golden-globes-2027", "title": headline, "subtitle": "84th Golden Globes"},
+        feed_item=good_paired_feed_item,
+    ).ok
+
+    bad_card_res = check_machinery_wording(
+        card={
+            "slug": "test-dup",
+            "title": "Houston leads the Dec 7 AP poll #1 team at 54%",
+            "subtitle": "Houston leads the Dec 7 AP poll #1 team at 54%",
+            "footer": "Houston leads the Dec 7 AP poll #1 team at 54%",
+        }
+    )
+    assert not bad_card_res.ok
+    assert {
+        err.location
+        for err in bad_card_res.errors
+        if err.rule == "duplicate_card_headline"
+    } == {"card.subtitle", "card.footer"}
+

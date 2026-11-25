@@ -184,8 +184,8 @@ def test_the_section_is_filtered_and_not_deleted():
         ]
     )
     assert [c["query"] for c in chips] == ["Gabriele Thomas Brancatelli"]
-    # And the label is still the house points formatting (#5608), unchanged.
-    assert chips[0]["label"].startswith("Falling -96.4 points — ")
+    # And the label uses whole-point formatting (#13602) without decimals.
+    assert chips[0]["label"].startswith("Falling -96 points — ")
 
 
 def test_a_state_label_does_not_spend_a_limit_slot():

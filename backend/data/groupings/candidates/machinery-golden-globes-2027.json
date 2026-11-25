@@ -10,7 +10,7 @@
   ],
   "level": "member",
   "kicker": "ENTERTAINMENT · AWARDS",
-  "name": "The 2027 Golden Globes",
+  "name": "Golden Globes 2027",
   "category": "entertainment",
   "tag": "ENTERTAINMENT",
   "section_title": "Golden Globes Favorites",
@@ -23,18 +23,26 @@
       "culture"
     ],
     "card_rows": 3,
-    "card_section_key": "golden_globes",
+    "card_section_key": "best_actress_paired",
     "suppress_card_photo": true,
-    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0e/Curtain-939464.jpg/960px-Curtain-939464.jpg",
-    "card_image_alt": "Lit crimson velvet stage curtain inside a theater",
-    "card_image_credit": "tommybuddy (CC0 1.0 Public Domain, Wikimedia Commons)",
-    "card_image_author": "tommybuddy",
-    "card_image_license": "CC0 1.0 Public Domain",
-    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Curtain-939464.jpg",
     "sections": [
       {
+        "key": "best_actress_paired",
+        "title": "Best Actress (Comedy or Musical): Nominated & Wins",
+        "item_noun": "contenders",
+        "note": "84th Golden Globes · Nominated % paired beside Wins %.",
+        "atom_query": {
+          "kind": "paired_stage",
+          "ceremony": "golden-globes-2027",
+          "category_name": "Best Actress",
+          "min_items": 3,
+          "max_items": 10,
+          "initial_visible_limit": 3
+        }
+      },
+      {
         "key": "golden_globes",
-        "title": "Golden Globes Favorites",
+        "title": "Other Golden Globes Races",
         "item_noun": "awards",
         "note": "Leading film, drama, comedy, and television contenders for the 2027 Golden Globes.",
         "atom_query": {

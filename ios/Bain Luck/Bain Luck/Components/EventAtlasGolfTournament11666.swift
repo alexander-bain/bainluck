@@ -321,7 +321,7 @@ enum EventAtlasGolfTournament11666 {
             || SettledQuote.isSettled(status)
             || EventState.isFinished(marketStatus)
             || SettledQuote.isSettled(marketStatus)
-            || field.contains(where: { $0.isWinner == true })
+            || field.contains(where: { GolfTournamentPresentation.resolvedWinnerFlag(for: $0) == true })
             || (winnerMarket?.outcomes.contains(where: { $0.isWinner == true }) == true)
         {
             return .final
@@ -416,6 +416,7 @@ enum EventAtlasGolfTournament11666 {
         market: FuturesMarketDetail?,
         tournamentCommenceTime: String? = nil,
         fallbackWinRow: GolfTournamentFieldRow? = nil,
+        hasConfirmedTournamentWinner: Bool = false,
         isTournamentSettled: Bool = false,
         loadFailed: Bool = false,
         now: Date
@@ -532,23 +533,28 @@ enum EventAtlasGolfTournament11666 {
                 return GolfFinishResult10868(text: "Pending", mark: .unknown)
             }
             let resolved = isMarketResolved(market) || isTournamentSettled
-            if let outcome {
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: outcome.isWinner,
-                    resolutionSource: outcome.resolutionSource,
-                    marketResolved: resolved
-                )
+            if let outcome,
+               let verdict = OutcomeVerdict.verdict(
+                   isWinner: outcome.isWinner,
+                   resolutionSource: outcome.resolutionSource,
+                   marketResolved: resolved
+               ) {
                 switch verdict {
                 case .won:
                     return GolfFinishResult10868(text: positiveResultWord(for: selection), mark: .success)
                 case .lost:
                     return GolfFinishResult10868(text: negativeResultWord(for: selection), mark: .failure)
-                case nil:
-                    return GolfFinishResult10868(text: "Result not confirmed", mark: .unknown)
                 }
             }
-            if let fallbackWinRow, selection == "win", fallbackWinRow.isWinner == true {
-                return GolfFinishResult10868(text: "Won", mark: .success)
+            if selection == "win" {
+                if let fieldFlag = fallbackWinRow.flatMap({ GolfTournamentPresentation.resolvedWinnerFlag(for: $0) }) {
+                    return fieldFlag
+                        ? GolfFinishResult10868(text: positiveResultWord(for: selection), mark: .success)
+                        : GolfFinishResult10868(text: negativeResultWord(for: selection), mark: .failure)
+                }
+                if hasConfirmedTournamentWinner {
+                    return GolfFinishResult10868(text: negativeResultWord(for: selection), mark: .failure)
+                }
             }
             return GolfFinishResult10868(text: "Result not confirmed", mark: .unknown)
         }()
@@ -609,6 +615,11 @@ enum EventAtlasGolfTournament11666 {
         let target = normalizeGolferName(selectedGolferName)
         let fieldMatches = presentation.field.filter { normalizeGolferName($0.name) == target }
         let fallbackWinRow = fieldMatches.count == 1 ? fieldMatches[0] : nil
+        let hasConfirmedWinner = hasConfirmedTournamentWinner(
+            presentation: presentation,
+            winnerMarket: atlasData.winnerMarket,
+            phase: phase
+        )
 
         let winSlot = buildSlot(
             selection: "win",
@@ -619,6 +630,7 @@ enum EventAtlasGolfTournament11666 {
             market: atlasData.winnerMarket,
             tournamentCommenceTime: presentation.commenceTime,
             fallbackWinRow: fallbackWinRow,
+            hasConfirmedTournamentWinner: hasConfirmedWinner,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("win"),
             now: now
@@ -947,6 +959,25 @@ enum EventAtlasGolfTournament11666 {
         return filtered
     }
 
+    private nonisolated static func hasConfirmedTournamentWinner(
+        presentation: GolfTournamentPresentation,
+        winnerMarket: FuturesMarketDetail?,
+        phase: GolfFinishPhase10868
+    ) -> Bool {
+        if presentation.field.contains(where: { GolfTournamentPresentation.resolvedWinnerFlag(for: $0) == true }) {
+            return true
+        }
+        guard phase == .final else { return false }
+        let resolved = isMarketResolved(winnerMarket) || phase == .final
+        return winnerMarket?.outcomes.contains(where: {
+            OutcomeVerdict.verdict(
+                isWinner: $0.isWinner,
+                resolutionSource: $0.resolutionSource,
+                marketResolved: resolved
+            ) == .won
+        }) == true
+    }
+
     nonisolated static func buildJourneyContenders(
         presentation: GolfTournamentPresentation,
         atlasData: TournamentAtlasData,
@@ -962,6 +993,11 @@ enum EventAtlasGolfTournament11666 {
         )
         let resolved = isMarketResolved(atlasData.winnerMarket) || phase == .final
         let winFailed = atlasData.failedMarketSlots.contains("win")
+        let confirmedWinner = hasConfirmedTournamentWinner(
+            presentation: presentation,
+            winnerMarket: atlasData.winnerMarket,
+            phase: phase
+        )
 
         var chosenNames: [String] = Array(presentation.field.prefix(headlineContenderCount).map(\.name))
         if let selected = selectedGolferName,
@@ -1017,15 +1053,19 @@ enum EventAtlasGolfTournament11666 {
 
             let verdict: OutcomeVerdict? = {
                 guard phase == .final, !winFailed else { return nil }
-                if let outcome {
-                    return OutcomeVerdict.verdict(
-                        isWinner: outcome.isWinner,
-                        resolutionSource: outcome.resolutionSource,
-                        marketResolved: resolved
-                    )
+                if let outcome,
+                   let marketVerdict = OutcomeVerdict.verdict(
+                       isWinner: outcome.isWinner,
+                       resolutionSource: outcome.resolutionSource,
+                       marketResolved: resolved
+                   ) {
+                    return marketVerdict
                 }
-                if fieldRow?.isWinner == true {
-                    return .won
+                if let fieldFlag = fieldRow.flatMap({ GolfTournamentPresentation.resolvedWinnerFlag(for: $0) }) {
+                    return fieldFlag ? .won : .lost
+                }
+                if confirmedWinner {
+                    return .lost
                 }
                 return nil
             }()
@@ -1792,15 +1832,23 @@ struct EventAtlasGolfJourneyCardView11666: View {
             plotHeight: EventAtlasGolfTournament11666.firstScreenChartHeight - plotBottomInset
         )
 
+        let labels = plotted.map { EventAtlasGolfTournament11666.shortChartEndLabel(for: $0, phase: phase) }
+        let sharedLabelFontSize = CardTeamNameSizing.sharedSingleLineFontSize(
+            names: labels,
+            baseSize: 10.5,
+            weight: .bold,
+            availableWidth: 94,
+            minimumScale: 0.68
+        )
+
         return ZStack(alignment: .topLeading) {
             ForEach(Array(plotted.enumerated()), id: \.element.id) { idx, contender in
                 let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
-                let label = EventAtlasGolfTournament11666.shortChartEndLabel(for: contender, phase: phase)
-                Text(label)
-                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
+                Text(labels[idx])
+                    .font(.system(size: sharedLabelFontSize, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.68)
+                    .minimumScaleFactor(0.9)
                     .allowsTightening(true)
                     .frame(width: 96, alignment: .leading)
                     .position(x: 49, y: yPositions[idx])
@@ -2550,8 +2598,9 @@ struct EventAtlasGolfContenderChooserView11666: View {
 
     @ViewBuilder
     private func chooserPrimaryValue(_ row: GolfTournamentFieldRow) -> some View {
+        let winnerFlag = GolfTournamentPresentation.resolvedWinnerFlag(for: row)
         if phase == .final {
-            if row.isWinner == true {
+            if winnerFlag == true {
                 HStack(spacing: 4) {
                     Text("✓ Won")
                         .font(.subheadline.weight(.semibold))
@@ -2568,6 +2617,17 @@ struct EventAtlasGolfContenderChooserView11666: View {
                         .font(.caption)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 13, compactRow: true) {
+                        mark.buttonStyle(.borderless)
+                    }
+                }
+            } else if winnerFlag == false {
+                HStack(spacing: 4) {
+                    Text("Lost")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                     if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 13, compactRow: true) {

@@ -1,3 +1,6 @@
+/* eslint-disable @next/next/no-img-element */
+import { BRAND_DRAWING_DATA_URI } from "@/lib/og/brandDrawingDataUri";
+
 /**
  * THE PICTURE A PASTED LINK UNFURLS WITH (#5888).
  *
@@ -225,33 +228,16 @@ export function UnfurlCard({
           padding: "44px 64px 48px",
         }}
       >
-        {/* Header */}
+        {/* Header — offline embedded brand mark so Satori never hits network CDN */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          {/*
-            A typographic wordmark, and NOT the 🍀 the other four cards use.
-
-            Satori resolves an emoji through `loadAdditionalAsset`, which fetches
-            the glyph from a third-party CDN at render time. Measured here: with
-            the clover in this header the route does not degrade to a missing
-            character, it fails outright — `next start` answered every
-            `opengraph-image` request with "failed to pipe response / fetch
-            failed … loadAdditionalAsset", HTTP 000 to the client, on all seven
-            branches. On Vercel that fetch succeeds (`/opengraph-image`,
-            `/events/15304875/opengraph-image` and `/futures/109952/opengraph-image`
-            all answered `200 image/png` in 0.6–1.2s while this was written), so
-            the four existing cards are not broken and this is not a bug report
-            about them.
-
-            It is still a dependency the most public surface we have does not
-            need: one third-party round trip per unfurl, on a path where failure
-            is total rather than cosmetic. Dropping it also makes this component
-            renderable in the sandbox and in CI, which is the only reason the
-            before/after for #5888 could be shot at all.
-
-            Named residue: the same swap in `app/opengraph-image.tsx`,
-            `app/about/opengraph-image.tsx`, `/events/[id]` and `/futures/[id]`.
-          */}
-          <div style={{ display: "flex", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <img
+              src={BRAND_DRAWING_DATA_URI}
+              alt=""
+              width={32}
+              height={32}
+              style={{ borderRadius: 8 }}
+            />
             <span style={{ fontSize: 28, fontWeight: 800, letterSpacing: -0.5 }}>
               Bain Luck
             </span>

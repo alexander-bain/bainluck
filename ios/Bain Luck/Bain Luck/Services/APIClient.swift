@@ -1366,6 +1366,12 @@ actor APIClient {
         return try await fetch("/api/me/preferences")
     }
 
+    /// Adds a favorite-team relation for the signed-in user (`POST /api/me/favorites`).
+    func addFavorite(teamId: Int, relationType: String = "follow") async throws -> StatusResponse {
+        let body = AddFavoriteRequest(teamId: teamId, relationType: relationType)
+        return try await postEncodable("/api/me/favorites", body: body)
+    }
+
     /// Removes a favorite-team relation from the current user's preferences.
     func removeFavorite(teamId: Int, relationType: String) async throws -> StatusResponse {
         return try await delete("/api/me/favorites/\(teamId)", query: ["relation_type": relationType])
@@ -1524,6 +1530,25 @@ actor APIClient {
     /// during a round, and this is the screen a reader stays on to watch them.
     func fetchGolfTournament(slug: String) async throws -> GolfTournamentDetailResponse {
         return try await fetch("/api/golf/tournaments/\(slug)", cacheTTL: 60)
+    }
+
+    /// Fetches the blended, field-normalized probability history for a golf tournament (#13426).
+    func fetchGolfTournamentProbabilityTimeline(
+        slug: String,
+        top: Int = 20,
+        hours: Int = 168,
+        fullRange: Bool = false
+    ) async throws -> ProbabilityTimelineResponse {
+        let query = [
+            "top": "\(top)",
+            "hours": "\(hours)",
+        ].merging(EvolutionFullRange.query(fullRange: fullRange)) { current, _ in current }
+        return try await fetch(
+            "/api/golf/tournaments/\(slug)/probability-timeline",
+            query: query,
+            requiresNetwork: true,
+            revalidationQuery: ["fresh": "true"]
+        )
     }
 
     /// One event concept — the JSON behind the web's `/event/<domain>/<slug>`

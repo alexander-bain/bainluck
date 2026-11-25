@@ -43,6 +43,14 @@ import Foundation
     private(set) var unconfirmedRevocations: Set<String> = []
     var canRequestPushToken: Bool { session != nil }
 
+    /// #13052 — true when this activity is already owned by a signed-in account session
+    /// so the device-owned push-to-start observer never races with account registration.
+    func isAccountOwned(id: String) -> Bool {
+        if entries[id] != nil { return true }
+        let owned = defaults.dictionary(forKey: ownershipKey) ?? [:]
+        return owned[id] != nil
+    }
+
     convenience init() { self.init(transport: GameActivityRegistrationClient()) }
 
     init(transport: any GameActivityRegistrationTransport, defaults: UserDefaults = .standard) {

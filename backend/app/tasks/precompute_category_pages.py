@@ -33,6 +33,9 @@ _PREWARM_MACHINERY_CONCURRENCY_VAR: contextvars.ContextVar[int | None] = (
 _PREWARM_MACHINERY_WALL_BUDGET_VAR: contextvars.ContextVar[bool] = (
     contextvars.ContextVar("_PREWARM_MACHINERY_WALL_BUDGET_VAR", default=False)
 )
+_PREWARM_DERIVED_SIBLINGS_VAR: contextvars.ContextVar[
+    tuple[list[dict[str, Any]], dict[str, dict[str, Any]]] | None
+] = contextvars.ContextVar("_PREWARM_DERIVED_SIBLINGS_VAR", default=None)
 _PREWARM_MACHINERY_SKIP_TRICKLE_VAR: contextvars.ContextVar[bool] = (
     contextvars.ContextVar("_PREWARM_MACHINERY_SKIP_TRICKLE_VAR", default=False)
 )
@@ -1312,6 +1315,237 @@ FEED_PREWARM_SHAPES: tuple[dict, ...] = (
     },
 )
 
+def _publish_derived_siblings_from_parent(
+    rc: Any,
+    *,
+    parent_label: str,
+    parent_payload: Any,
+    request_scope: Any,
+    duration_s: float,
+    artifact_age_s: float | None,
+) -> None:
+    """Derive and publish ``limit=20`` sibling shapes from a freshly built ``limit=50`` parent (#13445 Option 2)."""
+    spec = _PREWARM_DERIVED_SIBLINGS_VAR.get()
+    if spec is None or not isinstance(parent_payload, dict) or not isinstance(request_scope, dict):
+        return
+    child_shapes, derived_out = spec
+    if not child_shapes:
+        return
+
+    from app.routes.feed import FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY
+    from app.utils.feed_cache import (
+        build_feed_cache_metadata,
+        dumps_feed_cache,
+        encode_base_last_good,
+        feed_page_base_cache_key,
+        feed_page_base_last_good_key,
+        feed_response_cache_key,
+        feed_response_cache_ttls,
+        live_stale_ceiling_seconds,
+        payload_contains_live_event,
+        render_feed_page_from_base,
+    )
+    from app.utils.feed_served_markets import market_ids_in_feed_payload, record_served_market_ids
+
+    parent_mach = request_scope.get(FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY)
+    if not isinstance(parent_mach, dict):
+        return
+    parent_cache_shape = parent_mach.get("cache_shape")
+    parent_pb_body = parent_mach.get("page_base_body")
+    if not isinstance(parent_cache_shape, dict) or not isinstance(parent_pb_body, dict):
+        return
+
+    pending_mach = _PREWARM_PENDING_MACH_BASES_VAR.get()
+    parent_fresh_ttl = max(int(parent_mach.get("page_base_fresh_ttl") or 0), 1)
+    parent_stale_ttl = max(int(parent_mach.get("page_base_stale_ttl") or 0), 1)
+    parent_lg_body = parent_mach.get("page_base_last_good_body")
+    child_lg_ttl = max(int(parent_mach.get("page_base_last_good_ttl") or 0), 1)
+    age_s_val = float(artifact_age_s or 0.0)
+
+    for child_shape in child_shapes:
+        child_label = str(child_shape.get("label") or "")
+        if not child_label:
+            continue
+        try:
+            child_limit = int(child_shape["limit"])
+            child_offset = int(child_shape.get("offset") or 0)
+            child_payload = render_feed_page_from_base(
+                parent_pb_body,
+                limit=child_limit,
+                offset=child_offset,
+            )
+            if not isinstance(child_payload, dict):
+                continue
+
+            child_cache_shape = dict(parent_cache_shape)
+            child_cache_shape["limit"] = child_limit
+            child_cache_shape["offset"] = child_offset
+            if "event_pct" in child_shape and child_shape["event_pct"] is not None:
+                child_cache_shape["event_pct"] = child_shape["event_pct"]
+            if "mode" in child_shape:
+                child_cache_shape["mode"] = child_shape["mode"]
+            child_cache_shape["include_events"] = bool(child_shape.get("include_events", True))
+            child_cache_shape["include_futures"] = bool(child_shape.get("include_futures", True))
+
+            child_live = payload_contains_live_event(child_payload)
+            ceiling_s = live_stale_ceiling_seconds(child_payload)
+            child_ttl, child_stale_ttl = feed_response_cache_ttls(
+                my_teams_only=False,
+                identified=False,
+                live=child_live,
+                oldest_artifact_age_s=age_s_val,
+                strict_artifact_age_s=age_s_val,
+                live_stale_ceiling_s=ceiling_s,
+            )
+            if child_live and (child_ttl <= 0 or child_stale_ttl <= 0):
+                logger.warning(
+                    "Feed pre-warm skipping derived %s from %s — expired live artifact headroom (ttl=%s stale_ttl=%s)",
+                    child_label,
+                    parent_label,
+                    child_ttl,
+                    child_stale_ttl,
+                )
+                continue
+
+            child_payload["cache"] = build_feed_cache_metadata(
+                "miss",
+                ttl_seconds=child_ttl,
+                stale_ttl_seconds=child_stale_ttl,
+                live=child_live,
+                built_at=parent_mach.get("age_origin"),
+            )
+            if "cache_version" in parent_payload:
+                child_payload["cache_version"] = parent_payload["cache_version"]
+
+            child_cache_key = feed_response_cache_key(
+                user_id=None,
+                session_id=None,
+                **child_cache_shape,
+            )
+            pb_params = {
+                k: v
+                for k, v in child_cache_shape.items()
+                if k not in ("offset", "edition", "machinery")
+            }
+            child_pb_key = feed_page_base_cache_key(**pb_params)
+            child_pb_lg_key = feed_page_base_last_good_key(child_pb_key)
+
+            child_pb_body = dict(parent_pb_body)
+            if "limit" in child_pb_body:
+                child_pb_body["limit"] = child_limit
+
+            rc.setex(
+                child_cache_key,
+                max(int(child_stale_ttl), 1),
+                dumps_feed_cache(child_payload),
+            )
+            rc.setex(
+                child_pb_key,
+                max(parent_stale_ttl, parent_fresh_ttl, 1),
+                dumps_feed_cache(child_pb_body),
+            )
+            if isinstance(parent_lg_body, dict):
+                child_lg_body = dict(parent_lg_body)
+                if "limit" in child_lg_body:
+                    child_lg_body["limit"] = child_limit
+                encoded_lg = encode_base_last_good(dumps_feed_cache(child_lg_body))
+                if encoded_lg is not None:
+                    rc.setex(child_pb_lg_key, child_lg_ttl, encoded_lg)
+
+            child_mach_base = dict(parent_mach)
+            child_mach_base["cache_shape"] = child_cache_shape
+            child_mach_base["page_base_key"] = child_pb_key
+            child_mach_base["limit"] = child_limit
+            child_mach_base["offset"] = child_offset
+            mach_live_flag = False
+            from app.utils.roundup_containers import roundup_feed_enabled
+
+            if roundup_feed_enabled(
+                mode=child_cache_shape.get("mode"),
+                include_events=bool(child_cache_shape.get("include_events", True)),
+                include_futures=bool(child_cache_shape.get("include_futures", True)),
+            ):
+                mach_res = _publish_machinery_feed_from_prewarm_base(
+                    rc,
+                    mach_base=child_mach_base,
+                    label=child_label,
+                )
+                if isinstance(mach_res, dict) and mach_res.get("outcome") == "ok":
+                    if mach_res.get("page_base_key"):
+                        _record_shape_key_in_hash(
+                            rc,
+                            FEED_PREWARM_MACHINERY_KEYS_KEY,
+                            child_label,
+                            str(mach_res["page_base_key"]),
+                        )
+                    mach_live_flag = bool(mach_res.get("live"))
+                if pending_mach is not None:
+                    pending_mach[child_label] = {
+                        "mach_base": child_mach_base,
+                        "force_retry": bool(
+                            isinstance(mach_res, dict) and mach_res.get("incomplete")
+                        ),
+                    }
+
+            child_enroll_live = bool(
+                child_live or payload_contains_live_event(parent_pb_body) or mach_live_flag
+            )
+            _record_shape_liveness(rc, child_label, child_enroll_live)
+            _record_shape_cache_key(rc, child_label, child_cache_key)
+            _record_shape_key_in_hash(rc, FEED_PREWARM_PAGE_BASE_KEYS_KEY, child_label, child_pb_key)
+            record_served_market_ids(rc, child_label, market_ids_in_feed_payload(child_payload))
+
+            child_items = child_payload.get("items") or []
+            derived_res = {
+                "outcome": "ok",
+                "derived_from": parent_label,
+                "duration_s": round(duration_s, 3),
+                "items": len(child_items),
+                "live": child_live,
+                "artifact_age_s": artifact_age_s,
+            }
+            if isinstance(child_payload.get("opening"), dict):
+                derived_res["opening"] = dict(child_payload["opening"])
+            derived_out[child_label] = derived_res
+        except Exception as exc:
+            logger.warning(
+                "Feed pre-warm failed deriving %s from %s; "
+                "parent already published and fallback will build directly: %s",
+                child_label,
+                parent_label,
+                exc,
+            )
+
+
+def _group_live_prewarm_targets(
+    targets: list[tuple[str, dict[str, Any]]],
+    *,
+    live_labels: set[str] | frozenset[str] = frozenset(),
+    absent_labels: set[str] | frozenset[str] = frozenset(),
+) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
+    """Group ``limit=20`` sibling shapes under their same-tier ``limit=50`` parent (#13445 Option 2)."""
+    grouped: list[tuple[str, dict[str, Any]]] = []
+    children_by_parent: dict[str, list[dict[str, Any]]] = {}
+    for lbl, s in targets:
+        parent_lbl = FEED_PREWARM_DERIVED_SIBLINGS.get(lbl)
+        if parent_lbl:
+            in_same_tier = (lbl in live_labels and parent_lbl in live_labels) or (
+                lbl in absent_labels and parent_lbl in absent_labels
+            ) or (not live_labels and not absent_labels and any(p == parent_lbl for p, _ in targets))
+            if in_same_tier and any(p == parent_lbl for p, _ in targets):
+                children_by_parent.setdefault(parent_lbl, []).append(s)
+                continue
+        grouped.append((lbl, s))
+    return grouped, children_by_parent
+
+
+#: Shapes whose ``offset=0, limit=20`` cached responses and ``page_base`` are
+#: pure slices of a larger parent shape in the same priority tier (#13445 Option 2).
+FEED_PREWARM_DERIVED_SIBLINGS: dict[str, str] = {
+    "discover": "discover_native",
+    "sports": "sports_native",
+}
+
 #: The two real shapes of `GET /api/futures/grouped-feed` — the Sports tab's
 #: THIRD request, on both surfaces. Enrolled by LAT-P100 together with that
 #: route's first response cache; before it, the route had none at all and both
@@ -1944,6 +2178,29 @@ async def _prewarm_feed_shape(
     }
     if _opening_report is not None:
         _ok_result["opening"] = _opening_report
+    try:
+        _publish_derived_siblings_from_parent(
+            rc,
+            parent_label=label,
+            parent_payload=payload,
+            request_scope=request.scope,
+            duration_s=duration_s,
+            artifact_age_s=_artifact_age_s,
+        )
+    except Exception as exc:
+        _spec = _PREWARM_DERIVED_SIBLINGS_VAR.get()
+        _child_labels = (
+            ",".join(str(cs.get("label") or "") for cs in _spec[0] if cs.get("label"))
+            if _spec is not None and _spec[0]
+            else "<unknown>"
+        )
+        logger.warning(
+            "Feed pre-warm failed deriving sibling(s) %s from parent %s; "
+            "parent already published and fallback will build directly: %s",
+            _child_labels,
+            label,
+            exc,
+        )
     return _ok_result
 
 
@@ -3331,6 +3588,9 @@ async def _prewarm_live_feed_shapes():
     targets += [
         (s["label"], s) for s in FEED_PREWARM_SHAPES if s["label"] in absent_labels
     ]
+    targets, derived_children_by_parent = _group_live_prewarm_targets(
+        targets, live_labels=live_labels, absent_labels=absent_labels
+    )
 
     # #3233: the targets build CONCURRENTLY under one wall, not serially under
     # 1/N slices of it.
@@ -3387,9 +3647,37 @@ async def _prewarm_live_feed_shapes():
             # The deadline is what is LEFT of the wall, not a slice of it. The
             # pass still cannot overrun `BUDGET`, because every target's timeout
             # is measured from the same start.
-            shapes[label] = await _prewarm_feed_shape(
-                dict(shape), rc, deadline_s=remaining_s
+            derived_children = derived_children_by_parent.get(label) or []
+            derived_out: dict[str, dict[str, Any]] = {}
+            derived_token = (
+                _PREWARM_DERIVED_SIBLINGS_VAR.set((derived_children, derived_out))
+                if derived_children
+                else None
             )
+            try:
+                shapes[label] = await _prewarm_feed_shape(
+                    dict(shape), rc, deadline_s=remaining_s
+                )
+            finally:
+                if derived_token is not None:
+                    _PREWARM_DERIVED_SIBLINGS_VAR.reset(derived_token)
+            for child_shape in derived_children:
+                child_label = child_shape["label"]
+                if child_label in derived_out:
+                    shapes[child_label] = derived_out[child_label]
+                    continue
+                child_remaining_s = FEED_LIVE_REPUBLISH_BUDGET_S - (
+                    _time.monotonic() - pass_started
+                )
+                if child_remaining_s < FEED_PREWARM_MIN_VIABLE_BUILD_S:
+                    shapes[child_label] = {
+                        "outcome": "skipped_no_time",
+                        "remaining_s": round(child_remaining_s, 1),
+                    }
+                else:
+                    shapes[child_label] = await _prewarm_feed_shape(
+                        dict(child_shape), rc, deadline_s=child_remaining_s
+                    )
 
     # #12288: run live/due machinery roundup prewarm CONCURRENTLY with the feed
     # shapes inside the same bounded pass budget so slow discover builds (~19s

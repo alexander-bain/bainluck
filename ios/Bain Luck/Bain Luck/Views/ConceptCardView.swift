@@ -49,6 +49,15 @@ struct ConceptCardView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                FollowButton295A(
+                    subject: .set(slug: key, setKind: .concept, name: title),
+                    pageContextId: "concept:\(key)",
+                    compact: true
+                )
+            }
+        }
         .task {
             await vm.load()
             AnalyticsService.trackScreen(name: "concept_card", type: "concept")
@@ -67,6 +76,9 @@ struct ConceptCardView: View {
     private func loaded(_ presentation: ConceptCardPresentation) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                GameAlertsInlinePageSlot295A(contextId: "concept:\(key)")
+                    .padding(.top, 4)
+
                 header(presentation)
 
                 if presentation.bouts.isEmpty {

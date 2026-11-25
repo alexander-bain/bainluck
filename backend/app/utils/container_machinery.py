@@ -628,6 +628,82 @@ _PLACEHOLDER_CREST_SUFFIX = "/default.png"
 _TEAM_CLUB_PREFIX_RE = re.compile(r"^(?:fc|cf|sc|ac|afc|sv|fk)\s+", re.IGNORECASE)
 _TEAM_CLUB_SUFFIX_RE = re.compile(r"\s+(?:fc|cf|sc|ac|afc)$", re.IGNORECASE)
 _TEAM_STATIC_LOGO_KINDS: frozenset[str] = frozenset({"team_logo", "espn_team_logo"})
+_PERSON_ART_KINDS: frozenset[str] = frozenset(
+    {"person", "headshot", "portrait", "tmdb_headshot", "tmdb_person"}
+)
+_CAST_AS_SPLIT_RE = re.compile(r"\s+as\s+", re.IGNORECASE)
+_PORTRAIT_DETAIL_SUFFIX_RE = re.compile(
+    r"\s+(?:tmdb\s+portrait|espn\s+headshot|wikimedia\s+commons\s+portrait|portrait|headshot)$",
+    re.IGNORECASE,
+)
+_NUMERIC_RANGE_OUTCOME_RE = re.compile(r"\d+(?:\s*(?:[-–]|to)\s*\d+)?%?")
+_NON_ENTITY_EXACT_LABELS: frozenset[str] = frozenset(
+    {
+        "yes",
+        "no",
+        "rock",
+        "pop",
+        "country",
+        "rap",
+        "hip-hop",
+        "hip hop",
+        "r&b",
+        "jazz",
+        "metal",
+        "electronic",
+        "indie",
+        "folk",
+        "latin",
+        "classical",
+        "alternative",
+    }
+)
+_NON_ENTITY_PREFIXES: tuple[str, ...] = ("before ", "after ", "by ", "in ", "rank ", "top ", "<", ">")
+# Intentional artist-work and stage-name pairs validated against public sets (#13587).
+_ARTIST_WORK_AND_STAGE_ALLOWLIST: tuple[tuple[str, str], ...] = (
+    ("all i want for christmas is you", "mariah carey"),
+    ("tame impala", "kevin parker"),
+    ("djo", "joe keery"),
+)
+
+
+def _split_cast_actor_prefix(text: str) -> Optional[str]:
+    """Return the actor name before ' as <Role>' when structured as a cast credit."""
+    parts = _CAST_AS_SPLIT_RE.split(str(text or "").strip(), maxsplit=1)
+    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+        return parts[0].strip()
+    return None
+
+
+def _portrait_name_from_detail(detail: str) -> Optional[str]:
+    """Extract the person name preceding a portrait/headshot suffix in ``art.detail``."""
+    cleaned = str(detail or "").strip()
+    m = _PORTRAIT_DETAIL_SUFFIX_RE.search(cleaned)
+    if not m:
+        return None
+    prefix = cleaned[: m.start()].strip()
+    return prefix or None
+
+
+def is_non_entity_outcome_label(label: str) -> bool:
+    """True when an outcome label is structural (Yes/No, date, rank, genre) rather than a named entity."""
+    cleaned = str(label or "").strip().lower()
+    if not cleaned or cleaned in _NON_ENTITY_EXACT_LABELS:
+        return True
+    if cleaned.startswith(_NON_ENTITY_PREFIXES):
+        return True
+    return bool(_NUMERIC_RANGE_OUTCOME_RE.fullmatch(cleaned))
+
+
+def _monogram_art(subject: str) -> dict[str, Any]:
+    """Return a clean no-picture monogram art dict for ``subject``."""
+    return {
+        "url": None,
+        "kind": "monogram",
+        "detail": "",
+        "accent_color": _fallback_color(subject),
+        "initials": _initials(subject),
+    }
 _ESPN_TEAMLOGO_LEAGUE_RE = re.compile(r"/teamlogos/([a-z0-9_-]+)/", re.IGNORECASE)
 _ESPN_LEAGUE_SPORT_PREFIXES: dict[str, tuple[str, ...]] = {
     "nfl": ("americanfootball_nfl",),
@@ -887,6 +963,7 @@ class SubjectArtResolver:
         self._team_lookup = team_lookup
         self._team_keys_by_norm: dict[str, list[str]] = {}
         self._team_prefix_unique: dict[str, str] = {}
+        self._person_names_by_url: dict[str, set[str]] = {}
         if _static_by_norm is not None:
             self._by_norm = _static_by_norm
         else:
@@ -1054,6 +1131,37 @@ class SubjectArtResolver:
 
         return None
 
+    def _record_person_url_aliases(
+        self,
+        url: Optional[str],
+        names: Sequence[str],
+        *,
+        kind: Optional[str],
+        detail: Optional[str],
+    ) -> None:
+        if not url:
+            return
+        k_low = str(kind or "").strip().lower()
+        d_str = str(detail or "").strip()
+        det_name = _portrait_name_from_detail(d_str)
+        if not (k_low in _PERSON_ART_KINDS or det_name is not None or "/headshots/" in url.lower()):
+            return
+        bucket = self._person_names_by_url.setdefault(url, set())
+        candidates = list(names)
+        if det_name:
+            candidates.append(det_name)
+        elif "," in d_str and k_low in _PERSON_ART_KINDS:
+            candidates.append(d_str.split(",", 1)[0].strip())
+        for raw in candidates:
+            s = str(raw or "").strip()
+            if not s:
+                continue
+            actor_prefix = _split_cast_actor_prefix(s)
+            if actor_prefix:
+                s = actor_prefix
+            if s:
+                bucket.add(s)
+
     def _register(
         self,
         aliases: Sequence[str],
@@ -1062,6 +1170,12 @@ class SubjectArtResolver:
         display_aliases: Optional[Sequence[str]] = None,
     ) -> None:
         disp_list = [str(a) for a in (display_aliases if display_aliases is not None else aliases) if str(a).strip()]
+        self._record_person_url_aliases(
+            record.get("url"),
+            disp_list,
+            kind=record.get("kind"),
+            detail=record.get("detail"),
+        )
         primary_disp = disp_list[0] if disp_list else None
         by_fold: dict[str, list[str]] = {}
         for raw in disp_list:
@@ -1208,6 +1322,14 @@ class SubjectArtResolver:
         nk = _norm_key(clean_subj) or _norm_key(subject)
         fk = _ascii_fold_key(clean_subj) or _ascii_fold_key(subject)
         hit = self._by_norm.get(nk) or (self._by_norm.get(fk) if fk else None)
+        if hit is None:
+            actor_name = _split_cast_actor_prefix(clean_subj or subject)
+            if actor_name:
+                a_nk = _norm_key(actor_name)
+                a_fk = _ascii_fold_key(actor_name)
+                actor_hit = self._by_norm.get(a_nk) or (self._by_norm.get(a_fk) if a_fk else None)
+                if actor_hit and str(actor_hit.get("kind") or "").lower() in _PERSON_ART_KINDS:
+                    hit = actor_hit
         if hit and hit.get("kind") in _TEAM_STATIC_LOGO_KINDS:
             if allow_team_lookup is False or not _static_team_logo_matches_sport(
                 hit.get("url"), sport_key
@@ -1235,6 +1357,103 @@ class SubjectArtResolver:
         return out
 
 
+def _extract_portrait_person_names(
+    art: Mapping[str, Any],
+    resolver: Optional[SubjectArtResolver] = None,
+) -> tuple[list[str], set[str]]:
+    """Return ``(display_names, folded_names)`` when ``art`` depicts a named person portrait."""
+    url = str(art.get("url") or "").strip()
+    if not url:
+        return [], set()
+    kind = str(art.get("kind") or "").strip().lower()
+    detail = str(art.get("detail") or "").strip()
+    det_name = _portrait_name_from_detail(detail)
+    is_portrait = (
+        kind in _PERSON_ART_KINDS
+        or det_name is not None
+        or "/headshots/" in url.lower()
+    )
+    if not is_portrait:
+        return [], set()
+
+    raw_names: list[str] = []
+    if det_name:
+        raw_names.append(det_name)
+        if "," in det_name:
+            raw_names.append(det_name.split(",", 1)[0].strip())
+    elif "," in detail and kind in _PERSON_ART_KINDS:
+        raw_names.append(detail.split(",", 1)[0].strip())
+    if resolver is not None:
+        for reg_name in sorted(resolver._person_names_by_url.get(url, ())):
+            raw_names.append(reg_name)
+
+    display_names: list[str] = []
+    folded_names: set[str] = set()
+    for nm in raw_names:
+        cleaned = str(nm or "").strip()
+        fk = _ascii_fold_key(cleaned)
+        if cleaned and fk and fk not in folded_names:
+            folded_names.add(fk)
+            display_names.append(cleaned)
+    return display_names, folded_names
+
+
+def art_subject_mismatch_reason(
+    subject_texts: Sequence[str],
+    art: Mapping[str, Any],
+    *,
+    resolver: Optional[SubjectArtResolver] = None,
+) -> Optional[str]:
+    """Return a mismatch reason when a person portrait depicts someone other than the subject."""
+    if not isinstance(art, Mapping) or not art.get("url"):
+        return None
+    display_names, portrait_folds = _extract_portrait_person_names(art, resolver=resolver)
+    if not portrait_folds:
+        return None
+    hay_parts = [_ascii_fold_key(t) for t in subject_texts if t]
+    hay = " ".join(part for part in hay_parts if part)
+    if not hay:
+        return None
+    padded_hay = f" {hay} "
+    hay_tokens = set(hay.split())
+
+    for work_or_stage, artist_fold in _ARTIST_WORK_AND_STAGE_ALLOWLIST:
+        if f" {work_or_stage} " in padded_hay and artist_fold in portrait_folds:
+            return None
+
+    for p_fold in portrait_folds:
+        if f" {p_fold} " in padded_hay:
+            return None
+        tokens = [t for t in p_fold.split() if len(t) >= 3]
+        if tokens and all(t in hay_tokens for t in tokens):
+            return None
+
+    primary_subj = next((str(t).strip() for t in subject_texts if str(t or "").strip()), "")
+    return f"Portrait depicts {', '.join(display_names)} rather than {primary_subj!r}"
+
+
+def _gate_outcome_art(
+    outcome_name: str,
+    context_texts: Sequence[str],
+    art: Mapping[str, Any],
+    *,
+    resolver: Optional[SubjectArtResolver] = None,
+    fallback_subject: Optional[str] = None,
+) -> dict[str, Any]:
+    """Strip any mismatched person portrait so a row serves no picture rather than a wrong face."""
+    clean_out = str(outcome_name or "").strip()
+    if not isinstance(art, Mapping):
+        return _monogram_art(str(fallback_subject or clean_out or "Subject"))
+    if not art.get("url"):
+        return dict(art)
+    check_texts: Sequence[str] = (
+        [clean_out, *context_texts] if is_non_entity_outcome_label(clean_out) else [clean_out]
+    )
+    if art_subject_mismatch_reason(check_texts, art, resolver=resolver) is None:
+        return dict(art)
+    return _monogram_art(str(fallback_subject or clean_out or "Subject"))
+
+
 @lru_cache(maxsize=1)
 def _default_art_resolver() -> SubjectArtResolver:
     return SubjectArtResolver()
@@ -1256,9 +1475,14 @@ def _is_event_toss_up(item: Mapping[str, Any]) -> bool:
     return max(ap, hp) <= (TOSS_UP_MAX_SIDE_PROB + 1e-9)
 
 
+_DUEL_DRAW_OUTCOME_NAMES: frozenset[str] = frozenset({"tie", "draw"})
+
+
 def choose_section_form(
     atoms_kind: str,
     selected_items: Sequence[Mapping[str, Any]],
+    *,
+    allow_three_way_duel: bool = False,
 ) -> str:
     """Choose a section's visual form strictly from the shape of its atoms (zero topic checks)."""
     if atoms_kind == "paired_stage":
@@ -1284,6 +1508,18 @@ def choose_section_form(
         if len(selected_items) == 1:
             outcomes = selected_items[0].get("outcomes") or ()
             if len(outcomes) == 2:
+                return "duel_bar"
+            if (
+                allow_three_way_duel
+                and len(outcomes) == 3
+                and sum(
+                    1
+                    for o in outcomes
+                    if isinstance(o, Mapping)
+                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+                )
+                == 1
+            ):
                 return "duel_bar"
             if len(outcomes) >= 3:
                 return "contender_spotlight"
@@ -2287,6 +2523,22 @@ def _hydrate_market_visual_item(
                     break
         outcomes_out[0]["art"] = yes_art
 
+    # Portrait/subject gate (#13587): never serve a person's face on another subject's row.
+    if outcomes_out:
+        art_context_texts = (display_title, clean_raw_name)
+        for oc in outcomes_out:
+            oc["art"] = _gate_outcome_art(
+                str(oc.get("name") or ""),
+                art_context_texts,
+                oc.get("art") or {},
+                resolver=resolver,
+                fallback_subject=(
+                    str(display_title or clean_raw_name or f"Market {mid}")
+                    if shape_is_yes
+                    else str(oc.get("name") or display_title or clean_raw_name or f"Market {mid}")
+                ),
+            )
+
     headline_phrase: Optional[str] = None
     headline_with_phrase: Optional[str] = None
     if fun_sub_tag:
@@ -2312,7 +2564,10 @@ def _hydrate_market_visual_item(
         elif lead_ans_clean.startswith(">$"):
             lead_ans_for_phrase = f"above {lead_ans_clean[1:].strip()}"
         else:
-            lead_ans_for_phrase = _abbreviate_month_names(lead_ans_clean)
+            if lead_ans_clean.strip().lower() in _MONTH_FULL_MAP:
+                lead_ans_for_phrase = _expand_month_token(lead_ans_clean)
+            else:
+                lead_ans_for_phrase = _abbreviate_month_names(lead_ans_clean)
         _THE_COUNTRIES = frozenset(
             {
                 "united states",
@@ -2369,6 +2624,7 @@ def _hydrate_market_visual_item(
     return {
         "market_id": mid,
         "title": display_title,
+        "_short_label_base": base_title,
         "headline_phrase": headline_phrase,
         "headline_with_phrase": headline_with_phrase,
         "raw_title": clean_raw_name,
@@ -2762,6 +3018,8 @@ _CATEGORY_LLM_POOL: dict[str, tuple[str, ...]] = {
     "football": ("football", "nfl", "americanfootball_nfl", "other"),
     "basketball": ("basketball", "nba", "basketball_nba", "basketball_ncaab", "other"),
     "hockey": ("hockey", "nhl", "icehockey_nhl", "other"),
+    "golf": ("golf", "pga", "other"),
+    "mma": ("mma", "ufc", "boxing", "other"),
     "soccer": ("soccer", "sports", "other"),
     "tech": ("tech", "technology", "ai", "science", "other"),
 }
@@ -3847,6 +4105,7 @@ _PROPER_WORDS_KEEP = frozenset(
         "oscars",
         "senate",
         "house",
+        "ap",
         "january",
         "february",
         "march",
@@ -3883,6 +4142,12 @@ _EXACT_CASE_TOKENS: dict[str, str] = {
     "millennium": "Millennium",
     "sec": "SEC",
     "pac-12": "Pac-12",
+    "ryder": "Ryder",
+    "cup": "Cup",
+    "conor": "Conor",
+    "mcgregor": "McGregor",
+    "mcgregor's": "McGregor's",
+    "mcgregor’s": "McGregor’s",
 }
 
 
@@ -3950,17 +4215,19 @@ def _prose_market_phrase(title: str, *, capitalize_first: bool = False) -> str:
             if exact_cased is not None:
                 words.append(exact_cased + w[len(w.rstrip("(),.:;")) :])
             elif core.lower() in _PROPER_WORDS_KEEP or any(ch.isdigit() for ch in core):
-                if core.upper() in {"NFL", "NBA", "MLB", "NHL", "WNBA", "AFC", "NFC", "GDP", "CPI", "FOMC", "IPO", "US"}:
+                if core.upper() in {"NFL", "NBA", "MLB", "NHL", "WNBA", "AFC", "NFC", "GDP", "CPI", "FOMC", "IPO", "US", "AP"}:
                     words.append(w.upper())
                 elif core.lower() == "u.s.":
                     words.append("U.S.")
+                elif any(ch.isdigit() for ch in core) and not core[0].isalpha():
+                    words.append(w)
                 else:
                     words.append(core.capitalize())
             else:
                 words.append(w.lower())
         joined = " ".join(words)
         joined = re.sub(r"\bbig\s+ten\b", "Big Ten", joined, flags=re.IGNORECASE)
-        has_leading_possessive = bool(words and ("'" in words[0] or "’" in words[0]))
+        has_leading_possessive = any("'" in tok or "’" in tok for tok in words[:2])
         out = (
             joined
             if joined.lower().startswith(("the ", "a ", "an ")) or has_leading_possessive
@@ -4227,17 +4494,24 @@ def _build_dynamic_title_from_set(
         return max(outs, key=lambda o: float(o.get("probability") or 0.0))
 
     if spotlight_item is None and duel_item is not None and lead_sec_form == "duel_bar":
-        d_outs = sorted(
+        d_outs_all = sorted(
             [o for o in (duel_item.get("outcomes") or ()) if isinstance(o, Mapping)],
             key=lambda o: -float(o.get("probability") or 0.0),
         )
+        d_non_draw = [
+            o
+            for o in d_outs_all
+            if str(o.get("name") or "").strip().lower() not in _DUEL_DRAW_OUTCOME_NAMES
+        ]
+        d_outs = d_non_draw if len(d_non_draw) >= 2 else d_outs_all
         if len(d_outs) >= 2:
             lead_name = _prose_outcome_name(str(d_outs[0]["name"]))
             trail_name = _prose_outcome_name(str(d_outs[1]["name"]))
             lead_p = int(d_outs[0]["rendered_percent"])
             trail_p = int(d_outs[1]["rendered_percent"])
             du_phrase = _prose_market_phrase(str(duel_item["title"]))
-            return f"{lead_name} leads {trail_name} {lead_p}%–{trail_p}% in {du_phrase}"
+            sep = " to " if len(d_outs_all) >= 3 else "–"
+            return f"{lead_name} leads {trail_name} {lead_p}%{sep}{trail_p}% in {du_phrase}"
 
     if history_items and (
         lead_sec_form == "probability_history_chart"
@@ -4325,6 +4599,45 @@ def _build_dynamic_title_from_set(
         if sp_fav:
             sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
             return f"{_prose_rate_outcome(str(sp_fav['name']), capitalize_first=True)} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
+
+    def _sibling_headline() -> Optional[str]:
+        if not sibling_items:
+            return None
+        lead_sib = sibling_items[0]
+        lead_o = _fav_outcome(lead_sib)
+        if lead_o is None:
+            return None
+        lead_name = _prose_outcome_name(str(lead_o["name"]))
+        lead_title = str(lead_sib.get("title") or "").strip()
+        lead_p = int(lead_o["rendered_percent"])
+        _CASTING_ROLES = {
+            "james bond",
+            "m",
+            "q",
+            "moneypenny",
+            "bond girl",
+            "villain",
+            "main villain",
+        }
+        if len(sibling_items) >= 2:
+            sec_sib = sibling_items[1]
+            sec_o = _fav_outcome(sec_sib)
+            if sec_o is not None:
+                sec_name = _prose_outcome_name(str(sec_o["name"]))
+                sec_title = str(sec_sib.get("title") or "").strip()
+                sec_p = int(sec_o["rendered_percent"])
+                sec_verb = (
+                    "to play"
+                    if sec_title.lower() in _CASTING_ROLES
+                    else "leading"
+                )
+                return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
+        return f"{lead_name} leads {lead_title} at {lead_p}%"
+
+    if sibling_items and lead_sec_form == "sibling_fields_grid":
+        sib_hl = _sibling_headline()
+        if sib_hl:
+            return sib_hl
 
     if benchmark_items:
         rule_dict = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
@@ -4414,35 +4727,9 @@ def _build_dynamic_title_from_set(
             return lead_clause
 
     if sibling_items:
-        lead_sib = sibling_items[0]
-        lead_o = _fav_outcome(lead_sib)
-        if lead_o is not None:
-            lead_name = _prose_outcome_name(str(lead_o["name"]))
-            lead_title = str(lead_sib.get("title") or "").strip()
-            lead_p = int(lead_o["rendered_percent"])
-            _CASTING_ROLES = {
-                "james bond",
-                "m",
-                "q",
-                "moneypenny",
-                "bond girl",
-                "villain",
-                "main villain",
-            }
-            if len(sibling_items) >= 2:
-                sec_sib = sibling_items[1]
-                sec_o = _fav_outcome(sec_sib)
-                if sec_o is not None:
-                    sec_name = _prose_outcome_name(str(sec_o["name"]))
-                    sec_title = str(sec_sib.get("title") or "").strip()
-                    sec_p = int(sec_o["rendered_percent"])
-                    sec_verb = (
-                        "to play"
-                        if sec_title.lower() in _CASTING_ROLES
-                        else "leading"
-                    )
-                    return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
-            return f"{lead_name} leads {lead_title} at {lead_p}%"
+        sib_hl = _sibling_headline()
+        if sib_hl:
+            return sib_hl
 
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
 
@@ -4946,7 +5233,12 @@ async def produce_container_machinery(
                     fm_it["content_kind"] = "futures"
                     if isinstance(fm_it.get("card"), dict):
                         fm_it["card"]["content_kind"] = "futures"
-                form_id = choose_section_form("markets", fallback_matched)
+                sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
+                form_id = choose_section_form(
+                    "markets",
+                    fallback_matched,
+                    allow_three_way_duel=sec_allow_3way_duel,
+                )
                 if form_id in {"sibling_fields_grid", "contender_spotlight"}:
                     tile_cap = 3 if form_id == "contender_spotlight" else 1
                     all_tiles_pictured = all(
@@ -5060,8 +5352,37 @@ async def produce_container_machinery(
         matched = matched[:max_items]
         if len(matched) < min_items:
             return RoundupRefusal((("container_machinery", f"too_few_markets:{sec_key}"),))
+        if bool(aq.get("omit_shared_date_suffix_on_rows")) and matched:
+            shared_date_answers = {
+                _norm_key(str((it.get("outcomes") or [{}])[0].get("name") or ""))
+                for it in matched
+                if it.get("is_date_timing_row") and (it.get("outcomes") or ())
+            }
+            if len(shared_date_answers) == 1 and all(it.get("is_date_timing_row") for it in matched):
+                for it in matched:
+                    plain_lbl = str(it.get("_short_label_base") or "").strip()
+                    if plain_lbl:
+                        it["title"] = plain_lbl
 
-        form_id = choose_section_form("markets", matched)
+        sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
+        form_id = choose_section_form(
+            "markets",
+            matched,
+            allow_three_way_duel=sec_allow_3way_duel,
+        )
+        if form_id == "duel_bar" and sec_allow_3way_duel:
+            for it in matched:
+                for out_item in it.get("outcomes") or ():
+                    if (
+                        isinstance(out_item, dict)
+                        and str(out_item.get("name") or "").strip().lower()
+                        in _DUEL_DRAW_OUTCOME_NAMES
+                    ):
+                        art = dict(out_item.get("art") or {})
+                        art["url"] = None
+                        art["kind"] = "monogram"
+                        art["accent_color"] = "#94A3B8"
+                        out_item["art"] = art
         eff_title, eff_note = _resolve_section_heading(
             sec_cfg,
             aq_kind="markets",
@@ -5092,7 +5413,7 @@ async def produce_container_machinery(
                 {
                     k: v
                     for k, v in it.items()
-                    if k not in ("card", "_twin_market_ids", "_volume")
+                    if k not in ("card", "_twin_market_ids", "_volume", "_short_label_base")
                 }
                 for it in matched
             ],
@@ -5128,6 +5449,15 @@ async def produce_container_machinery(
         (s for s in built_sections if s["class"] == preferred_card_key),
         built_sections[0],
     )
+    card_sec_cfg = next(
+        (
+            s
+            for s in ((rule.get("sections") or ()) if isinstance(rule, Mapping) else ())
+            if isinstance(s, Mapping) and str(s.get("key") or "").strip() == str(card_sec.get("class") or "")
+        ),
+        {},
+    )
+    card_allow_3way_duel = bool(card_sec_cfg.get("allow_three_way_duel"))
     vb = card_sec["visual_block"]
     vb_form = vb["form_id"]
     card_scale_ordered = False
@@ -5278,6 +5608,19 @@ async def produce_container_machinery(
             s_idx = numerical_scale_order_indices(sliced)
             chosen_outs = [sliced[i] for i in s_idx] if s_idx is not None else sliced
             card_scale_ordered = s_idx is not None
+        elif vb_form == "duel_bar" and card_allow_3way_duel:
+            non_draw_outs = [
+                o
+                for o in all_lead_outs
+                if str(o.get("name") or "").strip().lower() not in _DUEL_DRAW_OUTCOME_NAMES
+            ]
+            draw_outs = [
+                o
+                for o in all_lead_outs
+                if str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+            ]
+            chosen_outs = (non_draw_outs + draw_outs)[:card_rows_limit]
+            card_scale_ordered = False
         else:
             chosen_outs = all_lead_outs[:card_rows_limit]
             card_scale_ordered = bool(lead_market.get("scale_ordered"))
@@ -5330,7 +5673,7 @@ async def produce_container_machinery(
     if (
         not hide_row_art
         and card_visual_rows
-        and vb_form in {"benchmark_strip", "sibling_fields_grid", "leader_bars", "probability_history_chart"}
+        and vb_form in {"benchmark_strip", "sibling_fields_grid", "leader_bars", "contender_spotlight", "probability_history_chart"}
         and not card_scale_ordered
     ):
         row_has_url = [
@@ -5697,6 +6040,10 @@ def _enforce_section_all_or_nothing_art(
                 if isinstance(it, Mapping) and not it.get("scale_ordered")
                 for o in (it.get("outcomes") or ())
                 if isinstance(o, Mapping)
+                and not (
+                    s_form == "duel_bar"
+                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+                )
             ]
             should_strip = any(has_urls) and not all(has_urls)
 
