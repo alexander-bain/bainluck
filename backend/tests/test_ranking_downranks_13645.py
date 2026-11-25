@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from starlette.requests import Request
 
 import app.routes.admin_ranking_eval as admin
+import app.utils.feed_market_quality as fmq
 from app.utils.discover_opening_mix import (
     apply_discover_opening_mix,
     is_opening_weather_excluded_roundup,
@@ -129,27 +130,62 @@ class TestDownrankFamilyRules13645:
         capped = diversify_quality_families(mu_items)
         assert len(capped) == 1
 
-    def test_non_us_central_banks_and_foreign_gdp_penalized_without_ban(self):
+    def test_parenthesized_non_stock_tags_get_no_equity_ticker_key(self):
+        for title in ("Miami (OH)", "Loyola (MD)", "Georgia (UGA)"):
+            q = classify_market_quality(title, sport_category="sports")
+            assert q.story_key is None, title
+            assert "asset_price_level" not in q.reasons, title
+
+            q_persisted = classify_market_quality(
+                title,
+                sport_category="ncaab",
+                persisted_story_key="story:college_hoops",
+            )
+            assert q_persisted.story_key == "story:college_hoops", title
+
+    def test_non_us_central_banks_and_foreign_gdp_reasons_recorded_zero_until_408(
+        self, monkeypatch
+    ):
+        assert fmq.NON_US_MACRO_PENALTY == 0
         for title in (
             "Bank of Canada Decision in December?",
             "Reserve Bank of New Zealand decision in December?",
+            "ECB interest rate cut in December?",
             "Brazil GDP Growth in Q3 2026 (QoQ)?",
         ):
             q = classify_market_quality(title, sport_category="economics")
             assert q.quality_class == "normal", title
             assert "non_us_macro_downrank" in q.reasons, title
-            assert quality_score_adjustment(q) == -20, title
+            # Ships at 0 on merge pending Decision 408
+            assert quality_score_adjustment(q) == 0, title
 
-        # U.S. Fed & U.S. GDP must NOT be penalized
-        for us_title in (
-            "Will the Fed cut interest rates in January?",
-            "Will the Fed cut before the ECB?",
-            "US GDP growth above 2.5% in Q4?",
-        ):
-            q = classify_market_quality(us_title, sport_category="economics")
-            assert "non_us_macro_downrank" not in q.reasons, us_title
+        with monkeypatch.context() as mp:
+            mp.setattr(fmq, "NON_US_MACRO_PENALTY", -20)
+            for title in (
+                "Bank of Canada Decision in December?",
+                "Reserve Bank of New Zealand decision in December?",
+                "ECB interest rate cut in December?",
+                "Brazil GDP Growth in Q3 2026 (QoQ)?",
+            ):
+                q = classify_market_quality(title, sport_category="economics")
+                assert quality_score_adjustment(q) == -20, title
 
-    def test_minor_conference_title_berth_penalized_and_cfp_kept(self):
+            # Bare acronyms without rate/decision/policy words AND U.S. Fed/GDP take 0 weight
+            for safe_title, safe_cat in (
+                ("Will the Fed cut interest rates in January?", "economics"),
+                ("Will the Fed cut before the ECB?", "economics"),
+                ("US GDP growth above 2.5% in Q4?", "economics"),
+                ("Who will lead MLB in RBI in 2027?", "baseball"),
+                ("Will the ECB name a new England Test captain before March?", "cricket"),
+            ):
+                q = classify_market_quality(safe_title, sport_category=safe_cat)
+                assert "non_us_macro_downrank" not in q.reasons, safe_title
+                assert quality_score_adjustment(q) == 0, safe_title
+
+    def test_minor_conference_title_berth_reason_recorded_zero_until_408(
+        self, monkeypatch
+    ):
+        assert fmq.MINOR_CONF_BERTH_PENALTY == 0
         for title in (
             "James Madison advances to the Sun Belt Championship Game",
             "NCAA Football: Team to Qualify for 2026 Mountain West Championship Game",
@@ -158,7 +194,17 @@ class TestDownrankFamilyRules13645:
             q = classify_market_quality(title, sport_category="football")
             assert q.quality_class == "normal", title
             assert "minor_conf_title_berth" in q.reasons, title
-            assert quality_score_adjustment(q) == -20, title
+            assert quality_score_adjustment(q) == 0, title
+
+        with monkeypatch.context() as mp:
+            mp.setattr(fmq, "MINOR_CONF_BERTH_PENALTY", -20)
+            for title in (
+                "James Madison advances to the Sun Belt Championship Game",
+                "NCAA Football: Team to Qualify for 2026 Mountain West Championship Game",
+                "NCAA Football: Team to Qualify for 2026 MAC Championship Game",
+            ):
+                q = classify_market_quality(title, sport_category="football")
+                assert quality_score_adjustment(q) == -20, title
 
         for major_title in (
             "College Football Playoff National Championship Winner",
@@ -168,7 +214,10 @@ class TestDownrankFamilyRules13645:
             q = classify_market_quality(major_title, sport_category="football")
             assert "minor_conf_title_berth" not in q.reasons, major_title
 
-    def test_yemen_houthi_tactical_folds_into_middle_east_and_penalized(self):
+    def test_yemen_houthi_tactical_folds_into_middle_east_and_zero_until_408(
+        self, monkeypatch
+    ):
+        assert fmq.REGIONAL_CONFLICT_TACTICAL_PENALTY == 0
         for title in (
             "Houthis enter Aden?",
             "Houthis successfully target shipping by November 30?",
@@ -181,7 +230,17 @@ class TestDownrankFamilyRules13645:
             )
             assert q.story_key == "story:middle_east_conflict", title
             assert "regional_conflict_operational" in q.reasons, title
-            assert quality_score_adjustment(q) == -15, title
+            assert quality_score_adjustment(q) == 0, title
+
+        with monkeypatch.context() as mp:
+            mp.setattr(fmq, "REGIONAL_CONFLICT_TACTICAL_PENALTY", -15)
+            for title in (
+                "Houthis enter Aden?",
+                "Houthis successfully target shipping by November 30?",
+                "Pakistan military action against Yemen by December 31?",
+            ):
+                q = classify_market_quality(title, sport_category="geopolitics")
+                assert quality_score_adjustment(q) == -15, title
 
         ceasefire = classify_market_quality(
             "Israel x Hamas ceasefire extended through 2026?",

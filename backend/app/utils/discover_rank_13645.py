@@ -22,6 +22,13 @@ from app.utils.feed_market_quality import (
 )
 
 _OPENING_TEN = 10
+# Decision 408 proposal weights used for offline replay & pair p13645 while the
+# live scoring constants in `feed_market_quality` ship at 0 awaiting ruling.
+_PROPOSED_REPLAY_DOWNRANK_SHIFTS = {
+    "non_us_macro_downrank": 20,
+    "minor_conf_title_berth": 20,
+    "regional_conflict_operational": 15,
+}
 
 
 def _served_pos(candidate: Mapping[str, Any]) -> float:
@@ -92,12 +99,16 @@ def rank_13645_downranks(candidates: Iterable[Mapping[str, Any]]) -> list[dict[s
                 effective_pos = base_rank + 100.0
             else:
                 adj = quality_score_adjustment(q)
-                if (
-                    "non_us_macro_downrank" in q.reasons
-                    or "minor_conf_title_berth" in q.reasons
-                    or "regional_conflict_operational" in q.reasons
-                ):
-                    effective_pos = base_rank + abs(min(0, adj))
+                shift = max(
+                    abs(min(0, adj)),
+                    sum(
+                        weight
+                        for reason, weight in _PROPOSED_REPLAY_DOWNRANK_SHIFTS.items()
+                        if reason in q.reasons
+                    ),
+                )
+                if shift > 0:
+                    effective_pos = base_rank + shift
 
             if q.story_key and q.story_key.startswith("story:equity_ticker:"):
                 if q.story_key in seen_tickers:

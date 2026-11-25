@@ -1608,6 +1608,15 @@ _NON_EQUITY_TICKER_ACRONYMS = frozenset(
 _EQUITY_TICKER_PAREN_RE = re.compile(
     r"\b[A-Z][A-Za-z0-9.&',\-\s]{1,40}\s*\(([A-Z]{1,5})\)"
 )
+_EQUITY_TICKER_CATEGORIES = frozenset(
+    {"economics", "finance", "business", "stocks", "markets"}
+)
+_EQUITY_PRICE_CONTEXT_RE = re.compile(
+    r"(?:\b(?:stocks?|share\s+price|per\s+share|market\s+cap|earnings|revenue|eps|"
+    r"valuation|price|closes?\s+(?:above|below|under|over|at|(?:the\s+)?week\s+of|\$)|"
+    r"finish(?:es)?\s+(?:the\s+)?week\s+of)\b|\$\s*\d)",
+    re.IGNORECASE,
+)
 _WEEKLY_STOCK_PRICE_RE = re.compile(
     r"(?:\bcloses?\s+(?:the\s+)?week\s+of\b"
     r"|\bfinish(?:es)?\s+the\s+week(?:\s+of)?\b"
@@ -1617,8 +1626,17 @@ _WEEKLY_STOCK_PRICE_RE = re.compile(
 )
 
 
-def _equity_ticker_from_name(name: str) -> str | None:
-    """Extract a parenthesized stock ticker like ``Micron (MU)`` (#13645)."""
+def _equity_ticker_from_name(name: str, category: str | None = None) -> str | None:
+    """Extract a parenthesized stock ticker like ``Micron (MU)`` (#13645).
+
+    Restricted to finance/business categories or titles carrying an explicit
+    price/stock context word so college/city tags like ``Miami (OH)`` or
+    ``Georgia (UGA)`` never receive ``story:equity_ticker:*`` keys.
+    """
+    has_finance_category = (category or "").strip().lower() in _EQUITY_TICKER_CATEGORIES
+    has_price_context = bool(_EQUITY_PRICE_CONTEXT_RE.search(name or ""))
+    if not (has_finance_category or has_price_context):
+        return None
     for match in _EQUITY_TICKER_PAREN_RE.finditer(name or ""):
         ticker = match.group(1)
         if ticker not in _NON_EQUITY_TICKER_ACRONYMS:
@@ -1626,20 +1644,20 @@ def _equity_ticker_from_name(name: str) -> str | None:
     return None
 
 
-def _is_weekly_single_stock_price(name: str) -> bool:
+def _is_weekly_single_stock_price(name: str, category: str | None = None) -> bool:
     """Weekly single-stock price close/range/low-high cards (#13645, R2)."""
     if re.search(r"\bipo\b", name, re.IGNORECASE):
         return False
     if not _WEEKLY_STOCK_PRICE_RE.search(name):
         return False
-    return bool(_equity_ticker_from_name(name) or _ASSET_CONTEXT_RE.search(name))
+    return bool(_equity_ticker_from_name(name, category) or _ASSET_CONTEXT_RE.search(name))
 
 
-def _is_asset_price_level(name: str) -> bool:
+def _is_asset_price_level(name: str, category: str | None = None) -> bool:
     """R2 — asset price-LEVEL market (stocks/crypto/commodities ' above $X' or weekly stock ladders)."""
     if _MACRO_EVENT_RE.search(name):
         return False
-    if _is_weekly_single_stock_price(name):
+    if _is_weekly_single_stock_price(name, category):
         return True
     return bool(_ASSET_CONTEXT_RE.search(name)) and bool(
         _PRICE_THRESHOLD_RE.search(name)
@@ -2744,17 +2762,35 @@ _NON_US_JURISDICTION_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-_NON_US_CENTRAL_BANK_POLICY_RE = re.compile(
+_NON_US_CENTRAL_BANK_FULL_RE = re.compile(
     r"\b("
-    r"bank of canada|boc|reserve bank of (?:new zealand|australia|india)|"
-    r"rbnz|rba|rbi|bank of england|boe|bank of japan|boj|"
-    r"ecb|european central bank|banxico|bank of mexico|"
-    r"snb|swiss national bank|riksbank|norges bank|"
-    r"pboc|people'?s bank of china|"
+    r"bank of canada|reserve bank of (?:new zealand|australia|india)|"
+    r"bank of england|bank of japan|european central bank|banxico|bank of mexico|"
+    r"swiss national bank|riksbank|norges bank|people'?s bank of china|"
     r"central bank of (?:brazil|turkey|t[uü]rkiye|russia|chile|colombia|argentina|indonesia|korea)"
     r")\b",
     re.IGNORECASE,
 )
+_NON_US_CENTRAL_BANK_ACRONYM_RE = re.compile(
+    r"\b(boc|rbnz|rba|rbi|boe|boj|ecb|snb|pboc)\b",
+    re.IGNORECASE,
+)
+_CENTRAL_BANK_POLICY_CONTEXT_RE = re.compile(
+    r"\b(rates?|interest\s+rates?|bps|basis\s+points?|cuts?|hikes?|holds?|"
+    r"raises?|lowers?|policy|decisions?|meetings?|inflation|monetary)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_non_us_central_bank_policy(name: str) -> bool:
+    """Match explicit foreign central banks, or bare acronyms beside policy words."""
+    if _NON_US_CENTRAL_BANK_FULL_RE.search(name):
+        return True
+    return bool(_NON_US_CENTRAL_BANK_ACRONYM_RE.search(name)) and bool(
+        _CENTRAL_BANK_POLICY_CONTEXT_RE.search(name)
+    )
+
+
 _MINOR_CONF_NAME_RE = re.compile(
     r"\b("
     r"sun belt|mid-american|mac|conference usa|c-?usa|mountain west|"
@@ -2789,9 +2825,11 @@ _HEADLINE_CEASEFIRE_RE = re.compile(
     re.IGNORECASE,
 )
 EQUITY_TICKER_STORY_PREFIX = "story:equity_ticker:"
-NON_US_MACRO_PENALTY = -20
-MINOR_CONF_BERTH_PENALTY = -20
-REGIONAL_CONFLICT_TACTICAL_PENALTY = -15
+# Decision 408: proposed weights ship at 0 with reasons recorded; flip to
+# -20 / -20 / -15 with a one-line change upon Alex's ruling.
+NON_US_MACRO_PENALTY = 0
+MINOR_CONF_BERTH_PENALTY = 0
+REGIONAL_CONFLICT_TACTICAL_PENALTY = 0
 
 # #8742. `story:us_federal_power` is headed "Who holds power in Washington?", so
 # its membership rule has to be about Washington — #7494's lesson, second family.
@@ -3334,7 +3372,7 @@ def _story_key(name: str, category: str) -> str | None:
     if national_presidential is not None:
         return national_presidential
 
-    equity_ticker = _equity_ticker_from_name(name)
+    equity_ticker = _equity_ticker_from_name(name, category)
     if equity_ticker is not None and not re.search(r"\bipo\b", lower):
         return f"{EQUITY_TICKER_STORY_PREFIX}{equity_ticker.lower()}"
 
@@ -3373,7 +3411,7 @@ def classify_market_quality(
     if ticker_boost:
         reasons.append("ticker_boost")
 
-    asset_price_level = _is_asset_price_level(name)  # R2
+    asset_price_level = _is_asset_price_level(name, category)  # R2
     runner_up_rank = _is_runner_up_rank(name)  # R8
     resolved_sports = _is_resolved_sports(status, category)  # R6
     novel_sports = _is_novel_sports_framing(name, category)  # R3
@@ -3428,7 +3466,7 @@ def classify_market_quality(
     low_signal_sport = bool(_LOW_SIGNAL_SPORT_RE.search(name))
     episode_level = bool(_EPISODE_LEVEL_RE.search(name))
     non_us_macro_downrank = (
-        bool(_NON_US_CENTRAL_BANK_POLICY_RE.search(name)) and not _US_CENTRAL_BANK_RE.search(name)
+        _is_non_us_central_bank_policy(name) and not _US_CENTRAL_BANK_RE.search(name)
     ) or (
         bool(re.search(r"\bgdp\b", name, re.IGNORECASE))
         and bool(_NON_US_JURISDICTION_RE.search(name))
