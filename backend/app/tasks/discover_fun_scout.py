@@ -276,6 +276,7 @@ def build_scout_nightly_artifact(
             created_at=run_now,
             licence_state=licence_status,
         )
+        scout_meta = rule_def.get("scout") or {}
         staged_sets.append(
             {
                 "slug": vset.slug,
@@ -294,6 +295,8 @@ def build_scout_nightly_artifact(
                     }
                     for m in vset.members
                 ],
+                "trimmed_members": list(scout_meta.get("trimmed_members") or []),
+                "added_members": list(scout_meta.get("added_members") or []),
                 "rule_definition": rule_def,
             }
         )
@@ -422,6 +425,32 @@ def format_scout_nightly_comment_markdown(
                 f"({_md_code_span(m.get('source'))}, vol `{vol}`): "
                 f"{_md_code_span(m.get('title'))}"
             )
+        trimmed_rows = (
+            s.get("trimmed_members")
+            or ((s.get("rule_definition") or {}).get("scout") or {}).get("trimmed_members")
+            or []
+        )
+        if trimmed_rows:
+            sets_lines.append("- **Split-set gate trimmed:**")
+            for tm in trimmed_rows:
+                sets_lines.append(
+                    f"  - {_md_code_span(tm.get('market_id'))} "
+                    f"({_md_code_span(tm.get('reason'))}): "
+                    f"{_md_code_span(tm.get('title'))}"
+                )
+        added_rows = (
+            s.get("added_members")
+            or ((s.get("rule_definition") or {}).get("scout") or {}).get("added_members")
+            or []
+        )
+        if added_rows:
+            sets_lines.append("- **Missing-member fill added:**")
+            for am in added_rows:
+                sets_lines.append(
+                    f"  - {_md_code_span(am.get('market_id'))} "
+                    f"({_md_code_span(am.get('reason'))}): "
+                    f"{_md_code_span(am.get('title'))}"
+                )
         sets_lines.append("<details><summary>Rule definition JSON</summary>\n")
         rule_json = json.dumps(s.get("rule_definition") or {}, indent=2)
         sets_lines.extend(_md_code_fence(rule_json, "json"))

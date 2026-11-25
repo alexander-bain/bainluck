@@ -215,6 +215,8 @@ class ScoutProposedSet:
     title_ilike: Optional[str] = None
     template: Optional[str] = None
     footer: Optional[str] = None
+    narrowed_name: Optional[str] = None
+    narrowed_why_better_together: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -247,6 +249,8 @@ class ScoutValidatedSet:
     deduped_members: tuple[tuple[int, int], ...] = ()
     trimmed_members: tuple[tuple[int, str], ...] = ()
     added_member_ids: tuple[int, ...] = ()
+    trimmed_member_details: tuple[dict[str, Any], ...] = ()
+    added_members: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass
@@ -1135,7 +1139,8 @@ _SPLIT_TITLE_SUBJECT_STOP: frozenset[str] = _SPLIT_UNIFIED_ANCHOR_STOP | frozens
         "never", "finale", "week", "night", "countdown", "showdown", "fresh",
         "rotten", "put", "ring", "take", "takes", "home", "gold", "nomination",
         "nominations", "opening", "weekend", "box", "office", "america", "top",
-        "song", "songs", "chart", "music", "tv", "back",
+        "song", "songs", "album", "albums", "chart", "music", "tv", "back",
+        "release", "released", "announce", "announced",
     }
 )
 _SPLIT_SUBJECT_ALIASES: dict[str, tuple[str, ...]] = {
@@ -1175,6 +1180,8 @@ _SPLIT_PERSON_NON_NAMES: frozenset[str] = frozenset(
         "oxford word", "time person", "sports personality", "bbc sports",
         "critics choice", "choice awards", "the voice", "dancing with",
         "minnesota yacht", "yacht club", "club festival", "jazz heritage",
+        "largest company", "searched person", "spotify artist", "spotify song",
+        "spotify album", "motion picture", "sale growth", "sales growth",
     }
 )
 _SPLIT_PLATFORM_BRANDS: tuple[str, ...] = (
@@ -1263,14 +1270,18 @@ def _has_unified_parent_frame(set_title: str, member_titles: Sequence[str]) -> b
     ):
         return True
     for key, variants in _SPLIT_SUBJECT_ALIASES.items():
+        # "elon" in title allows Elon-company sets (e.g. Elon + Tesla); never bypass Taylor sets.
+        if key == "taylor":
+            continue
         if key == "elon" and "elon" not in title_toks:
             continue
         if all(any(re.search(rf"\b{re.escape(v)}s?\b", f) for v in variants) for f in folded):
             return True
 
-    tsets = [_split_norm_tokens(t) - _SPLIT_UNIFIED_ANCHOR_STOP for t in member_titles]
-    if tsets and set.intersection(*tsets):
+    shows = [_extract_show_season(_strip_quoted_substrings(t)) for t in member_titles]
+    if shows and shows[0] and all(s == shows[0] for s in shows):
         return True
+
     if all("big game" in f for f in folded):
         return True
     return False
@@ -1499,7 +1510,118 @@ def _matches_title_ilike(title: str, pattern: Optional[str]) -> bool:
     return bool(re.search(regex_str, title or "", re.IGNORECASE))
 
 
-def fill_missing_scout_members(
+_STRUCTURED_PREFIX_RE = re.compile(
+    r"^\s*([A-Z][A-Za-z0-9&'.\-\s]{3,40}?)\s*(?::|\u00b7)\s+\S"
+)
+_STRUCTURED_SUFFIX_RE = re.compile(r":\s*([A-Za-z][A-Za-z\s]{1,28})\s*$")
+_SHOW_SEASON_RE = re.compile(
+    r"\b([A-Z][A-Za-z0-9'&]+(?:\s+(?:the|with|of|and|[A-Z][A-Za-z0-9'&]+)){0,4}\s+Season\s+\d+)\b"
+)
+_GENERIC_PREFIXES = frozenset({"next", "top", "who", "what"})
+_TEMPLATE_PHRASE_BOILERPLATE_RE = re.compile(
+    r"\b(?:released?\s+by|announced?\s+(?:by|before|this)|this\s+year|before\s+202\d|in\s+202\d)\b"
+)
+
+
+def _extract_structured_prefix(stripped_title: str) -> tuple[str, str]:
+    match = _STRUCTURED_PREFIX_RE.match(stripped_title or "")
+    if not match:
+        return "", ""
+    raw_pfx = re.sub(r"\s+", " ", match.group(1)).strip()
+    folded_pfx = re.sub(r"\s+", " ", _split_fold(raw_pfx)).strip()
+    if len(folded_pfx) < 4 or folded_pfx in _GENERIC_PREFIXES:
+        return "", ""
+    return folded_pfx, raw_pfx
+
+
+def _extract_structured_suffix(stripped_title: str) -> str:
+    match = _STRUCTURED_SUFFIX_RE.search(stripped_title or "")
+    if not match:
+        return ""
+    words = [_split_singularize(w) for w in re.findall(r"[a-z]+", _split_fold(match.group(1)))]
+    key = " ".join(words)
+    if key in {"", "2026", "2027", "year"}:
+        return ""
+    return key
+
+
+def _extract_show_season(stripped_title: str) -> str:
+    match = _SHOW_SEASON_RE.search(stripped_title or "")
+    if not match:
+        return ""
+    cleaned = re.sub(r"^(?:who will (?:win|host)|will)\s+", "", _split_fold(match.group(1))).strip()
+    return re.sub(r"\s+", " ", cleaned)
+
+
+def _extract_shared_template_phrase(stripped_titles: Sequence[str]) -> Optional[str]:
+    """Find the longest non-person 3+-word contiguous template phrase shared by all members."""
+    if len(stripped_titles) < 2:
+        return None
+    norm_lists: list[list[str]] = []
+    for raw in stripped_titles:
+        words = re.findall(r"[a-z0-9]+", _split_fold(raw))
+        if len(words) < 3:
+            return None
+        norm_lists.append(words)
+
+    first = norm_lists[0]
+    rest_joined = [" ".join(w) for w in norm_lists[1:]]
+    best: Optional[str] = None
+    best_score = (0, 0)
+    for start in range(len(first)):
+        for end in range(len(first), start + 2, -1):
+            span = first[start:end]
+            phrase = " ".join(span)
+            if len(phrase) < 12 or _TEMPLATE_PHRASE_BOILERPLATE_RE.search(phrase):
+                continue
+            content = [w for w in span if w not in _SPLIT_UNIFIED_ANCHOR_STOP and not w.isdigit()]
+            if len(content) < 2:
+                continue
+            pattern = re.compile(rf"(?:^|\s){re.escape(phrase)}(?:$|\s)")
+            if not all(pattern.search(joined) for joined in rest_joined):
+                continue
+            title_case = " ".join(w.capitalize() for w in span)
+            if _extract_split_named_persons(title_case):
+                continue
+            score = (len(content), len(span))
+            if score > best_score:
+                best_score = score
+                best = phrase
+    return best
+
+
+def _is_templated_title_ilike(pattern: str) -> bool:
+    cleaned = re.sub(r"%+", " ", (pattern or "").strip()).strip()
+    if not cleaned:
+        return False
+    if ":" in cleaned or re.search(r"\bseason\s+\d+\b", cleaned, re.IGNORECASE):
+        return not bool(_extract_split_named_persons(cleaned))
+    words = [
+        w
+        for w in re.findall(r"[a-z0-9]+", _split_fold(cleaned))
+        if w not in _SPLIT_UNIFIED_ANCHOR_STOP and not w.isdigit()
+    ]
+    return len(words) >= 3 and not bool(_extract_split_named_persons(cleaned))
+
+
+def _compound_title_has_dropped_facet(
+    set_title: str, kept_rows: Sequence[ScoutMarketRow]
+) -> Optional[str]:
+    """Return missing side label if a trimmed compound 'A & B' title lost a side."""
+    parts = re.split(r"\s+(?:&|and|vs\.?)\s+", set_title.strip(), flags=re.IGNORECASE)
+    if len(parts) < 2:
+        return None
+    kept_tokens: set[str] = set()
+    for row in kept_rows:
+        kept_tokens |= _split_norm_tokens(row.title or "")
+    for part in parts:
+        part_tokens = _split_norm_tokens(part) - _SPLIT_TITLE_SUBJECT_STOP
+        if part_tokens and not (part_tokens & kept_tokens):
+            return part.strip()
+    return None
+
+
+def _fill_missing_scout_members_with_details(
     name: str,
     category: str,
     look: str,
@@ -1512,8 +1634,9 @@ def fill_missing_scout_members(
     max_members: int = 6,
     min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
     now: Optional[datetime] = None,
-) -> tuple[list[ScoutMarketRow], list[int]]:
-    """Search the full live catalog for missing siblings when a set has <4 members (#13544)."""
+) -> tuple[list[ScoutMarketRow], list[dict[str, Any]]]:
+    """Search the catalog using only structural title templates (#13544 / #13703)."""
+    del tagged_by_id  # Template-only fill: never expand solely by tagging group.
     out = list(members)
     if len(out) >= target_min_members or len(out) >= max_members:
         return out, []
@@ -1531,53 +1654,50 @@ def fill_missing_scout_members(
     titles = [m.title or "" for m in out]
     stripped = [_strip_quoted_substrings(t) for t in titles]
 
-    # Derive strongest anchor shared by ALL existing members
+    # Derive strict template anchors shared by ALL existing members.
     shared_prefix: Optional[str] = None
-    prefixes: list[str] = []
-    for raw in stripped:
-        pm = re.match(r"^\s*([A-Z][A-Za-z0-9&'.\-\s]{3,40}?)\s*(?::|\u00b7)\s+\S", raw)
-        prefixes.append(re.sub(r"\s+", " ", _split_fold(pm.group(1))).strip() if pm else "")
-    if prefixes and prefixes[0] and all(p == prefixes[0] for p in prefixes):
-        shared_prefix = prefixes[0]
+    pfx_pairs = [_extract_structured_prefix(raw) for raw in stripped]
+    if pfx_pairs and pfx_pairs[0][0] and all(p == pfx_pairs[0][0] for p, _ in pfx_pairs):
+        raw_pfx_sample = pfx_pairs[0][1]
+        if not _extract_split_named_persons(f"{raw_pfx_sample}: Placeholder"):
+            shared_prefix = pfx_pairs[0][0]
 
     shared_suffix: Optional[str] = None
-    suffixes: list[str] = []
-    for raw in stripped:
-        sm = re.search(r":\s*([A-Za-z][A-Za-z\s]{1,28})\s*$", raw)
-        suffixes.append(
-            " ".join(_split_singularize(w) for w in re.findall(r"[a-z]+", _split_fold(sm.group(1))))
-            if sm
-            else ""
-        )
+    suffixes = [_extract_structured_suffix(raw) for raw in stripped]
     if suffixes and suffixes[0] and all(s == suffixes[0] for s in suffixes):
         shared_suffix = suffixes[0]
 
-    shared_tokens: set[str] = set()
-    if titles:
-        token_sets = [_split_norm_tokens(t) - _SPLIT_UNIFIED_ANCHOR_STOP for t in titles]
-        if token_sets:
-            shared_tokens = set.intersection(*token_sets)
+    shared_show_season: Optional[str] = None
+    shows = [_extract_show_season(raw) for raw in stripped]
+    if shows and shows[0] and all(s == shows[0] for s in shows):
+        shared_show_season = shows[0]
 
-    shared_fun_groups: set[str] = set()
-    if tagged_by_id:
-        groups = [
-            tagged_by_id[m.market_id].fun_group
-            for m in out
-            if m.market_id in tagged_by_id and tagged_by_id[m.market_id].fun_group
-        ]
-        if len(groups) == len(out) and len(set(groups)) == 1:
-            shared_fun_groups = {groups[0]}
+    shared_phrase = _extract_shared_template_phrase(stripped)
 
-    is_awaited_idea = bool(
-        _AWAITED_TITLE_HINT_RE.search(name or "")
-        or "long-awaited" in (category or "").lower()
-        or "long-awaited" in shared_fun_groups
-        or (len(out) >= 2 and all(_AWAITED_RELEASE_PATTERN_RE.search(t) for t in titles))
-    )
+    raw_ilike = (title_ilike or "").strip()
+    ilike_pat = raw_ilike if raw_ilike and _is_templated_title_ilike(raw_ilike) else None
 
-    ilike_pat = (title_ilike or "").strip() or None
-    if not any([ilike_pat, shared_prefix, shared_suffix, shared_tokens, shared_fun_groups, is_awaited_idea]):
+    if not any([ilike_pat, shared_prefix, shared_suffix, shared_show_season, shared_phrase]):
         return out, []
+
+    anchor_parts: list[str] = []
+    if shared_suffix:
+        anchor_parts.append(f"template_suffix:{shared_suffix}")
+    if shared_prefix:
+        anchor_parts.append(f"template_prefix:{shared_prefix}")
+    if shared_show_season:
+        anchor_parts.append(f"show_season:{shared_show_season}")
+    if shared_phrase:
+        anchor_parts.append(f"template_phrase:{shared_phrase}")
+    if ilike_pat:
+        anchor_parts.append(f"title_ilike:{ilike_pat}")
+    fill_reason = "+".join(anchor_parts)
+
+    phrase_re = (
+        re.compile(rf"(?:^|\s){re.escape(shared_phrase)}(?:$|\s)")
+        if shared_phrase
+        else None
+    )
 
     non_political_set = (category or "").strip().lower() not in _SCOUT_POLITICAL_CATEGORIES
     scored_candidates: list[tuple[tuple[float, float, int], ScoutMarketRow]] = []
@@ -1599,8 +1719,7 @@ def fill_missing_scout_members(
             continue
 
         cand_stripped = _strip_quoted_substrings(cand.title or "")
-        cand_folded = _split_fold(cand_stripped)
-        cand_tokens = _split_norm_tokens(cand.title or "") - _SPLIT_UNIFIED_ANCHOR_STOP
+        cand_word_str = " ".join(re.findall(r"[a-z0-9]+", _split_fold(cand_stripped)))
 
         relevance = 0.0
         if ilike_pat:
@@ -1608,36 +1727,24 @@ def fill_missing_scout_members(
                 continue
             relevance += 5.0
         if shared_prefix:
-            pm = re.match(r"^\s*([A-Z][A-Za-z0-9&'.\-\s]{3,40}?)\s*(?::|\u00b7)\s+\S", cand_stripped)
-            cand_pfx = re.sub(r"\s+", " ", _split_fold(pm.group(1))).strip() if pm else ""
+            cand_pfx, _ = _extract_structured_prefix(cand_stripped)
             if cand_pfx != shared_prefix:
                 continue
             relevance += 4.0
         if shared_suffix:
-            sm = re.search(r":\s*([A-Za-z][A-Za-z\s]{1,28})\s*$", cand_stripped)
-            cand_sfx = (
-                " ".join(_split_singularize(w) for w in re.findall(r"[a-z]+", _split_fold(sm.group(1))))
-                if sm
-                else ""
-            )
+            cand_sfx = _extract_structured_suffix(cand_stripped)
             if cand_sfx != shared_suffix:
                 continue
             relevance += 4.0
-        if shared_tokens:
-            overlap = shared_tokens & cand_tokens
-            if len(overlap) < len(shared_tokens) and not any(
-                re.search(rf"\b{re.escape(tok)}s?\b", cand_folded) for tok in shared_tokens
-            ):
-                if not shared_prefix and not shared_suffix and not ilike_pat:
-                    continue
-            relevance += 3.0 * len(overlap)
-        if relevance <= 0.0 and shared_fun_groups and tagged_by_id:
-            tag = tagged_by_id.get(cand.market_id)
-            if tag and tag.fun_group in shared_fun_groups:
-                relevance += 2.5
-        if relevance <= 0.0 and is_awaited_idea and _AWAITED_RELEASE_PATTERN_RE.search(cand.title or ""):
-            if (cand.category or "").strip().lower() not in _SCOUT_POLITICAL_CATEGORIES:
-                relevance += 2.0
+        if shared_show_season:
+            cand_show = _extract_show_season(cand_stripped)
+            if cand_show != shared_show_season:
+                continue
+            relevance += 4.0
+        if phrase_re is not None:
+            if not phrase_re.search(cand_word_str):
+                continue
+            relevance += 3.5
 
         if relevance <= 0.0:
             continue
@@ -1647,7 +1754,7 @@ def fill_missing_scout_members(
         scored_candidates.append(((-relevance, -vol, cand.market_id), cand))
 
     scored_candidates.sort(key=lambda pair: pair[0])
-    added_ids: list[int] = []
+    added_details: list[dict[str, Any]] = []
     limit = min(target_min_members, max_members)
     for _, cand in scored_candidates:
         if len(out) >= limit:
@@ -1660,14 +1767,51 @@ def fill_missing_scout_members(
         if detect_scout_split_set(name, trial) is not None:
             continue
         out = trial
-        added_ids.append(cand.market_id)
+        added_details.append(
+            {
+                "market_id": cand.market_id,
+                "title": cand.title,
+                "reason": fill_reason,
+            }
+        )
         existing_ids.add(cand.market_id)
         if tkey:
             existing_tkeys.add(tkey)
         if ckey:
             existing_ckeys.add(ckey)
 
-    return out, added_ids
+    return out, added_details
+
+
+def fill_missing_scout_members(
+    name: str,
+    category: str,
+    look: str,
+    members: Sequence[ScoutMarketRow],
+    catalog_by_id: Mapping[int, ScoutMarketRow],
+    *,
+    title_ilike: Optional[str] = None,
+    tagged_by_id: Optional[Mapping[int, ScoutTaggedMarket]] = None,
+    target_min_members: int = SCOUT_PREFERRED_MIN_MEMBERS,
+    max_members: int = 6,
+    min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
+    now: Optional[datetime] = None,
+) -> tuple[list[ScoutMarketRow], list[int]]:
+    """Search the full live catalog for missing siblings when a set has <4 members (#13544)."""
+    out, details = _fill_missing_scout_members_with_details(
+        name,
+        category,
+        look,
+        members,
+        catalog_by_id,
+        title_ilike=title_ilike,
+        tagged_by_id=tagged_by_id,
+        target_min_members=target_min_members,
+        max_members=max_members,
+        min_volume=min_volume,
+        now=now,
+    )
+    return out, [int(item["market_id"]) for item in details]
 
 
 def validate_scout_proposed_set(
@@ -1741,7 +1885,12 @@ def validate_scout_proposed_set(
 
     deduped_rows, deduped_pairs = dedupe_cross_venue_members(passing)
 
+    early_mech_err = check_scout_no_mechanical_sales_downloads(name, why, deduped_rows)
+    if early_mech_err is not None:
+        return None, early_mech_err
+
     trimmed_members: list[tuple[int, str]] = []
+    trimmed_member_details: list[dict[str, Any]] = []
     narrowed_rows, trimmed_outliers, split_finding = trim_scout_split_set(name, deduped_rows)
     if split_finding is not None and not split_finding.trimmable:
         return (
@@ -1749,20 +1898,64 @@ def validate_scout_proposed_set(
             f"split_set:{split_finding.reason}:{split_finding.shared_feature}",
         )
     if split_finding is not None:
+        # Never lean on missing-member fill to rescue a trim that dropped below min_members.
+        if len(narrowed_rows) < min_members:
+            return (
+                None,
+                f"split_set_too_small_after_trim:{split_finding.reason}:"
+                f"{split_finding.shared_feature}:{len(narrowed_rows)}<{min_members}",
+            )
         deduped_rows = narrowed_rows
         for out_row, out_reason in trimmed_outliers:
             trimmed_members.append((out_row.market_id, out_reason))
+            trimmed_member_details.append(
+                {
+                    "market_id": out_row.market_id,
+                    "title": out_row.title,
+                    "reason": out_reason,
+                }
+            )
             dropped.append((out_row.market_id, out_reason))
             dropped_rows.append((out_row, out_reason))
+
+        dropped_facet = (
+            _compound_title_has_dropped_facet(name, deduped_rows)
+            if split_finding.reason == "title_subject_split"
+            else None
+        )
+        if split_finding.reason != "title_subject_split" or dropped_facet is not None:
+            narrow_name = (proposal.narrowed_name or "").strip()
+            narrow_why = (proposal.narrowed_why_better_together or "").strip()
+            if (
+                not narrow_name
+                or not narrow_why
+                or _normalized_title_key(narrow_name) == _normalized_title_key(name)
+            ):
+                return (
+                    None,
+                    f"split_set_needs_narrow_title:{split_finding.reason}:{split_finding.shared_feature}",
+                )
+            narrow_ok, narrow_taste_reason = check_fun_taste_guard(narrow_name)
+            if not narrow_ok:
+                return None, f"set_title_{narrow_taste_reason}"
+            if _SCOUT_NON_FUN_HARM_RE.search(narrow_name):
+                return None, "set_title_taste_guard:severe_harm"
+            if detect_scout_split_set(narrow_name, deduped_rows) is not None:
+                return (
+                    None,
+                    f"split_set_needs_narrow_title:{split_finding.reason}:{split_finding.shared_feature}",
+                )
+            name = narrow_name
+            why = narrow_why
     elif len(deduped_rows) < min_members:
         return (
             None,
             f"too_few_live_members:{len(deduped_rows)}<{min_members}",
         )
 
-    added_member_ids: list[int] = []
+    added_details: list[dict[str, Any]] = []
     if fill_missing_members and len(deduped_rows) < preferred_min_members:
-        deduped_rows, added_member_ids = fill_missing_scout_members(
+        deduped_rows, added_details = _fill_missing_scout_members_with_details(
             name,
             category,
             look,
@@ -1774,13 +1967,9 @@ def validate_scout_proposed_set(
             min_volume=min_volume,
             now=now,
         )
+    added_member_ids = [int(item["market_id"]) for item in added_details]
 
     if len(deduped_rows) < min_members:
-        if split_finding is not None:
-            return (
-                None,
-                f"split_set:{split_finding.reason}:{split_finding.shared_feature}",
-            )
         return (
             None,
             f"too_few_live_members:{len(deduped_rows)}<{min_members}",
@@ -1820,6 +2009,8 @@ def validate_scout_proposed_set(
             deduped_members=tuple(deduped_pairs),
             trimmed_members=tuple(trimmed_members),
             added_member_ids=tuple(added_member_ids),
+            trimmed_member_details=tuple(trimmed_member_details),
+            added_members=tuple(added_details),
         ),
         None,
     )
@@ -1862,6 +2053,24 @@ def build_scout_rule_file_definition(
     else:
         rule["selector"] = {"fun_tag": validated_set.slug}
 
+    trimmed_records = [dict(item) for item in validated_set.trimmed_member_details]
+    if not trimmed_records and validated_set.trimmed_members:
+        trimmed_records = [
+            {"market_id": int(mid), "title": "", "reason": str(reason)}
+            for mid, reason in validated_set.trimmed_members
+        ]
+    added_records = [dict(item) for item in validated_set.added_members]
+    if not added_records and validated_set.added_member_ids:
+        member_titles = {int(m.market_id): m.title for m in validated_set.members}
+        added_records = [
+            {
+                "market_id": int(mid),
+                "title": member_titles.get(int(mid), ""),
+                "reason": "catalog_fill",
+            }
+            for mid in validated_set.added_member_ids
+        ]
+
     definition: dict[str, Any] = {
         "slug": validated_set.slug,
         "stage": "preview",
@@ -1890,6 +2099,8 @@ def build_scout_rule_file_definition(
             "created_at": created_at.astimezone(timezone.utc).isoformat(),
             "verified_member_count": len(validated_set.members),
             "fun_tag": validated_set.slug,
+            "trimmed_members": trimmed_records,
+            "added_members": added_records,
         },
         "rule": rule,
     }
