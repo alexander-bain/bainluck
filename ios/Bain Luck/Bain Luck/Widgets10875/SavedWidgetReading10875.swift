@@ -529,34 +529,26 @@ enum SavedWidgetReadingRules10875 {
 /// later is covered too. The spoken label keeps the full sentence.
 nonisolated enum SavedLockScreenFit10875 {
     /// The verdicts that share a line with the outcome name.
-    static let shortVerdicts: Set<String> = ["Won", "Lost", "Draw"]
+    static let shortVerdicts: Set<String> = LockScreenSmallSlotFit13430.shortVerdicts
     /// The longest word the circular widget's value line holds whole ("Unknown").
-    static let ringLimit = 7
+    static let ringLimit = LockScreenSmallSlotFit13430.ringLimit
 
     /// The ring has space for a bare value. Opening lines need their caption.
     static func ringHeadline(_ reading: SavedWidgetReading10875) -> SavedWidgetReading10875.Row? {
-        reading.phase == .openingLine ? nil : reading.headline
+        LockScreenSmallSlotFit13430.allowsRingValue(phase: reading.phase.smallSlotPhase13430) ? reading.headline : nil
     }
 
     /// The circular widget's value: a figure, a verdict that fits, or a word
     /// standing for one that does not.
     static func ringValue(_ reading: SavedWidgetReading10875) -> String {
-        guard let headline = ringHeadline(reading) else { return reading.phase == .noResult ? "Final" : "—" }
-        // Nothing to show for the choice (its label says why, e.g. "Not
-        // listed"): a dash, never a sentence squeezed into the circle.
-        if reading.phase == .unavailable { return "—" }
-        guard let verdict = headline.verdict else { return headline.figure ?? "—" }
-        if shortVerdicts.contains(verdict) || verdict.count <= ringLimit { return verdict }
-        // #698: settled, and the result is unknown.
-        if reading.phase == .noResult { return "Unknown" }
-        // The venue's words naming a side: that side's short name ("SEA").
-        // The server writes "{participant} wins" (venue_settlement
-        // WINNER_SENTENCE); the bare name is kept too.
-        if let side = reading.rows.first(where: { $0.label == verdict || $0.label + " wins" == verdict }),
-           side.shortLabel.count <= ringLimit {
-            return side.shortLabel
-        }
-        return "—"
+        let headline = ringHeadline(reading)
+        return LockScreenSmallSlotFit13430.ringValue(
+            phase: reading.phase.smallSlotPhase13430,
+            headlineExists: headline != nil,
+            figure: headline?.figure,
+            verdict: headline?.verdict,
+            rows: reading.rows.map { LockScreenSmallSlotRow13430(label: $0.label, shortLabel: $0.shortLabel) }
+        )
     }
 
     /// The rectangular widget's verdict when it needs its own line; nil when
@@ -574,5 +566,18 @@ nonisolated enum SavedLockScreenFit10875 {
         guard let name = reading.headline?.shortLabel, !name.isEmpty,
               name != caption, name != reading.status else { return caption }
         return "\(name) · \(caption)"
+    }
+}
+
+private extension SavedWidgetReading10875.Phase {
+    nonisolated var smallSlotPhase13430: LockScreenSmallSlotPhase13430 {
+        switch self {
+        case .current: return .current
+        case .lastRecorded: return .lastRecorded
+        case .openingLine: return .openingLine
+        case .result: return .result
+        case .noResult: return .noResult
+        case .unavailable: return .unavailable
+        }
     }
 }

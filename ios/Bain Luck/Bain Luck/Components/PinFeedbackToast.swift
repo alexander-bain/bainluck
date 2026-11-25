@@ -97,6 +97,18 @@ struct PinFeedbackToast: View {
         .sheet(item: $pinManager.managementPresentation) { request in
             PinManagementView(focusType: request.focusType).environmentObject(pinManager)
         }
+        .sheet(item: $pinManager.gameAlertsOptInPresentation) { _ in
+            GameAlertsPinPromptSheet13084(
+                onTurnOn: {
+                    _ = await pinManager.acceptGameAlertsOptInPrompt()
+                },
+                onNotNow: {
+                    pinManager.declineGameAlertsOptInPrompt()
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: pinManager.feedback?.id)
     }
 }

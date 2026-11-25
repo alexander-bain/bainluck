@@ -2,6 +2,9 @@
 import ActivityKit
 import SwiftUI
 import WidgetKit
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 /// Local ActivityKit content. Updates require the phone's foreground owner.
 @available(iOS 18.0, *)
@@ -58,7 +61,7 @@ struct GameLiveActivityBase: Widget {
 /// Everything the views print, decided once per update so the Lock Screen, the
 /// Dynamic Island and the Smart Stack never disagree about a game.
 @available(iOS 17.0, *)
-private struct GameActivityReading {
+struct GameActivityReading {
     enum Side { case away, home }
 
     let snapshot: GameActivitySnapshot
@@ -72,6 +75,13 @@ private struct GameActivityReading {
         eventID = context.attributes.eventID
         matches = context.state.snapshot.eventID == context.attributes.eventID
         isStale = context.isStale
+    }
+
+    init(snapshot: GameActivitySnapshot, eventID: Int, isStale: Bool = false) {
+        self.snapshot = snapshot
+        self.eventID = eventID
+        self.matches = snapshot.eventID == eventID
+        self.isStale = isStale
     }
 
     /// #199 — the page headline's three phases (`EventSportHeadlines12472`):
@@ -168,18 +178,18 @@ private struct GameActivityReading {
     func percentText(_ value: Int) -> String {
         (Double(value) / 100).formatted(.percent.precision(.fractionLength(0)))
     }
-    /// #199 — the page headline's "Now" for a side: its tenths (66.2%) when the
-    /// reading carries them, else the whole percent the headline itself falls
-    /// back to. One wording for the page, the Lock Screen and the island.
+    /// #395 — whole percents across every Live Activity form (Lock Screen,
+    /// Dynamic Island Compact/Expanded/Minimal, and Watch Smart Stack):
+    /// Live Activities receive 15s backend APNs pushes and committed snapshots,
+    /// not a live DNPL stream.
     func nowText(_ side: Side) -> String? {
         guard let value = percent(side) else { return nil }
-        return snapshot.headlineNowText(home: side == .home) ?? percentText(value)
-    }
-    /// #13392 — Dynamic Island Minimal shows whole percents (`57%`) on one line;
-    /// Lock Screen, Compact, Expanded, and Smart Stack retain tenths (`nowText`).
-    func minimalNowText(_ side: Side) -> String? {
-        guard let value = percent(side) else { return nil }
         return percentText(value)
+    }
+    /// #13392 / #395 — Dynamic Island Minimal shares whole-percent formatting
+    /// with the rest of `GameLiveActivity`.
+    func minimalNowText(_ side: Side) -> String? {
+        nowText(side)
     }
     /// The side the compact views lead with: the favourite of a two-way game, else home.
     var lead: Side {
@@ -335,7 +345,7 @@ private struct GameActivityReading {
 /// A served team colour, lifted when it would vanish on a dark surface (navy on
 /// the Dynamic Island's black) and deepened when it would vanish on a light one.
 @available(iOS 17.0, *)
-private enum GameActivityColor {
+enum GameActivityColor {
     typealias RGB = (r: Double, g: Double, b: Double)
 
     static func rgb(_ hex: String?) -> RGB? {
@@ -360,7 +370,7 @@ private enum GameActivityColor {
 }
 
 @available(iOS 18.0, *)
-private struct GameActivityFamilyView: View {
+struct GameActivityFamilyView: View {
     @Environment(\.activityFamily) private var family
     let reading: GameActivityReading
 
@@ -376,7 +386,7 @@ private struct GameActivityFamilyView: View {
 /// Shared scaled typography and column widths for the Lock Screen headline so
 /// headers and numbers align at default and larger text without wrapping (#12999).
 @available(iOS 17.0, *)
-private struct GameActivityLockMetrics {
+struct GameActivityLockMetrics {
     let nowSize: CGFloat
     let scoreProminentSize: CGFloat
     let scoreRegularSize: CGFloat
@@ -398,7 +408,7 @@ private struct GameActivityLockMetrics {
 
 /// The Lock Screen and the banner: one headline everywhere (#199, #12999).
 @available(iOS 17.0, *)
-private struct GameActivityLockScreenView: View {
+struct GameActivityLockScreenView: View {
     @Environment(\.colorScheme) private var scheme
     @ScaledMetric(relativeTo: .title3) private var rawNowSize: CGFloat = HeadlineStyleTable199.nowBaseSize(.lockScreen)
     @ScaledMetric(relativeTo: .body) private var rawScoreProminentSize: CGFloat = HeadlineStyleTable199.secondNumberBaseSize(.lockScreen, prominent: true)
@@ -452,7 +462,7 @@ private struct GameActivityLockScreenView: View {
 }
 
 @available(iOS 17.0, *)
-private struct GameActivityTeamRow: View {
+struct GameActivityTeamRow: View {
     @Environment(\.colorScheme) private var scheme
     let reading: GameActivityReading
     let side: GameActivityReading.Side
@@ -528,7 +538,7 @@ private struct GameActivityTeamRow: View {
 /// and "Now" (`EventSportHeadlines12472.LiveColumnHeaders`). Every header stays
 /// on one line and never wraps or cuts (#12999).
 @available(iOS 17.0, *)
-private struct GameActivityColumnLabels: View {
+struct GameActivityColumnLabels: View {
     let reading: GameActivityReading
     let metrics: GameActivityLockMetrics
 
@@ -577,7 +587,7 @@ private struct GameActivityColumnLabels: View {
 }
 
 @available(iOS 17.0, *)
-private struct GameActivityStatusPill: View {
+struct GameActivityStatusPill: View {
     let reading: GameActivityReading
 
     var body: some View {
@@ -599,7 +609,7 @@ private struct GameActivityStatusPill: View {
 }
 
 @available(iOS 17.0, *)
-private struct GameActivitySplitBar: View {
+struct GameActivitySplitBar: View {
     let away: Color
     let home: Color
     let awayShare: Double
@@ -619,7 +629,7 @@ private struct GameActivitySplitBar: View {
 
 /// A team crest on a white disc so dark crests read on the Lock Screen's
 /// material and the island's black.
-private struct GameActivityCrest: View {
+struct GameActivityCrest: View {
     let image: UIImage
     let size: CGFloat
 
@@ -636,7 +646,7 @@ private struct GameActivityCrest: View {
 }
 
 /// The compact island's team mark: the crest when the app has it, else the badge.
-private struct GameActivityCrestOrBadge: View {
+struct GameActivityCrestOrBadge: View {
     let reading: GameActivityReading
     let side: GameActivityReading.Side
 
@@ -650,7 +660,7 @@ private struct GameActivityCrestOrBadge: View {
 }
 
 @available(iOS 17.0, *)
-private struct GameActivityFooter: View {
+struct GameActivityFooter: View {
     let reading: GameActivityReading
     var alignment: Alignment = .leading
     var scaledSize: CGFloat? = nil
@@ -671,7 +681,7 @@ private struct GameActivityFooter: View {
 
 /// The expanded Dynamic Island's sides: badge over score (secondary during play, prominent on final).
 @available(iOS 17.0, *)
-private struct GameActivityExpandedSide: View {
+struct GameActivityExpandedSide: View {
     let reading: GameActivityReading
     let side: GameActivityReading.Side
 
@@ -719,7 +729,7 @@ private struct GameActivityExpandedSide: View {
 /// The expanded Dynamic Island's chance: both sides in team colour on a split bar.
 /// After a game, each side's pregame chance under its final score (direction 209).
 @available(iOS 17.0, *)
-private struct GameActivityChanceLine: View {
+struct GameActivityChanceLine: View {
     let reading: GameActivityReading
 
     var body: some View {
@@ -776,7 +786,7 @@ private struct GameActivityChanceLine: View {
 /// Compact leading: the favourite's colour and badge while there is a chance to
 /// show; the away side's score once the game is over.
 @available(iOS 17.0, *)
-private struct GameActivityCompactLeading: View {
+struct GameActivityCompactLeading: View {
     let reading: GameActivityReading
 
     var body: some View {
@@ -829,7 +839,7 @@ private struct GameActivityCompactLeading: View {
 /// Compact trailing: the live score, a chance before kickoff, or the home
 /// side's score once the game is over.
 @available(iOS 17.0, *)
-private struct GameActivityCompactTrailing: View {
+struct GameActivityCompactTrailing: View {
     let reading: GameActivityReading
 
     var body: some View {
@@ -887,7 +897,7 @@ private struct GameActivityCompactTrailing: View {
 }
 
 @available(iOS 17.0, *)
-private struct GameActivityMinimal: View {
+struct GameActivityMinimal: View {
     let reading: GameActivityReading
 
     var body: some View {
@@ -925,7 +935,7 @@ private struct GameActivityMinimal: View {
 /// The Smart Stack on Apple Watch and CarPlay: state, the favourite's chance and
 /// both scores.
 @available(iOS 17.0, *)
-private struct GameActivitySmallView: View {
+struct GameActivitySmallView: View {
     let reading: GameActivityReading
 
     var body: some View {

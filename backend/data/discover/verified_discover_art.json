@@ -3559,6 +3559,397 @@
       "author": "Министерство спорта Республики Татарстан",
       "license": "CC BY 4.0",
       "source_page": "https://commons.wikimedia.org/wiki/File:Kateryna_Lagno_in_2019_3x4_crop.jpg"
+    },
+    {
+      "entity_key": "scottie-scheffler",
+      "aliases": [
+        "Scottie Scheffler"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Scottie Scheffler, American golfer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ef/Scottie_Scheffler_Ryder_Cup_2025_%28cropped%29.jpg/500px-Scottie_Scheffler_Ryder_Cup_2025_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Scottie_Scheffler_Ryder_Cup_2025_(cropped).jpg"
+    },
+    {
+      "entity_key": "rory-mcilroy",
+      "aliases": [
+        "Rory McIlroy"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Rory McIlroy, Northern Irish golfer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/02/Rory_McIlroy_Ryder_Cup_2025-195_%28cropped%29.jpg/500px-Rory_McIlroy_Ryder_Cup_2025-195_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Rory_McIlroy_Ryder_Cup_2025-195_(cropped).jpg"
+    },
+    {
+      "entity_key": "jon-rahm",
+      "aliases": [
+        "Jon Rahm"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jon Rahm, Spanish golfer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d4/Jon_Rahm_Ryder_Cup_2025-130_%28cropped%29.jpg/500px-Jon_Rahm_Ryder_Cup_2025-130_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jon_Rahm_Ryder_Cup_2025-130_(cropped).jpg"
+    },
+    {
+      "entity_key": "cameron-young",
+      "aliases": [
+        "Cameron Young"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Cameron Young, American golfer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ad/Cameron_Young_Travelers-023_%28cropped%29.jpg/500px-Cameron_Young_Travelers-023_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Cameron_Young_Travelers-023_(cropped).jpg"
+    },
+    {
+      "entity_key": "tyson-fury",
+      "aliases": [
+        "Tyson Fury"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tyson Fury, British heavyweight boxer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8d/Tyson_Fury_at_Place_Bell%2C_Laval_Quebec%2C_Canada_-_Dec_16_2017_%28cropped%29.jpg/500px-Tyson_Fury_at_Place_Bell%2C_Laval_Quebec%2C_Canada_-_Dec_16_2017_%28cropped%29.jpg",
+      "credit": "Mike DiDomizio (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Mike DiDomizio",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Tyson_Fury_at_Place_Bell,_Laval_Quebec,_Canada_-_Dec_16_2017_(cropped).jpg"
+    },
+    {
+      "entity_key": "anthony-joshua",
+      "aliases": [
+        "Anthony Joshua"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Anthony Joshua, British heavyweight boxer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/98/Anthony_Joshua_Press_Conference_%28cropped%29.jpg/500px-Anthony_Joshua_Press_Conference_%28cropped%29.jpg",
+      "credit": "JazzyJoeyD (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "JazzyJoeyD",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Anthony_Joshua_Press_Conference_(cropped).jpg"
+    },
+    {
+      "entity_key": "conor-mcgregor",
+      "aliases": [
+        "Conor McGregor"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Conor McGregor, Irish mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e5/Conor_McGregor_2025.jpeg/500px-Conor_McGregor_2025.jpeg",
+      "credit": "U.S. Secretary of Defense (Public domain, Wikimedia Commons)",
+      "author": "U.S. Secretary of Defense",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Conor_McGregor_2025.jpeg"
+    },
+    {
+      "entity_key": "max-holloway",
+      "aliases": [
+        "Max Holloway"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Max Holloway, American mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2b/Blue_Angels%27_VIP_Rider_Max_Holloway_%281%29_%28cropped%29.jpg/500px-Blue_Angels%27_VIP_Rider_Max_Holloway_%281%29_%28cropped%29.jpg",
+      "credit": "Cpl. Samantha Sanchez (Public domain, Wikimedia Commons)",
+      "author": "Cpl. Samantha Sanchez",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Blue_Angels%27_VIP_Rider_Max_Holloway_(1)_(cropped).jpg"
+    },
+    {
+      "entity_key": "michael-chandler",
+      "aliases": [
+        "Michael Chandler"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Michael Chandler, American mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5b/MichaelChandler0523_%28cropped%29.jpg/500px-MichaelChandler0523_%28cropped%29.jpg",
+      "credit": "Gage Skidmore (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Gage Skidmore",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:MichaelChandler0523_(cropped).jpg"
+    },
+    {
+      "entity_key": "nate-diaz",
+      "aliases": [
+        "Nate Diaz"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Nate Diaz, American mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/Nate_Diaz_Oct_2019.jpg/500px-Nate_Diaz_Oct_2019.jpg",
+      "credit": "MMAnytt (CC BY 3.0, Wikimedia Commons)",
+      "author": "MMAnytt",
+      "license": "CC BY 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Nate_Diaz_Oct_2019.jpg"
+    },
+    {
+      "entity_key": "carlos-ulberg",
+      "aliases": [
+        "Carlos Ulberg"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Carlos Ulberg, New Zealand mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fe/Motorcycle_stunts_on_the_South_Lawn_of_the_White_House_ahead_of_UFC_Freedom_250%2C_Saturday%2C_June_13%2C_2026_-_11%28cropped%29.jpg/500px-Motorcycle_stunts_on_the_South_Lawn_of_the_White_House_ahead_of_UFC_Freedom_250%2C_Saturday%2C_June_13%2C_2026_-_11%28cropped%29.jpg",
+      "credit": "The White House (Public domain, Wikimedia Commons)",
+      "author": "The White House",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Motorcycle_stunts_on_the_South_Lawn_of_the_White_House_ahead_of_UFC_Freedom_250,_Saturday,_June_13,_2026_-_11(cropped).jpg"
+    },
+    {
+      "entity_key": "magomed-ankalaev",
+      "aliases": [
+        "Magomed Ankalaev"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Magomed Ankalaev, Russian mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/63/Magomed_Ankalaev_at_UFC_Fight_Night_136_in_Moscow%2C_Russia.jpg/500px-Magomed_Ankalaev_at_UFC_Fight_Night_136_in_Moscow%2C_Russia.jpg",
+      "credit": "MMAnytt (CC BY 3.0, Wikimedia Commons)",
+      "author": "MMAnytt",
+      "license": "CC BY 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Magomed_Ankalaev_at_UFC_Fight_Night_136_in_Moscow,_Russia.jpg"
+    },
+    {
+      "entity_key": "nassourdine-imavov",
+      "aliases": [
+        "Nassourdine Imavov",
+        "Nassourdine Imamov"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Nassourdine Imavov, French mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/08/Nassourdine_Imavov.jpg/500px-Nassourdine_Imavov.jpg",
+      "credit": "JoeKhanMMA (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "JoeKhanMMA",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Nassourdine_Imavov.jpg"
+    },
+    {
+      "entity_key": "khamzat-chimaev",
+      "aliases": [
+        "Khamzat Chimaev"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Khamzat Chimaev, Emirati mixed martial artist",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/b/b3/Khamzat_Chimaev_2022_%28cropped%29.png",
+      "credit": "MMAnytt (CC BY 3.0, Wikimedia Commons)",
+      "author": "MMAnytt",
+      "license": "CC BY 3.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Khamzat_Chimaev_2022_(cropped).png"
+    },
+    {
+      "entity_key": "dricus-du-plessis",
+      "aliases": [
+        "Dricus Du Plessis",
+        "Dricus du Plessis"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Dricus Du Plessis, South African mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/31/IMG-Dricus-Duplessis%28cropped%29.jpg/500px-IMG-Dricus-Duplessis%28cropped%29.jpg",
+      "credit": "User:Philippe3017 (CC0, Wikimedia Commons)",
+      "author": "User:Philippe3017",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:IMG-Dricus-Duplessis(cropped).jpg"
+    },
+    {
+      "entity_key": "jean-silva",
+      "aliases": [
+        "Jean Silva"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jean Silva, Brazilian mixed martial artist",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fb/Jean_Silva_%2854451587575%29.jpg/500px-Jean_Silva_%2854451587575%29.jpg",
+      "credit": "The White House (Public domain, Wikimedia Commons)",
+      "author": "The White House",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Jean_Silva_(54451587575).jpg"
+    },
+    {
+      "entity_key": "team-europe-flag",
+      "aliases": [
+        "Team Europe"
+      ],
+      "kind": "flag",
+      "presentation": "logo",
+      "verified_subject": "Flag of Europe (Team Europe Ryder Cup)",
+      "url": "https://flagcdn.com/w160/eu.png",
+      "credit": "Flagpedia / European Union flag (Public domain)",
+      "author": "Council of Europe",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Flag_of_Europe.svg"
+    },
+    {
+      "entity_key": "team-usa-flag",
+      "aliases": [
+        "Team USA"
+      ],
+      "kind": "flag",
+      "presentation": "logo",
+      "verified_subject": "Flag of the United States (Team USA Ryder Cup)",
+      "url": "https://flagcdn.com/w160/us.png",
+      "credit": "Flagpedia / United States flag (Public domain)",
+      "author": "United States",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Flag_of_the_United_States.svg"
+    },
+    {
+      "entity_key": "batch9-big-one-cosmic-risks",
+      "aliases": [
+        "The Big One & Cosmic Risks",
+        "batch9-big-one-cosmic-risks"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Lava fountain erupting at twilight at Kilauea volcano, Hawaii",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Pahoeoe_fountain_edit2.jpg/960px-Pahoeoe_fountain_edit2.jpg",
+      "credit": "J.D. Griggs (Public domain, Wikimedia Commons)",
+      "author": "J.D. Griggs",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Pahoeoe_fountain_edit2.jpg"
+    },
+    {
+      "entity_key": "batch9-tech-shocks-ai-bankruptcies",
+      "aliases": [
+        "Tech Shocks & AI Bankruptcies",
+        "batch9-tech-shocks-ai-bankruptcies"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Close-up of colorful source code displayed on a computer monitor",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7f/Code_on_computer_monitor_%28Unsplash%29.jpg/960px-Code_on_computer_monitor_%28Unsplash%29.jpg",
+      "credit": "Markus Spiske (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Markus Spiske",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Code_on_computer_monitor_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch9-critics-choice-oscars",
+      "aliases": [
+        "Critics Choice & Below-the-Line Oscars",
+        "batch9-critics-choice-oscars"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Red velvet seats and wood-paneled acoustic balcony inside a concert hall",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ed/Empty_concert_hall_in_Katowice_%28Unsplash%29.jpg/960px-Empty_concert_hall_in_Katowice_%28Unsplash%29.jpg",
+      "credit": "Radek Grzybowski (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Radek Grzybowski",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Empty_concert_hall_in_Katowice_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch9-live-music-broadway-box-office",
+      "aliases": [
+        "Live Music, Broadway & Box Office",
+        "batch9-live-music-broadway-box-office"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Concert venue stage illuminated in warm purple and blue lights before a show",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Waiting_for_the_concert_to_start_%28Unsplash%29.jpg/960px-Waiting_for_the_concert_to_start_%28Unsplash%29.jpg",
+      "credit": "Laura Wielo (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Laura Wielo",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Waiting_for_the_concert_to_start_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch9-golf-majors-ryder-cup",
+      "aliases": [
+        "Golf Majors & The Ryder Cup",
+        "batch9-golf-majors-ryder-cup"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Green golf fairway and bunkers under blue sky",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9c/Caversham_Heath_Golf_Course_the_4th_fairway_and_green_-_geograph.org.uk_-_2718385.jpg/960px-Caversham_Heath_Golf_Course_the_4th_fairway_and_green_-_geograph.org.uk_-_2718385.jpg",
+      "credit": "Stuart Logan (CC BY-SA 2.0, Wikimedia Commons)",
+      "author": "Stuart Logan",
+      "license": "CC BY-SA 2.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Caversham_Heath_Golf_Course_the_4th_fairway_and_green_-_geograph.org.uk_-_2718385.jpg"
+    },
+    {
+      "entity_key": "batch9-ufc-boxing",
+      "aliases": [
+        "UFC Next Fights & Heavyweight Boxing",
+        "batch9-ufc-boxing"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Pair of black leather boxing gloves resting on canvas in ring lighting",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/Black_boxing_gloves.jpg/960px-Black_boxing_gloves.jpg",
+      "credit": "Airman 1st Class Kerelin Molina (Public domain, Wikimedia Commons)",
+      "author": "Airman 1st Class Kerelin Molina",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Black_boxing_gloves.jpg"
+    },
+    {
+      "entity_key": "anthropic-pbc",
+      "aliases": [
+        "Anthropic",
+        "Claude",
+        "Claude Opus"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Anthropic / Claude official symbol mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/330px-Claude_AI_symbol.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Anthropic PBC",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Claude_AI_symbol.svg"
+    },
+    {
+      "entity_key": "openai-inc",
+      "aliases": [
+        "OpenAI",
+        "OpenAI IPO",
+        "ChatGPT"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "OpenAI / ChatGPT blossom mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/OpenAI_logo_2025_%28symbol%29.svg/330px-OpenAI_logo_2025_%28symbol%29.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "OpenAI",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:OpenAI_logo_2025_(symbol).svg"
+    },
+    {
+      "entity_key": "coreweave-inc",
+      "aliases": [
+        "CoreWeave",
+        "CoreWeave Inc"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "CoreWeave corporate logo mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/25/CoreWeave_logo.svg/330px-CoreWeave_logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "CoreWeave, Inc.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:CoreWeave_logo.svg"
     }
   ]
 }
