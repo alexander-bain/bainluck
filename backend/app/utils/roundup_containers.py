@@ -5695,6 +5695,10 @@ _KIND_TO_MODULE_BUILDER: dict[str, tuple[str, str]] = {
         "app.utils.container_machinery",
         "build_container_machinery_producer",
     ),
+    "fun_scout_set": (
+        "app.utils.discover_fun_scout",
+        "build_fun_scout_set_producer",
+    ),
 }
 
 

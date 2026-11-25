@@ -1927,3 +1927,155 @@ def evaluate_tagging_pass_against_seed_sets(
         "unique_seed_survived": len(unique_seed_ids & tagged_ids),
         "groups": groups_report,
     }
+
+
+def build_fun_scout_set_producer(definition: Mapping[str, Any]) -> Any:
+    """Build a ``RoundupProducer`` from a Nightly Fun Scout rule definition (#13102)."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.models.models import FuturesMarket
+    from app.utils.container_presentation import market_destination
+    from app.utils.discover_fun_tags import fun_market_ids_for_sub_tag
+    from app.utils.roundup_containers import (
+        RoundupMembers,
+        RoundupProducer,
+        RoundupRefusal,
+    )
+
+    validated = validate_roundup_definition(dict(definition))
+    if isinstance(validated.get("sections"), Sequence) and not isinstance(
+        validated.get("sections"), (str, bytes)
+    ) and len(validated["sections"]) > 0:
+        from app.utils.container_machinery import build_container_machinery_producer
+
+        return build_container_machinery_producer(validated)
+
+    rule = dict(validated.get("rule") or {})
+    selector = rule.get("selector") if isinstance(rule.get("selector"), Mapping) else {}
+    fun_tag = str(selector.get("fun_tag") or "").strip()
+    title_ilike = str(rule.get("title_ilike") or selector.get("title_ilike") or "").strip()
+    min_members = max(1, int(rule.get("min_numbered_members") or SCOUT_MIN_LIVE_MEMBERS))
+    card_rows = max(1, int(rule.get("card_rows") or 4))
+    open_status = "open"
+
+    async def _produce(db: Any) -> RoundupMembers | RoundupRefusal:
+        if title_ilike:
+            stmt = (
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.status == open_status,
+                    FuturesMarket.name.ilike(title_ilike),
+                )
+                .limit(50)
+            )
+            market_rows = list((await db.execute(stmt)).scalars().all())
+        elif fun_tag:
+            candidate_ids = [int(mid) for mid in fun_market_ids_for_sub_tag(fun_tag)]
+            if not candidate_ids:
+                return RoundupRefusal(("empty_fun_scout_selector",))
+            stmt = (
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.status == open_status,
+                    FuturesMarket.id.in_(candidate_ids),
+                )
+            )
+            market_rows = list((await db.execute(stmt)).scalars().all())
+        else:
+            return RoundupRefusal(("missing_fun_scout_selector",))
+
+        market_rows.sort(
+            key=lambda m: (
+                -(float(getattr(m, "volume", None) or 0.0)),
+                int(getattr(m, "id", 0) or 0),
+            )
+        )
+        if len(market_rows) < min_members:
+            return RoundupRefusal(
+                (f"too_few_live_members:{len(market_rows)}<{min_members}",)
+            )
+
+        member_cards: list[dict[str, Any]] = []
+        rows_out: list[dict[str, Any]] = []
+        default_category = str(validated.get("category") or "culture")
+        for m in market_rows:
+            mid = int(getattr(m, "id"))
+            title = str(getattr(m, "question", None) or getattr(m, "name", None) or "").strip()
+            if not title:
+                continue
+            outs = sorted(
+                list(getattr(m, "outcomes", None) or ()),
+                key=lambda o: (
+                    getattr(o, "rank", None) or 9999,
+                    -(float(getattr(o, "current_probability", None) or 0.0)),
+                ),
+            )
+            lead = outs[0] if outs else None
+            raw_prob = getattr(lead, "current_probability", None) if lead else None
+            prob = float(raw_prob) if raw_prob is not None else 0.5
+            raw_delta = getattr(lead, "probability_change_24h", None) if lead else None
+            delta = float(raw_delta) if raw_delta is not None else None
+            lead_name = str(getattr(lead, "name", None) or "Yes") if lead else "Yes"
+            member_cards.append(
+                {
+                    "id": mid,
+                    "name": title,
+                    "question": title,
+                    "category": str(getattr(m, "category", None) or default_category),
+                    "top_outcomes": [
+                        {
+                            "name": lead_name,
+                            "probability": round(prob, 4),
+                            "movement": round(delta, 4) if delta is not None else None,
+                        }
+                    ],
+                    "destination": market_destination(mid),
+                }
+            )
+            rows_out.append(
+                {
+                    "label": title,
+                    "probability": round(prob, 4),
+                    "rendered_percent": round(prob * 100),
+                    "movement": round(delta, 4) if delta is not None else None,
+                    "destination_href": f"/markets/{mid}",
+                }
+            )
+
+        if len(member_cards) < min_members:
+            return RoundupRefusal(
+                (f"too_few_live_members:{len(member_cards)}<{min_members}",)
+            )
+
+        return RoundupMembers(
+            member_cards,
+            rows_out[:card_rows],
+            footer=str(validated.get("footer") or ""),
+            title=str(validated["name"]),
+            kicker=str(validated.get("kicker") or "CURIOSITIES"),
+            destination_href=validated.get("destination_href"),
+        )
+
+    return RoundupProducer(
+        slug=str(validated["slug"]),
+        name=str(validated["name"]),
+        kind=str(validated.get("kind") or "roundup"),
+        category=str(validated.get("category") or "culture"),
+        section_title=validated.get("section_title") or str(validated["name"]),
+        footer=str(validated.get("footer") or ""),
+        produce=_produce,
+        membership=str(validated.get("membership") or "computed-produced"),
+        relations=tuple(validated["relations"]),
+        level=str(validated["level"]),
+        rule=rule,
+        tag=validated.get("tag"),
+        kicker=str(validated.get("kicker") or "CURIOSITIES"),
+        destination_href=validated.get("destination_href"),
+        stage=str(validated.get("stage") or "preview"),
+        look=str(validated.get("look") or "bars"),
+        enabled=(lambda: bool(validated["enabled"])) if "enabled" in validated else None,
+    )
+
