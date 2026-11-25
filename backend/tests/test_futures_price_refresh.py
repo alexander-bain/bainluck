@@ -1325,9 +1325,19 @@ class _FakeSession:
         if "SELECT id, external_id FROM futures_outcomes" in compiled:
             return _FakeResult([(oid, ext) for ext, oid in self._outcomes.items()])
         if compiled.lstrip().upper().startswith("INSERT INTO FUTURES_ODDS_SNAPSHOTS"):
-            self.snapshot_probabilities.append(
-                float(statement.compile().params["probability"])
-            )
+            multi = getattr(statement, "_multi_values", None)
+            if multi:
+                for chunk in multi:
+                    for row in chunk:
+                        prob = next(
+                            v for k, v in row.items()
+                            if getattr(k, "key", str(k)) == "probability"
+                        )
+                        self.snapshot_probabilities.append(float(prob))
+            else:
+                self.snapshot_probabilities.append(
+                    float(statement.compile().params["probability"])
+                )
         return _FakeResult([])
 
 
@@ -1417,9 +1427,19 @@ class _RunHarness:
             if "SELECT id, external_id FROM futures_outcomes" in sql:
                 return _RunHarness._Result([(11, "0xabc")])
             if sql.lstrip().upper().startswith("INSERT INTO FUTURES_ODDS_SNAPSHOTS"):
-                self.outer.snapshot_probabilities.append(
-                    float(statement.compile().params["probability"])
-                )
+                multi = getattr(statement, "_multi_values", None)
+                if multi:
+                    for chunk in multi:
+                        for row in chunk:
+                            prob = next(
+                                v for k, v in row.items()
+                                if getattr(k, "key", str(k)) == "probability"
+                            )
+                            self.outer.snapshot_probabilities.append(float(prob))
+                else:
+                    self.outer.snapshot_probabilities.append(
+                        float(statement.compile().params["probability"])
+                    )
                 return _RunHarness._Result()
             if "fm.id = ANY(:market_ids)" in sql:
                 return _RunHarness._Result([], scalar=0)
