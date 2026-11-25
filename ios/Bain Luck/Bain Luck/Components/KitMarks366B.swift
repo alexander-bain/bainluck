@@ -54,6 +54,71 @@ struct KitMarkView366B: View {
     }
 }
 
+// MARK: - Initials Fallback (`387: A`)
+
+/// Ruling 387: A — Delegates team/org/flag badges to `TeamLogoView.badge` (`TeamShortName`)
+/// and person/film/topic initials to `PairedMetricPresentation.initials` with zero custom slicing.
+nonisolated enum KitInitials366B {
+    private static let connectorWords: Set<String> = ["&", "and", "of", "the"]
+
+    static func initials(for raw: String, subjectKind: String? = nil) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "?" }
+
+        if let kind = subjectKind,
+           KitPictureShape366B.resolve(forSubjectKind: kind) == .containedCrest {
+            let teamBadge = TeamLogoView.badge(teamName: trimmed, opponentName: nil)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !teamBadge.isEmpty {
+                return teamBadge
+            }
+        }
+
+        let parts = trimmed.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        if parts.count == 1, let single = parts.first,
+           (2...3).contains(single.count),
+           single.contains(where: { $0.isLetter }),
+           single.allSatisfy({ ($0.isLetter && $0.isUppercase) || $0.isNumber }) {
+            return single
+        }
+
+        let substantive = parts.filter { !connectorWords.contains($0.lowercased()) }
+        let input = substantive.count >= 2 ? substantive.joined(separator: " ") : trimmed
+        let resolved = PairedMetricPresentation.initials(for: input)
+        return resolved == "—" ? "?" : resolved
+    }
+}
+
+/// Ruling 387: A — Circle initials badge matching sibling picture slot geometry while staying
+/// invisible to VoiceOver (`.accessibilityHidden(true)`).
+struct KitInitialsCircle366B: View {
+    let name: String
+    var subjectKind: String? = nil
+    let box: CGSize
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let diameter = max(16, min(box.width, box.height))
+        Circle()
+            .fill(KitTones366B.elevatedBackground(for: colorScheme))
+            .overlay(
+                Circle()
+                    .stroke(KitTones366B.cardBorder(for: colorScheme), lineWidth: 1)
+            )
+            .overlay {
+                Text(KitInitials366B.initials(for: name, subjectKind: subjectKind))
+                    .font(.system(size: max(8.5, diameter * 0.38), weight: .bold))
+                    .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(width: diameter, height: diameter)
+            .frame(width: box.width, height: box.height)
+            .accessibilityHidden(true)
+    }
+}
+
 // MARK: - 1. Picture Mark (Unified Shape Rule)
 
 /// Canonical Kit v1 picture shape rule (#13589 / Ruling 366: B):
@@ -97,12 +162,12 @@ struct KitPictureMarkView366B: View {
         KitPictureShape366B.resolve(forSubjectKind: mark.subjectKind)
     }
 
-    var renderedBoxSize: CGSize {
+    static func boxSize(for mark: KitV1PictureMark, fixedSquareBox: CGFloat? = nil) -> CGSize {
         if let fixedSquareBox {
             return CGSize(width: fixedSquareBox, height: fixedSquareBox)
         }
         let isMd = (mark.size == .md)
-        switch pictureShape {
+        switch KitPictureShape366B.resolve(forSubjectKind: mark.subjectKind) {
         case .roundPerson:
             let side: CGFloat = isMd ? 32 : 24
             return CGSize(width: side, height: side)
@@ -117,6 +182,10 @@ struct KitPictureMarkView366B: View {
             let side: CGFloat = isMd ? 32 : 24
             return CGSize(width: side, height: side)
         }
+    }
+
+    var renderedBoxSize: CGSize {
+        Self.boxSize(for: mark, fixedSquareBox: fixedSquareBox)
     }
 
     private var resolvedURL: URL? {
@@ -199,41 +268,15 @@ struct KitPictureMarkView366B: View {
             }
         }
         .frame(width: box.width, height: box.height)
-        .accessibilityLabel(mark.alt)
+        .accessibilityHidden(true)
         .task(id: mark.url) {
             guard activeImage == nil, let url = resolvedURL else { return }
             loadedImage = await ImageCache.shared.image(for: url)
         }
     }
 
-    private func fallbackBadge(box: CGSize, radius: CGFloat) -> some View {
-        let symbolName: String? = {
-            switch mark.subjectKind {
-            case "person": return "person.fill"
-            case "flag": return "flag.fill"
-            case "film": return "film"
-            case "team", "organization": return nil
-            default: return "photo"
-            }
-        }()
-        return RoundedRectangle(cornerRadius: radius, style: .continuous)
-            .fill(KitTones366B.elevatedBackground(for: colorScheme))
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(KitTones366B.cardBorder(for: colorScheme), lineWidth: 1)
-            )
-            .overlay {
-                if let symbolName {
-                    Image(systemName: symbolName)
-                        .font(.system(size: max(9, min(box.width, box.height) * 0.42), weight: .semibold))
-                        .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
-                } else {
-                    Text(TeamLogoView.badge(teamName: mark.alt, opponentName: nil))
-                        .font(.system(size: max(8, box.width * 0.36), weight: .bold))
-                        .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
-                }
-            }
-            .frame(width: box.width, height: box.height)
+    private func fallbackBadge(box: CGSize, radius _: CGFloat) -> some View {
+        KitInitialsCircle366B(name: mark.alt, subjectKind: mark.subjectKind, box: box)
     }
 }
 
@@ -348,12 +391,21 @@ struct KitWordMarkView366B: View {
                 let font: Font = (mark.style == .sub)
                     ? .caption.weight(mark.bold == true ? .semibold : .regular)
                     : .subheadline.weight(mark.bold == true ? .semibold : .regular)
-                Text(mark.text)
-                    .font(font)
-                    .foregroundStyle(baseColor)
-                    .multilineTextAlignment(textAlignment)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(minWidth: fixedMinWidth, maxWidth: mark.width == .flex ? .infinity : nil, alignment: frameAlignment)
+                VStack(alignment: (mark.align == .right) ? .trailing : ((mark.align == .center) ? .center : .leading), spacing: 2) {
+                    Text(mark.text)
+                        .font(font)
+                        .foregroundStyle(baseColor)
+                        .multilineTextAlignment(textAlignment)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let secondary = mark.secondaryText, !secondary.isEmpty {
+                        Text(secondary)
+                            .font(.caption)
+                            .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
+                            .multilineTextAlignment(textAlignment)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(minWidth: fixedMinWidth, maxWidth: mark.width == .flex ? .infinity : nil, alignment: frameAlignment)
             }
         }
     }
@@ -433,6 +485,7 @@ struct KitBarMarkView366B: View {
     let mark: KitV1BarMark
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         switch mark.barStyle {
@@ -528,34 +581,42 @@ struct KitBarMarkView366B: View {
             fallbackIndex: 0,
             scheme: colorScheme
         )
-        return GeometryReader { geo in
-            let leftX = geo.size.width * lo
-            let spanW = max(12, min(geo.size.width - leftX, geo.size.width * (hi - lo)))
-            let label = mark.pctLabel ?? ""
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(KitTones366B.trackBackground(for: colorScheme))
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(accent.opacity(0.28))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .stroke(accent.opacity(0.55), lineWidth: 1)
-                    )
-                    .frame(width: spanW, height: 18)
-                    .offset(x: leftX)
-                if !label.isEmpty {
-                    Text(label)
-                        .font(.caption2.weight(.bold).monospacedDigit())
-                        .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .frame(width: spanW >= 72 ? spanW : geo.size.width, height: 18)
-                        .offset(x: spanW >= 72 ? leftX : 0)
+        let label = mark.pctLabel ?? ""
+        return VStack(alignment: .leading, spacing: 4) {
+            if dynamicTypeSize.isAccessibilitySize && !label.isEmpty {
+                Text(label)
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            GeometryReader { geo in
+                let leftX = geo.size.width * lo
+                let spanW = max(12, min(geo.size.width - leftX, geo.size.width * (hi - lo)))
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(KitTones366B.trackBackground(for: colorScheme))
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(accent.opacity(0.28))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .stroke(accent.opacity(0.90), lineWidth: 1)
+                        )
+                        .frame(width: spanW, height: 18)
+                        .offset(x: leftX)
+                    if !dynamicTypeSize.isAccessibilitySize && !label.isEmpty {
+                        Text(label)
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .frame(width: spanW >= 72 ? spanW : geo.size.width, height: 18)
+                            .offset(x: spanW >= 72 ? leftX : 0)
+                    }
                 }
             }
+            .frame(height: 20)
+            .frame(maxWidth: .infinity)
         }
-        .frame(height: 20)
-        .frame(maxWidth: .infinity)
     }
 }
 
@@ -566,6 +627,7 @@ struct KitTileMarkView366B: View {
     var compact: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         let palette = KitTones366B.tilePalette(
@@ -574,29 +636,58 @@ struct KitTileMarkView366B: View {
             muted: mark.muted ?? false,
             scheme: colorScheme
         )
-        VStack(spacing: 2) {
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        VStack(spacing: isAX ? 3 : 2) {
             if let top = mark.topLabel, !top.isEmpty {
-                Text(top)
-                    .font(.system(size: compact ? 9.5 : 10.5, weight: .medium))
-                    .foregroundStyle(palette.secondaryForeground)
-                    .minimumScaleFactor(0.85)
-                    .lineLimit(1)
+                Group {
+                    if isAX {
+                        Text(top)
+                            .font(.caption2.weight(.medium))
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text(top)
+                            .font(.system(size: compact ? 9.5 : 10.5, weight: .medium))
+                            .minimumScaleFactor(0.85)
+                            .lineLimit(1)
+                    }
+                }
+                .foregroundStyle(palette.secondaryForeground)
             }
-            Text(mark.centerLabel)
-                .font((compact ? Font.caption : Font.footnote).weight(.bold).monospacedDigit())
-                .foregroundStyle(palette.foreground)
-                .minimumScaleFactor(0.85)
-                .lineLimit(1)
+            Group {
+                if isAX {
+                    Text(mark.centerLabel)
+                        .font((compact ? Font.caption : Font.footnote).weight(.bold).monospacedDigit())
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(mark.centerLabel)
+                        .font((compact ? Font.caption : Font.footnote).weight(.bold).monospacedDigit())
+                        .minimumScaleFactor(0.85)
+                        .lineLimit(1)
+                }
+            }
+            .foregroundStyle(palette.foreground)
             if let bottom = mark.bottomLabel, !bottom.isEmpty {
-                Text(bottom)
-                    .font(.system(size: compact ? 9.5 : 10.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(palette.secondaryForeground)
-                    .minimumScaleFactor(0.8)
-                    .lineLimit(1)
+                Group {
+                    if isAX {
+                        Text(bottom)
+                            .font(.caption2.weight(.semibold).monospacedDigit())
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text(bottom)
+                            .font(.system(size: compact ? 9.5 : 10.5, weight: .semibold).monospacedDigit())
+                            .minimumScaleFactor(0.8)
+                            .lineLimit(1)
+                    }
+                }
+                .foregroundStyle(palette.secondaryForeground)
             }
         }
-        .padding(.horizontal, compact ? 2 : 6)
-        .padding(.vertical, compact ? 5 : 6)
+        .padding(.horizontal, isAX ? 8 : (compact ? 2 : 6))
+        .padding(.vertical, isAX ? 8 : (compact ? 5 : 6))
+        .frame(minWidth: isAX ? 64 : 44, minHeight: isAX ? 44 : nil)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -615,25 +706,29 @@ struct KitRingMarkView366B: View {
     let mark: KitV1RingMark
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         let clamped = min(1.0, max(0.0, mark.progress))
         let pct = Int((clamped * 100.0).rounded())
         let strokeColor = mark.tone == .muted
-            ? DS.textMuted
+            ? KitTones366B.textColor(for: .muted, scheme: colorScheme)
             : KitTones366B.brandAccent(for: colorScheme)
+        let boxSize: CGFloat = dynamicTypeSize >= .accessibility3 ? 78 : (dynamicTypeSize.isAccessibilitySize ? 58 : 30)
         ZStack {
             Circle()
-                .stroke(KitTones366B.trackBackground(for: colorScheme), lineWidth: 3)
+                .stroke(KitTones366B.trackBackground(for: colorScheme), lineWidth: dynamicTypeSize.isAccessibilitySize ? 4 : 3)
             Circle()
                 .trim(from: 0, to: clamped)
-                .stroke(strokeColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .stroke(strokeColor, style: StrokeStyle(lineWidth: dynamicTypeSize.isAccessibilitySize ? 4 : 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Text(mark.label ?? "\(pct)%")
                 .font(.caption2.weight(.bold).monospacedDigit())
                 .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
-        .frame(width: 30, height: 30)
+        .frame(width: boxSize, height: boxSize)
     }
 }
 
@@ -661,7 +756,7 @@ struct KitDotMarkView366B: View {
                     .frame(width: 10, height: 10)
             }
         }
-        .accessibilityLabel(mark.label)
+        .accessibilityHidden(true)
     }
 }
 
