@@ -644,7 +644,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
         // 1. Preloaded snapshot path must strip finished events from nextEvents into movedEntries.
         var snap = MyStuffLandingViewModel295A.PreloadedSnapshot()
         snap.nextEvents = [(event: finishedEvent, awayVerified: true), (event: upcomingEvent, awayVerified: true)]
-        let preloadedVM = MyStuffLandingViewModel295A(defaults: def, preloaded: snap)
+        let preloadedVM = MyStuffLandingViewModel295A(defaults: def, preloaded: snap, nowProvider: { Self.fixtureNow })
         XCTAssertEqual(preloadedVM.nextEvents.map(\.event.id), [15353145])
         XCTAssertTrue(preloadedVM.movedEntries.contains(where: { $0.id == "moved-final-14780582" }))
 
@@ -655,7 +655,8 @@ final class FirstRunChecklist364ATests: XCTestCase {
             subjectHydrator: { _ in
                 [MyStuffLandingViewModel295A.HydratedSubjectPack(events: [(finishedEvent, true), (upcomingEvent, true)], markets: [])]
             },
-            discoverFetcher: { emptyFeed }
+            discoverFetcher: { emptyFeed },
+            nowProvider: { Self.fixtureNow }
         )
         await liveVM.refresh(
             followedSubjects: [FollowedSubject295A.subject(slug: "story:oscars", name: "Oscars", affinityCategory: "entertainment")],
@@ -875,7 +876,8 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 XCTAssertEqual(subjects.map(\.name), ["Boston Celtics"])
                 return [MyStuffLandingViewModel295A.HydratedSubjectPack(events: [(celticsEvent, true)], markets: [])]
             },
-            discoverFetcher: { unfollowedDiscover }
+            discoverFetcher: { unfollowedDiscover },
+            nowProvider: { Self.fixtureNow }
         )
         await vm.refresh(
             followedSubjects: [FollowedSubject295A.team(slug: "100", teamId: 100, name: "Boston Celtics", sportKey: "basketball_nba")],
