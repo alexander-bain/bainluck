@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.routes.feed import PersonalizationContext, apply_discover_display_chain
+from app.routes.feed import PersonalizationContext, _rank_key, apply_discover_display_chain
 from app.utils.surface_rank import (
     DISCOVER_SURFACE_PROFILE,
     MY_STUFF_SURFACE_PROFILE,
@@ -82,7 +82,72 @@ def test_resolve_surface_profile_honors_cert_2190_precedence():
     assert resolve_surface_profile(my_teams_only=True) is MY_STUFF_SURFACE_PROFILE
     assert resolve_surface_profile(mode="sports", my_teams_only=True) is MY_STUFF_SURFACE_PROFILE
     assert resolve_surface_profile(sports_mode=True, my_teams_only=True) is MY_STUFF_SURFACE_PROFILE
-    assert get_surface_profile("sports").futures_first_page_cap == 2
+    assert get_surface_profile("sports").futures_first_page_cap is None
+
+
+def test_sports_and_my_stuff_shipping_profiles_match_legacy_rank_key():
+    """Pin 'nothing moved' for Step 1: Sports and My Stuff profiles match legacy `_rank_key`."""
+    pool = [
+        _event(10, score=72.0, status="live", hours_from_now=-0.5),
+        _event(11, score=85.0, status="scheduled", hours_from_now=4.0),
+        # Same score as eid 11, earlier kickoff/sort_time -> _rank_key breaks ties by _sort_time
+        _event(12, score=85.0, status="scheduled", hours_from_now=1.0),
+        _futures(20, score=90.0, team_id=9, movement=0.20),
+        _futures(21, score=72.0, team_id=12, movement=0.05),
+        _event(13, score=64.0, status="completed", hours_from_now=-3.0),
+    ]
+    # Give _futures(21) a newer _sort_time than _event(10) so tie on 72.0 breaks by recency.
+    pool[4]["_sort_time"] = FROZEN_NOW.timestamp() + 1800
+    expected = [(c["type"], c["data"]["id"]) for c in sorted(pool, key=_rank_key, reverse=True)]
+    for profile in (SPORTS_SURFACE_PROFILE, MY_STUFF_SURFACE_PROFILE):
+        ranked = rank_candidates_for_surface(
+            pool,
+            profile,
+            followed_team_ids={9, 12},
+            now=FROZEN_NOW,
+        )
+        assert [(c["type"], c["data"]["id"]) for c in ranked] == expected
+
+
+def test_order_my_stuff_team_buckets_matches_legacy_loop_and_documents_tie_break():
+    def _legacy_order(per_team: dict[int, list[dict]], limit: int) -> list[dict]:
+        ranked_buckets = sorted(
+            per_team.values(),
+            key=lambda bucket: bucket[0]["probability"],
+            reverse=True,
+        )
+        out: list[dict] = []
+        depth = 0
+        while len(out) < limit:
+            progressed = False
+            for bucket in ranked_buckets:
+                if depth < len(bucket):
+                    out.append(bucket[depth])
+                    progressed = True
+                    if len(out) >= limit:
+                        break
+            if not progressed:
+                break
+            depth += 1
+        return out
+
+    distinct = {
+        1: [{"id": 101, "probability": 0.40}, {"id": 102, "probability": 0.25}],
+        2: [{"id": 201, "probability": 0.72}, {"id": 202, "probability": 0.30}],
+        3: [{"id": 301, "probability": 0.55}, {"id": 302, "probability": 0.20}],
+    }
+    assert order_my_stuff_team_buckets(
+        distinct, limit=5, profile=MY_STUFF_SURFACE_PROFILE
+    ) == _legacy_order(distinct, 5)
+
+    # Known Step 1 tie difference: exact lead-probability ties sort lower team_id first.
+    tied = {
+        20: [{"id": 2001, "probability": 0.55}, {"id": 2002, "probability": 0.15}],
+        5: [{"id": 501, "probability": 0.55}, {"id": 502, "probability": 0.10}],
+        12: [{"id": 1201, "probability": 0.80}],
+    }
+    ordered_tied = order_my_stuff_team_buckets(tied, limit=5, profile=MY_STUFF_SURFACE_PROFILE)
+    assert [it["id"] for it in ordered_tied] == [1201, 501, 2001, 502, 2002]
 
 
 def test_discover_profile_never_drifts_base_rank_scores():

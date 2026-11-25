@@ -3091,7 +3091,6 @@ def apply_discover_display_chain(
 
     # === TONIGHT'S MARQUEE GAME LEADS UPCOMING (#9489) ===
     #
-    # Measured 2026-11-24? Wait exact comment preserved below:
     # Measured 2026-09-28 23:05Z, an hour before Monday Night Football: the
     # Sports first page served Eagles @ Bears (tier:1, score 48) fifth among
     # upcoming games, below four that start TOMORROW (87/70/55/52), and

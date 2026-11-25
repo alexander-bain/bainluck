@@ -31,6 +31,8 @@ class RankingSurfaceProfile:
     followed_team_bonus: float = 0.0
     movement_weight: float = 1.0
     coherent_market_bonus: float = 0.0
+    # Not read yet — reserved for later Stage 2 steps; the real Sports/Discover
+    # diversity and futures caps live in feed.py (`cap_futures_on_games_led_first_page`).
     apply_diversity_caps: bool = True
     apply_discover_demotion: bool = False
     futures_first_page_cap: int | None = None
@@ -45,9 +47,9 @@ DISCOVER_SURFACE_PROFILE = RankingSurfaceProfile(
     followed_team_bonus=0.0,
     movement_weight=1.0,
     coherent_market_bonus=0.0,
-    apply_diversity_caps=True,
-    apply_discover_demotion=True,
-    futures_first_page_cap=None,
+    apply_diversity_caps=True,  # not read yet
+    apply_discover_demotion=True,  # not read yet
+    futures_first_page_cap=None,  # not read yet
 )
 
 SPORTS_SURFACE_PROFILE = RankingSurfaceProfile(
@@ -59,9 +61,9 @@ SPORTS_SURFACE_PROFILE = RankingSurfaceProfile(
     followed_team_bonus=0.0,
     movement_weight=1.0,
     coherent_market_bonus=0.0,
-    apply_diversity_caps=True,
-    apply_discover_demotion=False,
-    futures_first_page_cap=2,
+    apply_diversity_caps=True,  # not read yet
+    apply_discover_demotion=False,  # not read yet
+    futures_first_page_cap=None,  # not read yet; real cap lives in cap_futures_on_games_led_first_page
 )
 
 MY_STUFF_SURFACE_PROFILE = RankingSurfaceProfile(
@@ -73,9 +75,9 @@ MY_STUFF_SURFACE_PROFILE = RankingSurfaceProfile(
     followed_team_bonus=0.0,
     movement_weight=1.0,
     coherent_market_bonus=0.0,
-    apply_diversity_caps=False,
-    apply_discover_demotion=False,
-    futures_first_page_cap=None,
+    apply_diversity_caps=False,  # not read yet
+    apply_discover_demotion=False,  # not read yet
+    futures_first_page_cap=None,  # not read yet
 )
 
 _PROFILES_BY_SURFACE: dict[SurfaceId, RankingSurfaceProfile] = {
