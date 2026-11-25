@@ -9,10 +9,12 @@
  *  - and never lets user/session/token/market payload into perf events.
  */
 
+import { createHash } from 'node:crypto';
 import {
   _resetBrowserQuerySaltForTests,
   sanitizeEvent,
   scrubString,
+  sha256Hex,
   hashQuery,
   queryMetadata,
   KNOWN_EVENT_NAMES,
@@ -266,15 +268,52 @@ describe('taxonomy integrity', () => {
 });
 
 // ============================================================================
-// Per-browser keyed hash contract (Decision 404: B)
+// Per-browser keyed SHA-256 hash & consent-gated salt persistence (Decision 404: B)
 // ============================================================================
 
-describe('hashQuery — Decision 404: B per-browser random salt', () => {
+describe('sha256Hex — synchronous FIPS 180-4 SHA-256 known-answer vectors', () => {
+  it('matches NIST empty-string and "abc" known-answer vectors', () => {
+    expect(sha256Hex('')).toBe(
+      'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    );
+    expect(sha256Hex('abc')).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    );
+  });
+
+  it('matches Node crypto SHA-256 across multi-block, exact-block-boundary, and non-ASCII UTF-8 inputs', () => {
+    const vectors = [
+      'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq', // 56 bytes -> 2 blocks
+      'a'.repeat(130),
+      'São Paulo café 🏆 2026',
+    ];
+    for (const v of vectors) {
+      expect(sha256Hex(v)).toBe(createHash('sha256').update(v, 'utf8').digest('hex'));
+    }
+  });
+
+  it('matches Node crypto even via the pure-JS UTF-8 encoder fallback (TextEncoder absent)', () => {
+    const originalTextEncoder = globalThis.TextEncoder;
+    // @ts-expect-error testing non-TextEncoder runtime fallback
+    delete globalThis.TextEncoder;
+    try {
+      const sample = 'São Paulo café 🏆 2026';
+      expect(sha256Hex(sample)).toBe(createHash('sha256').update(sample, 'utf8').digest('hex'));
+    } finally {
+      globalThis.TextEncoder = originalTextEncoder;
+    }
+  });
+});
+
+describe('hashQuery — Decision 404: B per-browser keyed SHA-256 (Allow-only storage)', () => {
+  const CONSENT_STORAGE_KEY = 'bainluck_consent';
   const SALT_STORAGE_KEY = 'bainluck_search_hash_salt_v1';
+  const FIXED_SALT_1 = '00112233445566778899aabbccddeeff';
+  const FIXED_SALT_2 = 'ffeeddccbbaa99887766554433221100';
   const ORIGINAL_WINDOW = (globalThis as { window?: unknown }).window;
 
-  function installMockLocalStorage(): Map<string, string> {
-    const store = new Map<string, string>();
+  function installMockLocalStorage(initial?: Record<string, string>): Map<string, string> {
+    const store = new Map<string, string>(Object.entries(initial ?? {}));
     (globalThis as { window?: unknown }).window = {
       localStorage: {
         getItem: (k: string) => store.get(k) ?? null,
@@ -299,37 +338,114 @@ describe('hashQuery — Decision 404: B per-browser random salt', () => {
     }
   });
 
-  it('persists one random salt in localStorage and stays stable across calls and reloads in the same browser', () => {
-    const store = installMockLocalStorage();
-    const first = hashQuery('lakers');
-    const persisted = store.get(SALT_STORAGE_KEY);
-    expect(persisted).toMatch(/^[0-9a-z]{12,64}$/);
-    expect(hashQuery('lakers')).toBe(first);
-
-    // Simulate reload in the same browser (module cache cleared, localStorage kept).
-    _resetBrowserQuerySaltForTests();
-    expect(hashQuery('lakers')).toBe(first);
-    expect(store.get(SALT_STORAGE_KEY)).toBe(persisted);
+  it('matches externally computed SHA-256(salt + NUL + normalized query) cut to 64 bits', () => {
+    installMockLocalStorage({
+      [CONSENT_STORAGE_KEY]: 'all',
+      [SALT_STORAGE_KEY]: FIXED_SALT_1,
+    });
+    const out = hashQuery('Lakers');
+    const external = createHash('sha256')
+      .update(`${FIXED_SALT_1}\u0000lakers`, 'utf8')
+      .digest('hex')
+      .slice(0, 16);
+    expect(out).toBe('b8f6a9534f94cb9c');
+    expect(out).toBe(external);
   });
 
-  it('produces different hashes across browsers and does not match legacy unsalted FNV-1a vectors', () => {
-    const storeA = installMockLocalStorage();
-    const hashA = hashQuery('lakers');
-    const saltA = storeA.get(SALT_STORAGE_KEY);
-    expect(hashA).not.toBe('1ghlcvp');
-    expect(hashQuery('')).not.toBe('ztntfp');
-    expect(hashQuery('Lakers vs Celtics')).not.toBe('sn4x6t');
-    expect(hashQuery('super bowl')).not.toBe('4gxf0');
+  it('produces unrelated 64-bit hashes sharing no prefix for the same query under two salts', () => {
+    installMockLocalStorage({
+      [CONSENT_STORAGE_KEY]: 'all',
+      [SALT_STORAGE_KEY]: FIXED_SALT_1,
+    });
+    const h1 = hashQuery('lakers');
+    expect(h1).toBe('b8f6a9534f94cb9c');
 
     _resetBrowserQuerySaltForTests();
-    const storeB = installMockLocalStorage();
-    const hashB = hashQuery('lakers');
-    expect(storeB.get(SALT_STORAGE_KEY)).not.toBe(saltA);
-    expect(hashB).not.toBe(hashA);
+    installMockLocalStorage({
+      [CONSENT_STORAGE_KEY]: 'all',
+      [SALT_STORAGE_KEY]: FIXED_SALT_2,
+    });
+    const h2 = hashQuery('lakers');
+    expect(h2).toBe('1219761f75e13cc9');
+    expect(h1.slice(0, 4)).not.toBe(h2.slice(0, 4));
+
+    _resetBrowserQuerySaltForTests();
+    installMockLocalStorage({ [CONSENT_STORAGE_KEY]: 'all' });
+    const rand1 = hashQuery('lakers');
+    _resetBrowserQuerySaltForTests();
+    installMockLocalStorage({ [CONSENT_STORAGE_KEY]: 'all' });
+    const rand2 = hashQuery('lakers');
+    expect(rand1).toMatch(/^[0-9a-f]{16}$/);
+    expect(rand2).toMatch(/^[0-9a-f]{16}$/);
+    expect(rand1.slice(0, 4)).not.toBe(rand2.slice(0, 4));
+  });
+
+  it('writes NO salt to localStorage when consent is unset or declined (181-C)', () => {
+    for (const initialConsent of [undefined, 'none']) {
+      _resetBrowserQuerySaltForTests();
+      const setItemSpy = jest.fn();
+      const store = new Map<string, string>(
+        initialConsent ? [[CONSENT_STORAGE_KEY, initialConsent]] : [],
+      );
+      (globalThis as { window?: unknown }).window = {
+        localStorage: {
+          getItem: (k: string) => store.get(k) ?? null,
+          setItem: (k: string, v: string) => {
+            setItemSpy(k, v);
+            store.set(k, v);
+          },
+        },
+      };
+
+      const first = hashQuery('lakers');
+      expect(first).toMatch(/^[0-9a-f]{16}$/);
+      // Stable within the same page without writing to localStorage.
+      expect(hashQuery('LAKERS')).toBe(first);
+      expect(setItemSpy).not.toHaveBeenCalled();
+      expect(store.has(SALT_STORAGE_KEY)).toBe(false);
+
+      // Reload starts fresh when unconsented.
+      _resetBrowserQuerySaltForTests();
+      const reloaded = hashQuery('lakers');
+      expect(reloaded).not.toBe(first);
+      expect(setItemSpy).not.toHaveBeenCalled();
+      expect(store.has(SALT_STORAGE_KEY)).toBe(false);
+    }
+  });
+
+  it('persists one random salt in localStorage when consent is "all" or "analytics" and survives reload', () => {
+    for (const consentLevel of ['all', 'analytics'] as const) {
+      _resetBrowserQuerySaltForTests();
+      const store = installMockLocalStorage({ [CONSENT_STORAGE_KEY]: consentLevel });
+      const first = hashQuery('lakers');
+      const persisted = store.get(SALT_STORAGE_KEY);
+      expect(persisted).toMatch(/^[0-9a-z]{12,64}$/);
+      expect(first).toMatch(/^[0-9a-f]{16}$/);
+      expect(hashQuery('lakers')).toBe(first);
+
+      // Simulate reload in the same browser (module cache cleared, localStorage kept).
+      _resetBrowserQuerySaltForTests();
+      expect(hashQuery('lakers')).toBe(first);
+      expect(store.get(SALT_STORAGE_KEY)).toBe(persisted);
+    }
+  });
+
+  it('promotes the in-page salt into localStorage cleanly if the visitor later chooses Allow', () => {
+    const store = installMockLocalStorage();
+    const beforeAllow = hashQuery('lakers');
+    expect(store.has(SALT_STORAGE_KEY)).toBe(false);
+
+    store.set(CONSENT_STORAGE_KEY, 'all');
+    const afterAllowSamePage = hashQuery('lakers');
+    expect(afterAllowSamePage).toBe(beforeAllow);
+    expect(store.get(SALT_STORAGE_KEY)).toMatch(/^[0-9a-z]{12,64}$/);
+
+    _resetBrowserQuerySaltForTests();
+    expect(hashQuery('lakers')).toBe(beforeAllow);
   });
 
   it('normalizes trim + case identically within one browser and never leaks salt or raw query', () => {
-    const store = installMockLocalStorage();
+    const store = installMockLocalStorage({ [CONSENT_STORAGE_KEY]: 'all' });
     const canonical = hashQuery('Lakers');
     for (const variant of ['lakers', '  lakers  ', 'LAKERS', '\tLakers\n']) {
       expect(hashQuery(variant)).toBe(canonical);
@@ -355,7 +471,7 @@ describe('hashQuery — Decision 404: B per-browser random salt', () => {
       },
     };
     const h = hashQuery('lakers');
-    expect(h).toMatch(/^[0-9a-z]{14}$/);
+    expect(h).toMatch(/^[0-9a-f]{16}$/);
     expect(hashQuery('LAKERS')).toBe(h);
   });
 });
