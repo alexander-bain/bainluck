@@ -280,6 +280,7 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     let externalId: String?
     var marketType: String? = nil
     let mutuallyExclusive: Bool?
+    var outcomePricesAreIndependent: Bool? = nil
     let commenceTime: String?
     let resolutionDate: String?
     let updatedAt: String?
@@ -657,6 +658,7 @@ nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
     let espnId: String?
     /// #9387 — the same per-outcome fields as `FuturesOutcome`, on the current
     /// column of an opt-in timeline.
+    @TolerantNumeric var renderedPercent: Int? = nil
     @TolerantNumeric var contributingSources: [String]? = nil
     @TolerantNumeric var observedAt: String? = nil
     @TolerantNumeric var aggregationRule: String? = nil
@@ -669,7 +671,7 @@ nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, teamId, logoSmall, logoLarge
         case primaryColor, secondaryColor, abbreviation, record, location, espnId
-        case contributingSources, observedAt, aggregationRule
+        case renderedPercent, contributingSources, observedAt, aggregationRule
     }
 }
 
@@ -681,6 +683,7 @@ extension TimelineOutcomeMeta {
     nonisolated func withholdingCurrent() -> TimelineOutcomeMeta {
         var copy = self
         copy.currentProbability = nil
+        copy._renderedPercent = TolerantNumeric(wrappedValue: nil)
         copy._probabilityChange24h = TolerantNumeric(wrappedValue: nil)
         copy._contributingSources = TolerantNumeric(wrappedValue: nil)
         return copy

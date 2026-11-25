@@ -214,19 +214,33 @@ async def test_detail_and_list_agree_on_15345867_three_way_books():
 
 
 @pytest.mark.asyncio
-async def test_one_leg_soccer_match_serves_nothing_for_chance_on_detail_and_list():
-    """Step 3: Polymarket-only soccer match with zero books -> no orphan percent."""
+@pytest.mark.parametrize("non_settled_status", ["scheduled", "live", "suspended"])
+async def test_one_leg_soccer_match_serves_nothing_for_chance_on_detail_and_list(
+    non_settled_status,
+):
+    """#13131 / #13479: one-leg soccer match with zero 3-way books serves no orphan chance on any non-settled status."""
+    is_15345080 = non_settled_status == "suspended"
+    event_id = 15345080 if is_15345080 else 15347782
+    home_prob = 0.9995 if is_15345080 else 0.31
+    home_team = "CD Marquense" if is_15345080 else "Garuda Yaksa"
+    away_team = "Aurora FC" if is_15345080 else "Madura United"
+
     ev_detail = _detail_event(
         sport_key="soccer_other",
-        home_prob=0.31,
-        event_id=15347782,
-        status="scheduled",
+        home_prob=home_prob,
+        event_id=event_id,
+        status=non_settled_status,
         home_score=None,
         away_score=None,
         opening_home=None,
         opening_away=None,
     )
-    ev_detail.commence_time = _utc_offset(48)
+    ev_detail.home_team_name = home_team
+    ev_detail.away_team_name = away_team
+    ev_detail.win_probability_sources = {
+        "polymarket": {"value": home_prob, "type": "market"}
+    }
+    ev_detail.commence_time = _utc_offset(-5 if is_15345080 else 48)
     detail_payload = await _detail_payload(ev_detail, snapshots=[])
 
     co = detail_payload["current_odds"]
@@ -239,13 +253,13 @@ async def test_one_leg_soccer_match_serves_nothing_for_chance_on_detail_and_list
     assert detail_payload["source_mark"]["state"] == "none"
 
     ev_list = Event(
-        id=15347782,
+        id=event_id,
         sport_id=1,
-        home_team_name="Garuda Yaksa",
-        away_team_name="Madura United",
-        commence_time=_utc_offset(48),
-        status="scheduled",
-        win_probability_sources={"polymarket": {"value": 0.31, "type": "market"}},
+        home_team_name=home_team,
+        away_team_name=away_team,
+        commence_time=_utc_offset(-5 if is_15345080 else 48),
+        status=non_settled_status,
+        win_probability_sources={"polymarket": {"value": home_prob, "type": "market"}},
     )
     ev_list.sport = Sport(id=1, key="soccer_other", name="Other Soccer")
     list_payload = events_route._format_event_with_aggregated_odds(ev_list, None)
@@ -253,6 +267,78 @@ async def test_one_leg_soccer_match_serves_nothing_for_chance_on_detail_and_list
     assert list_payload["hero_probability_away"] is None
     assert list_payload["hero_probability_draw"] is None
     assert list_payload["source_mark"]["state"] == "none"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("non_settled_status", ["live", "suspended"])
+async def test_live_or_suspended_one_leg_complement_snapshots_withhold_on_detail(
+    non_settled_status,
+):
+    """#13479: live/suspended soccer with 2-way complement books (sum=1.0) withholds all 3 legs on detail."""
+    ev_detail = _detail_event(
+        sport_key="soccer_epl",
+        home_prob=0.62,
+        event_id=15345099,
+        status=non_settled_status,
+        home_score=1,
+        away_score=1,
+        opening_home=None,
+        opening_away=None,
+    )
+    ev_detail.commence_time = _utc_offset(-1)
+    detail_payload = await _detail_payload(
+        ev_detail,
+        snapshots=[_detail_snapshot(0.62, 0.38, bookmaker="draftkings")],
+    )
+    co = detail_payload["current_odds"]
+    assert co["home_probability"] is None
+    assert co["away_probability"] is None
+    assert co["draw_probability"] is None
+    assert detail_payload["hero_probability"] is None
+    assert detail_payload["hero_probability_away"] is None
+    assert detail_payload["hero_probability_draw"] is None
+
+
+@pytest.mark.asyncio
+async def test_two_way_suspended_and_settled_soccer_stay_untouched_on_detail():
+    """Control: two-way suspended match & settled soccer match (win/draw) stay unchanged."""
+    two_way = _detail_event(
+        sport_key="basketball_nba",
+        home_prob=0.72,
+        event_id=15345091,
+        status="suspended",
+        home_score=None,
+        away_score=None,
+        opening_home=None,
+        opening_away=None,
+    )
+    two_way.win_probability_sources = {
+        "polymarket": {"value": 0.72, "type": "market"}
+    }
+    two_way.commence_time = _utc_offset(-5)
+    two_way_payload = await _detail_payload(two_way, snapshots=[])
+    assert two_way_payload["hero_probability"] == pytest.approx(0.72)
+    assert two_way_payload["hero_probability_away"] == pytest.approx(0.28)
+    assert two_way_payload["current_odds"]["home_probability"] == pytest.approx(0.72)
+
+    settled_draw = _detail_event(
+        sport_key="soccer_epl",
+        home_prob=0.45,
+        event_id=15345092,
+        status="completed",
+        home_score=1,
+        away_score=1,
+        opening_home=None,
+        opening_away=None,
+    )
+    settled_draw.completed_at = _utc_offset(-2)
+    settled_draw.commence_time = _utc_offset(-4)
+    settled_payload = await _detail_payload(settled_draw, snapshots=[])
+    assert settled_payload["hero_probability_source"] == "settled"
+    assert settled_payload["hero_settled_result"] == "draw"
+    assert settled_payload["hero_probability"] == pytest.approx(0.0)
+    assert settled_payload["hero_probability_away"] == pytest.approx(0.0)
+    assert settled_payload["hero_probability_draw"] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -378,3 +464,43 @@ def test_feed_format_event_data_serves_three_way_and_suppresses_one_leg():
     assert card_settled["hero_probability"] == 1.0
     assert card_settled["hero_probability_away"] == 0.0
     assert card_settled["hero_settled_result"] == "home"
+
+
+@pytest.mark.asyncio
+async def test_one_leg_live_soccer_activitykit_payload_falls_back_to_score_only():
+    """When a live soccer match only has one leg, ActivityKit omits percentages and serves score-only state."""
+    import json
+    from app.utils.activitykit_payload import build_activitykit_update
+    from app.utils.activitykit_projection import project_activitykit_snapshot
+
+    now = datetime.now(timezone.utc)
+    ev_detail = _detail_event(
+        sport_key="soccer_epl",
+        home_prob=0.63,
+        event_id=15345098,
+        status="live",
+        home_score=2,
+        away_score=1,
+        opening_home=None,
+        opening_away=None,
+    )
+    ev_detail.commence_time = now - timedelta(minutes=20)
+    ev_detail.score_source = "espn"
+    ev_detail.score_observed_at = now
+
+    detail_payload = await _detail_payload(ev_detail, snapshots=[])
+    snapshot = project_activitykit_snapshot(detail_payload)
+    assert snapshot.home_score == 2
+    assert snapshot.away_score == 1
+    assert snapshot.score_observed_at == now
+    assert snapshot.home_rendered_percent is None
+    assert snapshot.probability_observed_at is None
+
+    push = build_activitykit_update(snapshot, sent_at=now)
+    aps = json.loads(push.body)["aps"]
+    snap_payload = aps["content-state"]["snapshot"]
+    assert snap_payload["homeScore"] == 2
+    assert "homeRenderedPercent" not in snap_payload
+    assert "probabilityObservedAt" not in snap_payload
+    assert aps["stale-date"] > aps["timestamp"]
+

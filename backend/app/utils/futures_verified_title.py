@@ -151,6 +151,10 @@ NFL_TITLE = TitleQuestion(
 #: written down, never by inference from a market name or the calendar.
 TITLE_QUESTIONS: tuple[TitleQuestion, ...] = (NFL_TITLE,)
 
+# #12530: the reviewed 2027 pair. The sportsbook row can roll to a new edition.
+SUPER_BOWL_2027_BOARD_ID = 86832
+SUPER_BOWL_2027_ALIAS_ID = 129037
+
 
 @dataclass(frozen=True)
 class MarketFacts:

@@ -10,10 +10,13 @@ BUILDERS = {
     "speed/": "S",
     "codex/": "B",
     "ios/": "C",
+    "builder-c/": "C",
+    "bc/": "C",
     "atlas/": "D",
     "builder-e/": "E",
     "apple/": "F",
     "weebey/": "W",
+    "factory/": "Factory",
 }
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -28,8 +31,7 @@ def iso(value):
 
 
 def public_title(title):
-    # Titles are the only free text that leaves the collector. Never publish
-    # discussion bodies, author identities, URLs from comments, or email addresses.
+    # Keep account identifiers and the repository owner's name out of public text.
     title = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[email removed]", title)
     title = re.sub(r"(?<!\w)@[\w-]+(?:\[bot\])?", "[account removed]", title)
     title = re.sub(r"\bAlex(?:ander)?(?: Bain)?\b", "the founder", title, flags=re.I)
@@ -132,6 +134,32 @@ def last_authored(pull):
     )
 
 
+def fable_accepted_at(pull, decision=None):
+    look = fable_decision(pull) if decision is None else decision
+    if not pull.get("comments_complete") or not look.get("fable_accept"):
+        return None
+    named = look.get("fable_accept_sha")
+    if named:
+        if len(named) < 40:
+            matches = [
+                c["sha"]
+                for c in pull.get("commits", [])
+                if c.get("sha", "").startswith(named)
+            ]
+            if not pull.get("commits_complete") or len(matches) != 1:
+                return None
+            named = matches[0]
+        return look["created_at"] if unchanged_after(pull, named) else None
+    revised = last_authored(pull)
+    if (
+        pull.get("commits_complete")
+        and revised
+        and instant(look["created_at"]) >= instant(revised["at"])
+    ):
+        return look["created_at"]
+    return None
+
+
 def classify(pull, deployments, now, line, uncertain_line):
     reasons = ["Changed files could not be confirmed."] if uncertain_line else []
     builder = next(
@@ -208,10 +236,18 @@ def classify(pull, deployments, now, line, uncertain_line):
     change["station"] = "Test"
     green, unknown = checks_green(pull)
     if not green:
-        if pull.get("checks_complete") and any(
-            c.get("ci") and c["state"] == "in_progress" for c in latest_checks(pull)
-        ):
-            change["checks_running"] = True
+        if pull.get("checks_complete"):
+            checks = list(latest_checks(pull))
+            if any(c.get("ci") and c["state"] == "in_progress" for c in checks):
+                change["checks_running"] = True
+            if any(
+                c.get("ci")
+                and c["name"] != "flaky-canary"
+                and c["state"] == "completed"
+                and c.get("conclusion") in {"failure", "timed_out"}
+                for c in checks
+            ):
+                change["checks_failed"] = True
         change["unsure"] |= unknown
         if unknown:
             change["reasons"].append("Checks on this version could not be confirmed.")
@@ -219,11 +255,21 @@ def classify(pull, deployments, now, line, uncertain_line):
     change["station"] = "Review"
     if park_when_quiet:
         change["parked"] = True
+    accepted_at = fable_accepted_at(pull, fable)
+    bot = bot_review(pull)
+    if (
+        accepted_at
+        and fable.get("fable_accept_sha") == pull["head_sha"]
+        and bot.get("state") != "CHANGES_REQUESTED"
+    ):
+        if not uncertain_line:
+            change["station"] = "Merge line"
+        return change
     if not pull.get("reviews_complete"):
         change["unsure"] = True
         change["reasons"].append("Review evidence could not be confirmed.")
         return change
-    if bot_review(pull).get("state") != "APPROVED":
+    if bot.get("state") != "APPROVED":
         return change
     if pull.get("fable_needed") and not pull.get("fable_not_needed"):
         last_change = last_authored(pull)
@@ -235,13 +281,7 @@ def classify(pull, deployments, now, line, uncertain_line):
             change["unsure"] = True
             change["reasons"].append("The final review could not be confirmed.")
             return change
-        # The API returns commits in topological order. Merge-only syncs do not
-        # invalidate an acceptance of the last authored (non-merge) change.
-        last_commit = last_change["at"]
-        accepted = fable.get("fable_accept") and instant(
-            fable["created_at"]
-        ) >= instant(last_commit)
-        if not accepted:
+        if not accepted_at:
             return change
     if not uncertain_line:
         change["station"] = "Merge line"
@@ -337,7 +377,7 @@ def advance_jams(changes, master, previous, now, stops=(), holds=None):
 
 
 def delivery_posts(commands, pulls, now):
-    batches, routes, refusals, live, build_post = {}, {}, {}, {}, None
+    batches, routes, refusals, live = {}, {}, {}, {}
     for post in sorted(commands, key=lambda c: instant(c["at"])):
         if instant(post["at"]) > now:
             continue
@@ -365,9 +405,36 @@ def delivery_posts(commands, pulls, now):
             for number in post["numbers"]:
                 live[(line, number)] = post
                 batches.get(line, {}).pop(number, None)
-        if post.get("build"):
-            build_post = {"build": post["build"], "at": post["at"]}
-    return batches, routes, refusals, live, build_post
+    return batches, routes, refusals, live
+
+
+def verified_testflight_post(commands, deployments, now, previous):
+    # GitHub confirms delivery on a master commit, but Xcode Cloud's status
+    # has no build number. Use only a trusted numbered report for that commit.
+    apps = [
+        receipt
+        for receipt in deployments
+        if receipt["line"] == "Apps"
+        and receipt.get("state") == "success"
+        and instant(receipt["at"]) <= now
+    ]
+    if not apps:
+        return None
+    deployed = max(apps, key=lambda receipt: instant(receipt["at"]))
+    commit = deployed["commit"]
+    known_commits = {receipt["commit"] for receipt in apps}
+    candidates = [
+        {"build": post["build"], "at": post["at"], "commit": commit}
+        for post in commands
+        if post["kind"] == "build"
+        and post.get("commit")
+        and commit.startswith(post["commit"])
+        and sum(sha.startswith(post["commit"]) for sha in known_commits) == 1
+        and instant(deployed["committed_at"]) <= instant(post["at"]) <= now
+    ]
+    if previous and previous.get("commit") == commit:
+        candidates.append(previous)
+    return min(candidates, key=lambda p: (-p["build"], instant(p["at"])), default=None)
 
 
 def build(snapshot, previous=None):
@@ -376,8 +443,10 @@ def build(snapshot, previous=None):
     pulls = {p["number"]: p for p in snapshot["pulls"]}
     commands = snapshot.get("commands", previous.get("signals", {}).get("commands", []))
     history = snapshot.get("hold_commands", commands)
-    batches, routes, refusals, live_posts, posted_build = delivery_posts(
-        history, pulls, now
+    batches, routes, refusals, live_posts = delivery_posts(history, pulls, now)
+    posted_build = verified_testflight_post(
+        history, snapshot["deployments"], now,
+        previous.get("signals", {}).get("testflight_post"),
     )
     changes = []
     confirmed_routes = set()
@@ -441,14 +510,8 @@ def build(snapshot, previous=None):
                 and r.get("state") == "APPROVED"
                 and unchanged_after(pull, r.get("commit_id"))
             ]
-            if pull.get("fable_needed") and not pull.get("fable_not_needed"):
-                arrivals += [
-                    c["created_at"]
-                    for c in pull.get("comments", [])
-                    if c.get("fable_accept")
-                    and c.get("association") in TRUSTED
-                    and c["created_at"] >= revision
-                ]
+            if accepted_at := fable_accepted_at(pull):
+                arrivals.append(accepted_at)
             route = routes.get(change["number"])
             refusal = refusals.get(change["number"])
             if route and refusal and instant(refusal) > instant(route[0]):

@@ -206,3 +206,115 @@ class TestTheBagKeyIsNotASource:
         with_clock = dict(self.BAG, **{LIVE_STATE_CLOCK_KEY: SCORE_CHANGE.isoformat()})
         assert LIVE_STATE_CLOCK_KEY not in format_probability_sources(with_clock)
         assert set(format_probability_sources(with_clock)) == set(format_probability_sources(self.BAG))
+
+
+class TestHistoryRouteWithholdsStaleSportsbooksWhenBlendSwitchOff:
+    """#12938: when PROJECTED_FINAL_BLEND_ENABLED is off (production default),
+    `GET /api/events/{id}/history` still filters live sportsbook snapshots
+    by Ruling 233: A so `pm_spread_data.projected_final` never leaks a stale
+    `history[-1]` sportsbook line while `/api/events/{id}` withholds it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_history_route_switch_off_withholds_stale_sportsbooks_and_uses_current_lines(
+        self, monkeypatch
+    ):
+        from unittest.mock import MagicMock
+
+        from app.routes.events import get_event_odds_history
+        from app.utils.binary_spread import PROJECTED_FINAL_BLEND_ENV
+        from tests.test_projection_source_confidence_3921 import _DispatchingSession
+
+        now = datetime.now(timezone.utc)
+        score_change = now - timedelta(seconds=90)
+        fresh = now - timedelta(seconds=30)
+        stale = now - timedelta(seconds=600)
+
+        live_event = SimpleNamespace(
+            id=15350027,
+            status="live",
+            commence_time=now - timedelta(hours=2),
+            completed_at=None,
+            home_team_name="Stanford Cardinal",
+            away_team_name="UC Irvine Anteaters",
+            home_score=65,
+            away_score=61,
+            sport=SimpleNamespace(key="basketball_ncaab"),
+            sport_id=3,
+            box_score_data=None,
+            win_probability_sources={
+                "kalshi": {"value": 0.995},
+                LIVE_STATE_CLOCK_KEY: score_change.isoformat(),
+            },
+        )
+
+        def _sb_snap(book: str, *, captured_at: datetime, spread: float, total: float):
+            return SimpleNamespace(
+                id=1,
+                event_id=15350027,
+                bookmaker=book,
+                captured_at=captured_at,
+                valid_until=None,  # still synthetic-extended in history[-1]
+                home_win_probability=0.90,
+                away_win_probability=0.10,
+                home_odds=-900,
+                away_odds=600,
+                home_spread=spread,
+                over_under=total,
+                projected_home_score=round((total - spread) / 2, 1),
+                projected_away_score=round((total + spread) / 2, 1),
+            )
+
+        class _SessionWithOdds(_DispatchingSession):
+            def __init__(self, event, markets, odds_snaps):
+                super().__init__(event, markets)
+                self._odds_snaps = list(odds_snaps)
+
+            async def execute(self, stmt, *args, **kwargs):
+                if "FROM odds_snapshots" in str(stmt):
+                    class _Res:
+                        def __init__(self, rows):
+                            self._rows = rows
+
+                        def scalars(self):
+                            return self
+
+                        def all(self):
+                            return list(self._rows)
+
+                    return _Res(self._odds_snaps)
+                return await super().execute(stmt, *args, **kwargs)
+
+        monkeypatch.setenv(PROJECTED_FINAL_BLEND_ENV, "false")
+
+        stale_payload = await get_event_odds_history(
+            event_id=15350027,
+            hours=24,
+            response=MagicMock(headers={}),
+            db=_SessionWithOdds(
+                live_event,
+                (),
+                [_sb_snap("betrivers", captured_at=stale, spread=-2.5, total=135.5)],
+            ),
+        )
+        assert (stale_payload.get("pm_spread_data") or {}).get("projected_final") is None
+
+        fresh_payload = await get_event_odds_history(
+            event_id=15350027,
+            hours=24,
+            response=MagicMock(headers={}),
+            db=_SessionWithOdds(
+                live_event,
+                (),
+                [
+                    _sb_snap("draftkings", captured_at=fresh, spread=-6.0, total=134.0),
+                    _sb_snap("betrivers", captured_at=stale, spread=-2.5, total=135.5),
+                ],
+            ),
+        )
+        pf = (fresh_payload.get("pm_spread_data") or {}).get("projected_final")
+        assert pf is not None
+        assert pf["spread_source"] == "sportsbook"
+        assert pf["total_source"] == "sportsbook"
+        assert pf["home_score"] == 70.0
+        assert pf["away_score"] == 64.0

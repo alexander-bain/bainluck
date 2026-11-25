@@ -353,11 +353,11 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
     (
         "canonical-shortcircuit-restored",
         EVENTS,
-        """    name = (market.name or "").strip()
+        """    name = (futures_reader_name(market) or "").strip()
     name = _FUTURES_DEDUP_STRIP.sub("", name).strip()""",
         """    if getattr(market, "canonical_market_key", None):
         return f"canonical:{market.canonical_market_key}"
-    name = (market.name or "").strip()
+    name = (futures_reader_name(market) or "").strip()
     name = _FUTURES_DEDUP_STRIP.sub("", name).strip()""",
         DEDUP_ORACLE,
         "Puts a CATEGORY key back in the identity slot: `president` returns one "

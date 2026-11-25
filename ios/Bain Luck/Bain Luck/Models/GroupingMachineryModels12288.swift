@@ -105,9 +105,20 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
     let name: String
     let probability: Double
     let renderedPercent: Int
+    let unflooredPercent: Int?
     let art: MachinerySubjectArt?
+    let sourceMark: SourceMark?
 
     var id: String { "\(marketId ?? 0):\(outcomeId):\(name)" }
+
+    var probabilityLabel: String {
+        if probability == 0 && unflooredPercent == nil {
+            return "\(renderedPercent)%"
+        }
+        return DiscoverRoundupCardModel.probabilityText(
+            probability: probability, renderedPercent: unflooredPercent ?? renderedPercent
+        )
+    }
 
     init(
         outcomeId: Int,
@@ -115,14 +126,18 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
         name: String,
         probability: Double,
         renderedPercent: Int,
-        art: MachinerySubjectArt? = nil
+        unflooredPercent: Int? = nil,
+        art: MachinerySubjectArt? = nil,
+        sourceMark: SourceMark? = nil
     ) {
         self.outcomeId = outcomeId
         self.marketId = marketId
         self.name = name
         self.probability = probability
         self.renderedPercent = renderedPercent
+        self.unflooredPercent = unflooredPercent
         self.art = art
+        self.sourceMark = sourceMark
     }
 
     init(from decoder: Decoder) throws {
@@ -137,7 +152,9 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
         } else {
             self.renderedPercent = Int((prob * 100.0).rounded())
         }
+        self.unflooredPercent = c.decodeFirst(Int.self, keys: ["unflooredPercent", "unfloored_percent"])
         self.art = c.decodeFirst(MachinerySubjectArt.self, keys: ["art"])
+        self.sourceMark = c.decodeFirst(SourceMark.self, keys: ["sourceMark", "source_mark"])
     }
 }
 
@@ -153,6 +170,8 @@ nonisolated struct MachineryEventVisualItem: Decodable, Equatable, Identifiable,
     let commenceTime: String
     let awayArt: MachinerySubjectArt?
     let homeArt: MachinerySubjectArt?
+    let sourceMark: SourceMark?
+    let awaySourceMark: SourceMark?
 
     var id: Int { eventId }
 
@@ -166,7 +185,9 @@ nonisolated struct MachineryEventVisualItem: Decodable, Equatable, Identifiable,
         homePct: Int,
         commenceTime: String = "",
         awayArt: MachinerySubjectArt? = nil,
-        homeArt: MachinerySubjectArt? = nil
+        homeArt: MachinerySubjectArt? = nil,
+        sourceMark: SourceMark? = nil,
+        awaySourceMark: SourceMark? = nil
     ) {
         self.eventId = eventId
         self.awayTeam = awayTeam.isEmpty ? awayShort : awayTeam
@@ -178,6 +199,8 @@ nonisolated struct MachineryEventVisualItem: Decodable, Equatable, Identifiable,
         self.commenceTime = commenceTime
         self.awayArt = awayArt
         self.homeArt = homeArt
+        self.sourceMark = sourceMark
+        self.awaySourceMark = awaySourceMark
     }
 
     init(from decoder: Decoder) throws {
@@ -196,6 +219,8 @@ nonisolated struct MachineryEventVisualItem: Decodable, Equatable, Identifiable,
         self.commenceTime = c.decodeFirst(String.self, keys: ["commenceTime", "commence_time"]) ?? ""
         self.awayArt = c.decodeFirst(MachinerySubjectArt.self, keys: ["awayArt", "away_art"])
         self.homeArt = c.decodeFirst(MachinerySubjectArt.self, keys: ["homeArt", "home_art"])
+        self.sourceMark = c.decodeFirst(SourceMark.self, keys: ["sourceMark", "source_mark"])
+        self.awaySourceMark = c.decodeFirst(SourceMark.self, keys: ["awaySourceMark", "away_source_mark"])
     }
 }
 
@@ -290,6 +315,7 @@ nonisolated struct MachineryHistorySeries: Decodable, Equatable, Identifiable, S
     let color: String
     let art: MachinerySubjectArt?
     let points: [MachineryHistorySeriesPoint]
+    let sourceMark: SourceMark?
 
     var id: Int { outcomeId }
 
@@ -299,7 +325,8 @@ nonisolated struct MachineryHistorySeries: Decodable, Equatable, Identifiable, S
         currentPct: Int,
         color: String,
         art: MachinerySubjectArt? = nil,
-        points: [MachineryHistorySeriesPoint]
+        points: [MachineryHistorySeriesPoint],
+        sourceMark: SourceMark? = nil
     ) {
         self.outcomeId = outcomeId
         self.name = name
@@ -307,6 +334,7 @@ nonisolated struct MachineryHistorySeries: Decodable, Equatable, Identifiable, S
         self.color = color
         self.art = art
         self.points = points
+        self.sourceMark = sourceMark
     }
 
     init(from decoder: Decoder) throws {
@@ -317,6 +345,7 @@ nonisolated struct MachineryHistorySeries: Decodable, Equatable, Identifiable, S
         self.color = c.decodeFirst(String.self, keys: ["color"]) ?? "#2563EB"
         self.art = c.decodeFirst(MachinerySubjectArt.self, keys: ["art"])
         self.points = c.decodeFirst([MachineryHistorySeriesPoint].self, keys: ["points"]) ?? []
+        self.sourceMark = c.decodeFirst(SourceMark.self, keys: ["sourceMark", "source_mark"])
     }
 }
 
@@ -413,6 +442,7 @@ nonisolated struct MachineryHistoryChartItem: Decodable, Equatable, Identifiable
 nonisolated struct MachineryVisualBlock: Decodable, Equatable, Sendable {
     let formId: MachineryFormId
     let initialVisibleLimit: Int
+    let itemNoun: String?
     let pairedMetricSet: PairedMetricSet?
     let eventItems: [MachineryEventVisualItem]
     let marketItems: [MachineryMarketVisualItem]
@@ -422,9 +452,15 @@ nonisolated struct MachineryVisualBlock: Decodable, Equatable, Sendable {
         min(3, max(1, initialVisibleLimit))
     }
 
+    var effectiveItemNoun: String {
+        let trimmed = itemNoun?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "markets" : trimmed
+    }
+
     init(
         formId: MachineryFormId,
         initialVisibleLimit: Int = 3,
+        itemNoun: String? = nil,
         pairedMetricSet: PairedMetricSet? = nil,
         eventItems: [MachineryEventVisualItem] = [],
         marketItems: [MachineryMarketVisualItem] = [],
@@ -432,6 +468,8 @@ nonisolated struct MachineryVisualBlock: Decodable, Equatable, Sendable {
     ) {
         self.formId = formId
         self.initialVisibleLimit = initialVisibleLimit
+        let trimmed = itemNoun?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.itemNoun = (trimmed?.isEmpty == false) ? trimmed : nil
         self.pairedMetricSet = pairedMetricSet
         self.eventItems = eventItems
         self.marketItems = marketItems
@@ -440,10 +478,22 @@ nonisolated struct MachineryVisualBlock: Decodable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: MachineryCodingKey.self)
-        let rawForm = c.decodeFirst(String.self, keys: ["formId", "form_id", "form"]) ?? "sibling_fields_grid"
-        let resolvedForm = MachineryFormId(rawValue: rawForm) ?? .siblingFieldsGrid
+        guard let rawForm = c.decodeFirst(String.self, keys: ["formId", "form_id", "form"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawForm.isEmpty,
+              let resolvedForm = MachineryFormId(rawValue: rawForm) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Unrecognized MachineryVisualBlock form_id"
+                )
+            )
+        }
         self.formId = resolvedForm
         self.initialVisibleLimit = c.decodeFirst(Int.self, keys: ["initialVisibleLimit", "initial_visible_limit"]) ?? 3
+        let rawNoun = c.decodeFirst(String.self, keys: ["itemNoun", "item_noun", "unitNoun", "unit_noun"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.itemNoun = (rawNoun?.isEmpty == false) ? rawNoun : nil
         self.pairedMetricSet = c.decodeFirst(PairedMetricSet.self, keys: ["pairedMetricSet", "paired_metric_set"])
 
         switch resolvedForm {
@@ -562,8 +612,17 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         let c = try decoder.container(keyedBy: MachineryCodingKey.self)
         let decodedSlug = c.decodeFirst(String.self, keys: ["slug"]) ?? ""
         self.slug = decodedSlug
-        let rawForm = c.decodeFirst(String.self, keys: ["formId", "form_id"]) ?? "sibling_fields_grid"
-        let resolvedForm = MachineryFormId(rawValue: rawForm) ?? .siblingFieldsGrid
+        guard let rawForm = c.decodeFirst(String.self, keys: ["formId", "form_id"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawForm.isEmpty,
+              let resolvedForm = MachineryFormId(rawValue: rawForm) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Unrecognized MachineryCardContract form_id"
+                )
+            )
+        }
         self.formId = resolvedForm
         self.kicker = c.decodeFirst(String.self, keys: ["kicker"]) ?? "ROUND-UP"
         self.title = c.decodeFirst(String.self, keys: ["title"]) ?? ""

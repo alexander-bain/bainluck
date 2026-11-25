@@ -3,7 +3,8 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from http.client import HTTPException
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ import urllib.request
 import urllib.parse
 
 from model import build, instant, iso, public_title, PACIFIC, TRUSTED
-from ci_queue import attach_machine_reason, machine_queue
+from ci_queue import machine_queue
 from crew import add_crew_week, add_day_replay
 from daily_picture import (
     DAILY_PICTURE_ENABLED, asset_label, asset_name, gallery, metered_picture,
@@ -27,10 +28,15 @@ from journeys import add_journeys
 from signs import add_signs, switched_off, wrong_numbers
 from notes import ModelBudget, make_notes
 from speech import make_speech
-from signals import commands_from, crew_posts_from, test_file
+from signals import LANE_UPDATE_WINDOW, commands_from, crew_posts_from, is_test_file, lane_updates_from
 
 REPO = "alexander-bain/bainluck"
 RELEASE = "factory-data"
+READ_FAILURES = (OSError, HTTPException, ValueError)
+FABLE_ACCEPT_SHA = re.compile(
+    r"^\*\*Fable(?: look)?(?:\*\*)?[ :—–-]+(?:\*\*)?ACCEPT(?:ED)?\s+at\s+`?([a-f0-9]{7,40})\b",
+    re.I,
+)
 RELEASE_HOLD = re.compile(
     r"(?<!\bnot )(?<!\bno longer )(?<!\bwas )(?<!\bno need to )"
     r"\b(?:holds?(?:\s+(?:the\s+)?merge)?|held|do not merge)\s+(?:"
@@ -38,6 +44,26 @@ RELEASE_HOLD = re.compile(
     r"|until\b[^\n]{0,80}?\b1\.0\.7\b[^\n]{0,40}?\b(?:app store|upload|freeze))",
     re.I,
 )
+
+
+def retry_read(read):
+    for next_attempt in (2, 3):
+        try:
+            return read()
+        except READ_FAILURES as error:
+            if isinstance(error, urllib.error.HTTPError):
+                if error.code != 408 and not 500 <= error.code <= 599:
+                    raise
+                error.close()
+                reason = f"HTTP {error.code}"
+            else:
+                reason = type(error).__name__
+            print(
+                f"FACTORY_READ_RETRY {reason}. Attempt {next_attempt} of 3 in 20 seconds.",
+                file=sys.stderr,
+            )
+            time.sleep(20)
+    return read()
 
 
 class GitHub:
@@ -64,7 +90,8 @@ class GitHub:
             and data
             and not re.search(r"\bmutation\b", data.get("query", ""))
         )
-        if self.read_only and method != "GET" and not graphql_read:
+        is_read = method == "GET" or (method == "POST" and graphql_read)
+        if self.read_only and not is_read:
             raise RuntimeError("This collector run has read-only API access")
         body = (
             binary
@@ -91,8 +118,7 @@ class GitHub:
                 ),
             },
         )
-        attempts = 2 if method == "GET" or (method == "POST" and graphql_read) else 1
-        for attempt in range(attempts):
+        def send():
             with self.lock:
                 self.api_calls += 1
                 self.api_calls_by_resource[
@@ -102,13 +128,12 @@ class GitHub:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
                     self._remember_rate(response.headers)
                     content = response.read()
-                return json.loads(content) if content else None
+                return json.loads(content) if content or is_read else None
             except urllib.error.HTTPError as error:
                 self._remember_rate(error.headers)
-                if attempt + 1 == attempts or not 500 <= error.code <= 599:
-                    raise
-                error.close()
-                time.sleep(1)
+                raise
+
+        return retry_read(send) if is_read else send()
 
     def _remember_rate(self, headers):
         remaining = headers.get("X-RateLimit-Remaining")
@@ -117,15 +142,19 @@ class GitHub:
                 self.rates[headers.get("X-RateLimit-Resource", "core")] = int(remaining)
 
     def public_json(self, url):
-        self.public_reads += 1
-        return read_public(url)
+        def read():
+            with self.lock:
+                self.public_reads += 1
+            return read_public(url)
+
+        return retry_read(read)
 
     def metrics(self):
         try:
             limits = self.request("rate_limit")["resources"]
             self.rates.setdefault("core", limits["core"]["remaining"])
             self.rates.setdefault("graphql", limits["graphql"]["remaining"])
-        except (urllib.error.URLError, ValueError, KeyError):
+        except (OSError, HTTPException, ValueError, KeyError):
             # Keep the last response-header budgets if the final meter read fails.
             pass
         return {
@@ -162,11 +191,13 @@ def safe_comment(comment):
     fable = body.startswith("**Fable")
     heading = body.partition("\n")[0]
     changes = fable and bool(re.search(r"\bCHANGES\b", heading))
+    at_sha = FABLE_ACCEPT_SHA.match(heading) if not changes else None
     return {
         "created_at": comment["created_at"],
         "updated_at": comment["updated_at"],
         "association": comment.get("author_association"),
         "fable_changes": changes,
+        **({"fable_accept_sha": at_sha[1].lower()} if at_sha else {}),
         "fable_accept": fable
         and not changes
         and bool(
@@ -310,10 +341,10 @@ def annotate_test_commits(api, pulls, cache):
                     bool(files)
                     and len(files) < 3000
                     and all(
-                        test_file(f["filename"])
+                        is_test_file(f["filename"])
                         and (
                             not f.get("previous_filename")
-                            or test_file(f["previous_filename"])
+                            or is_test_file(f["previous_filename"])
                         )
                         for f in files
                     )
@@ -482,13 +513,15 @@ def history_signals(api, midnight, injury_since):
     latest = {}
     cursor = None
     reports = None
+    # Each commit can carry 100 nested checks. Keep pages small enough for
+    # GitHub to finish the query and follow the cursor to the same receipts.
     while True:
         query = """query($cursor:String,$reports:String!,$firstPage:Boolean!) {
           reports: search(query:$reports,type:ISSUE,first:100) @include(if:$firstPage) {
             issueCount pageInfo { hasNextPage } nodes { ... on Issue { number title createdAt } }
           }
           repository(owner:"alexander-bain",name:"bainluck") {
-          defaultBranchRef { target { ... on Commit { history(first:100,after:$cursor) {
+          defaultBranchRef { target { ... on Commit { history(first:24,after:$cursor) {
             pageInfo {hasNextPage endCursor} nodes { oid committedDate
               statusCheckRollup { contexts(first:100) { nodes {
                 ... on StatusContext { context state createdAt description }
@@ -557,6 +590,65 @@ def history_signals(api, midnight, injury_since):
             break
         cursor = history["pageInfo"]["endCursor"]
     return receipts, latest, starts, reports
+
+
+def master_checks(api, runs, completed, pulls):
+    ci = completed[0] if completed else None
+    latest = next((run for run in runs if run["name"] == "CI"), None)
+    if latest and (not ci or latest["id"] > ci["id"]):
+        if latest["status"] == "completed":
+            ci = latest
+        elif latest.get("run_attempt", 1) > 1:
+            # A rerun removes the failed run from the completed list.
+            attempt = latest["run_attempt"] - 1
+            endpoint = f"repos/{REPO}/actions/runs/{latest['id']}/attempts/{attempt}"
+            ci = None
+            try:
+                prior = api.request(endpoint, timeout=5)
+            except READ_FAILURES:
+                prior = None
+            if (
+                prior
+                and prior.get("id") == latest["id"]
+                and prior.get("run_attempt") == attempt
+                and prior.get("head_sha") == latest["head_sha"]
+                and prior.get("status") == "completed"
+            ):
+                ci = prior
+
+    conclusion = ci.get("conclusion") if ci else None
+    result = {
+        "tests": {"failure": "failing", "timed_out": "failing", "success": "passing"}.get(
+            conclusion, "unknown"
+        ),
+        "tests_at": ci.get("updated_at") if ci else None,
+    }
+    if conclusion != "failure" or not ci.get("head_sha") or not ci.get("run_attempt"):
+        return result
+
+    # A failed workflow can include jobs unrelated to the server release.
+    pull = next(
+        (p for p in pulls if p.get("merge_commit_sha") == ci["head_sha"]
+         and p.get("merged_at") and any(path.startswith("backend/") for path in p.get("files", ()))),
+        None,
+    )
+    if not pull:
+        return result
+    endpoint = f"repos/{REPO}/actions/runs/{ci['id']}/attempts/{ci['run_attempt']}/jobs?per_page=100"
+    try:
+        jobs = api.request(endpoint, timeout=5).get("jobs", [])
+    except READ_FAILURES:
+        return result
+    if (
+        any(job.get("name") == "deploy" and job.get("conclusion") == "skipped" for job in jobs)
+        and any(
+            job.get("conclusion") == "failure"
+            and re.fullmatch(r"backend-tests(?: \([0-9]+\))?", job.get("name", ""))
+            for job in jobs
+        )
+    ):
+        result["blocked_server_release"] = pull["number"]
+    return result
 
 
 def collect(api, previous=None, cache=None, open_summaries=None):
@@ -637,7 +729,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     last_read = (
         previous.get("generated_at") if previous.get("injury_clock") else injury_since
     )
-    comments_since = min(floor, instant(last_read), now - timedelta(minutes=15))
+    comments_since = min(floor, instant(last_read), now - LANE_UPDATE_WINDOW)
     comments = api.pages(f"issues/12779/comments?since={iso(comments_since)}")
     commands = commands_from(
         c for c in comments if instant(c.get("updated_at", c["created_at"])) >= floor
@@ -695,16 +787,8 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     completed = api.request(
         f"repos/{REPO}/actions/workflows/ci.yml/runs?branch=master&event=push&status=completed&per_page=1"
     )["workflow_runs"]
-    ci = completed[0] if completed else None
-    tests = "unknown"
-    if ci:
-        if ci["conclusion"] in {"failure", "timed_out"}:
-            tests = "failing"
-        elif ci["conclusion"] == "success":
-            tests = "passing"
     master = {
-        "tests": tests,
-        "tests_at": ci.get("updated_at") if ci else None,
+        **master_checks(api, runs, completed, pulls),
         "testflight": latest.get("Apps", {}).get("state", "unknown"),
         "successful_runs": [
             {"started_at": run["run_started_at"], "finished_at": run["updated_at"]}
@@ -715,6 +799,19 @@ def collect(api, previous=None, cache=None, open_summaries=None):
             and run.get("updated_at")
         ],
     }
+    try:
+        active = api.request(
+            f"repos/{REPO}/actions/workflows/ci.yml/runs?branch=master&event=push&status=in_progress&per_page=100"
+        )
+    except READ_FAILURES:
+        active = None
+    active_ci = active.get("workflow_runs") if isinstance(active, dict) else None
+    if isinstance(active_ci, list) and all(
+        isinstance(run, dict) and run.get("status") == "in_progress"
+        and isinstance(run.get("run_started_at"), str) and run["run_started_at"]
+        for run in active_ci
+    ):
+        master["oldest_running_ci_at"] = min((run["run_started_at"] for run in active_ci), default=None)
     flight_run = next((r for r in runs if r["name"] == "TestFlight release"), None)
     if flight_run and flight_run["conclusion"] in {"failure", "cancelled", "timed_out"}:
         master["testflight"] = flight_run["conclusion"]
@@ -722,6 +819,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     return {
         "captured_at": iso(captured),
         "crew_posts": crew_posts_from(comments, captured),
+        "lane_updates": lane_updates_from(comments, captured),
         "pulls": pulls,
         "deployments": receipts,
         "deploy_starts": starts,
@@ -732,9 +830,6 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         },
         "master": master,
         "coverage": coverage,
-        "master_ci_active": any(
-            run["name"] == "CI" and run.get("status") != "completed" for run in runs
-        ),
         "commands": reconcile_commands(commands, pulls, previous),
         "hold_commands": previous.get("signals", {}).get("commands", []) + commands,
     }
@@ -925,8 +1020,12 @@ def main():
             if picture:
                 _, content = picture
                 sample = args.output.with_name("factory-measured-picture.webp")
-                sample.parent.mkdir(parents=True, exist_ok=True)
-                sample.write_bytes(content)
+                try:
+                    sample.parent.mkdir(parents=True, exist_ok=True)
+                    sample.write_bytes(content)
+                except OSError:
+                    picture_stats["status"] = "write-failed"
+                    raise
             return
 
         if args.publish:
@@ -935,15 +1034,17 @@ def main():
         result = build(snapshot, previous)
         if posts := snapshot.get("crew_posts"):
             result["crew_posts"] = posts
+        if updates := snapshot.get("lane_updates"):
+            result["lane_updates"] = {
+                lane: {**update, "text": public_title(update["text"])}
+                for lane, update in updates.items()
+            }
         add_events(result, snapshot, previous, cache)
         add_journeys(result, previous)
         add_day_replay(result, previous)
         crew_week = add_crew_week(result, snapshot["pulls"], cache.get("crew_week"))
         add_signs(result, snapshot, previous)
-        queue = machine_queue(api, REPO, datetime.now(timezone.utc))
-        result["signals"]["checks_queue"] = queue["display"]
-        if snapshot.get("master_ci_active"):
-            attach_machine_reason(result, queue["master_jobs"])
+        result["signals"]["checks_queue"] = machine_queue(api, REPO, datetime.now(timezone.utc))
 
         result["notes"], note_stats = make_notes(
             result, snapshot["pulls"], previous.get("notes") or {}, budget, key
@@ -953,14 +1054,37 @@ def main():
         )
         if args.publish and release:
             assets = list(release.get("assets", []))
-            if DAILY_PICTURE_ENABLED:
+            today = budget.now.astimezone(PACIFIC).date().isoformat()
+            today_asset = asset_name({"day": today})
+            if DAILY_PICTURE_ENABLED and any(
+                asset.get("name") == today_asset and asset.get("state") == "uploaded" for asset in assets
+            ):
+                picture_stats = {"status": "already-published"}
+            elif DAILY_PICTURE_ENABLED:
                 picture, picture_stats = metered_picture(result, budget, key)
                 if picture:
                     try:
-                        assets.append(publish_daily_picture(api, release, picture))
-                        picture_stats["status"] = "published"
-                    except (urllib.error.URLError, TimeoutError, ValueError):
-                        picture_stats["status"] = "upload-failed"
+                        uploaded = publish_daily_picture(api, release, picture)
+                    except urllib.error.HTTPError as error:
+                        picture_stats["status"] = (
+                            "upload-unconfirmed" if error.code == 408 or error.code >= 500
+                            else "upload-failed"
+                        )
+                    except READ_FAILURES:
+                        # A lost reply can follow a successful upload. Keep the
+                        # paid reservation and let the next read reconcile it.
+                        picture_stats["status"] = "upload-unconfirmed"
+                    else:
+                        if (
+                            isinstance(uploaded, dict)
+                            and uploaded.get("name") == asset_name(picture[0])
+                            and uploaded.get("label") == asset_label(picture[0])
+                            and uploaded.get("state") == "uploaded"
+                        ):
+                            assets.append(uploaded)
+                            picture_stats["status"] = "published"
+                        else:
+                            picture_stats["status"] = "upload-unconfirmed"
             if records := gallery(assets, budget.now):
                 result["pictures"] = records
         meter = budget.state()

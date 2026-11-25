@@ -5,7 +5,7 @@ from unittest.mock import Mock
 from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ci_queue import attach_machine_reason, machine_queue
+from ci_queue import machine_queue
 from model import instant
 
 NOW = instant("2026-11-19T02:20:00Z")
@@ -74,10 +74,10 @@ class TestMachineQueue(unittest.TestCase):
             Mock(request=Mock(side_effect=self.response)), "owner/repo", NOW
         )
 
-    def test_keeps_run_counts_separate_from_the_40_running_and_95_waiting_jobs(self):
+    def test_keeps_run_counts_separate_from_jobs_in_the_running_run(self):
         queue = self.measured()
         self.assertEqual(
-            queue["display"],
+            queue,
             {
                 "machines": 40,
                 "machines_busy": 40,
@@ -87,18 +87,6 @@ class TestMachineQueue(unittest.TestCase):
                 "queued_without_jobs": 0,
             },
         )
-        jobs = {"running": 40, "waiting": 95}
-        self.assertEqual(queue["master_jobs"], jobs)
-        result = {
-            "stops": [
-                {"kind": "line-stalled", "line": "Server"},
-                {"kind": "line-stalled", "line": "Apps"},
-                {"kind": "hold", "line": "Apps"},
-            ]
-        }
-        attach_machine_reason(result, queue["master_jobs"])
-        self.assertEqual(result["stops"][0]["machines"], jobs)
-        self.assertNotIn("machines", result["stops"][1])
 
     def test_large_queue_includes_waiting_runs_and_longest_wait_on_the_second_page(
         self,
@@ -107,7 +95,7 @@ class TestMachineQueue(unittest.TestCase):
             self.queued.append({"id": run, "status": "queued"})
             self.jobs[run] = [queued_job(3000 + run)]
         self.jobs[132][0]["created_at"] = "2026-11-18T23:00:00Z"
-        queue = self.measured()["display"]
+        queue = self.measured()
         self.assertEqual(queue["waiting"], 131)
         self.assertEqual(queue["running"], 1)
         self.assertEqual(queue["longest_wait_minutes"], 200)
@@ -118,14 +106,14 @@ class TestMachineQueue(unittest.TestCase):
             created = "2020-01-01T00:00:00Z" if run < 505 else "2026-11-18T00:00:00Z"
             self.queued.append({"id": run, "status": "queued", "created_at": created})
             self.jobs[run] = [queued_job(5000 + run)]
-        self.assertEqual(self.measured()["display"]["waiting"], 1002)
+        self.assertEqual(self.measured()["waiting"], 1002)
 
     def test_a_queued_run_without_jobs_has_no_machine_wait_or_wait_time(self):
         self.queued.append(
             {"id": 3, "status": "queued", "created_at": "2026-11-01T00:00:00Z"}
         )
         self.jobs[3] = []
-        queue = self.measured()["display"]
+        queue = self.measured()
         self.assertEqual(queue["waiting"], 1)
         self.assertEqual(queue["longest_wait_minutes"], 10)
         self.assertEqual(queue["queued_without_jobs"], 1)
@@ -138,27 +126,27 @@ class TestMachineQueue(unittest.TestCase):
         self.jobs[4][0]["labels"] = ["self-hosted", "xcode-27"]
         self.jobs[2][94]["labels"] = ["xcode-27"]
         queue = self.measured()
-        self.assertEqual(queue["display"]["waiting"], 2)
-        self.assertEqual(queue["display"]["longest_wait_minutes"], 15)
-        self.assertEqual(queue["master_jobs"], {"running": 40, "waiting": 96})
+        self.assertEqual(queue["waiting"], 2)
+        self.assertEqual(queue["longest_wait_minutes"], 15)
+        self.assertEqual(queue["machines_busy"], 40)
 
     def test_a_wait_with_no_timestamp_keeps_the_count_and_omits_the_longest_time(self):
         self.jobs[1][0].pop("created_at")
-        queue = self.measured()["display"]
+        queue = self.measured()
         self.assertEqual(queue["waiting"], 1)
         self.assertIsNone(queue["longest_wait_minutes"])
 
-    def test_an_unrelated_queue_does_not_explain_the_dock(self):
+    def test_queued_jobs_in_a_running_run_do_not_make_it_a_waiting_run(self):
         self.jobs[1][0]["status"] = "completed"
         result = self.measured()
-        self.assertEqual(result["display"]["waiting"], 0)
-        self.assertIsNone(result["master_jobs"])
+        self.assertEqual(result["waiting"], 0)
+        self.assertEqual(result["running"], 1)
 
     def test_quiet_queue_reports_zero_machines_busy(self):
         self.queued = []
         self.running = []
         self.assertEqual(
-            self.measured()["display"],
+            self.measured(),
             {
                 "machines": 40,
                 "machines_busy": 0,
@@ -169,7 +157,7 @@ class TestMachineQueue(unittest.TestCase):
             },
         )
 
-    def test_partial_response_keeps_only_the_capacity_and_gives_no_cause(self):
+    def test_partial_response_keeps_only_the_capacity(self):
         original = self.response
 
         def partial(endpoint, **kwargs):
@@ -181,10 +169,7 @@ class TestMachineQueue(unittest.TestCase):
         self.response = partial
         self.assertEqual(
             self.measured(),
-            {
-                "display": {"machines": 40, "unavailable": True},
-                "master_jobs": None,
-            },
+            {"machines": 40, "unavailable": True},
         )
 
     def test_retries_an_inventory_that_shifted_during_the_read(self):
@@ -200,4 +185,4 @@ class TestMachineQueue(unittest.TestCase):
             return result
 
         self.response = shifting
-        self.assertEqual(self.measured()["display"]["waiting"], 1)
+        self.assertEqual(self.measured()["waiting"], 1)

@@ -75,7 +75,8 @@
       "discover_category": "culture",
       "set_only": false,
       "short_label": "Taylor Swift meeting Pope Leo XIV",
-      "headline_with_phrase": "Taylor Swift meeting Pope Leo XIV before 2027"
+      "headline_with_phrase": "Taylor Swift meeting Pope Leo XIV before 2027",
+      "art_subject": "Taylor Swift"
     },
     "34191685": {
       "market_id": 34191685,
@@ -101,7 +102,8 @@
       "discover_category": "tech",
       "set_only": false,
       "short_label": "Elon Musk visiting Mars",
-      "headline_with_phrase": "Elon Musk visiting Mars in his lifetime"
+      "headline_with_phrase": "Elon Musk visiting Mars in his lifetime",
+      "art_subject": "Elon Musk"
     },
     "9997262": {
       "market_id": 9997262,
@@ -150,7 +152,8 @@
       "discover_category": "entertainment",
       "set_only": false,
       "short_label": "Trump on SNL",
-      "headline_with_phrase": "Trump on SNL"
+      "headline_with_phrase": "Trump on SNL",
+      "art_subject": "Donald Trump"
     },
     "66925975": {
       "market_id": 66925975,
@@ -162,7 +165,8 @@
       "discover_category": "culture",
       "set_only": false,
       "short_label": "Bryan Johnson dunking before 2027",
-      "headline_with_phrase": "Bryan Johnson dunking before 2027"
+      "headline_with_phrase": "Bryan Johnson dunking before 2027",
+      "art_subject": "Bryan Johnson"
     },
     "109633": {
       "market_id": 109633,
@@ -176,7 +180,8 @@
       "discover_category": "entertainment",
       "set_only": false,
       "short_label": "Elon Musk cast in Superman",
-      "headline_with_phrase": "Elon Musk cast in the next Superman film"
+      "headline_with_phrase": "Elon Musk cast in the next Superman film",
+      "art_subject": "Elon Musk"
     },
     "112833": {
       "market_id": 112833,
@@ -203,7 +208,8 @@
         57418931
       ],
       "short_label": "Kim Kardashian passing the bar",
-      "headline_with_phrase": "Kim Kardashian passing the bar before 2027"
+      "headline_with_phrase": "Kim Kardashian passing the bar before 2027",
+      "art_subject": "Kim Kardashian"
     },
     "52755889": {
       "market_id": 52755889,
@@ -215,7 +221,8 @@
       "discover_category": "entertainment",
       "set_only": false,
       "short_label": "MrBeast hitting 1B subscribers",
-      "headline_with_phrase": "MrBeast hitting 1B subscribers"
+      "headline_with_phrase": "MrBeast hitting 1B subscribers",
+      "art_subject": "MrBeast"
     },
     "109316": {
       "market_id": 109316,
@@ -228,7 +235,8 @@
       "discover_category": "culture",
       "set_only": false,
       "short_label": "Elon Musk buying a major sports team",
-      "headline_with_phrase": "Elon Musk buying a major sports team before 2027"
+      "headline_with_phrase": "Elon Musk buying a major sports team before 2027",
+      "art_subject": "Elon Musk"
     },
     "56762760": {
       "market_id": 56762760,
@@ -267,7 +275,8 @@
       "discover_category": "entertainment",
       "set_only": false,
       "short_label": "Joe Rogan joining 60 Minutes",
-      "headline_with_phrase": "Joe Rogan joining 60 Minutes"
+      "headline_with_phrase": "Joe Rogan joining 60 Minutes",
+      "art_subject": "Joe Rogan"
     },
     "63336261": {
       "market_id": 63336261,
@@ -456,7 +465,8 @@
       "set_only": false,
       "short_label": "New Stranger Things episode",
       "headline_phrase": "A new Stranger Things episode {answer}",
-      "headline_with_phrase": "a new Stranger Things episode {answer}"
+      "headline_with_phrase": "a new Stranger Things episode {answer}",
+      "art_subject": "Stranger Things"
     },
     "108494": {
       "market_id": 108494,
@@ -500,7 +510,8 @@
       ],
       "short_label": "Frank Ocean's next album",
       "headline_phrase": "Frank Ocean's next album released {answer}",
-      "headline_with_phrase": "Frank Ocean's next album released {answer}"
+      "headline_with_phrase": "Frank Ocean's next album released {answer}",
+      "art_subject": "Frank Ocean"
     },
     "59693617": {
       "market_id": 59693617,
@@ -516,7 +527,8 @@
       ],
       "short_label": "Drake's next album",
       "headline_phrase": "Drake's next album released {answer}",
-      "headline_with_phrase": "Drake's next album released {answer}"
+      "headline_with_phrase": "Drake's next album released {answer}",
+      "art_subject": "Drake"
     },
     "109347": {
       "market_id": 109347,
@@ -528,7 +540,8 @@
       "discover_category": "entertainment",
       "set_only": false,
       "short_label": "Robert Downey Jr. back as Iron Man",
-      "headline_with_phrase": "Robert Downey Jr. back as Iron Man"
+      "headline_with_phrase": "Robert Downey Jr. back as Iron Man",
+      "art_subject": "Robert Downey Jr."
     },
     "108239": {
       "market_id": 108239,
@@ -540,7 +553,8 @@
       "discover_category": "entertainment",
       "set_only": false,
       "short_label": "Johnny Depp in Pirates",
-      "headline_with_phrase": "Johnny Depp in Pirates"
+      "headline_with_phrase": "Johnny Depp in Pirates",
+      "art_subject": "Johnny Depp"
     },
     "108275": {
       "market_id": 108275,

@@ -173,16 +173,23 @@ CERTAIN_LEG_PROBABILITY = 0.999
 #: module's.
 MAX_CERTAIN_LEGS = 1
 
+#: Lowest sum where an all-identical non-certain field is clearly a shared seed
+#: rather than 3-leg overround (e.g. ``[0.42, 0.42, 0.42]`` sums to ``1.26``
+#: while four teams seeded at ``0.48`` add to ``1.92``).
+SHARED_SEED_SUM_CEILING = 1.4
+
 OK = "ok"
 NOT_APPLICABLE_NOT_EXCLUSIVE = "not_applicable_not_exclusive"
 NOT_APPLICABLE_FIELD_TOO_SMALL = "not_applicable_field_too_small"
 REFUSED_FIELD_NOT_A_DISTRIBUTION = "refused_field_not_a_distribution"
 REFUSED_MULTIPLE_CERTAIN_LEGS = "refused_multiple_certain_legs"
+REFUSED_SHARED_SEED_OPENINGS = "refused_shared_seed_openings"
 
 #: Verdicts that mean "do not publish any opening in this field".
 REFUSAL_VERDICTS = (
     REFUSED_FIELD_NOT_A_DISTRIBUTION,
     REFUSED_MULTIPLE_CERTAIN_LEGS,
+    REFUSED_SHARED_SEED_OPENINGS,
 )
 
 
@@ -218,6 +225,20 @@ def classify_field_openings(
     # under, and the legs that pull it under are the honest ones.
     if sum(1 for p in priced if p >= CERTAIN_LEG_PROBABILITY) > MAX_CERTAIN_LEGS:
         return REFUSED_MULTIPLE_CERTAIN_LEGS
+
+    # #13485: a small field can carry a uniform untraded seed (four NFC South
+    # teams all at 0.48, optionally alongside a 1.0 "Other" row) whose total
+    # sits below FIELD_SUM_CEILING. Mean >= FIELD_MEAN_CEILING spares shared
+    # honest longshots (0.005..0.035), while sum > SHARED_SEED_SUM_CEILING spares
+    # ordinary 3-leg overround (such as [0.42, 0.42, 0.42]).
+    non_certain = [p for p in priced if p < CERTAIN_LEG_PROBABILITY]
+    if (
+        len(non_certain) >= MIN_FIELD_LEGS
+        and len(set(non_certain)) == 1
+        and non_certain[0] >= FIELD_MEAN_CEILING
+        and sum(non_certain) > SHARED_SEED_SUM_CEILING
+    ):
+        return REFUSED_SHARED_SEED_OPENINGS
     return OK
 
 

@@ -87,7 +87,10 @@ struct GameActivityRecord {
     convenience init() {
         self.init(service: SystemGameActivityService(),
                   isForeground: { UIApplication.shared.applicationState == .active },
-                  hasPushUpdates: { GameActivityRegistrationCoordinator.shared.canRequestPushToken })
+                  hasPushUpdates: {
+                      GameActivityRegistrationCoordinator.shared.canRequestPushToken
+                          || LiveActivityPushStartCoordinator254A.shared.hasAnyDeviceRegisteredActivity
+                  })
     }
     init(service: any GameActivityServing, isForeground: @escaping () -> Bool,
          hasPushUpdates: @escaping () -> Bool = { false },
@@ -217,6 +220,8 @@ struct GameActivityRecord {
             if snapshot.isTerminal {
                 await service.end(id: record.id, final: snapshot)
                 setStatus("Game finished. The Live Activity has ended.", for: snapshot.eventID, completion: true)
+                // #12304 — following a game to its final is a good moment.
+                if snapshot.isFinal { ReviewPromptSignals12304.shared.recordGoodMoment() }
             } else {
                 await service.update(id: record.id, snapshot: snapshot, staleDate: staleDate(for: snapshot))
             }

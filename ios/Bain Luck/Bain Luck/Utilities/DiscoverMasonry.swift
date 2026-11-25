@@ -1,4 +1,5 @@
 import CoreGraphics
+import SwiftUI
 
 // MARK: - How the Discover feed divides itself into columns
 
@@ -193,5 +194,202 @@ enum DiscoverMasonry {
             buckets[index % n].append(index)
         }
         return buckets
+    }
+
+    static let defaultRowsPerChunk = 1
+
+    /// Splits a contiguous card range into small chunk slices (`columnCount * rowsPerChunk`
+    /// items each) so an outer `LazyVStack` materializes only the viewport chunks while
+    /// preserving row-by-row left-to-right masonry inside each chunk.
+    static func chunkRanges(
+        in range: Range<Int>,
+        columnCount: Int,
+        rowsPerChunk: Int = defaultRowsPerChunk
+    ) -> [Range<Int>] {
+        guard !range.isEmpty else { return [] }
+        let step = max(1, columnCount) * max(1, rowsPerChunk)
+        var chunks: [Range<Int>] = []
+        chunks.reserveCapacity((range.count + step - 1) / step)
+        var start = range.lowerBound
+        while start < range.upperBound {
+            let end = min(start + step, range.upperBound)
+            chunks.append(start..<end)
+            start = end
+        }
+        return chunks
+    }
+
+    static func chunkRanges(
+        count: Int,
+        columnCount: Int,
+        rowsPerChunk: Int = defaultRowsPerChunk
+    ) -> [Range<Int>] {
+        guard count > 0 else { return [] }
+        return chunkRanges(in: 0..<count, columnCount: columnCount, rowsPerChunk: rowsPerChunk)
+    }
+
+    static func cardAreaWidth(
+        containerWidth: CGFloat,
+        maxContentWidth: CGFloat,
+        horizontalPadding: CGFloat = 16
+    ) -> CGFloat {
+        guard containerWidth.isFinite, containerWidth > 0 else { return 0 }
+        let clamped = maxContentWidth.isFinite ? min(containerWidth, maxContentWidth) : containerWidth
+        return max(0, clamped - horizontalPadding * 2)
+    }
+}
+
+struct MasonryColumnsLayoutCache {
+    var columnWidth: CGFloat = -1
+    var sizes: [CGSize] = []
+}
+
+/// Arranges cards round-robin across `columnCount` vertical masonry columns
+/// (`idx % cols`, matching `DiscoverMasonry.columns`) while preserving rank
+/// order in the view hierarchy so VoiceOver reads left-to-right, then down.
+struct MasonryColumnsLayout: Layout {
+    let columnCount: Int
+    let spacing: CGFloat
+
+    init(columnCount: Int, spacing: CGFloat = DiscoverMasonry.spacing) {
+        self.columnCount = max(1, columnCount)
+        self.spacing = spacing
+    }
+
+    func makeCache(subviews: Subviews) -> MasonryColumnsLayoutCache {
+        MasonryColumnsLayoutCache()
+    }
+
+    func updateCache(_ cache: inout MasonryColumnsLayoutCache, subviews: Subviews) {
+        cache.columnWidth = -1
+        cache.sizes.removeAll(keepingCapacity: true)
+    }
+
+    private func ensureSizes(
+        resolvedWidth: CGFloat,
+        subviews: Subviews,
+        cache: inout MasonryColumnsLayoutCache
+    ) -> (colWidth: CGFloat, sizes: [CGSize]) {
+        let cols = max(1, columnCount)
+        let colWidth = max(0, (resolvedWidth - spacing * CGFloat(cols - 1)) / CGFloat(cols))
+        if cache.columnWidth == colWidth && cache.sizes.count == subviews.count {
+            return (colWidth, cache.sizes)
+        }
+        let childProposal = ProposedViewSize(width: colWidth, height: nil)
+        let sizes = subviews.map { $0.sizeThatFits(childProposal) }
+        cache.columnWidth = colWidth
+        cache.sizes = sizes
+        return (colWidth, sizes)
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout MasonryColumnsLayoutCache
+    ) -> CGSize {
+        let resolvedWidth: CGFloat = {
+            if let width = proposal.width, width.isFinite, width > 0 {
+                return width
+            }
+            let fallback = proposal.replacingUnspecifiedDimensions().width
+            return fallback.isFinite ? fallback : 0
+        }()
+        let cols = max(1, columnCount)
+        guard !subviews.isEmpty else {
+            return CGSize(width: resolvedWidth, height: 0)
+        }
+        let (_, sizes) = ensureSizes(resolvedWidth: resolvedWidth, subviews: subviews, cache: &cache)
+        var columnHeights = Array(repeating: CGFloat(0), count: cols)
+        var columnCounts = Array(repeating: 0, count: cols)
+        for (idx, size) in sizes.enumerated() {
+            let col = idx % cols
+            if columnCounts[col] > 0 {
+                columnHeights[col] += spacing
+            }
+            columnHeights[col] += size.height
+            columnCounts[col] += 1
+        }
+        return CGSize(width: resolvedWidth, height: columnHeights.max() ?? 0)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout MasonryColumnsLayoutCache
+    ) {
+        guard !subviews.isEmpty else { return }
+        let cols = max(1, columnCount)
+        let (colWidth, sizes) = ensureSizes(resolvedWidth: bounds.width, subviews: subviews, cache: &cache)
+        var columnY = Array(repeating: bounds.minY, count: cols)
+        var columnCounts = Array(repeating: 0, count: cols)
+        for (idx, subview) in subviews.enumerated() {
+            let col = idx % cols
+            if columnCounts[col] > 0 {
+                columnY[col] += spacing
+            }
+            let x = bounds.minX + CGFloat(col) * (colWidth + spacing)
+            let size = sizes[idx]
+            subview.place(
+                at: CGPoint(x: x, y: columnY[col]),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: colWidth, height: size.height)
+            )
+            columnY[col] += size.height
+            columnCounts[col] += 1
+        }
+    }
+}
+
+/// Chunked lazy two-column masonry: keeps viewport laziness (`LazyVStack` over
+/// fixed multi-row chunks) while rendering each chunk via `MasonryColumnsLayout`
+/// so VoiceOver visits cards left-to-right, then down without building the whole feed.
+struct LazyMasonryColumns<CardContent: View>: View {
+    let range: Range<Int>
+    let columnCount: Int
+    let spacing: CGFloat
+    let rowsPerChunk: Int
+    let horizontalAlignment: HorizontalAlignment
+    let cardAlignment: Alignment
+    let content: (Int) -> CardContent
+
+    init(
+        range: Range<Int>,
+        columnCount: Int,
+        spacing: CGFloat = DiscoverMasonry.spacing,
+        rowsPerChunk: Int = DiscoverMasonry.defaultRowsPerChunk,
+        horizontalAlignment: HorizontalAlignment = .leading,
+        cardAlignment: Alignment = .leading,
+        @ViewBuilder content: @escaping (Int) -> CardContent
+    ) {
+        self.range = range
+        self.columnCount = max(1, columnCount)
+        self.spacing = spacing
+        self.rowsPerChunk = max(1, rowsPerChunk)
+        self.horizontalAlignment = horizontalAlignment
+        self.cardAlignment = cardAlignment
+        self.content = content
+    }
+
+    var body: some View {
+        let chunks = DiscoverMasonry.chunkRanges(
+            in: range,
+            columnCount: columnCount,
+            rowsPerChunk: rowsPerChunk
+        )
+        LazyVStack(alignment: horizontalAlignment, spacing: spacing) {
+            ForEach(chunks, id: \.lowerBound) { chunk in
+                MasonryColumnsLayout(columnCount: columnCount, spacing: spacing) {
+                    ForEach(chunk, id: \.self) { idx in
+                        content(idx)
+                            .frame(maxWidth: .infinity, alignment: cardAlignment)
+                            .accessibilityElement(children: .contain)
+                            .accessibilitySortPriority(Double(chunk.upperBound - idx))
+                    }
+                }
+                .accessibilityElement(children: .contain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
     }
 }

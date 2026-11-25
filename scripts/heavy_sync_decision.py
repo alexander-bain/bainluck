@@ -90,15 +90,18 @@ never take the sync down (the polarity rule in :func:`decide`).
 **AND ONE READING OF THAT PROBE CANNOT SEE ITS OWN BLIND SPOT**, which the first
 sync under it demonstrated rather than risked: at v15 the gate printed IDLE at
 16:57:10Z while ``matching_reconciliation`` had been running since 16:56:59.9Z.
-The reply is a snapshot of unknown age — 5 s of endpoint cache, a 25.6 s
-measured broadcast, two retries — so :data:`IDLE_CONFIRMATIONS` readings are
-required before the push, and the derivation of that number is on the constant.
+The reply is a snapshot of unknown age — 5 s of endpoint cache, up to 5 s
+by construction for the bounded parallel broadcast (previously 25.6 s
+measured sequentially), two retries — so :data:`IDLE_CONFIRMATIONS` readings
+are required before the push, and the derivation of that number is on the
+constant.
 
 What is STILL not covered, stated so nobody reads any of this as a proof:
 
-* a job shorter than the SEPARATION between two readings — ~56 s, not the 30 s
-  poll; the arithmetic and its measurement are on
-  :data:`INFLIGHT_POLL_SECONDS` — that both starts and ends inside the confirm.
+* a job shorter than the SEPARATION between two readings — ~35 s by
+  construction (previously ~56 s), not the 30 s poll; the arithmetic and its
+  derivation are on :data:`INFLIGHT_POLL_SECONDS` — that both starts and ends
+  inside the confirm.
   One resident still qualifies, and still only one: ``matching_reconciliation``
   at 11-36 s measured. The next shortest heavy resident is
   ``rebuild_typeahead_index`` at 90 s, so the wider bound does not widen the
@@ -325,9 +328,11 @@ def inside_window(now: datetime) -> bool:
 #: 500 on two of eight calls when it was measured, so the rate is also a load
 #: choice. 30 s gives <=40 reads across the widest possible band.
 #:
-#: IT IS A SLEEP, NOT THE SEPARATION. The read itself costs ~25.6 s (five 5 s
-#: broadcasts — see :data:`IDLE_CONFIRMATIONS`), so two consecutive readings
-#: sit ~56 s apart, and 56 s is the width of the confirm's blind window.
+#: IT IS A SLEEP, NOT THE SEPARATION. The read itself is capped at <= 5 s
+#: by construction (parallel broadcasts under `_INSPECT_TOTAL_TIMEOUT_S = 5.0`;
+#: previously ~25.6 s sequentially), so two consecutive readings sit ~35 s apart
+#: by construction (previously ~56 s), and 35 s is the width of the confirm's
+#: blind window.
 #: Lowering this number is how a later reader will try to narrow that window;
 #: below `_INSPECT_TTL_S` (5 s) it stops being an instrument at all, because
 #: the endpoint's memo would serve ONE snapshot as both confirmations — a
@@ -347,31 +352,30 @@ INFLIGHT_POLL_SECONDS = 30
 #: kills a pass.
 #:
 #: The reading is a SNAPSHOT of unknown age, not a live fact: the endpoint
-#: caches for 5 s (`_INSPECT_TTL_S`), the inspect broadcast itself measures
-#: 25.6 s, and the workflow retries twice with a 3 s delay. So "IDLE" honestly
-#: means "no heavy job was running up to ~31 s ago", against a kill window that
-#: runs another 36-118 s past the push.
+#: caches for 5 s (`_INSPECT_TTL_S`), the parallel inspect broadcast itself is
+#: bounded at <= 5 s by construction (`_INSPECT_TOTAL_TIMEOUT_S = 5.0`,
+#: post-release measurement to be posted on #13532), and the workflow retries
+#: twice with a 2 s delay. So "IDLE" honestly means "no heavy job was running
+#: up to ~10 s ago", against a kill window that runs another 36-118 s past the
+#: push.
 #:
-#: 25.6 s, not the 18.4 s this comment carried until latency/381, and the
-#: correction is structural rather than a re-measurement: `_inspect_snapshot`
-#: makes FIVE broadcasts in one handler — ping, active, reserved, registered,
-#: stats — each `inspect(timeout=5)`, and celery's inspect waits out its
-#: timeout whenever it cannot know that every worker has answered. 5 x 5 s is
-#: the floor, and eight production reads on 2026-09-13 21:38-21:43Z landed at
-#: 25.6-29.6 s (the one exception, 0.22 s, was served by the 5 s memo).
+#: 5 s by construction, replacing the 25.6 s sequential measurement (`latency/381`)
+#: once `_inspect_snapshot` moved its five broadcasts — ping, active, reserved,
+#: registered, stats — from sequential `inspect(timeout=5)` calls to parallel
+#: calls with a 3.5 s per-call window and a 5.0 s hard budget (`#13532`).
 #:
 #: A second reading one poll later closes that gap for any job that outlives
 #: the SEPARATION of the two readings, because the two snapshots cannot both
-#: miss it. That separation is the read plus the sleep — ~25.6 + 30 = ~56 s —
-#: and NOT the 30 s poll, which is the number the first version of this comment
-#: implied. Stated as a bound rather than a promise: every heavy resident
-#: measured on production outlives 56 s — matcher 154-552 s,
-#: `futures_price_refresh` 151-296 s, the rebuild 4-22 min,
+#: miss it. That separation is the read plus the sleep — <= 5 + 30 = ~35 s by
+#: construction (previously ~56 s) — and NOT the 30 s poll, which is the number
+#: the first version of this comment implied. Stated as a bound rather than a
+#: promise: every heavy resident measured on production outlives 35 s — matcher
+#: 154-552 s, `futures_price_refresh` 151-296 s, the rebuild 4-22 min,
 #: `rebuild_typeahead_index` 90 s (its own budget) — EXCEPT
 #: `matching_reconciliation` at 11-36 s, which can still start and finish
-#: inside the confirm. So the wider bound does not widen the residual set: the
-#: one job it covered at 30 s is the same one job it covers at 56 s. That one
-#: is also the cheapest to lose and re-fires every 15 min.
+#: inside the confirm. So the bound still covers the exact same heavy residents:
+#: `matching_reconciliation` stays the one job short enough to slip inside it,
+#: and it is also the cheapest to lose and re-fires every 15 min.
 #:
 #: 🔴 DO NOT CLOSE THE GAP BY POLLING FASTER. It is the obvious fix and it is
 #: the one that took production down: LAT-P071, 2026-08-19 05:00-05:03Z, two
@@ -386,14 +390,15 @@ INFLIGHT_POLL_SECONDS = 30
 #: cannot cost a cycle (`test_the_confirm_degrades_to_a_single_read_at_the_edge`).
 IDLE_CONFIRMATIONS = 2
 
-#: What ONE more turn of the wait loop costs in band, measured end to end.
+#: What ONE more turn of the wait loop costs in band, end to end.
 #:
-#: The broadcast half of it: ~25.6 s, eight production reads on 2026-09-13
-#: 21:38-21:43Z landing at 25.6-29.6 s, rounded UP to a whole 26 so the
-#: derivation below can never under-state the turn. This is the same number
-#: :data:`IDLE_CONFIRMATIONS` derives the confirm's blind window from — one
-#: measurement, named once, rather than a figure that lives only in prose.
-INFLIGHT_READ_SECONDS = 26
+#: Set by construction to 5 s (`_INSPECT_TOTAL_TIMEOUT_S = 5.0` in
+#: `admin_celery.py`), replacing the earlier 26 s ceiling from eight production
+#: sequential reads on 2026-09-13 21:38-21:43Z (`25.6-29.6 s`), until the
+#: post-release production timing is recorded on #13532. This is the same
+#: number :data:`IDLE_CONFIRMATIONS` derives the confirm's blind window from —
+#: one constant, named once, rather than a figure that lives only in prose.
+INFLIGHT_READ_SECONDS = 5
 
 #: THE BAND'S EDGE, AND IT IS A TURN OF THE LOOP AND NOT A SLEEP (#6283).
 #:
@@ -1072,6 +1077,9 @@ def active_task_names(payload) -> list | None:
     """
     if not isinstance(payload, dict):
         return None
+    cache_meta = payload.get("_cache")
+    if isinstance(cache_meta, dict) and cache_meta.get("partial") is True:
+        return None
     names = []
     workers = 0
     for key, value in payload.items():
@@ -1505,11 +1513,41 @@ def heroku_releases_last_24h(app: str, token: str, now: datetime | None = None) 
     return count
 
 
+def _is_live_succeeded_release(release: dict) -> bool:
+    """Return False when Heroku explicitly marks a release failed, pending, or non-current."""
+    status = release.get("status")
+    current = release.get("current")
+    if status is not None and str(status).lower() != "succeeded":
+        return False
+    if current is False:
+        return False
+    return True
+
+
 def heroku_release_commit(app: str, token: str) -> str | None:
-    """The commit the app's CURRENT release was built from, via the Platform API."""
+    """The commit the app's CURRENT succeeded release was built from, via the Platform API."""
     release = _current_release(app, token)
     if not release:
         return None
+    if not _is_live_succeeded_release(release):
+        recent = (
+            _heroku_get(
+                f"apps/{app}/releases", token, {"Range": "version ..; order=desc, max=10"}
+            )
+            or []
+        )
+        release = next(
+            (
+                item
+                for item in recent
+                if item
+                and item.get("current") is True
+                and (item.get("status") is None or str(item.get("status")).lower() == "succeeded")
+            ),
+            None,
+        )
+        if not release:
+            return None
     slug = release.get("slug") or {}
     slug_id = slug.get("id")
     if not slug_id:

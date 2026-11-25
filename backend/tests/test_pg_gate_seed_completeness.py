@@ -956,10 +956,8 @@ def test_every_raw_insert_gate_is_covered():
 #: permission: it is frozen at the set CAL-P157 measured, so a new gate cannot
 #: join it silently.
 #:
-#: `test_feed_static_tag_filter_pg.py` — found by the arm below, owned by the
-#: feed, not wired here because switching on a never-run gate is a change whose
-#: blast radius belongs to the lane that can read its failures.
-_NEVER_WIRED = {"test_feed_static_tag_filter_pg.py"}
+#: ``test_feed_static_tag_filter_pg.py`` was wired into ``isolated`` under #12612.
+_NEVER_WIRED = set()
 
 CI_WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
 

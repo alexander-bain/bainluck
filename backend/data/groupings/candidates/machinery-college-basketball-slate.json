@@ -1,0 +1,44 @@
+{
+  "slug": "machinery-college-basketball-slate",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_window"
+  ],
+  "level": "member",
+  "kicker": "SPORTS · COLLEGE HOOPS",
+  "name": "College Basketball Slate",
+  "category": "basketball",
+  "tag": "COLLEGE BASKETBALL",
+  "section_title": "Upcoming Matchups",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "upcoming_matchups",
+    "suppress_card_photo": true,
+    "sections": [
+      {
+        "key": "upcoming_matchups",
+        "title": "Upcoming Matchups",
+        "item_noun": "games",
+        "note": "Men's college basketball win probabilities in tipoff order.",
+        "atom_query": {
+          "kind": "events",
+          "sport_key": "basketball_ncaab",
+          "window_days_ahead": 7,
+          "order_by": "kickoff_asc",
+          "exclude_decided": true,
+          "min_items": 3,
+          "max_items": 8,
+          "initial_visible_limit": 3
+        }
+      }
+    ]
+  }
+}

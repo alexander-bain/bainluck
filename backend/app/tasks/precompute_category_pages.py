@@ -14,6 +14,7 @@ import contextlib
 import contextvars
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -23,6 +24,62 @@ logger = logging.getLogger(__name__)
 _PREWARM_PENDING_MACH_BASES_VAR: contextvars.ContextVar[dict[str, dict] | None] = (
     contextvars.ContextVar("_PREWARM_PENDING_MACH_BASES_VAR", default=None)
 )
+_PREWARM_MACHINERY_SNAPSHOT_CACHE_VAR: contextvars.ContextVar[dict[Any, Any] | None] = (
+    contextvars.ContextVar("_PREWARM_MACHINERY_SNAPSHOT_CACHE_VAR", default=None)
+)
+_PREWARM_MACHINERY_CONCURRENCY_VAR: contextvars.ContextVar[int | None] = (
+    contextvars.ContextVar("_PREWARM_MACHINERY_CONCURRENCY_VAR", default=None)
+)
+_PREWARM_MACHINERY_WALL_BUDGET_VAR: contextvars.ContextVar[bool] = (
+    contextvars.ContextVar("_PREWARM_MACHINERY_WALL_BUDGET_VAR", default=False)
+)
+_PREWARM_DERIVED_SIBLINGS_VAR: contextvars.ContextVar[
+    tuple[list[dict[str, Any]], dict[str, dict[str, Any]]] | None
+] = contextvars.ContextVar("_PREWARM_DERIVED_SIBLINGS_VAR", default=None)
+_PREWARM_MACHINERY_SKIP_TRICKLE_VAR: contextvars.ContextVar[bool] = (
+    contextvars.ContextVar("_PREWARM_MACHINERY_SKIP_TRICKLE_VAR", default=False)
+)
+
+#: Redis cooldown for non-live machinery slugs that timed out in the 30s trickle
+#: (#13445 Option 1): sits out ~6 realtime passes (180s > 120s main pass) so a
+#: >4s slug stops re-occupying the head of `proactive_due` every 30s while the
+#: 2-minute main 27-set job still refreshes it without consulting this cooldown.
+MACHINERY_TRICKLE_COOLDOWN_PREFIX = "bainluck:roundup:machinery:trickle_cooldown:"
+MACHINERY_TRICKLE_COOLDOWN_TTL_S = 180
+
+
+def _redis_mget_safe(rc: Any, keys: list[str]) -> list[Any] | None:
+    """Batch-read Redis keys only when ``type(rc)`` genuinely defines ``mget``."""
+    if rc is None or not keys:
+        return [] if not keys else None
+    if not callable(getattr(type(rc), "mget", None)):
+        return None
+    try:
+        vals = rc.mget(keys)
+    except Exception:
+        logger.debug("Redis MGET failed; falling back to per-key reads", exc_info=True)
+        return None
+    if not isinstance(vals, (list, tuple)) or len(vals) != len(keys):
+        return None
+    return list(vals)
+
+
+def _redis_setex_batch(rc: Any, entries: list[tuple[str, int, str]]) -> None:
+    """Write ``(key, ttl, value)`` pairs via one pipeline when genuinely supported."""
+    if rc is None or not entries:
+        return
+    if callable(getattr(type(rc), "pipeline", None)):
+        try:
+            pipe = rc.pipeline(transaction=False)
+            if pipe is not None and callable(getattr(type(pipe), "setex", None)):
+                for key, ttl_s, value in entries:
+                    pipe.setex(key, ttl_s, value)
+                pipe.execute()
+                return
+        except Exception:
+            logger.debug("Redis SETEX pipeline failed; falling back sequentially", exc_info=True)
+    for key, ttl_s, value in entries:
+        rc.setex(key, ttl_s, value)
 
 # Redis key prefix and TTL (2 hours — task runs every 1h, so there's overlap)
 CACHE_PREFIX = "bainluck:category:"
@@ -200,10 +257,15 @@ async def _precompute_golf():
     (#1475/#1459). Keeping this on the worker means the web dyno never runs the
     heavy rebuild after a restart — Redis already holds a servable base.
     """
+    import asyncio
     from datetime import datetime, timezone
     from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
-    from app.routes.golf import GOLF_CATEGORY_CACHE_KEY, get_golf
+    from app.routes.golf import (
+        GOLF_CATEGORY_CACHE_KEY,
+        get_golf,
+        warm_golf_tournament_pages,
+    )
     from app.utils.golf_base import build_envelope, publish_envelope_sync
     from app.utils.golf_card_snapshot import SNAPSHOT_TTL_S, stamp_card_payload
 
@@ -239,6 +301,26 @@ async def _precompute_golf():
         "Cached golf category page + published feed base (%d tournaments)",
         len(envelope["tournaments"]),
     )
+
+    # Warm top tournament detail pages only after category/feed-base caches are
+    # safely published, on an isolated session + timeout (#13436).
+    if os.getenv("GOLF_TOURNAMENT_CACHE_WARM_ENABLED", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        async def _warm_details() -> None:
+            async with get_task_session() as warm_db:
+                await warm_golf_tournament_pages(
+                    warm_db, golf_data=response, only_live=False, redis_client=rc
+                )
+
+        try:
+            await asyncio.wait_for(_warm_details(), timeout=20.0)
+        except Exception:
+            logger.debug("Hourly golf tournament detail warm failed", exc_info=True)
+
     return "ok"
 
 
@@ -1233,6 +1315,237 @@ FEED_PREWARM_SHAPES: tuple[dict, ...] = (
     },
 )
 
+def _publish_derived_siblings_from_parent(
+    rc: Any,
+    *,
+    parent_label: str,
+    parent_payload: Any,
+    request_scope: Any,
+    duration_s: float,
+    artifact_age_s: float | None,
+) -> None:
+    """Derive and publish ``limit=20`` sibling shapes from a freshly built ``limit=50`` parent (#13445 Option 2)."""
+    spec = _PREWARM_DERIVED_SIBLINGS_VAR.get()
+    if spec is None or not isinstance(parent_payload, dict) or not isinstance(request_scope, dict):
+        return
+    child_shapes, derived_out = spec
+    if not child_shapes:
+        return
+
+    from app.routes.feed import FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY
+    from app.utils.feed_cache import (
+        build_feed_cache_metadata,
+        dumps_feed_cache,
+        encode_base_last_good,
+        feed_page_base_cache_key,
+        feed_page_base_last_good_key,
+        feed_response_cache_key,
+        feed_response_cache_ttls,
+        live_stale_ceiling_seconds,
+        payload_contains_live_event,
+        render_feed_page_from_base,
+    )
+    from app.utils.feed_served_markets import market_ids_in_feed_payload, record_served_market_ids
+
+    parent_mach = request_scope.get(FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY)
+    if not isinstance(parent_mach, dict):
+        return
+    parent_cache_shape = parent_mach.get("cache_shape")
+    parent_pb_body = parent_mach.get("page_base_body")
+    if not isinstance(parent_cache_shape, dict) or not isinstance(parent_pb_body, dict):
+        return
+
+    pending_mach = _PREWARM_PENDING_MACH_BASES_VAR.get()
+    parent_fresh_ttl = max(int(parent_mach.get("page_base_fresh_ttl") or 0), 1)
+    parent_stale_ttl = max(int(parent_mach.get("page_base_stale_ttl") or 0), 1)
+    parent_lg_body = parent_mach.get("page_base_last_good_body")
+    child_lg_ttl = max(int(parent_mach.get("page_base_last_good_ttl") or 0), 1)
+    age_s_val = float(artifact_age_s or 0.0)
+
+    for child_shape in child_shapes:
+        child_label = str(child_shape.get("label") or "")
+        if not child_label:
+            continue
+        try:
+            child_limit = int(child_shape["limit"])
+            child_offset = int(child_shape.get("offset") or 0)
+            child_payload = render_feed_page_from_base(
+                parent_pb_body,
+                limit=child_limit,
+                offset=child_offset,
+            )
+            if not isinstance(child_payload, dict):
+                continue
+
+            child_cache_shape = dict(parent_cache_shape)
+            child_cache_shape["limit"] = child_limit
+            child_cache_shape["offset"] = child_offset
+            if "event_pct" in child_shape and child_shape["event_pct"] is not None:
+                child_cache_shape["event_pct"] = child_shape["event_pct"]
+            if "mode" in child_shape:
+                child_cache_shape["mode"] = child_shape["mode"]
+            child_cache_shape["include_events"] = bool(child_shape.get("include_events", True))
+            child_cache_shape["include_futures"] = bool(child_shape.get("include_futures", True))
+
+            child_live = payload_contains_live_event(child_payload)
+            ceiling_s = live_stale_ceiling_seconds(child_payload)
+            child_ttl, child_stale_ttl = feed_response_cache_ttls(
+                my_teams_only=False,
+                identified=False,
+                live=child_live,
+                oldest_artifact_age_s=age_s_val,
+                strict_artifact_age_s=age_s_val,
+                live_stale_ceiling_s=ceiling_s,
+            )
+            if child_live and (child_ttl <= 0 or child_stale_ttl <= 0):
+                logger.warning(
+                    "Feed pre-warm skipping derived %s from %s — expired live artifact headroom (ttl=%s stale_ttl=%s)",
+                    child_label,
+                    parent_label,
+                    child_ttl,
+                    child_stale_ttl,
+                )
+                continue
+
+            child_payload["cache"] = build_feed_cache_metadata(
+                "miss",
+                ttl_seconds=child_ttl,
+                stale_ttl_seconds=child_stale_ttl,
+                live=child_live,
+                built_at=parent_mach.get("age_origin"),
+            )
+            if "cache_version" in parent_payload:
+                child_payload["cache_version"] = parent_payload["cache_version"]
+
+            child_cache_key = feed_response_cache_key(
+                user_id=None,
+                session_id=None,
+                **child_cache_shape,
+            )
+            pb_params = {
+                k: v
+                for k, v in child_cache_shape.items()
+                if k not in ("offset", "edition", "machinery")
+            }
+            child_pb_key = feed_page_base_cache_key(**pb_params)
+            child_pb_lg_key = feed_page_base_last_good_key(child_pb_key)
+
+            child_pb_body = dict(parent_pb_body)
+            if "limit" in child_pb_body:
+                child_pb_body["limit"] = child_limit
+
+            rc.setex(
+                child_cache_key,
+                max(int(child_stale_ttl), 1),
+                dumps_feed_cache(child_payload),
+            )
+            rc.setex(
+                child_pb_key,
+                max(parent_stale_ttl, parent_fresh_ttl, 1),
+                dumps_feed_cache(child_pb_body),
+            )
+            if isinstance(parent_lg_body, dict):
+                child_lg_body = dict(parent_lg_body)
+                if "limit" in child_lg_body:
+                    child_lg_body["limit"] = child_limit
+                encoded_lg = encode_base_last_good(dumps_feed_cache(child_lg_body))
+                if encoded_lg is not None:
+                    rc.setex(child_pb_lg_key, child_lg_ttl, encoded_lg)
+
+            child_mach_base = dict(parent_mach)
+            child_mach_base["cache_shape"] = child_cache_shape
+            child_mach_base["page_base_key"] = child_pb_key
+            child_mach_base["limit"] = child_limit
+            child_mach_base["offset"] = child_offset
+            mach_live_flag = False
+            from app.utils.roundup_containers import roundup_feed_enabled
+
+            if roundup_feed_enabled(
+                mode=child_cache_shape.get("mode"),
+                include_events=bool(child_cache_shape.get("include_events", True)),
+                include_futures=bool(child_cache_shape.get("include_futures", True)),
+            ):
+                mach_res = _publish_machinery_feed_from_prewarm_base(
+                    rc,
+                    mach_base=child_mach_base,
+                    label=child_label,
+                )
+                if isinstance(mach_res, dict) and mach_res.get("outcome") == "ok":
+                    if mach_res.get("page_base_key"):
+                        _record_shape_key_in_hash(
+                            rc,
+                            FEED_PREWARM_MACHINERY_KEYS_KEY,
+                            child_label,
+                            str(mach_res["page_base_key"]),
+                        )
+                    mach_live_flag = bool(mach_res.get("live"))
+                if pending_mach is not None:
+                    pending_mach[child_label] = {
+                        "mach_base": child_mach_base,
+                        "force_retry": bool(
+                            isinstance(mach_res, dict) and mach_res.get("incomplete")
+                        ),
+                    }
+
+            child_enroll_live = bool(
+                child_live or payload_contains_live_event(parent_pb_body) or mach_live_flag
+            )
+            _record_shape_liveness(rc, child_label, child_enroll_live)
+            _record_shape_cache_key(rc, child_label, child_cache_key)
+            _record_shape_key_in_hash(rc, FEED_PREWARM_PAGE_BASE_KEYS_KEY, child_label, child_pb_key)
+            record_served_market_ids(rc, child_label, market_ids_in_feed_payload(child_payload))
+
+            child_items = child_payload.get("items") or []
+            derived_res = {
+                "outcome": "ok",
+                "derived_from": parent_label,
+                "duration_s": round(duration_s, 3),
+                "items": len(child_items),
+                "live": child_live,
+                "artifact_age_s": artifact_age_s,
+            }
+            if isinstance(child_payload.get("opening"), dict):
+                derived_res["opening"] = dict(child_payload["opening"])
+            derived_out[child_label] = derived_res
+        except Exception as exc:
+            logger.warning(
+                "Feed pre-warm failed deriving %s from %s; "
+                "parent already published and fallback will build directly: %s",
+                child_label,
+                parent_label,
+                exc,
+            )
+
+
+def _group_live_prewarm_targets(
+    targets: list[tuple[str, dict[str, Any]]],
+    *,
+    live_labels: set[str] | frozenset[str] = frozenset(),
+    absent_labels: set[str] | frozenset[str] = frozenset(),
+) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
+    """Group ``limit=20`` sibling shapes under their same-tier ``limit=50`` parent (#13445 Option 2)."""
+    grouped: list[tuple[str, dict[str, Any]]] = []
+    children_by_parent: dict[str, list[dict[str, Any]]] = {}
+    for lbl, s in targets:
+        parent_lbl = FEED_PREWARM_DERIVED_SIBLINGS.get(lbl)
+        if parent_lbl:
+            in_same_tier = (lbl in live_labels and parent_lbl in live_labels) or (
+                lbl in absent_labels and parent_lbl in absent_labels
+            ) or (not live_labels and not absent_labels and any(p == parent_lbl for p, _ in targets))
+            if in_same_tier and any(p == parent_lbl for p, _ in targets):
+                children_by_parent.setdefault(parent_lbl, []).append(s)
+                continue
+        grouped.append((lbl, s))
+    return grouped, children_by_parent
+
+
+#: Shapes whose ``offset=0, limit=20`` cached responses and ``page_base`` are
+#: pure slices of a larger parent shape in the same priority tier (#13445 Option 2).
+FEED_PREWARM_DERIVED_SIBLINGS: dict[str, str] = {
+    "discover": "discover_native",
+    "sports": "sports_native",
+}
+
 #: The two real shapes of `GET /api/futures/grouped-feed` — the Sports tab's
 #: THIRD request, on both surfaces. Enrolled by LAT-P100 together with that
 #: route's first response cache; before it, the route had none at all and both
@@ -1413,6 +1726,7 @@ async def _prewarm_feed_shape(
         dumps_feed_cache,
         feed_payload_was_built_by_this_request,
         feed_response_cache_ttls,
+        live_stale_ceiling_seconds,
         payload_contains_live_event,
     )
     from app.utils.feed_served_markets import (
@@ -1630,7 +1944,10 @@ async def _prewarm_feed_shape(
     # disagreeing — which is why both now go through one function.
     _slice_live = payload_contains_live_event(payload)
     ttl, stale_ttl = feed_response_cache_ttls(
-        my_teams_only=False, identified=False, live=_slice_live
+        my_teams_only=False,
+        identified=False,
+        live=_slice_live,
+        live_stale_ceiling_s=live_stale_ceiling_seconds(payload),
     )
 
     # --- #3841: MEASURE the age of the inputs, and do not spend it -----------
@@ -1711,12 +2028,17 @@ async def _prewarm_feed_shape(
             _pb_fresh = int(_mach_base_ctx.get("page_base_fresh_ttl") or ttl)
             _pb_stale = int(_mach_base_ctx.get("page_base_stale_ttl") or stale_ttl)
             _pb_lg_ttl = int(_mach_base_ctx.get("page_base_last_good_ttl") or stale_ttl)
-            rc.setex(_pb_key, _pb_fresh, _pb_json)
-            rc.setex(f"{_pb_key}:stale", _pb_stale, _pb_json)
-            rc.setex(
-                feed_page_base_last_good_key(_pb_key),
-                _pb_lg_ttl,
-                encode_base_last_good(_pb_lg_json),
+            _redis_setex_batch(
+                rc,
+                [
+                    (_pb_key, _pb_fresh, _pb_json),
+                    (f"{_pb_key}:stale", _pb_stale, _pb_json),
+                    (
+                        feed_page_base_last_good_key(_pb_key),
+                        _pb_lg_ttl,
+                        encode_base_last_good(_pb_lg_json),
+                    ),
+                ],
             )
             _pb_key_recorded = _pb_key
         except Exception:
@@ -1856,6 +2178,29 @@ async def _prewarm_feed_shape(
     }
     if _opening_report is not None:
         _ok_result["opening"] = _opening_report
+    try:
+        _publish_derived_siblings_from_parent(
+            rc,
+            parent_label=label,
+            parent_payload=payload,
+            request_scope=request.scope,
+            duration_s=duration_s,
+            artifact_age_s=_artifact_age_s,
+        )
+    except Exception as exc:
+        _spec = _PREWARM_DERIVED_SIBLINGS_VAR.get()
+        _child_labels = (
+            ",".join(str(cs.get("label") or "") for cs in _spec[0] if cs.get("label"))
+            if _spec is not None and _spec[0]
+            else "<unknown>"
+        )
+        logger.warning(
+            "Feed pre-warm failed deriving sibling(s) %s from parent %s; "
+            "parent already published and fallback will build directly: %s",
+            _child_labels,
+            label,
+            exc,
+        )
     return _ok_result
 
 
@@ -1885,11 +2230,12 @@ async def _prewarm_grouped_feed_shape(
     started = _time.monotonic()
     request = _build_prewarm_request(GROUPED_FEED_PREWARM_SCOPE_KEY)
     try:
+        response = Response()
         async with get_task_session() as db:
             payload = await asyncio.wait_for(
                 grouped_feed(
                     request=request,
-                    response=Response(),
+                    response=response,
                     category=shape["category"],
                     sport=shape["sport"],
                     sports_only=shape["sports_only"],
@@ -1929,8 +2275,13 @@ async def _prewarm_grouped_feed_shape(
         )
         return {"outcome": "empty", "duration_s": duration_s}
 
+    timings = response.headers.get("Server-Timing") if label == "grouped_web" else None
     logger.info(
-        "Pre-warmed grouped-feed %s in %.1fs (%d items)", label, duration_s, len(items)
+        "Pre-warmed grouped-feed %s in %.1fs (%d items)%s",
+        label,
+        duration_s,
+        len(items),
+        f" — {timings}" if timings else "",
     )
     return {"outcome": "ok", "duration_s": duration_s, "items": len(items)}
 
@@ -2063,6 +2414,7 @@ async def _prewarm_machinery_roundups(
     slugs: list[str] | set[str] | tuple[str, ...] | None = None,
     stage: str | None = None,
     rc: object | None = None,
+    enforce_wall_budget: bool = False,
 ) -> dict:
     """Warm registered `machinery-*` roundup caches into shared Redis in parallel."""
     import asyncio
@@ -2128,64 +2480,81 @@ async def _prewarm_machinery_roundups(
         return {"outcome": "empty", "warmed": 0, "slugs": {}}
 
     wall_started = _time.monotonic()
-    db_sem = asyncio.Semaphore(3)
+    max_conc = max(1, int(_PREWARM_MACHINERY_CONCURRENCY_VAR.get() or 3))
+    use_wall_budget = bool(enforce_wall_budget or _PREWARM_MACHINERY_WALL_BUDGET_VAR.get())
+    db_sem = asyncio.Semaphore(max_conc)
 
     async def _warm_one(prod) -> tuple[str, dict]:
         t0 = _time.monotonic()
         try:
-            async with db_sem, get_task_session(
-                statement_timeout_ms=max(1000, int(deadline_s * 1000))
-            ) as db:
-                import inspect as _inspect
+            async with db_sem:
+                if use_wall_budget:
+                    rem = deadline_s - (_time.monotonic() - wall_started)
+                    if rem < 0.5:
+                        return prod.slug, {
+                            "outcome": "skipped_no_time",
+                            "elapsed_ms": 0.0,
+                            "live": False,
+                            "redis_written": False,
+                            "redis_read_back": False,
+                            "redis_ttl_s": None,
+                        }
+                    item_timeout = rem
+                else:
+                    item_timeout = deadline_s
+                async with get_task_session(
+                    statement_timeout_ms=max(1000, int(item_timeout * 1000))
+                ) as db:
+                    import inspect as _inspect
 
-                eval_meta: dict[str, Any] = {}
-                eval_kwargs: dict[str, Any] = {"force_refresh": True}
-                if "outcome_meta" in _inspect.signature(evaluate_roundup_producer).parameters:
-                    eval_kwargs["outcome_meta"] = eval_meta
-                fi, cp = await asyncio.wait_for(
-                    evaluate_roundup_producer(prod, db, **eval_kwargs),
-                    timeout=deadline_s,
-                )
-                elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
-                ok = fi is not None and cp is not None
-                redis_written = False
-                redis_read_back = False
-                redis_ttl_s = None
-                outcome_label = "ok" if ok else "refused"
-                if ok and sync_rc is not None:
-                    redis_written = store_roundup_cache_sync(
-                        sync_rc, prod.slug, _time.time(), fi, cp
+                    eval_meta: dict[str, Any] = {}
+                    eval_kwargs: dict[str, Any] = {"force_refresh": True}
+                    if "outcome_meta" in _inspect.signature(evaluate_roundup_producer).parameters:
+                        eval_kwargs["outcome_meta"] = eval_meta
+                    fi, cp = await asyncio.wait_for(
+                        evaluate_roundup_producer(prod, db, **eval_kwargs),
+                        timeout=item_timeout,
                     )
-                    if redis_written:
-                        redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
-                            sync_rc, prod.slug
-                        )
-                elif not ok and eval_meta.get("clean_empty") is True:
-                    # #13183: strictly opt-in clean-empty marker. Only recorded
-                    # when `evaluate_roundup_producer` positively confirms a clean
-                    # empty result (never on SUSPENDED kinds, served-card licence
-                    # violations, transient refusals, timeouts, or errors).
-                    outcome_label = "clean_empty"
-                    if sync_rc is not None:
-                        redis_written = store_roundup_clean_empty_sync(
-                            sync_rc,
-                            prod.slug,
-                            _time.time(),
-                            reason=eval_meta.get("reason"),
+                    elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
+                    ok = fi is not None and cp is not None
+                    redis_written = False
+                    redis_read_back = False
+                    redis_ttl_s = None
+                    outcome_label = "ok" if ok else "refused"
+                    if ok and sync_rc is not None:
+                        redis_written = store_roundup_cache_sync(
+                            sync_rc, prod.slug, _time.time(), fi, cp
                         )
                         if redis_written:
                             redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
-                                sync_rc, prod.slug, allow_clean_empty=True
+                                sync_rc, prod.slug
                             )
-                return prod.slug, {
-                    "outcome": outcome_label,
-                    "reason": eval_meta.get("reason"),
-                    "elapsed_ms": elapsed_ms,
-                    "live": bool(_roundup_payload_has_live_event(cp)) if ok else False,
-                    "redis_written": redis_written,
-                    "redis_read_back": redis_read_back,
-                    "redis_ttl_s": redis_ttl_s,
-                }
+                    elif not ok and eval_meta.get("clean_empty") is True:
+                        # #13183: strictly opt-in clean-empty marker. Only recorded
+                        # when `evaluate_roundup_producer` positively confirms a clean
+                        # empty result (never on SUSPENDED kinds, served-card licence
+                        # violations, transient refusals, timeouts, or errors).
+                        outcome_label = "clean_empty"
+                        if sync_rc is not None:
+                            redis_written = store_roundup_clean_empty_sync(
+                                sync_rc,
+                                prod.slug,
+                                _time.time(),
+                                reason=eval_meta.get("reason"),
+                            )
+                            if redis_written:
+                                redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
+                                    sync_rc, prod.slug, allow_clean_empty=True
+                                )
+                    return prod.slug, {
+                        "outcome": outcome_label,
+                        "reason": eval_meta.get("reason"),
+                        "elapsed_ms": elapsed_ms,
+                        "live": bool(_roundup_payload_has_live_event(cp)) if ok else False,
+                        "redis_written": redis_written,
+                        "redis_read_back": redis_read_back,
+                        "redis_ttl_s": redis_ttl_s,
+                    }
         except asyncio.TimeoutError:
             elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
             logger.warning(
@@ -2275,6 +2644,42 @@ def _live_machinery_slugs(rc) -> set[str]:
     return out
 
 
+def _load_machinery_snapshots(rc, producers) -> dict[str, dict | None]:
+    """Read and parse all public machinery Redis snapshots once per pass (#13445)."""
+    from app.utils.roundup_containers import _redis_cache_key
+
+    snap_cache = _PREWARM_MACHINERY_SNAPSHOT_CACHE_VAR.get()
+    cache_key = (id(rc), tuple(p.slug for p in producers))
+    if snap_cache is not None and cache_key in snap_cache:
+        return snap_cache[cache_key]
+
+    keys = [_redis_cache_key(p.slug) for p in producers]
+    raws = _redis_mget_safe(rc, keys)
+    if raws is None:
+        raws = [rc.get(k) if hasattr(rc, "get") else None for k in keys]
+
+    parsed_by_slug: dict[str, dict | None] = {}
+    for prod, raw in zip(producers, raws):
+        if not raw:
+            parsed_by_slug[prod.slug] = None
+            continue
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode("utf-8", errors="ignore")
+        if not isinstance(raw, str):
+            parsed_by_slug[prod.slug] = None
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            parsed_by_slug[prod.slug] = None
+            continue
+        parsed_by_slug[prod.slug] = parsed if isinstance(parsed, dict) else None
+
+    if snap_cache is not None:
+        snap_cache[cache_key] = parsed_by_slug
+    return parsed_by_slug
+
+
 def _publish_machinery_feed_from_prewarm_base(
     rc,
     *,
@@ -2297,7 +2702,6 @@ def _publish_machinery_feed_from_prewarm_base(
         ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
         ROUNDUP_PRODUCERS,
         _is_machinery_producer_slug,
-        _redis_cache_key,
         _roundup_effective_keep_seconds,
         _roundup_payload_has_live_event,
         ensure_optional_roundup_candidates,
@@ -2318,6 +2722,7 @@ def _publish_machinery_feed_from_prewarm_base(
     if not producers:
         return {"outcome": "empty"}
 
+    parsed_by_slug = _load_machinery_snapshots(rc, producers)
     produced: list[dict] = []
     clean_empty_slugs: list[str] = []
     clean_empty_reasons: dict[str, str] = {}
@@ -2325,20 +2730,7 @@ def _publish_machinery_feed_from_prewarm_base(
     oldest_live_built_at: float | None = None
     now_ts = _time.time()
     for prod in producers:
-        raw = rc.get(_redis_cache_key(prod.slug)) if hasattr(rc, "get") else None
-        if not raw:
-            absent_slugs.append(prod.slug)
-            continue
-        if isinstance(raw, (bytes, bytearray)):
-            raw = raw.decode("utf-8", errors="ignore")
-        if not isinstance(raw, str):
-            absent_slugs.append(prod.slug)
-            continue
-        try:
-            parsed = json.loads(raw)
-        except (ValueError, TypeError):
-            absent_slugs.append(prod.slug)
-            continue
+        parsed = parsed_by_slug.get(prod.slug)
         if not isinstance(parsed, dict):
             absent_slugs.append(prod.slug)
             continue
@@ -2417,14 +2809,17 @@ def _publish_machinery_feed_from_prewarm_base(
 
     m_ttl = int(bundle["ttl"])
     m_stale_ttl = int(bundle["stale_ttl"])
-    rc.setex(bundle["cache_key"], m_ttl, bundle["page_json"])
-    rc.setex(f"{bundle['cache_key']}:stale", m_stale_ttl, bundle["page_json"])
-    rc.setex(bundle["page_base_key"], m_ttl, bundle["page_base_json"])
-    rc.setex(f"{bundle['page_base_key']}:stale", m_stale_ttl, bundle["page_base_json"])
+    write_entries = [
+        (bundle["cache_key"], m_ttl, bundle["page_json"]),
+        (f"{bundle['cache_key']}:stale", m_stale_ttl, bundle["page_json"]),
+        (bundle["page_base_key"], m_ttl, bundle["page_base_json"]),
+        (f"{bundle['page_base_key']}:stale", m_stale_ttl, bundle["page_base_json"]),
+    ]
     if bundle.get("manifest_key") and bundle.get("manifest_json"):
-        rc.setex(
-            bundle["manifest_key"], int(bundle["manifest_ttl"]), bundle["manifest_json"]
+        write_entries.append(
+            (bundle["manifest_key"], int(bundle["manifest_ttl"]), bundle["manifest_json"])
         )
+    _redis_setex_batch(rc, write_entries)
 
     if clean_empty_slugs:
         clean_empty_desc = ", ".join(
@@ -2463,47 +2858,200 @@ def _publish_machinery_feed_from_prewarm_base(
     }
 
 
+def _partition_absent_machinery_slugs(
+    rc, *, registered_slugs: list[str], exclude: set[str]
+) -> tuple[list[str], list[str]]:
+    """Split due non-live machinery slugs into ``(missing_or_expired, proactive_due_oldest_first)`` (#13445)."""
+    import time as _time
+
+    from app.utils.roundup_containers import (
+        ROUNDUP_CACHE_TTL_S,
+        ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+        _redis_cache_key,
+        _roundup_effective_keep_seconds,
+    )
+
+    candidates = [s for s in registered_slugs if s not in exclude]
+    if not candidates:
+        return [], []
+
+    keys = [_redis_cache_key(s) for s in candidates]
+    mget_vals = _redis_mget_safe(rc, keys)
+    missing_or_expired: list[str] = []
+    due_pairs: list[tuple[float, str]] = []
+    now_ts = _time.time()
+    has_get = callable(getattr(type(rc), "get", None)) or callable(getattr(rc, "get", None))
+
+    for idx, slug in enumerate(candidates):
+        key = keys[idx]
+        try:
+            if mget_vals is not None:
+                raw = mget_vals[idx]
+                if raw is None:
+                    missing_or_expired.append(slug)
+                    continue
+            else:
+                if not rc.exists(key):
+                    missing_or_expired.append(slug)
+                    continue
+                if not has_get:
+                    continue
+                raw = rc.get(key)
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode("utf-8", errors="ignore")
+            if not isinstance(raw, str) or not raw.startswith("{"):
+                missing_or_expired.append(slug)
+                continue
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict) or not isinstance(
+                parsed.get("built_at"), (int, float)
+            ):
+                missing_or_expired.append(slug)
+                continue
+            built_at = float(parsed["built_at"])
+            age_s = max(0.0, now_ts - built_at)
+            raw_stale = parsed.get("stale_ttl_s")
+            stored_stale_ttl = (
+                float(raw_stale) if isinstance(raw_stale, (int, float)) else None
+            )
+            if parsed.get("clean_empty") is True:
+                lifetime_s = float(
+                    stored_stale_ttl or ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+                )
+                if age_s >= lifetime_s:
+                    missing_or_expired.append(slug)
+                continue
+            fi = parsed.get("feed_item")
+            cp = parsed.get("container_payload")
+            if not isinstance(fi, dict) or not isinstance(cp, dict):
+                missing_or_expired.append(slug)
+                continue
+            keep_s = _roundup_effective_keep_seconds(
+                slug,
+                cp,
+                now_ts=now_ts,
+                stored_stale_ttl=stored_stale_ttl,
+            )
+            if age_s >= keep_s:
+                missing_or_expired.append(slug)
+                continue
+            soft_ttl = float(parsed.get("ttl_s") or ROUNDUP_CACHE_TTL_S)
+            if age_s >= (0.70 * soft_ttl):
+                due_pairs.append((age_s, slug))
+        except Exception:
+            logger.debug("machinery cache partition check failed for %s", slug, exc_info=True)
+            missing_or_expired.append(slug)
+
+    due_pairs.sort(key=lambda item: (-item[0], item[1]))
+    return missing_or_expired, [slug for _, slug in due_pairs]
+
+
 def _absent_machinery_slugs(rc, *, registered_slugs: list[str], exclude: set[str]) -> list[str]:
     """Return registered machinery slugs whose Redis cache entry is absent or due for proactive refresh (#12288)."""
     import time as _time
 
     from app.utils.roundup_containers import ROUNDUP_CACHE_TTL_S, _redis_cache_key
 
+    candidates = [s for s in registered_slugs if s not in exclude]
+    if not candidates:
+        return []
+    keys = [_redis_cache_key(s) for s in candidates]
+    mget_vals = _redis_mget_safe(rc, keys)
     absent: list[str] = []
     now_ts = _time.time()
-    for slug in registered_slugs:
-        if slug in exclude:
-            continue
-        key = _redis_cache_key(slug)
+    for idx, slug in enumerate(candidates):
+        key = keys[idx]
         try:
-            if not rc.exists(key):
-                absent.append(slug)
-                continue
-            if hasattr(rc, "get"):
+            if mget_vals is not None:
+                raw = mget_vals[idx]
+                if raw is None:
+                    absent.append(slug)
+                    continue
+            else:
+                if not rc.exists(key):
+                    absent.append(slug)
+                    continue
+                if not hasattr(rc, "get"):
+                    continue
                 raw = rc.get(key)
-                if isinstance(raw, (bytes, bytearray)):
-                    raw = raw.decode("utf-8", errors="ignore")
-                if isinstance(raw, str) and raw.startswith("{"):
-                    parsed = json.loads(raw)
-                    if isinstance(parsed, dict) and isinstance(
-                        parsed.get("built_at"), (int, float)
-                    ):
-                        soft_ttl = float(parsed.get("ttl_s") or ROUNDUP_CACHE_TTL_S)
-                        if (now_ts - float(parsed["built_at"])) >= (0.70 * soft_ttl):
-                            absent.append(slug)
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode("utf-8", errors="ignore")
+            if isinstance(raw, str) and raw.startswith("{"):
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict) and isinstance(
+                    parsed.get("built_at"), (int, float)
+                ):
+                    soft_ttl = float(parsed.get("ttl_s") or ROUNDUP_CACHE_TTL_S)
+                    if (now_ts - float(parsed["built_at"])) >= (0.70 * soft_ttl):
+                        absent.append(slug)
         except Exception:
             logger.debug("machinery cache exists check failed for %s", slug, exc_info=True)
     return absent
 
 
-async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> dict:
+def _machinery_trickle_cooled_down_slugs(rc: Any, slugs: list[str]) -> set[str]:
+    """Return machinery slugs currently cooling down after a trickle timeout (#13445)."""
+    if rc is None or not slugs:
+        return set()
+    keys = [f"{MACHINERY_TRICKLE_COOLDOWN_PREFIX}{slug}" for slug in slugs]
+    vals = _redis_mget_safe(rc, keys)
+    if vals is not None:
+        return {
+            slug
+            for slug, val in zip(slugs, vals)
+            if isinstance(val, (bytes, bytearray, str, int, float)) and bool(val)
+        }
+    if not callable(getattr(type(rc), "get", None)):
+        return set()
+    cooled: set[str] = set()
+    for slug, key in zip(slugs, keys):
+        try:
+            raw = rc.get(key)
+        except Exception:
+            logger.debug("machinery trickle cooldown read failed for %s", slug, exc_info=True)
+            continue
+        if isinstance(raw, (bytes, bytearray, str, int, float)) and bool(raw):
+            cooled.add(slug)
+    return cooled
+
+
+def _record_machinery_trickle_cooldowns(rc: Any, slugs_outcomes: Any) -> list[str]:
+    """Cool down slugs that timed out in the 30s trickle so the queue never jams (#13445)."""
+    if rc is None or not isinstance(slugs_outcomes, dict):
+        return []
+    timed_out = sorted(
+        slug
+        for slug, info in slugs_outcomes.items()
+        if isinstance(info, dict) and info.get("outcome") == "timeout"
+    )
+    if not timed_out:
+        return []
+    if not callable(getattr(rc, "setex", None)):
+        return []
+    entries = [
+        (f"{MACHINERY_TRICKLE_COOLDOWN_PREFIX}{slug}", MACHINERY_TRICKLE_COOLDOWN_TTL_S, "1")
+        for slug in timed_out
+    ]
+    try:
+        _redis_setex_batch(rc, entries)
+    except Exception:
+        logger.debug("machinery trickle cooldown write failed for %s", timed_out, exc_info=True)
+        return []
+    return timed_out
+
+
+async def _prewarm_live_machinery_roundups(
+    rc, *, deadline_s: float = 20.0, skip_trickle: bool | None = None
+) -> dict:
     """Republish live (60s TTL) and absent machinery groupings on the 30s realtime rail.
 
     - Live machinery groupings (or slates with a game starting within 3 minutes)
       are rebuilt FIRST so a 60s live entry always outlasts the 30s wait for the
       next refresh (~29s headroom) and never disappears from Discover during games.
-    - Absent non-live machinery keys are rebuilt SECOND with remaining budget as
-      a LAT-P112 safety net if the 120s host beat lags past the 300s non-live TTL.
+    - Missing/expired keys rebuild SECOND; still-valid-stale non-live keys due at
+      >= 70% soft TTL trickle at most 2 oldest slugs per 30s pass (#13445) when
+      Discover is NOT among the live shapes and cooled-down timeout slugs sit out
+      next passes so non-live groupings never starve 5-shape live passes or jam.
     - Returns immediately with zero Redis/DB calls when the machinery switch is off.
     """
     import time as _time
@@ -2519,6 +3067,11 @@ async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> d
     if not container_machinery_enabled() or not containers_read_enabled():
         return {"outcome": "disabled", "warmed": 0}
 
+    effective_skip_trickle = (
+        _PREWARM_MACHINERY_SKIP_TRICKLE_VAR.get()
+        if skip_trickle is None
+        else bool(skip_trickle)
+    )
     ensure_optional_roundup_candidates()
     registered = sorted(
         p.slug
@@ -2529,15 +3082,26 @@ async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> d
     )
     registered_set = set(registered)
     live_slugs = sorted(s for s in _live_machinery_slugs(rc) if s in registered_set)
-    absent_slugs = _absent_machinery_slugs(
+    missing_or_expired, proactive_due = _partition_absent_machinery_slugs(
         rc, registered_slugs=registered, exclude=set(live_slugs)
     )
+    if effective_skip_trickle:
+        cooled_down_slugs: list[str] = []
+        due_batch: list[str] = []
+    else:
+        cooled_down_set = _machinery_trickle_cooled_down_slugs(rc, proactive_due)
+        cooled_down_slugs = [s for s in proactive_due if s in cooled_down_set]
+        due_batch = [s for s in proactive_due if s not in cooled_down_set][:2]
+    absent_slugs = [*missing_or_expired, *due_batch]
     if not live_slugs and not absent_slugs:
         return {
             "outcome": "idle",
             "warmed": 0,
             "live_slugs": [],
             "absent_slugs": [],
+            "trickle_skipped_discover_live": effective_skip_trickle,
+            "trickle_cooled_down": cooled_down_slugs,
+            "trickle_cooldown_recorded": [],
             "slugs": {},
         }
 
@@ -2545,26 +3109,49 @@ async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> d
     combined_slugs: dict[str, dict] = {}
     warmed = 0
 
+    async def _run_batch(conc: int, budget_s: float, slugs_batch: list[str]) -> dict:
+        tok = _PREWARM_MACHINERY_CONCURRENCY_VAR.set(conc)
+        wall_tok = _PREWARM_MACHINERY_WALL_BUDGET_VAR.set(True)
+        try:
+            return await _prewarm_machinery_roundups(deadline_s=budget_s, slugs=slugs_batch)
+        finally:
+            _PREWARM_MACHINERY_WALL_BUDGET_VAR.reset(wall_tok)
+            _PREWARM_MACHINERY_CONCURRENCY_VAR.reset(tok)
+
     if live_slugs and deadline_s >= 1.0:
-        res_live = await _prewarm_machinery_roundups(
-            deadline_s=deadline_s, slugs=live_slugs
-        )
+        res_live = await _run_batch(2, deadline_s, live_slugs)
         combined_slugs.update(res_live.get("slugs") or {})
         warmed += int(res_live.get("warmed") or 0)
 
     remaining_s = deadline_s - (_time.monotonic() - started)
-    if absent_slugs and remaining_s >= 1.5:
-        res_absent = await _prewarm_machinery_roundups(
-            deadline_s=remaining_s, slugs=absent_slugs
-        )
-        combined_slugs.update(res_absent.get("slugs") or {})
-        warmed += int(res_absent.get("warmed") or 0)
+    if missing_or_expired and remaining_s >= 1.5:
+        res_missing = await _run_batch(2, min(remaining_s, 6.0), missing_or_expired)
+        combined_slugs.update(res_missing.get("slugs") or {})
+        warmed += int(res_missing.get("warmed") or 0)
+
+    cooldown_recorded: list[str] = []
+    remaining_s = deadline_s - (_time.monotonic() - started)
+    if due_batch and remaining_s >= 1.5:
+        res_due = await _run_batch(1, min(remaining_s, 4.0), due_batch)
+        due_slugs_res = res_due.get("slugs") or {}
+        combined_slugs.update(due_slugs_res)
+        warmed += int(res_due.get("warmed") or 0)
+        cooldown_recorded = _record_machinery_trickle_cooldowns(rc, due_slugs_res)
+        if cooldown_recorded:
+            logger.info(
+                "Machinery trickle cooldown armed for %s (%ds) after timeout (#13445)",
+                cooldown_recorded,
+                MACHINERY_TRICKLE_COOLDOWN_TTL_S,
+            )
 
     return {
         "outcome": "ok" if warmed else "empty",
         "warmed": warmed,
         "live_slugs": live_slugs,
         "absent_slugs": absent_slugs,
+        "trickle_skipped_discover_live": effective_skip_trickle,
+        "trickle_cooled_down": cooled_down_slugs,
+        "trickle_cooldown_recorded": cooldown_recorded,
         "wall_ms": round((_time.monotonic() - started) * 1000.0, 1),
         "total_db_ms": round(
             sum(float(v.get("elapsed_ms") or 0.0) for v in combined_slugs.values()), 1
@@ -3001,6 +3588,9 @@ async def _prewarm_live_feed_shapes():
     targets += [
         (s["label"], s) for s in FEED_PREWARM_SHAPES if s["label"] in absent_labels
     ]
+    targets, derived_children_by_parent = _group_live_prewarm_targets(
+        targets, live_labels=live_labels, absent_labels=absent_labels
+    )
 
     # #3233: the targets build CONCURRENTLY under one wall, not serially under
     # 1/N slices of it.
@@ -3057,9 +3647,37 @@ async def _prewarm_live_feed_shapes():
             # The deadline is what is LEFT of the wall, not a slice of it. The
             # pass still cannot overrun `BUDGET`, because every target's timeout
             # is measured from the same start.
-            shapes[label] = await _prewarm_feed_shape(
-                dict(shape), rc, deadline_s=remaining_s
+            derived_children = derived_children_by_parent.get(label) or []
+            derived_out: dict[str, dict[str, Any]] = {}
+            derived_token = (
+                _PREWARM_DERIVED_SIBLINGS_VAR.set((derived_children, derived_out))
+                if derived_children
+                else None
             )
+            try:
+                shapes[label] = await _prewarm_feed_shape(
+                    dict(shape), rc, deadline_s=remaining_s
+                )
+            finally:
+                if derived_token is not None:
+                    _PREWARM_DERIVED_SIBLINGS_VAR.reset(derived_token)
+            for child_shape in derived_children:
+                child_label = child_shape["label"]
+                if child_label in derived_out:
+                    shapes[child_label] = derived_out[child_label]
+                    continue
+                child_remaining_s = FEED_LIVE_REPUBLISH_BUDGET_S - (
+                    _time.monotonic() - pass_started
+                )
+                if child_remaining_s < FEED_PREWARM_MIN_VIABLE_BUILD_S:
+                    shapes[child_label] = {
+                        "outcome": "skipped_no_time",
+                        "remaining_s": round(child_remaining_s, 1),
+                    }
+                else:
+                    shapes[child_label] = await _prewarm_feed_shape(
+                        dict(child_shape), rc, deadline_s=child_remaining_s
+                    )
 
     # #12288: run live/due machinery roundup prewarm CONCURRENTLY with the feed
     # shapes inside the same bounded pass budget so slow discover builds (~19s
@@ -3069,18 +3687,26 @@ async def _prewarm_live_feed_shapes():
     standing_live_result: dict = {"outcome": "idle", "warmed": 0}
     pending_mach_bases: dict[str, dict] = {}
 
+    discover_live = bool(live_labels & {"discover", "discover_native"})
+
     async def _run_machinery_live() -> None:
         nonlocal machinery_live_result, standing_live_result
-        machinery_live_result, standing_live_result = await asyncio.gather(
-            _prewarm_live_machinery_roundups(
-                rc, deadline_s=min(20.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
-            ),
-            _prewarm_live_standing_roundups(
-                rc, deadline_s=min(15.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
-            ),
-        )
+        skip_tok = _PREWARM_MACHINERY_SKIP_TRICKLE_VAR.set(discover_live)
+        try:
+            machinery_live_result, standing_live_result = await asyncio.gather(
+                _prewarm_live_machinery_roundups(
+                    rc, deadline_s=min(20.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+                ),
+                _prewarm_live_standing_roundups(
+                    rc, deadline_s=min(15.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+                ),
+            )
+        finally:
+            _PREWARM_MACHINERY_SKIP_TRICKLE_VAR.reset(skip_tok)
 
+    mach_snap_cache: dict[Any, Any] = {}
     pending_token = _PREWARM_PENDING_MACH_BASES_VAR.set(pending_mach_bases)
+    snap_token = _PREWARM_MACHINERY_SNAPSHOT_CACHE_VAR.set(mach_snap_cache)
     try:
         await asyncio.gather(
             *(_republish(label, shape) for label, shape in targets),
@@ -3094,31 +3720,36 @@ async def _prewarm_live_feed_shapes():
     # refreshed during `gather`, re-run the pure-Python `<5 ms` splice now so
     # `:machinery` receives the fresh live timestamp/TTL.
     _mach_warmed_n = int(machinery_live_result.get("warmed") or 0)
-    for pending_label, pending_entry in pending_mach_bases.items():
-        if not isinstance(pending_entry, dict) or "mach_base" not in pending_entry:
-            continue
-        if not pending_entry.get("force_retry") and _mach_warmed_n <= 0:
-            continue
-        try:
-            retry_res = _publish_machinery_feed_from_prewarm_base(
-                rc, mach_base=pending_entry["mach_base"], label=pending_label
-            )
-            if isinstance(retry_res, dict) and retry_res.get("outcome") == "ok":
-                if retry_res.get("page_base_key"):
-                    _record_shape_key_in_hash(
-                        rc,
-                        FEED_PREWARM_MACHINERY_KEYS_KEY,
-                        pending_label,
-                        str(retry_res["page_base_key"]),
-                    )
-                if retry_res.get("live"):
-                    _record_shape_liveness(rc, pending_label, True)
-        except Exception:
-            logger.debug(
-                "Post-gather machinery splice retry failed for %s",
-                pending_label,
-                exc_info=True,
-            )
+    if _mach_warmed_n > 0:
+        mach_snap_cache.clear()
+    try:
+        for pending_label, pending_entry in pending_mach_bases.items():
+            if not isinstance(pending_entry, dict) or "mach_base" not in pending_entry:
+                continue
+            if not pending_entry.get("force_retry") and _mach_warmed_n <= 0:
+                continue
+            try:
+                retry_res = _publish_machinery_feed_from_prewarm_base(
+                    rc, mach_base=pending_entry["mach_base"], label=pending_label
+                )
+                if isinstance(retry_res, dict) and retry_res.get("outcome") == "ok":
+                    if retry_res.get("page_base_key"):
+                        _record_shape_key_in_hash(
+                            rc,
+                            FEED_PREWARM_MACHINERY_KEYS_KEY,
+                            pending_label,
+                            str(retry_res["page_base_key"]),
+                        )
+                    if retry_res.get("live"):
+                        _record_shape_liveness(rc, pending_label, True)
+            except Exception:
+                logger.debug(
+                    "Post-gather machinery splice retry failed for %s",
+                    pending_label,
+                    exc_info=True,
+                )
+    finally:
+        _PREWARM_MACHINERY_SNAPSHOT_CACHE_VAR.reset(snap_token)
 
     # The idle pass reports too, and that is deliberate (gotcha #53). "Nothing was
     # live" and "this beat has not run since the deploy" are different facts with
@@ -3321,6 +3952,12 @@ async def _precompute_grids(report: dict | None = None):
                     rc.setex(cache_key, 3600, payload)
                     rc.setex(f"{cache_key}:stale", 86400, payload)
                     _record_grid_market_ids(rc, slug, result)
+                    try:
+                        from app.services.league_context import write_league_context_from_grid_sync
+
+                        write_league_context_from_grid_sync(rc, slug, result)
+                    except Exception:
+                        logger.debug("league_context warm skipped for %s", slug, exc_info=True)
                     warmed.append(slug)
                     leagues[slug] = {
                         "outcome": "ok",

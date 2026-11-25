@@ -63,6 +63,35 @@ final class FuturesDetailSumsTo100_8097Tests: XCTestCase {
         XCTAssertEqual(market.fullFieldRendered, true)
     }
 
+    func testTitleDetailChartPinAndPairedCardUseOneAllocation11995() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let market = try decoder.decode(FuturesMarketDetail.self, from: Data("""
+        {"id":52755659,"name":"Stanley Cup Winner","mutually_exclusive":true,"outcomes":[
+          {"id":1,"name":"Carolina Hurricanes","probability":0.14418605,"rendered_percent":15},
+          {"id":2,"name":"Minnesota Wild","probability":0.14418605,"rendered_percent":14},
+          {"id":3,"name":"Colorado Avalanche","probability":0.09767442,"rendered_percent":10}
+        ]}
+        """.utf8))
+        let timeline = try decoder.decode(TimelineOutcomeMeta.self, from: Data(
+            #"{"id":1,"name":"Carolina Hurricanes","current_probability":0.14418605,"rendered_percent":15}"#.utf8
+        ))
+        let set = try decoder.decode(PairedMetricSet.self, from: Data("""
+        {"set_id":"nhl-title","title":"NHL Playoff Berth and Stanley Cup","stage_1_label":"Playoff Berth","stage_2_label":"Win Cup","entries":[
+          {"subject":"Carolina Hurricanes","stage_1_market_id":59164863,"stage_1_probability":0.82,
+           "stage_2_market_id":52755659,"stage_2_probability":0.14418605,"stage_2_rendered_percent":15}
+        ]}
+        """.utf8))
+
+        let page = try XCTUnwrap(futuresDetailRenderedPercents(market.outcomes)[1])
+        let pin = try XCTUnwrap(FeedFuturesData(savedPinDetail: market).topOutcomes?.first { $0.id == 1 })
+        XCTAssertEqual(pin.renderedPercent, page)
+        let chartLabel = EvolutionChartView.currentEndLabel192A(name: timeline.name, outcome: timeline)
+        XCTAssertTrue(chartLabel.hasSuffix(" \(page)%"))
+        XCTAssertEqual(PairedMetricPresentation.formatStage2Display(entry: set.entries[0], set: set).label, "\(page)%")
+        XCTAssertEqual(PairedMetricPresentation.formatStage1Display(entry: set.entries[0], set: set).label, "82%")
+    }
+
     // MARK: - The defect
 
     func test_theProductionPairPrintsOneHundred() throws {

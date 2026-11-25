@@ -26,7 +26,12 @@ struct PinButton: View {
             let wasPinned = pinned
             pinManager.togglePin(type: type, id: id)
             // #10876 — a pin that took is the action its tip teaches.
-            if !wasPinned, pinned { ContextualTips10876.pinLearned() }
+            if !wasPinned, pinned {
+                ContextualTips10876.pinLearned()
+                if type == "event" {
+                    _ = GameAlertsPromptController295A.shared.offerSheet(subjectName: nil)
+                }
+            }
             // A root overlay may sit below a presented detail sheet. Its pin
             // button owns a local limit alert and a sheet above that detail.
             if isPresented, let feedback = pinManager.feedback,

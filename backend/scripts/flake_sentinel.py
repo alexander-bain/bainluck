@@ -63,6 +63,8 @@ THRESHOLD = 2
 MARKER_KEY = "flaky-test-fingerprint"
 QUARANTINE_LABEL = "flaky-quarantine"
 TITLE_PREFIX = "Flaky: "
+RIG_MARKER_KEY = "rig-burst-fingerprint"
+RIG_TITLE_PREFIX = "Rig: "
 RETRY_ARTIFACT = "flaky-retries-{attempt}"
 #: Each shared-tail runner uploads its own retries (an artifact name is unique per run).
 #: Fable, Nov 18: the tail split at #4586's full reset into shared-tail and shared-tail-2.
@@ -75,6 +77,9 @@ RETRY_ATTEMPTS = (1, 2, 3)
 RATE_FLOOR = 100
 # Evidence newer than this is "new since the last daily run" (the cron is late by hours).
 NEW_EVIDENCE_HOURS = 30
+# #12252: >=4 distinct tests failing in one job run indicates a shared rig failure
+# rather than independent test flakes; collapse into one rig event and never quarantine.
+RIG_BURST_MIN_TESTS = 4
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # `-v` lines ("tests/x.py::t FAILED") and the short summary ("FAILED tests/x.py::t - ...").
@@ -205,12 +210,51 @@ def fingerprint(test: str) -> str:
     return hashlib.sha256(test.encode()).hexdigest()[:12]
 
 
-def flaky(events: list[Event], since: str | None = None) -> dict[str, list[Event]]:
-    """Tests with THRESHOLD or more events (after ``since`` when given)."""
-    by: dict[str, list[Event]] = defaultdict(list)
+def split_rig_bursts(
+    events: list[Event],
+    *,
+    burst_threshold: int = RIG_BURST_MIN_TESTS,
+) -> tuple[list[Event], list[dict]]:
+    """Collapse bursts of ``burst_threshold``+ distinct tests inside one job run.
+
+    When external/infra breakage (e.g. a broken dependency or closed service in
+    one runner) fails many unrelated tests inside a single ``(run_id, attempt, job)``,
+    that job run counts as ONE rig burst event rather than quarantining every test.
+    """
+    by_job_run: dict[tuple[int, int, str], list[Event]] = defaultdict(list)
     for e in events:
-        if since is None or e.at > since:
-            by[e.test].append(e)
+        by_job_run[(e.run_id, e.attempt, e.job)].append(e)
+
+    per_test: list[Event] = []
+    rig_bursts: list[dict] = []
+    for (run_id, attempt, job), group in sorted(
+        by_job_run.items(), key=lambda kv: (kv[1][0].at, kv[0])
+    ):
+        distinct_tests = {e.test for e in group}
+        if len(distinct_tests) >= burst_threshold:
+            first = min(group, key=lambda e: e.at)
+            rig_bursts.append({
+                "run_id": run_id,
+                "attempt": attempt,
+                "job": job,
+                "sha": first.sha,
+                "at": first.at,
+                "test_count": len(distinct_tests),
+                "tests": sorted(distinct_tests),
+                "link": first.link(),
+            })
+        else:
+            per_test.extend(group)
+    return per_test, rig_bursts
+
+
+def flaky(events: list[Event], since: str | None = None) -> dict[str, list[Event]]:
+    """Tests with THRESHOLD or more non-burst events (after ``since`` when given)."""
+    windowed = [e for e in events if since is None or e.at > since]
+    per_test, _ = split_rig_bursts(windowed)
+    by: dict[str, list[Event]] = defaultdict(list)
+    for e in per_test:
+        by[e.test].append(e)
     return {t: sorted(es, key=lambda e: e.at) for t, es in by.items() if len(es) >= THRESHOLD}
 
 
@@ -237,6 +281,62 @@ def evidence_comment(test: str, new: list[Event]) -> str:
     return (f"Flake sentinel: {len(new)} new fail-then-pass event(s) for `{test}`:\n\n"
             + "\n".join(f"- `{e.sha[:10]}` {e.job} ([run {e.run_id}, attempt {e.attempt}]({e.link()}))"
                         for e in new))
+
+
+def rig_fingerprint(job: str, day_utc: str) -> str:
+    """Stable daily-per-job fingerprint for single-job multi-test rig bursts."""
+    return hashlib.sha256(f"{job}|{day_utc}".encode()).hexdigest()[:12]
+
+
+def _rig_burst_tests_and_count(bursts: list[dict]) -> tuple[list[str], int]:
+    unique_tests: set[str] = set()
+    max_count = 0
+    for b in bursts:
+        max_count = max(max_count, int(b.get("test_count") or 0))
+        unique_tests.update(b.get("tests") or ())
+    return sorted(unique_tests), (len(unique_tests) or max_count)
+
+
+def rig_issue_title(job: str, bursts: list[dict]) -> str:
+    _, test_count = _rig_burst_tests_and_count(bursts)
+    return f"{RIG_TITLE_PREFIX}{test_count} tests failed together in {job}"
+
+
+def rig_issue_body(job: str, day_utc: str, bursts: list[dict]) -> str:
+    unique_tests, test_count = _rig_burst_tests_and_count(bursts)
+    rows = "\n".join(
+        f"- {str(b.get('at') or '')[:16].replace('T', ' ')}Z `{str(b.get('sha') or '')[:10]}` — "
+        f"{b.get('test_count')} tests ([run {b.get('run_id')}, attempt {b.get('attempt')}]({b.get('link')}))"
+        for b in sorted(bursts, key=lambda b: (b.get("at") or "", int(b.get("run_id") or 0)))
+    )
+    sample = "\n".join(f"- `{t}`" for t in unique_tests[:15])
+    if len(unique_tests) > 15:
+        sample += f"\n- ... and {len(unique_tests) - 15} more"
+    sample_block = f"\n\n**Affected tests seen in these runs ({len(unique_tests)}):**\n{sample}" if sample else ""
+    return (
+        f"PILLAR: TRUTH. **Ship:** a single-job CI rig failure surfaces once per job per day "
+        f"for investigation without silently quarantining healthy tests.\n\n"
+        f"**{test_count}** distinct tests failed together across **{len(bursts)}** run(s) of "
+        f"`{job}` on `{day_utc}` (`{RIG_BURST_MIN_TESTS}+` distinct tests per job run = rig event):\n\n"
+        f"{rows}{sample_block}\n\n"
+        f"**Zero tests were quarantined:** none of these tests received `flaky-quarantine`. "
+        f"Fix the shared runner/environment cause and close this issue.\n\n"
+        f"Filed by `backend/scripts/flake_sentinel.py` (#12252 follow-up), daily.\n\n"
+        f"<sub>`{RIG_MARKER_KEY}:{rig_fingerprint(job, day_utc)}`  (dedupe key — do not remove)</sub>"
+    )
+
+
+def rig_evidence_comment(job: str, day_utc: str, bursts: list[dict]) -> str:
+    _, test_count = _rig_burst_tests_and_count(bursts)
+    rows = "\n".join(
+        f"- `{str(b.get('sha') or '')[:10]}` ({b.get('test_count')} tests) "
+        f"([run {b.get('run_id')}, attempt {b.get('attempt')}]({b.get('link')}))"
+        for b in sorted(bursts, key=lambda b: (b.get("at") or "", int(b.get("run_id") or 0)))
+    )
+    return (
+        f"Flake sentinel: {len(bursts)} burst run(s) ({test_count} distinct tests) "
+        f"for `{job}` on `{day_utc}`:\n\n{rows}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -375,9 +475,58 @@ def file_flakes(api: Api, events: list[Event], now: dt.datetime, dry: bool) -> l
     return lines
 
 
-def report(events: list[Event], job_level: list[dict], filed: list[str], api: Api, partial: str | None) -> str:
+def file_rig_bursts(rig_bursts: list[dict], now: dt.datetime, dry: bool) -> list[str]:
+    """File or update one ``Rig: N tests failed together in <job>`` issue per job per UTC day."""
+    from app.tasks.sentinel_filing import reconcile_issue
+
+    window = _iso(now - dt.timedelta(days=WINDOW_DAYS))
+    grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for b in rig_bursts:
+        at = str(b.get("at") or "")
+        if at and at < window:
+            continue
+        day_utc = (at or _iso(now))[:10]
+        grouped[(str(b.get("job") or "unknown"), day_utc)].append(b)
+
+    lines: list[str] = []
+    for (job, day_utc), day_bursts in sorted(grouped.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+        title = rig_issue_title(job, day_bursts)
+        if dry:
+            lines.append(f"- `{title}` ({day_utc}): {len(day_bursts)} burst run(s) — would file/update")
+            continue
+        body = rig_issue_body(job, day_utc, day_bursts)
+        result = reconcile_issue(
+            red=True,
+            fingerprint=rig_fingerprint(job, day_utc),
+            marker_key=RIG_MARKER_KEY,
+            labels=["alert-intake", "needs-agent", "area:infra", "type:bug", "priority:p2"],
+            title=title,
+            body=body,
+            title_prefix=None,
+            red_body=body,
+            red_comment=rig_evidence_comment(job, day_utc, day_bursts),
+            add_to_board=False,
+        )
+        lines.append(
+            f"- `{title}` ({day_utc}): {len(day_bursts)} burst run(s) — "
+            f"{result.get('action')} #{result.get('issue')}"
+        )
+    return lines
+
+
+def report(
+    events: list[Event],
+    job_level: list[dict],
+    filed: list[str],
+    api: Api,
+    partial: str | None,
+    rig_bursts: list[dict] | None = None,
+    rig_filed: list[str] | None = None,
+) -> str:
+    per_test, detected_bursts = split_rig_bursts(events)
+    bursts = detected_bursts if rig_bursts is None else rig_bursts
     by: dict[str, list[Event]] = defaultdict(list)
-    for e in events:
+    for e in per_test:
         by[e.test].append(e)
     seen = sorted(by.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     out = [f"## Flake sentinel — last {WINDOW_DAYS} days ({api.calls} GitHub calls)"]
@@ -388,6 +537,16 @@ def report(events: list[Event], job_level: list[dict], filed: list[str], api: Ap
     once = [(t, es) for t, es in seen if len(es) < THRESHOLD]
     out.append("\n**Seen once this week (watch, not filed):**")
     out += [f"- `{t}` — {es[0].job}, `{es[0].sha[:10]}` ([run]({es[0].link()}))" for t, es in once] or ["- none"]
+    out.append(f"\n**Job-wide bursts ({RIG_BURST_MIN_TESTS}+ tests in one job, counted as one rig event, never quarantined):** "
+               f"{len(bursts)}")
+    out += [
+        f"- {b['job']} — {b['test_count']} tests on `{b['sha'][:10]}` "
+        f"([run {b['run_id']}, attempt {b['attempt']}]({b['link']}))"
+        for b in bursts
+    ]
+    if rig_filed:
+        out.append("\n**Rig burst issues (one per job per day, never quarantined):**")
+        out += rig_filed
     out.append(f"\n**Jobs that failed then passed with no test named** (setup step or cascade, never filed): "
                f"{len(job_level)}")
     names = defaultdict(int)
@@ -406,17 +565,19 @@ def main(argv: list[str] | None = None) -> int:
         print("GITHUB_TOKEN unset — nothing read", file=sys.stderr)
         return 2
     api, now = Api(token), dt.datetime.now(dt.timezone.utc)
-    events, job_level, partial, filed = [], [], None, []
+    events, job_level, partial, filed, rig_bursts, rig_filed = [], [], None, [], [], []
     try:
         runs = list_runs(api, now)
         events, job_level = rerun_events(api, runs)
         events += retry_events(api, _iso(now - dt.timedelta(days=WINDOW_DAYS)))
-        filed = file_flakes(api, events, now, args.dry_run)
+        per_test, rig_bursts = split_rig_bursts(events)
+        filed = file_flakes(api, per_test, now, args.dry_run)
+        rig_filed = file_rig_bursts(rig_bursts, now, args.dry_run)
     except RateLimited as exc:
         partial = str(exc)
     except urllib.error.HTTPError as exc:
         partial = f"GitHub returned {exc.code} on {_where(exc.url or '')}"
-    text = report(events, job_level, filed, api, partial)
+    text = report(events, job_level, filed, api, partial, rig_bursts=rig_bursts, rig_filed=rig_filed)
     print(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

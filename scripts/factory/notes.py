@@ -33,6 +33,7 @@ PLACES = (
 DAILY_CALLS = 120
 COLLECTOR_DAILY_CALLS = 200
 MONTHLY_COST_MICROS = 20_000_000
+PICTURE_DRAWS_PER_DAY = 3
 INTERVAL = timedelta(minutes=10)
 TIMEOUT = 8
 MAX_TOKENS = 360
@@ -239,14 +240,37 @@ def read_meter(body, now):
             raise ValueError("Invalid Factory picture meter")
         meter["picture_sample"] = True
     if "picture_day" in saved:
-        if date.fromisoformat(saved["picture_day"]) > saved_day:
+        picture_day = date.fromisoformat(saved["picture_day"])
+        if "picture_draws" in saved or "picture_retry" in saved:
+            draws, retry = saved["picture_draws"], saved["picture_retry"]
+        else:
+            draws = 1
+            # The old meter tracked only the date. Run 45310334641 confirms
+            # that Nov 23's first draw was charged and refused for lettering.
+            retry = saved["picture_day"] == "2026-11-23"
+        if (
+            picture_day > saved_day
+            or type(draws) is not int or not 1 <= draws <= PICTURE_DRAWS_PER_DAY
+            or (picture_day == saved_day and draws > calls)
+            or type(retry) is not bool or (retry and draws == PICTURE_DRAWS_PER_DAY)
+        ):
             raise ValueError("Invalid Factory picture meter")
-        meter["picture_day"] = saved["picture_day"]
+        meter.update(picture_day=saved["picture_day"], picture_draws=draws, picture_retry=retry)
+    elif "picture_draws" in saved or "picture_retry" in saved:
+        raise ValueError("Invalid Factory picture meter")
     if month == meter["month"]:
         meter["month_micros"] = month_micros
     if saved_day == today:
         meter.update(calls=calls, notes_calls=notes_calls, micros=micros)
     return meter
+
+
+def next_picture_draw(meter, day):
+    if meter.get("picture_day") != day:
+        return 1
+    if meter["picture_retry"] and meter["picture_draws"] < PICTURE_DRAWS_PER_DAY:
+        return meter["picture_draws"] + 1
+    return None
 
 
 def meter_body(body, meter):
@@ -310,13 +334,20 @@ class ModelBudget:
         now = self.now
         day = now.astimezone(PACIFIC).date().isoformat()
         limit = MONTHLY_COST_MICROS if month_limit is None else min(month_limit, MONTHLY_COST_MICROS)
+        draw = next_picture_draw(meter, day) if meter and picture == "daily" else None
         if (
             not self.save or not meter or meter["day"] != day
             or meter["calls"] >= COLLECTOR_DAILY_CALLS
             or (notes_hash is not None and meter["notes_calls"] >= DAILY_CALLS)
             or (picture == "sample" and meter.get("picture_sample"))
-            or (picture == "daily" and meter.get("picture_day") == day)
+            or (picture == "daily" and draw is None)
             or meter["month_micros"] + cost > limit
+        ):
+            return None
+        picture_draws_today = meter["picture_draws"] if meter.get("picture_day") == day else 0
+        if (
+            picture != "daily"
+            and meter["calls"] - picture_draws_today >= COLLECTOR_DAILY_CALLS - PICTURE_DRAWS_PER_DAY
         ):
             return None
         reserved = {
@@ -331,8 +362,8 @@ class ModelBudget:
             )
         if picture == "sample":
             reserved["picture_sample"] = True
-        if picture == "daily":
-            reserved["picture_day"] = day
+        if draw is not None:
+            reserved.update(picture_day=day, picture_draws=draw, picture_retry=False)
         try:
             # Record the reservation before sending the request. The master
             # publisher is serialized even when the visible floor is unchanged.
@@ -343,8 +374,10 @@ class ModelBudget:
             return meter, reserved
         return None
 
-    def settle(self, reservation, spent):
+    def settle(self, reservation, spent, *, picture_rejected=False):
         meter, reserved = reservation
+        if picture_rejected and reserved["picture_draws"] < PICTURE_DRAWS_PER_DAY:
+            reserved = {**reserved, "picture_retry": True}
         self.persist({
             **reserved,
             "micros": meter["micros"] + spent,

@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "description": "Curated preview grouping sets for Batch 6 (#12288, Fable 6:19 AM PT Sun Nov 22): Google's 2026 Year in Search, Pop Culture Oddities, 2026 Box Office Showdown, and The 2027 Golden Globes.",
+  "sets": {
+    "batch6-google-year-in-search-top1": {
+      "entries": [
+        {
+          "id": 70733266,
+          "short_label": "#1 Searched Actor on Google 2026",
+          "headline_phrase": "{answer} finishing as Google's #1 searched actor",
+          "headline_with_phrase": "{answer} for #1 searched actor"
+        },
+        {
+          "id": 57792616,
+          "short_label": "#1 Searched Athlete on Google 2026",
+          "headline_phrase": "{answer} finishing as Google's #1 searched athlete",
+          "headline_with_phrase": "{answer} for #1 searched athlete"
+        },
+        {
+          "id": 57792681,
+          "short_label": "#1 Searched Movie on Google 2026",
+          "headline_phrase": "{answer} finishing as Google's #1 searched movie",
+          "headline_with_phrase": "{answer} for #1 searched movie"
+        },
+        {
+          "id": 57792626,
+          "short_label": "#1 Searched TV Show on Google 2026",
+          "headline_phrase": "{answer} finishing as Google's #1 searched TV show",
+          "headline_with_phrase": "{answer} for #1 searched TV show"
+        }
+      ]
+    },
+    "batch6-google-year-in-search-top5": {
+      "entries": [
+        {
+          "id": 60634621,
+          "short_label": "Top 5 Searched Movies on Google",
+          "headline_phrase": "{answer} making Google's top 5 searched movies",
+          "headline_with_phrase": "{answer} in the top 5 searched movies"
+        },
+        {
+          "id": 60634619,
+          "short_label": "Top 5 Searched Athletes on Google",
+          "headline_phrase": "{answer} making Google's top 5 searched athletes",
+          "headline_with_phrase": "{answer} in the top 5 searched athletes"
+        },
+        {
+          "id": 60634622,
+          "short_label": "Top 5 Searched Actors on Google",
+          "headline_phrase": "{answer} making Google's top 5 searched actors",
+          "headline_with_phrase": "{answer} in the top 5 searched actors"
+        },
+        {
+          "id": 60634620,
+          "short_label": "Top 5 Searched TV Shows on Google",
+          "headline_phrase": "{answer} making Google's top 5 searched TV shows",
+          "headline_with_phrase": "{answer} in the top 5 searched TV shows"
+        }
+      ]
+    },
+    "batch6-pop-culture-oddities": {
+      "entries": [
+        {
+          "id": 67804457,
+          "short_label": "\"All I Want for Christmas Is You\" in the Hot 100's {rank_slot} on Dec 19",
+          "plain_short_label": "\"All I Want for Christmas Is You\" Hot 100 rank on Dec 19",
+          "headline_phrase": "\"All I Want for Christmas Is You\" landing in {the_rank_slot} of the Dec 19 Hot 100",
+          "headline_with_phrase": "Mariah Carey landing in {the_rank_slot} of the Dec 19 Hot 100",
+          "art_subject": "Mariah Carey"
+        },
+        {
+          "id": 108306,
+          "short_label": "Beyoncé's next album genre",
+          "headline_phrase": "Beyoncé's next album being {lower_answer}",
+          "headline_with_phrase": "Beyoncé's next album being {lower_answer}",
+          "art_subject": "Beyoncé"
+        },
+        {
+          "id": 109309,
+          "short_label": "Taylor Swift (Taylor's Version) announced",
+          "headline_phrase": "Taylor Swift (Taylor's Version) announced this year",
+          "headline_with_phrase": "a Taylor Swift (Taylor's Version) announcement this year",
+          "art_subject": "Taylor Swift"
+        },
+        {
+          "id": 108254,
+          "short_label": "Time's Person of the Decade",
+          "headline_phrase": "{answer} named Time's Person of the Decade",
+          "headline_with_phrase": "{answer} named Time's Person of the Decade"
+        },
+        {
+          "id": 67804475,
+          "short_label": "NYC 2026 Michelin stars",
+          "headline_phrase": "{answer} earning a New York Michelin star in 2026",
+          "headline_with_phrase": "{answer} earning a New York Michelin star"
+        },
+        {
+          "id": 58903285,
+          "short_label": "Turner Prize 2026 Winner",
+          "headline_phrase": "{answer} winning the 2026 Turner Prize",
+          "headline_with_phrase": "{answer} winning the 2026 Turner Prize"
+        }
+      ]
+    },
+    "batch6-2026-box-office-showdown": {
+      "entries": [
+        {
+          "id": 114149,
+          "short_label": "Bigger opening weekend than Dune 3",
+          "headline_phrase": "{answer} beating Dune 3 on opening weekend",
+          "headline_with_phrase": "{answer} beating Dune 3 on opening weekend"
+        },
+        {
+          "id": 113355,
+          "short_label": "Top-grossing movie of 2026",
+          "headline_phrase": "{answer} finishing as the top-grossing movie of 2026",
+          "headline_with_phrase": "{answer} finishing as the top-grossing movie of 2026"
+        },
+        {
+          "id": 113356,
+          "short_label": "Biggest 2026 opening weekend",
+          "headline_phrase": "{answer} taking the biggest 2026 opening weekend",
+          "headline_with_phrase": "{answer} taking the biggest 2026 opening weekend"
+        },
+        {
+          "id": 56867563,
+          "short_label": "#2 opening weekend of 2026",
+          "headline_phrase": "{answer} taking the #2 opening weekend of 2026",
+          "headline_with_phrase": "{answer} taking the #2 opening weekend of 2026"
+        },
+        {
+          "id": 68365230,
+          "short_label": "Avengers: Doomsday opening box office",
+          "headline_phrase": "Avengers: Doomsday opening to {answer}",
+          "headline_with_phrase": "Avengers: Doomsday opening to {answer}",
+          "art_subject": "Avengers: Doomsday"
+        },
+        {
+          "id": 68365233,
+          "short_label": "Dune: Part Three opening box office",
+          "headline_phrase": "Dune: Part Three opening to {answer}",
+          "headline_with_phrase": "Dune: Part Three opening to {answer}",
+          "art_subject": "Dune: Part Three"
+        }
+      ]
+    },
+    "batch6-golden-globes-2027": {
+      "entries": [
+        {
+          "id": 70160313,
+          "short_label": "Best Actress (Comedy or Musical)",
+          "headline_phrase": "{answer} winning Best Actress (Comedy or Musical)",
+          "headline_with_phrase": "{answer} winning Best Actress (Comedy or Musical)"
+        },
+        {
+          "id": 70160296,
+          "short_label": "Best Actress (Limited Series)",
+          "headline_phrase": "{answer} winning Best Actress (Limited Series)",
+          "headline_with_phrase": "{answer} winning Best Actress (Limited Series)"
+        },
+        {
+          "id": 70160294,
+          "short_label": "Best Supporting Actress (TV)",
+          "headline_phrase": "{answer} winning Best Supporting Actress on TV",
+          "headline_with_phrase": "{answer} winning Best Supporting Actress on TV"
+        },
+        {
+          "id": 70160314,
+          "short_label": "Best Actor (Comedy or Musical)",
+          "headline_phrase": "{answer} winning Best Actor (Comedy or Musical)",
+          "headline_with_phrase": "{answer} winning Best Actor (Comedy or Musical)"
+        },
+        {
+          "id": 70160312,
+          "short_label": "Best Picture (Comedy or Musical)",
+          "headline_phrase": "{answer} winning Best Picture (Comedy or Musical)",
+          "headline_with_phrase": "{answer} winning Best Picture (Comedy or Musical)"
+        },
+        {
+          "id": 70160308,
+          "short_label": "Best Picture (Drama)",
+          "headline_phrase": "{answer} winning Best Drama at the Golden Globes",
+          "headline_with_phrase": "{answer} winning Best Drama"
+        },
+        {
+          "id": 70160311,
+          "short_label": "Best Actor (Drama)",
+          "headline_phrase": "{answer} winning Best Actor (Drama)",
+          "headline_with_phrase": "{answer} winning Best Actor (Drama)"
+        },
+        {
+          "id": 70160298,
+          "short_label": "Best Limited Series",
+          "headline_phrase": "{answer} winning Best Limited Series",
+          "headline_with_phrase": "{answer} winning Best Limited Series"
+        },
+        {
+          "id": 70160295,
+          "short_label": "Best Supporting Actor (TV)",
+          "headline_phrase": "{answer} winning Best Supporting Actor on TV",
+          "headline_with_phrase": "{answer} winning Best Supporting Actor on TV"
+        },
+        {
+          "id": 70239565,
+          "short_label": "Best Drama Series",
+          "headline_phrase": "{answer} winning Best TV Drama",
+          "headline_with_phrase": "{answer} winning Best TV Drama"
+        }
+      ]
+    }
+  }
+}

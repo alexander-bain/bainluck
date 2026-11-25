@@ -198,13 +198,29 @@ enum PeriodChipGeometry {
     /// Requests are placed in the order given; the caller passes them in time
     /// order, which is x order on a linear axis.
     static func place(
-        _ requests: [ChipRequest], plotWidth: Double, metrics: ChipMetrics = .match
+        _ requests: [ChipRequest],
+        plotWidth: Double,
+        metrics: ChipMetrics = .match,
+        clearTrailingBoundary: Bool = false,
+        trailingClearance: Double = 6
     ) -> [ChipPlacement] {
         var candidates = requests
         while !candidates.isEmpty {
-            let centers = relaxedCenters(candidates, plotWidth: plotWidth, metrics: metrics)
+            let centers = relaxedCenters(
+                candidates,
+                plotWidth: plotWidth,
+                metrics: metrics,
+                clearTrailingBoundary: clearTrailingBoundary,
+                trailingClearance: trailingClearance
+            )
             guard let doomed = firstUnplaceable(
-                candidates, centers: centers, plotWidth: plotWidth, metrics: metrics) else {
+                candidates,
+                centers: centers,
+                plotWidth: plotWidth,
+                metrics: metrics,
+                clearTrailingBoundary: clearTrailingBoundary,
+                trailingClearance: trailingClearance
+            ) else {
                 return zip(candidates, centers).map {
                     ChipPlacement(key: $0.key, centerX: $1)
                 }
@@ -215,13 +231,36 @@ enum PeriodChipGeometry {
             if candidates.count == 1 {
                 return [ChipPlacement(
                     key: candidates[0].key,
-                    centerX: clampedCenterX(
-                        rawX: candidates[0].rawX, label: candidates[0].label,
-                        plotWidth: plotWidth, metrics: metrics))]
+                    centerX: idealCenterX(
+                        rawX: candidates[0].rawX,
+                        label: candidates[0].label,
+                        plotWidth: plotWidth,
+                        metrics: metrics,
+                        clearTrailingBoundary: clearTrailingBoundary,
+                        trailingClearance: trailingClearance
+                    ))]
             }
             candidates.remove(at: doomed)
         }
         return []
+    }
+
+    static func idealCenterX(
+        rawX: Double,
+        label: String,
+        plotWidth: Double,
+        metrics: ChipMetrics = .match,
+        clearTrailingBoundary: Bool = false,
+        trailingClearance: Double = 6
+    ) -> Double {
+        let width = chipWidth(for: label, metrics: metrics)
+        guard plotWidth > width else { return plotWidth / 2 }
+        let half = width / 2
+        if clearTrailingBoundary, rawX + half > plotWidth {
+            let flipped = rawX - half - trailingClearance
+            return min(max(flipped, half), plotWidth - half)
+        }
+        return min(max(rawX, half), plotWidth - half)
     }
 
     /// The two relaxation passes. Left-to-right seats each chip clear of the one
@@ -230,10 +269,25 @@ enum PeriodChipGeometry {
     /// strip. Neither pass drops anything — that decision belongs to the caller,
     /// once it can see where everything landed.
     private static func relaxedCenters(
-        _ requests: [ChipRequest], plotWidth: Double, metrics: ChipMetrics
+        _ requests: [ChipRequest],
+        plotWidth: Double,
+        metrics: ChipMetrics,
+        clearTrailingBoundary: Bool = false,
+        trailingClearance: Double = 6
     ) -> [Double] {
         let halves = requests.map { chipWidth(for: $0.label, metrics: metrics) / 2 }
-        var centers = requests.map(\.rawX)
+        var centers = requests.map {
+            clearTrailingBoundary && ($0.rawX + chipWidth(for: $0.label, metrics: metrics) / 2 > plotWidth)
+                ? idealCenterX(
+                    rawX: $0.rawX,
+                    label: $0.label,
+                    plotWidth: plotWidth,
+                    metrics: metrics,
+                    clearTrailingBoundary: true,
+                    trailingClearance: trailingClearance
+                )
+                : $0.rawX
+        }
         guard !centers.isEmpty else { return centers }
 
         centers[0] = max(centers[0], halves[0])
@@ -241,7 +295,20 @@ enum PeriodChipGeometry {
             centers[i] = max(centers[i], centers[i - 1] + halves[i - 1] + halves[i])
         }
         let last = centers.count - 1
-        centers[last] = min(centers[last], plotWidth - halves[last])
+        let lastCeiling = clearTrailingBoundary
+            ? min(
+                plotWidth - halves[last],
+                idealCenterX(
+                    rawX: requests[last].rawX,
+                    label: requests[last].label,
+                    plotWidth: plotWidth,
+                    metrics: metrics,
+                    clearTrailingBoundary: true,
+                    trailingClearance: trailingClearance
+                )
+            )
+            : (plotWidth - halves[last])
+        centers[last] = min(centers[last], lastCeiling)
         for i in stride(from: last - 1, through: 0, by: -1) {
             centers[i] = min(centers[i], centers[i + 1] - halves[i + 1] - halves[i])
         }
@@ -262,8 +329,12 @@ enum PeriodChipGeometry {
     /// the budget would delete the two chips that most need to exist — the first
     /// period and the terminal one, which are the only two the clamp ever moves.
     private static func firstUnplaceable(
-        _ requests: [ChipRequest], centers: [Double], plotWidth: Double,
-        metrics: ChipMetrics
+        _ requests: [ChipRequest],
+        centers: [Double],
+        plotWidth: Double,
+        metrics: ChipMetrics,
+        clearTrailingBoundary: Bool = false,
+        trailingClearance: Double = 6
     ) -> Int? {
         let epsilon = 0.001
         for (i, request) in requests.enumerated() {
@@ -277,9 +348,14 @@ enum PeriodChipGeometry {
                     return i - 1
                 }
             }
-            let ideal = clampedCenterX(
-                rawX: request.rawX, label: request.label,
-                plotWidth: plotWidth, metrics: metrics)
+            let ideal = idealCenterX(
+                rawX: request.rawX,
+                label: request.label,
+                plotWidth: plotWidth,
+                metrics: metrics,
+                clearTrailingBoundary: clearTrailingBoundary,
+                trailingClearance: trailingClearance
+            )
             let nudge = centers[i] - ideal
             if abs(nudge) > nudgeBudget(for: request.label, metrics: metrics) + epsilon {
                 return nudge > 0 ? max(i - 1, 0) : i

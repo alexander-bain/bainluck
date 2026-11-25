@@ -285,7 +285,7 @@ struct EventDetailView: View {
             // fit, never a name cut in half ("RMA vs Dubai Bas…").
             ViewThatFits(in: .horizontal) {
                 Text(scorelessTitle).font(.headline).lineLimit(1)
-                Text(scorelessCompactTitle).font(.headline).lineLimit(1)
+                Text(scorelessCompactTitle).font(.headline).lineLimit(1).minimumScaleFactor(0.65)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(dynamicTitle)
@@ -301,6 +301,7 @@ struct EventDetailView: View {
             Text(c.homeScore).layoutPriority(1)
         }
         .font(.headline)
+        .minimumScaleFactor(0.65)
     }
     #endif
 
@@ -369,9 +370,18 @@ struct EventDetailView: View {
                     ToolbarItem(placement: .confirmationAction) {
                         HStack(spacing: 4) {
                             ShareLink(item: shareURL) {
+                                // #11177 — Pin's 44 pt tap target (`#10880` / `5d3931e735`):
+                                // `.plain` escapes the toolbar's 36 pt cap so the control is
+                                // 44×44, and `.primary` keeps Share's toolbar ink instead of
+                                // accent blue.
                                 Image(systemName: "square.and.arrow.up")
                                     .font(.system(size: 14))
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Share")
                             .recordsShareOpened {
                                 ShareInstrumentation.recordShareOpened(
                                     itemType: "event",
@@ -497,6 +507,7 @@ struct EventDetailView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
+                .noteReviewPromptTrouble12304()
             }
         }
         return stackBoundary12278 {
@@ -1659,6 +1670,27 @@ struct EventDetailView: View {
             event.homeTeamData?.record.map { "\(named.home) \($0)" },
         ].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Resolves `EventSportHeadlines12472.Model` through `PeriodLabel.liveStatusText`
+    /// so arrival previews share the exact shipped headline contract (#4880, #11934).
+    static func resolvedHeadlineModel(for event: EventDetail) -> EventSportHeadlines12472.Model {
+        let hasScore = showsScore(
+            status: event.status,
+            away: event.awayScore,
+            home: event.homeScore
+        ) && event.scoreSourceUnavailable != true
+        return EventSportHeadlines12472.resolve(
+            event: event,
+            awayFullName: event.awayTeam,
+            homeFullName: event.homeTeam,
+            liveStatusText: PeriodLabel.liveStatusText(
+                period: event.espn?.period,
+                gameClock: event.espn?.gameClock
+            ),
+            hasScore: hasScore,
+            numberStreams: false
+        )
     }
 
     private func heroSection(_ event: EventDetail) -> some View {

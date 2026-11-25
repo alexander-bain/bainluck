@@ -148,7 +148,6 @@ Full catalog with war stories: `docs/gotchas-reference.md`. **These numbers are 
 
 ## Reference docs
 
-Product judgment: `docs/PRODUCT-BRAIN.md`, `docs/PRD.md`, `docs/doctrine.md`.
-Architecture and incidents: `docs/architecture-reference.md`, `docs/gotchas-reference.md`.
-Visual language: `docs/design-system.md`. Priority and status: GitHub Issues.
-All other original guidance: `docs/release-loop/claude-before-day0-20261101.md`.
+Product: `docs/PRODUCT-BRAIN.md`, `docs/PRD.md`, `docs/doctrine.md`, `docs/design-system.md`.
+Architecture, incidents & lessons: `docs/architecture-reference.md`, `docs/gotchas-reference.md`, `docs/lessons.md`.
+Status: GitHub Issues. Archive: `docs/release-loop/claude-before-day0-20261101.md`.

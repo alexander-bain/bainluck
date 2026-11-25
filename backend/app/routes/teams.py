@@ -50,7 +50,7 @@ from app.utils.standings_shape import (
 )
 from app.utils.source_mark import quote_source_mark, settled_source_mark
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -60,7 +60,6 @@ from app.models import Team, Event, Sport, FuturesMarket, FuturesOutcome, TeamId
 from app.services import get_db
 from app.utils import season_windows
 from app.utils.proven_duplicates import (
-    FoldedBlendView,
     folded_probability_sources_batch,
     not_a_proven_duplicate,
 )
@@ -237,17 +236,8 @@ async def _club_row_identity(
     return frozenset(club_ids), frozenset(club_names)
 
 
-@router.get("/{identifier}")
-async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession = Depends(get_db)):
-    """Get a team page with upcoming/recent games, futures, and championship path."""
-    _t = {}
-    _t0 = time.perf_counter()
-
-    def _mark(label):
-        nonlocal _t0
-        _t[label] = round((time.perf_counter() - _t0) * 1000)
-        _t0 = time.perf_counter()
-
+async def _resolve_team_by_identifier(db: AsyncSession, identifier: str) -> Team:
+    """Resolve a team row by numeric ID or slug, following retired/legacy/parent redirects."""
     # Try integer ID first, then slug
     team_filter = Team.slug == identifier
     try:
@@ -321,6 +311,125 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             if parent is not None:
                 team = parent
 
+    return team
+
+
+async def _resolve_team_family_context(db: AsyncSession, team: Team):
+    """Resolve league-family sports and sibling club IDs/names for a resolved team."""
+    team_sport_key = getattr(team.sport, "key", None)
+    team_family = league_family_identity(team_sport_key)
+    family_sport_ids: list[int] = []
+    # #9581: the sports a NAME match may come from at all — see the name arm.
+    # Read off the same one query as the family list; `None` = no constraint.
+    name_arm_sport_ids: list[int] | None = None
+    if team_sport_key:
+        all_sports = (await db.execute(select(Sport.id, Sport.key))).all()
+        if team_family is not None:
+            family_sport_ids = [
+                sport_id
+                for sport_id, sport_key in all_sports
+                if league_family_identity(sport_key) == team_family
+            ]
+        name_arm_sport_ids = [
+            sport_id
+            for sport_id, sport_key in all_sports
+            if same_sport_same_gender(team_sport_key, sport_key)
+        ]
+
+    club_ids, club_names = await _club_row_identity(db, team, family_sport_ids)
+    # Sorted at the query boundary: a set's iteration order is not stable
+    # between processes, and an `IN` list that reorders is a different cache
+    # key for the same question. The frozensets stay sets for the membership
+    # tests in the card formatter, where order is nothing.
+    club_id_list, club_name_list = sorted(club_ids), sorted(club_names)
+    return (
+        team_sport_key,
+        team_family,
+        family_sport_ids,
+        name_arm_sport_ids,
+        club_ids,
+        club_names,
+        club_id_list,
+        club_name_list,
+    )
+
+
+async def _build_stamped_championship_path(
+    team: Team,
+    db: AsyncSession,
+    *,
+    club_id_list: list[int],
+    sport_key: str | None,
+    league_slug: str | None,
+    now: datetime,
+) -> tuple[list[dict], list[int]]:
+    """Compute championship path plus grid verdicts and every underlying candidate market ID."""
+    champ_market_ids: set[int] = set()
+    champ_path = await _get_championship_path(
+        team.id,
+        db,
+        league_slug=league_slug,
+        now=now,
+        team_sport_key=sport_key,
+        out_market_ids=champ_market_ids,
+    )
+    if league_slug and champ_path:
+        try:
+            _stamp_grid_states(
+                champ_path,
+                [],
+                _grid_decided_columns(
+                    await _read_cached_grid(league_slug),
+                    club_id_list,
+                    season_windows.season_string(league_slug, now),
+                ),
+            )
+        except Exception:
+            logger.exception("team championship path: grid state failed for team %s", team.id)
+    return champ_path, sorted(champ_market_ids)
+
+
+@router.get("/{identifier}/championship-path")
+async def get_team_championship_path(
+    identifier: str,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    """#10090: light refresh of one team's Championship Path steps & grid verdicts."""
+    team = await _resolve_team_by_identifier(db, identifier)
+    now = datetime.now(timezone.utc)
+    sport_key, _, _, _, _, _, club_id_list, _ = await _resolve_team_family_context(db, team)
+    league_slug = _league_slug_for_sport_key(sport_key)
+    champ_path, stream_market_ids = await _build_stamped_championship_path(
+        team,
+        db,
+        club_id_list=club_id_list,
+        sport_key=sport_key,
+        league_slug=league_slug,
+        now=now,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "team_id": team.id,
+        "championship_path": champ_path,
+        "stream_market_ids": stream_market_ids,
+        "built_at": now.timestamp(),
+    }
+
+
+@router.get("/{identifier}")
+async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession = Depends(get_db)):
+    """Get a team page with upcoming/recent games, futures, and championship path."""
+    _t = {}
+    _t0 = time.perf_counter()
+
+    def _mark(label):
+        nonlocal _t0
+        _t[label] = round((time.perf_counter() - _t0) * 1000)
+        _t0 = time.perf_counter()
+
+    team = await _resolve_team_by_identifier(db, identifier)
+
     now = datetime.now(timezone.utc)
 
     # --- Events: upcoming + recent ---
@@ -343,33 +452,16 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     # not a league (#1798/#4945: every MLB club has a preseason row too), and a
     # tennis player registered under `tennis_atp_us_open` must keep their
     # `tennis_atp` matches.
-    team_sport_key = getattr(team.sport, "key", None)
-    team_family = league_family_identity(team_sport_key)
-    family_sport_ids: list[int] = []
-    # #9581: the sports a NAME match may come from at all — see the name arm.
-    # Read off the same one query as the family list; `None` = no constraint.
-    name_arm_sport_ids: list[int] | None = None
-    if team_sport_key:
-        all_sports = (await db.execute(select(Sport.id, Sport.key))).all()
-        if team_family is not None:
-            family_sport_ids = [
-                sport_id
-                for sport_id, sport_key in all_sports
-                if league_family_identity(sport_key) == team_family
-            ]
-        name_arm_sport_ids = [
-            sport_id
-            for sport_id, sport_key in all_sports
-            if same_sport_same_gender(team_sport_key, sport_key)
-        ]
-
-    club_ids, club_names = await _club_row_identity(db, team, family_sport_ids)
-
-    # Sorted at the query boundary: a set's iteration order is not stable
-    # between processes, and an `IN` list that reorders is a different cache
-    # key for the same question. The frozensets stay sets for the membership
-    # tests in the card formatter, where order is nothing.
-    club_id_list, club_name_list = sorted(club_ids), sorted(club_names)
+    (
+        team_sport_key,
+        team_family,
+        family_sport_ids,
+        name_arm_sport_ids,
+        club_ids,
+        club_names,
+        club_id_list,
+        club_name_list,
+    ) = await _resolve_team_family_context(db, team)
 
     name_arm = or_(
         Event.home_team_name.in_(club_name_list),
@@ -581,9 +673,15 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
 
     # --- Team futures (championship, conference, division, awards) ---
     futures_items: list = []
+    _futures_unavailable = False
+    _futures_partial = False
+    _futures_omitted_count = 0
     _ftime: dict = {}
     try:
-        from app.routes.user import _query_team_futures
+        from app.routes.user import (
+            TeamFuturesScreenUnavailableError,
+            _query_team_futures,
+        )
         # #9219: the club's rows, not only the URL's row — the same set the
         # games rails use (#7929), so a spelling the page reaches for games it
         # also reaches for futures. Narrowed to the team's OWN sport row: the
@@ -606,10 +704,16 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             futures_team_ids, db, limit=30, timings=_ftime if debug_timing else None
         )
         futures_items = futures_data.get("items", [])
+        if futures_data.get("partial"):
+            _futures_partial = True
+            _futures_omitted_count = int(futures_data.get("omitted_count", 0))
         for item in futures_items:
             item["display_tier"] = _display_tier(
                 item.get("market_tier"), item.get("market_name")
             )
+    except TeamFuturesScreenUnavailableError:
+        logger.warning("team page: futures price screen unavailable for team %s", team.id)
+        _futures_unavailable = True
     except Exception:
         logger.exception("team page: futures section failed for team %s", team.id)
     _mark("futures")
@@ -628,9 +732,10 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
 
     # --- Championship path (tier 1/2/4 probabilities) ---
     champ_path: list = []
+    champ_market_ids: set[int] = set()
     try:
         champ_path = await _get_championship_path(
-            team.id, db, league_slug=league_slug, now=now, team_sport_key=sport_key
+            team.id, db, league_slug=league_slug, now=now, team_sport_key=sport_key, out_market_ids=champ_market_ids
         )
     except Exception:
         logger.exception("team page: championship path failed for team %s", team.id)
@@ -652,6 +757,18 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             logger.exception("team page: grid state failed for team %s", team.id)
     _mark("grid_state")
 
+    stream_market_ids = sorted(
+        champ_market_ids
+        | {
+            mid
+            for step in champ_path
+            for mid in (
+                step.get("market_ids")
+                or ([step["market_id"]] if step.get("market_id") else [])
+            )
+        }
+    )
+
     resp = {
         # `now` is the route's own clock (one read, at the top), so the record
         # and the season descriptor beside it cannot disagree about the date.
@@ -661,7 +778,13 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
         "recent_events": recent_events,
         "futures": futures_items,
         "championship_path": champ_path,
+        "championship_path_market_ids": stream_market_ids,
     }
+    if _futures_unavailable:
+        resp["futures_unavailable"] = True
+    if _futures_partial:
+        resp["futures_partial"] = True
+        resp["futures_omitted_count"] = _futures_omitted_count
     if debug_timing:
         resp["_timings_ms"] = _t
     return resp
@@ -891,11 +1014,28 @@ async def _folded_briefs(
     with a 500 for the sake of a number a reader would otherwise still see.
     """
     rows = [event for rail in rails for event in rail]
-    folded: dict[int, dict] = {}
-    try:
-        folded = await folded_probability_sources_batch(db, rows)
-    except Exception:
-        logger.exception("team page: twin fold failed for team %s", team.id)
+    from app.utils.unified_game_read import load_unified_game_reads
+
+    async def _fold_sources_with_log(sess, evs):
+        try:
+            return await folded_probability_sources_batch(sess, evs)
+        except Exception:
+            logger.exception("team page: twin fold failed for team %s", team.id)
+            return {}
+
+    unified_by_id: dict = {}
+    if rows:
+        unified_batch = await load_unified_game_reads(
+            db,
+            rows,
+            collapse_in_page=False,
+            include_same_league_external=False,
+            include_odds=True,
+            fold_sources_fn=_fold_sources_with_log,
+            fault_tolerant_external=True,
+            fault_tolerant_odds=True,
+        )
+        unified_by_id = unified_batch.by_id
 
     # #10589: a finished row's "we had them at N%" is the number its own page
     # prints as "Pre-match N%" — one read for both rails, the event route's
@@ -905,17 +1045,17 @@ async def _folded_briefs(
 
     return [
         [
-            # The row's OWN sources are the default, never ``None``: the batch
-            # promises an entry per event, but a miss must degrade to today's
-            # unfolded answer rather than to a card whose number vanishes.
             _format_event_brief(
-                FoldedBlendView(
-                    event, folded.get(int(event.id), event.win_probability_sources)
+                (
+                    unified_by_id[int(event.id)].blend_view
+                    if int(event.id) in unified_by_id
+                    else event
                 ),
                 team,
                 club_ids,
                 club_names,
                 prematch=prematch.get(int(event.id)),
+                unified_read=unified_by_id.get(int(event.id)),
             )
             for event in rail
         ]
@@ -945,7 +1085,12 @@ def _order_upcoming_team_briefs(briefs: list[dict]) -> list[dict]:
 
 
 def _format_event_brief(
-    event: Event, team: Team, club_ids=None, club_names=None, prematch=None
+    event: Event,
+    team: Team,
+    club_ids=None,
+    club_names=None,
+    prematch=None,
+    unified_read: object | None = None,
 ) -> dict:
     """Compact event format for team page game lists."""
     sport = event.sport
@@ -995,7 +1140,26 @@ def _format_event_brief(
     from app.utils.settled_hero import is_finished_status, settled_current_chance
     from app.utils.source_mark import headline_source_marks
 
-    if is_finished_status(status):
+    _bk_count = None
+    if unified_read is not None:
+        from app.utils.unified_game_read import resolve_unified_card_chance
+
+        _uc = resolve_unified_card_chance(
+            unified_read, sport_key=sport_key, served_status=status
+        )
+        _bk_count = _uc.bookmaker_count
+        if is_finished_status(status) or _uc.draw_probability is not None:
+            wp = _uc.home_probability if is_home else _uc.away_probability
+            draw_prob = _uc.draw_probability
+            current_mark = _uc.source_mark if is_home else _uc.away_source_mark
+        elif _uc.home_probability is not None:
+            wp = (
+                _uc.home_probability
+                if is_home
+                else (round(1.0 - _uc.home_probability, 6) if not away_unavailable else None)
+            )
+            current_mark = _uc.source_mark if is_home else _uc.away_source_mark
+    elif is_finished_status(status):
         # #13172 Option B — finished games serve their settled result (team-relative
         # 1.0 win / 0.0 loss, 0.0 with draw_probability=1.0 on a draw-priced draw)
         # and None when final_unresolved, never the last live price.
@@ -1131,6 +1295,7 @@ def _format_event_brief(
             else {}
         ),
         "source_mark": current_mark,
+        **({"bookmaker_count": _bk_count} if _bk_count is not None else {}),
         "pregame_win_probability": round(float(pre), 3) if pre is not None else None,
         "pregame_source_mark": pregame_mark,
         "completed_at": event.completed_at.isoformat() if event.completed_at else None,
@@ -1391,12 +1556,22 @@ def _championship_tier_label(
     return _TIER_LABELS.get(tier, "Other")
 
 
+def _component_observed_at(outcome: object) -> str | None:
+    stamp = getattr(outcome, "last_updated", None)
+    if stamp is None or not callable(getattr(stamp, "isoformat", None)):
+        return None
+    if getattr(stamp, "tzinfo", None) is None and callable(getattr(stamp, "replace", None)):
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.isoformat()
+
+
 async def _get_championship_path(
     team_id: int,
     db: AsyncSession,
     league_slug: str | None = None,
     now: datetime | None = None,
     team_sport_key: str | None = None,
+    out_market_ids: set[int] | None = None,
 ) -> list[dict]:
     """Get championship/conference/division probabilities for a team.
 
@@ -1506,6 +1681,11 @@ async def _get_championship_path(
     path = []
     for tier in sorted(tier_candidates.keys()):
         candidates = tier_candidates[tier]
+        tier_market_ids = sorted(
+            {m.id for _, _, m in candidates if getattr(m, "id", None) is not None}
+        )
+        if out_market_ids is not None:
+            out_market_ids.update(tier_market_ids)
 
         # Withhold a step whose sources disagree (#1752). Measured on every
         # candidate the tier holds, BEFORE the group_id dedupe below, so the
@@ -1567,6 +1747,17 @@ async def _get_championship_path(
             "label": _championship_tier_label(tier, team_sport_key, best_market.name),
             "market_name": best_market.name,
             "market_id": best_market.id,
+            "market_ids": tier_market_ids,
+            "components": [
+                {
+                    "market_id": m.id,
+                    "outcome_id": getattr(o, "id", None),
+                    "source": getattr(m, "source", None),
+                    "probability": round(p, 4),
+                    "observed_at": _component_observed_at(o),
+                }
+                for p, o, m in deduped
+            ],
             "probability": round(avg_prob, 4),
             "source_mark": source_mark,
             "rank": best_outcome.rank,

@@ -1364,7 +1364,9 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   const otherChoices = otherChoiceTexts(data, leader);
   const answerLabel = otherChoices.length > 0 && leader?.name?.trim()
     ? leader.name.trim()
-    : rowAnswerLabel(leader, context);
+    : rowAnswerLabel(leader, context, data.name, {
+        titleStatesSingleAnswer: data.title_states_single_answer === true,
+      });
   // #7331 — and the label #4396 added collapses when the answer is itself a
   // quantity: `Core CPI YoY - September 2026 · 2.4% · Resolves within a month`
   // with `41%` in this column printed two percentages and said which was which

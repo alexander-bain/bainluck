@@ -122,8 +122,9 @@ from app.utils.aggregation import (
 )
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
 from app.utils.market_display_name import (
-    clean_market_display_name,
     elided_trailing_preposition,
+    fill_market_display_name_blank,
+    futures_reader_name,
 )
 from app.utils.hero_probability import resolve_hero
 from app.utils.probability_eligibility import is_refused
@@ -254,6 +255,7 @@ from app.utils.feed_cache import (
     FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY,
     FEED_PREWARM_OPENING_SCOPE_KEY,
     FEED_PREWARM_SCOPE_KEY,
+    FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS,
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
     FEED_RESPONSE_STALE_TTL_SECONDS,
     FEED_EDITION_FIELD,
@@ -274,8 +276,10 @@ from app.utils.feed_cache import (
     feed_response_cache_ttls,
     strip_live_and_started_items_for_last_good,
     inert_principal_share_enabled,
+    live_stale_ceiling_seconds,
     live_total_age_headroom_s,
     payload_contains_live_event,
+    payload_is_live_only_via_grouping,
     render_feed_page_from_base,
     warm_rail_max_shared_artifact_age_s,
 )
@@ -4038,6 +4042,16 @@ async def get_feed(
     _prewarm_rebuild = bool(
         getattr(request, "scope", None) and request.scope.get(FEED_PREWARM_SCOPE_KEY)
     )
+
+    async def _finish_feed_payload(payload: dict) -> dict:
+        if (mode or "").lower() != "sports" or not payload.get("items"):
+            return payload
+        from app.routes.title_feed_projection import project_super_bowl_card
+
+        wait_seconds = min(5.0, _feed_budget_remaining_s()) if _prewarm_rebuild else 0.0
+        items = await project_super_bowl_card(payload["items"], db, wait_seconds=wait_seconds)
+        return {**payload, "items": items} if items is not payload["items"] else payload
+
     # --- LAT-P271 (#2143): the warm rail refreshes its inputs, it does not
     # inherit them -------------------------------------------------------------
     #
@@ -4220,6 +4234,7 @@ async def get_feed(
             oldest_artifact_age_s=oldest_artifact_age_s,
             # #1480: passed only by the build seam that consumed them.
             strict_artifact_age_s=strict_artifact_age_s,
+            live_stale_ceiling_s=live_stale_ceiling_seconds(payload),
         )
 
     def _payload_built_at(payload):
@@ -4264,7 +4279,7 @@ async def get_feed(
             return False
         if not payload_contains_live_event(payload):
             return False
-        return (time.time() - built_at) >= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+        return (time.time() - built_at) >= live_stale_ceiling_seconds(payload)
 
     def _live_bounded_last_good(key):
         """Process-local last-good, with the live ceiling applied (#2216).
@@ -4286,9 +4301,12 @@ async def get_feed(
             return None
         lg = _rc.recall_last_good(key)
         if isinstance(lg, dict) and payload_contains_live_event(lg):
-            lg = _rc.recall_last_good(
-                key, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
+            _lg_max_age_s = (
+                FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS
+                if payload_is_live_only_via_grouping(lg)
+                else FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
             )
+            lg = _rc.recall_last_good(key, max_age_s=_lg_max_age_s)
         return lg
 
     def _identity_anonymous_base_key():
@@ -4432,7 +4450,7 @@ async def get_feed(
             ),
             **finalize,
         )
-        return sanitize_feed_response_images(page)
+        return await _finish_feed_payload(sanitize_feed_response_images(page))
 
     def _opening_refusal(reason, *, singleflight="none"):
         """#5105: the seated route's truthful availability refusal.
@@ -4718,7 +4736,7 @@ async def get_feed(
                             returned=len(payload.get("items") or []),
                         ),
                     )
-                    return sanitize_feed_response_images(payload)
+                    return await _finish_feed_payload(sanitize_feed_response_images(payload))
                 # Malformed fresh value → typed miss; fall through to stale/build.
             # Stale fallback: serve old data if primary cache expired.
             if _stale.is_ok:
@@ -4760,7 +4778,7 @@ async def get_feed(
                             returned=len(payload.get("items") or []),
                         ),
                     )
-                    return sanitize_feed_response_images(payload)
+                    return await _finish_feed_payload(sanitize_feed_response_images(payload))
             if _fresh.is_failure or _stale.is_failure:
                 # Redis stalled/errored (NOT a clean miss). Serve process-local
                 # last-good before paying a cold compute — a Redis blip must not
@@ -4792,7 +4810,7 @@ async def get_feed(
                             returned=len(out.get("items") or []),
                         ),
                     )
-                    return sanitize_feed_response_images(out)
+                    return await _finish_feed_payload(sanitize_feed_response_images(out))
         except Exception:
             _cache_status = "error"
             _lg = _live_bounded_last_good(_cache_key)
@@ -4818,7 +4836,7 @@ async def get_feed(
                         returned=len(out.get("items") or []),
                     ),
                 )
-                return sanitize_feed_response_images(out)
+                return await _finish_feed_payload(sanitize_feed_response_images(out))
     elif debug:
         _cache_status = "disabled_debug"
     elif exclude_reviewed:
@@ -4917,7 +4935,7 @@ async def get_feed(
                         returned=len(out.get("items") or []),
                     ),
                 )
-                return sanitize_feed_response_images(out)
+                return await _finish_feed_payload(sanitize_feed_response_images(out))
             # Budget exhausted / leader produced nothing usable — serve bounded
             # process-local last-good before ever paying (or duplicating) a build.
             _lg = _live_bounded_last_good(_cache_key)
@@ -4943,7 +4961,7 @@ async def get_feed(
                         returned=len(out.get("items") or []),
                     ),
                 )
-                return sanitize_feed_response_images(out)
+                return await _finish_feed_payload(sanitize_feed_response_images(out))
             # #11259: no process-local last-good — this dyno may have just
             # started — so the anonymous base's durable copy comes before an
             # empty page. Same bounds and label; still no build of its own.
@@ -5222,7 +5240,7 @@ async def get_feed(
                             returned=len(_shared_payload.get("items") or []),
                         ),
                     )
-                    return sanitize_feed_response_images(_shared_payload)
+                    return await _finish_feed_payload(sanitize_feed_response_images(_shared_payload))
 
         # --- LAT-P141: page 2 is the same build as page 1 --------------------
         #
@@ -5351,6 +5369,7 @@ async def get_feed(
                         include_machinery=True,
                         machinery_only=True,
                         include_preview=_include_machinery_preview,
+                        apply_opening_mix=bool(_opening_seating),
                     )
                     _base_body = {
                         **_base_body,
@@ -5508,9 +5527,6 @@ async def get_feed(
                 # the stored list, and `render_feed_page_from_base` strips it so
                 # it cannot leak into the response shape.
                 _pb_built_at = feed_page_base_built_at(_base_body)
-                _rc.remember_last_good(
-                    _cache_key, _base_page, built_at=_pb_built_at
-                )
                 # Liveness is re-derived from the PAGE, not the base: the ttl
                 # reported to this caller describes what this caller was handed.
                 _pb_live = payload_contains_live_event(_base_page)
@@ -5531,6 +5547,12 @@ async def get_feed(
                         _pb_age_s,
                         _pic.oldest_consumed_artifact_age_s(_shared_origins),
                     )
+                if _pb_live and _pb_age_s >= live_stale_ceiling_seconds(_base_page):
+                    _base_page = None
+            if _base_page is not None:
+                _rc.remember_last_good(
+                    _cache_key, _base_page, built_at=_pb_built_at
+                )
                 _pb_fresh_ttl, _pb_stale_ttl = _live_ttls(
                     _base_page, oldest_artifact_age_s=_pb_age_s
                 )
@@ -5620,7 +5642,7 @@ async def get_feed(
                         returned=len(_base_page.get("items") or []),
                     ),
                 )
-                return sanitize_feed_response_images(_base_page)
+                return await _finish_feed_payload(sanitize_feed_response_images(_base_page))
 
         # Build team name set once (used by both scoring functions + response).
         # Only uses Team.name (full ESPN display name like "Brown Bears"), NOT
@@ -5718,7 +5740,7 @@ async def get_feed(
                     shared_reuse=_shared_reuse,
                     shared_tiers=_shared_tiers,
                 )
-                return _prior_out
+                return await _finish_feed_payload(_prior_out)
             # #11259: this process holds nothing (a release wipes every dyno's
             # store), so the anonymous base's durable copy before an empty page.
             # `durable=False` is the one caller whose build FINISHED but whose
@@ -6689,6 +6711,7 @@ async def get_feed(
                     include_machinery=True,
                     machinery_only=True,
                     include_preview=_include_machinery_preview,
+                    apply_opening_mix=bool(_opening_seating),
                 )
             if _capture is not None and feed_items is not _before_roundups:
                 _capture.abandon("roundup_containers")
@@ -7045,7 +7068,14 @@ async def get_feed(
         # LIVE ONLY. The ceiling is a live rule (#2216) and stays one: a page of
         # futures built from an hour-old artifact is not wrong, and refusing it
         # would be a correctness fix that broke the product.
-        if _built_live and live_total_age_headroom_s(_consumed_age_s) <= 0:
+        _built_ceiling_s = live_stale_ceiling_seconds(payload)
+        if (
+            _built_live
+            and live_total_age_headroom_s(
+                _consumed_age_s, ceiling_seconds=_built_ceiling_s
+            )
+            <= 0
+        ):
             # #10290: what is served below is NOT the build the capture saw.
             if _capture is not None:
                 _capture.abandon("input_age_ceiling")
@@ -7065,12 +7095,10 @@ async def get_feed(
             # rebuilds" is the property being bought, and a background delete
             # that lands after that request buys nothing. It re-reads before
             # deleting, so a sibling's fresh republication survives.
-            _dropped_artifacts = _pic.drop_entries_older_than(
-                FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
-            )
+            _dropped_artifacts = _pic.drop_entries_older_than(_built_ceiling_s)
             if _dropped_artifacts:
                 await _pic.forget_stale_cross_worker(
-                    _dropped_artifacts, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+                    _dropped_artifacts, _built_ceiling_s
                 )
             # (b) A prior payload, bounded by the live ceiling. Bounded for a
             # NON-live prior too, deliberately: this request has just proven the
@@ -7127,7 +7155,7 @@ async def get_feed(
                     shared_reuse=_shared_reuse,
                     shared_tiers=_shared_tiers,
                 )
-                return _prior_out
+                return await _finish_feed_payload(_prior_out)
             # (c) Nothing valid to serve. An empty, truthfully labelled page —
             # the same terminal a coalescing waiter reaches, for the same reason:
             # a wrong answer wearing a 200 is worse than an honest empty one.
@@ -7405,6 +7433,9 @@ async def get_feed(
                         # CERT-1864: the same reading as the decision above.
                         oldest_artifact_age_s=_consumed_age_s,
                         strict_artifact_age_s=_strict_age_s,
+                        live_stale_ceiling_s=live_stale_ceiling_seconds(
+                            _page_base_body
+                        ),
                     )
                     _page_base_json = dumps_feed_cache(_page_base_body)
                     # #11259: strip live and started event cards BEFORE writing
@@ -7487,6 +7518,9 @@ async def get_feed(
                             live=payload_contains_live_event(_mach_base_body),
                             oldest_artifact_age_s=_consumed_age_s,
                             strict_artifact_age_s=_strict_age_s,
+                            live_stale_ceiling_s=live_stale_ceiling_seconds(
+                                _mach_base_body
+                            ),
                         )
                         _mach_base_json = dumps_feed_cache(_mach_base_body)
                         _mach_base_key = feed_machinery_page_base_key(_page_base_key)
@@ -7566,6 +7600,9 @@ async def get_feed(
                     live=payload_contains_live_event(_fb_page_base_body),
                     oldest_artifact_age_s=_consumed_age_s,
                     strict_artifact_age_s=_strict_age_s,
+                    live_stale_ceiling_s=live_stale_ceiling_seconds(
+                        _fb_page_base_body
+                    ),
                 )
                 _fb_last_good_body = strip_live_and_started_items_for_last_good(
                     _fb_page_base_body, now=_age_origin
@@ -7619,7 +7656,7 @@ async def get_feed(
         # capture at the seam, so this call is inert for it (#5105).
         if _capture is not None:
             _capture.record_response(payload, feed_items, timings=_timings)
-        return payload
+        return await _finish_feed_payload(payload)
     except BaseException:
         # Release any coalescing waiters (result=None → they fall back to
         # bounded last-good or the truthful unavailable terminal) and remove the
@@ -8008,8 +8045,19 @@ def _publish_feed_item(item: dict) -> None:
     # to clients — which is exactly how `_quality_ladder_or_bucket`
     # (#1958) leaked the moment it was added. The prefix rule cannot
     # fall behind, because it has nothing to keep up with.
-    for private_key in [k for k in item if k.startswith("_")]:
-        item.pop(private_key, None)
+    def _strip_private_keys(mapping: dict) -> None:
+        for private_key in [k for k in mapping if k.startswith("_")]:
+            mapping.pop(private_key, None)
+
+    _strip_private_keys(item)
+    if isinstance(data, dict):
+        _strip_private_keys(data)
+        for child in data.get("items") or ():
+            if isinstance(child, dict):
+                _strip_private_keys(child)
+                cdata = child.get("data")
+                if isinstance(cdata, dict):
+                    _strip_private_keys(cdata)
 
 
 #: #5105 — whether ``GET /api/feed`` serves the seated Discover opening (Alex,
@@ -10732,7 +10780,11 @@ def _score_market_trace(
     # trace exists to reproduce the card, so its copy is composed from the same
     # string the card prints; the raw stored `name` is served separately by
     # `build_discover_market_trace`.
-    display_name = clean_market_display_name(market.name)
+    display_name = fill_market_display_name_blank(
+        futures_reader_name(market),
+        leader_name,
+        outcome_count=len(outcomes_data),
+    )
     # #6470 — read off the RAW name: `display_name` is that string with
     # this very word removed, so deriving it from the cleaned title would
     # ask the question after deleting the answer.
@@ -12356,6 +12408,7 @@ async def _score_events(
     defer_personalization: bool = False,
     timing_records: Optional[list[dict[str, float | str]]] = None,
     timing_started_at: Optional[float] = None,
+    precomputed_unified_reads: Any | None = None,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -12696,59 +12749,60 @@ async def _score_events(
         # improvement to the page, never a precondition for having one. If anything
         # in it raises, the feed serves the unfolded candidate set — the bug Alex
         # reported — instead of serving nothing.
-        if price_refresh_events is None:
-            try:
-                _fold = fold_twin_events(events)
-                if _fold.dropped_ids:
-                    for _survivor_id, _merged in _fold.merged_sources.items():
-                        _survivor = next(e for e in _fold.events if e.id == _survivor_id)
-                        set_committed_value(_survivor, "win_probability_sources", _merged)
-                    logger.info(
-                        "feed twin fold: %d duplicate event rows collapsed, %d cards gained "
-                        "a venue (dropped=%s)",
-                        _fold.folded_count,
-                        len(_fold.merged_sources),
-                        _fold.dropped_ids[:20],
-                    )
-                    events = _fold.events
-            except Exception:
-                logger.exception("feed twin fold failed; serving the unfolded candidate set")
-
-        # #13142: tagged duplicates (`provenance:duplicate-of:<id>`) were
-        # dropped in SQL before `fold_twin_events` ran; pull their live
-        # prediction-market prices and opening lines back onto their canonical
-        # rows so Sports list and Discover cards keep those prices.
+        _unified_feed = precomputed_unified_reads
         _proven_absorbed_by_canonical: dict[int, tuple[int, ...]] = {}
-        if price_refresh_events is None and events:
-            try:
-                _proven_absorbed_by_canonical = await _apply_proven_duplicate_folds(
-                    db, events
-                )
-            except Exception:
-                logger.exception(
-                    "feed proven-duplicate fold failed; serving canonical rows unfolded"
-                )
+        three_way_books_by_event: dict[int, tuple[float, float]] = {}
 
-        # Batch fallback: for events where _compute_aggregate_probability() returns
-        # None, query the latest win_prob_snapshot per event. This catches
-        # Kalshi/Polymarket pregame data that's only in snapshots (not on Event model).
-        # #11254: a source's explicit withdrawal row retires that source's earlier
-        # readings here, so a withdrawn venue's last price is not served as current.
-        # #1459: read recent history first, full history only for the ids it left
-        # unanswered; same answer (see `feed_snapshot_fallback`).
+        if _unified_feed is None and price_refresh_events is None:
+            from app.utils.proven_duplicates import folded_card_numbers_batch
+            from app.utils.unified_game_read import load_unified_game_reads
+
+            _unified_feed = await load_unified_game_reads(
+                db,
+                events,
+                sport_key=sport_filter,
+                collapse_in_page=True,
+                include_same_league_external=True,
+                include_odds=True,
+                fold_card_fn=folded_card_numbers_batch,
+                fault_tolerant_external=True,
+                fault_tolerant_odds=True,
+                now=now,
+            )
+            events = _unified_feed.events
+            if _unified_feed.fold_result.dropped_ids:
+                logger.info(
+                    "feed twin fold: %d duplicate event rows collapsed, %d cards gained "
+                    "a venue (dropped=%s)",
+                    _unified_feed.fold_result.folded_count,
+                    len(_unified_feed.fold_result.merged_sources),
+                    _unified_feed.fold_result.dropped_ids[:20],
+                )
+        if _unified_feed is not None:
+            _proven_absorbed_by_canonical = {
+                eid: read.absorbed_ids
+                for eid, read in _unified_feed.by_id.items()
+                if read.absorbed_ids
+            }
+            three_way_books_by_event = {
+                eid: read.three_way_books
+                for eid, read in _unified_feed.by_id.items()
+                if read.three_way_books is not None
+            }
+
+        def _ev_blend_view(ev):
+            if _unified_feed is None:
+                return ev
+            _read = _unified_feed.by_id.get(int(ev.id))
+            return _read.blend_view if _read is not None else ev
+
         snapshot_fallbacks: dict[int, float] = {}
         events_needing_fallback = [] if price_refresh_events is not None else [
             e for e in events
-            if _compute_aggregate_probability(e) is None
-            # #12824: removing the opening rung must not enroll opening-only
-            # events in a historical fallback they never used before. Their
-            # current chance stays absent until an admitted source returns.
-            and getattr(e, "opening_home_probability", None) is None
-            # #11931: settled events already receive `final_hero.home_probability`
-            # before `snapshot_fallbacks` is ever consulted (see loop below), so
-            # querying full-history `win_prob_snapshots` for them is dead work.
+            if _compute_aggregate_probability(_ev_blend_view(e)) is None
+            and getattr(_ev_blend_view(e), "opening_home_probability", None) is None
             and not (
-                (settled_hero := resolve_hero(e)) is not None
+                (settled_hero := resolve_hero(_ev_blend_view(e))) is not None
                 and settled_hero.source == "settled"
             )
         ]
@@ -12903,24 +12957,6 @@ async def _score_events(
             sport_prices_a_draw as _sport_prices_a_draw,
         )
 
-        # #13131: live draw-priced events (typically 0-5 rows) read their latest
-        # filtered per-book (home, away) consensus using the same stale-book and
-        # reversed-book pipeline as `/api/events/{id}` so live soccer feed cards
-        # (including just-kicked-off games promoted to `live`) serve Home, Draw,
-        # and Away summing to 100%.
-        from app.routes.events import latest_odds_per_bookmaker_query
-        from app.utils.draw_priced_winner import read_live_three_way_books
-
-        live_three_way_books: dict[int, tuple[float, float]] = (
-            await read_live_three_way_books(
-                db,
-                events,
-                now,
-                latest_odds_query=latest_odds_per_bookmaker_query,
-                absorbed_ids_by_event=_proven_absorbed_by_canonical,
-            )
-        )
-
     for event in events:
         try:
             if not my_teams_only and price_refresh_events is None:
@@ -12953,32 +12989,33 @@ async def _score_events(
                 if not matched_by_id and not matched_by_name:
                     continue
 
-            opening_home_prob = (
-                float(event.opening_home_probability)
-                if event.opening_home_probability
+            _uread = (
+                _unified_feed.by_id.get(int(event.id))
+                if _unified_feed is not None
                 else None
             )
-            opening_away_prob = (
-                float(event.opening_away_probability)
-                if event.opening_away_probability
-                else None
-            )
+            _ev_view = _uread.blend_view if _uread is not None else event
+
+            _open_h = getattr(_ev_view, "opening_home_probability", None)
+            _open_a = getattr(_ev_view, "opening_away_probability", None)
+            opening_home_prob = float(_open_h) if _open_h else None
+            opening_away_prob = float(_open_a) if _open_a else None
             # #12824 (226: A, Fable's item 4): an ESPN-only pregame number is a
             # model, not a market, so it is never measured against the opening
             # line ("odds shifted N% since open", the swing bonus).
             from app.utils.aggregation import pregame_blend_rests_on_espn_alone
 
-            if pregame_blend_rests_on_espn_alone(event):
+            if pregame_blend_rests_on_espn_alone(_ev_view):
                 opening_home_prob = opening_away_prob = None
 
             # Always compute aggregate from all available sources (ESPN, stat model,
             # Kalshi, Polymarket, sportsbook consensus). Falls back through tiers.
-            current_home_prob = _compute_aggregate_probability(event)
+            current_home_prob = _compute_aggregate_probability(_ev_view)
             if current_home_prob is None:
                 # #12824: removing an opening quote must not remove a verified
                 # final. Use the same settled result as the card, never its
                 # historical line, when ranking a finished game.
-                final_hero = resolve_hero(event)
+                final_hero = resolve_hero(_ev_view)
                 if final_hero is not None and final_hero.source == "settled":
                     current_home_prob = final_hero.home_probability
             if current_home_prob is None and event.id in snapshot_fallbacks:
@@ -12991,7 +13028,7 @@ async def _score_events(
                 # detail. Opening-only/final-unresolved is not a current quote.
                 from app.utils.draw_priced_winner import printable_away
 
-                price_hero = resolve_hero(event)
+                price_hero = resolve_hero(_ev_view)
                 current_home_prob = None
                 current_away_prob = None
                 if price_hero is not None and price_hero.source in ("blend", "settled"):
@@ -13124,7 +13161,9 @@ async def _score_events(
             _event_tags = event.event_tags or []
 
             _source_count = (
-                len(event.win_probability_sources) if event.win_probability_sources else 0
+                len(_ev_view.win_probability_sources)
+                if _ev_view.win_probability_sources
+                else 0
             )
             _game_progress, _ = parse_game_progress(event.period, sport_key)
 
@@ -13197,18 +13236,26 @@ async def _score_events(
             _card_away_prob = current_away_prob
             _card_draw_prob: float | None = None
             _sport_key_for_card = event.sport.key if event.sport else ""
+            _books_t3 = three_way_books_by_event.get(int(event.id))
+            if (
+                _card_home_prob is None
+                and served_status == "live"
+                and _books_t3 is not None
+            ):
+                _card_home_prob = round(float(_books_t3[0]), 6)
+                _card_away_prob = round(1.0 - _card_home_prob, 6)
             if _sport_prices_a_draw(_sport_key_for_card) and event.status not in (
                 "completed",
                 "closed",
             ):
-                if served_status == "live":
-                    _bh, _ba = live_three_way_books.get(event.id, (None, None))
+                if _books_t3 is not None:
+                    _bh, _ba = _books_t3
                 elif served_status == "scheduled":
                     _bh, _ba = opening_home_prob, opening_away_prob
                 else:
                     _bh, _ba = None, None
                 _card_3 = _resolve_three_way_probs(
-                    current_home_prob,
+                    _card_home_prob,
                     books_home=_bh,
                     books_away=_ba,
                     sport_key=_sport_key_for_card,
@@ -13365,7 +13412,7 @@ async def _score_events(
             hero_inputs: list[tuple[str, float]] = []
             hero_method: list[str] = []
             card_hero = resolve_hero(
-                event, source_inputs=hero_inputs, source_method=hero_method,
+                _ev_view, source_inputs=hero_inputs, source_method=hero_method,
             )
             if card_hero is not None and card_hero.source == "settled":
                 _card_home_prob = current_home_prob
@@ -13392,7 +13439,7 @@ async def _score_events(
                 opening_home_prob=opening_home_prob,
                 opening_away_prob=opening_away_prob,
                 opening_favorite=event.opening_favorite,
-                win_probability_sources=event.win_probability_sources,
+                win_probability_sources=_ev_view.win_probability_sources,
                 prob_source=prob_source,
                 game_clock=getattr(event, "game_clock", None),
                 period=event.period,
@@ -13417,6 +13464,9 @@ async def _score_events(
                 # fold-invariant by construction (they read status/scores/openings,
                 # which the fold does not touch).
                 hero=card_hero,
+                bookmaker_count=(
+                    _uread.bookmaker_count if _uread is not None else None
+                ),
             )
             # #12581: the feed carries the exact headline trace, including
             # the folded inputs and their original price-read clocks. The
@@ -13455,11 +13505,11 @@ async def _score_events(
                 else None
             )
             event_data["source_mark"], event_data["away_source_mark"] = headline_source_marks(
-                event, _card_effective_hero, hero_inputs,
+                _ev_view, _card_effective_hero, hero_inputs,
                 method=hero_method[0] if hero_method else None,
                 away_available=away_available,
                 three_way_probs=_card_three_way,
-                books_three_way=live_three_way_books.get(event.id),
+                books_three_way=_books_t3,
             )
             # #10582: score provenance belongs to the scoreboard, not the blend.
             # The same projection serves cached feed and fresh price-card reads.
@@ -13510,7 +13560,7 @@ async def _score_events(
                     and abs(current_home_prob - opening_home_prob) > 0.001
                 ),
                 sources_agree=cross_source_agreement(
-                    _numeric_source_probs(event.win_probability_sources)
+                    _numeric_source_probs(_ev_view.win_probability_sources)
                 ),
                 has_closing_line=(
                     getattr(event, "closing_home_probability", None) is not None
@@ -14602,7 +14652,11 @@ async def _score_sports_mode_futures(
         # by...?"), so every string a person reads is composed from this and
         # every decision we make is still made from `market.name` — printed vs
         # interpreted, see `clean_market_display_name`.
-        display_name = clean_market_display_name(market.name)
+        display_name = fill_market_display_name_blank(
+            futures_reader_name(market),
+            leader_name,
+            outcome_count=len(outcomes_data),
+        )
         # #6470 — read off the RAW name: `display_name` is that string with
         # this very word removed, so deriving it from the cleaned title would
         # ask the question after deleting the answer.
@@ -15070,6 +15124,7 @@ async def _score_sports_mode_futures(
             "type": "futures",
             "score": personalized_score,
             "_rank_score": rank_score,
+            "_raw_market_name": market.name,
             "reason": reason,
             "headline": headline,
             "context_summary": context_summary,
@@ -16561,6 +16616,11 @@ async def _score_futures(
                         default=None,
                     ),
                     float(market.volume_24h) if market.volume_24h is not None else None,
+                    outcome_probabilities=[
+                        float(o.current_probability)
+                        for o in sorted_outcomes
+                        if o.current_probability is not None
+                    ],
                 )
             )
             if _locked_near_certain and not runtime_filters["checks"].get(
@@ -16574,7 +16634,11 @@ async def _score_futures(
                 source_count = canonical_source_counts.get(market.canonical_market_key, 1)
 
             # #3513: printed vs interpreted — see `_score_sports_mode_futures`.
-            display_name = clean_market_display_name(market.name)
+            display_name = fill_market_display_name_blank(
+                futures_reader_name(market),
+                leader_name,
+                outcome_count=len(outcomes_data),
+            )
             # #6470 — read off the RAW name: `display_name` is that string with
             # this very word removed, so deriving it from the cleaned title would
             # ask the question after deleting the answer.
@@ -17412,6 +17476,7 @@ async def _score_futures(
                 "type": "futures",
                 "score": personalized_score,
                 "_rank_score": rank_score,
+                "_raw_market_name": market.name,
                 "reason": reason,
                 "headline": headline,
                 "context_summary": context_summary,
@@ -18260,7 +18325,8 @@ async def _score_golf_tournaments(
                     "name": g["name"],
                     "probability": g["probability"],
                     "source_mark": (
-                        golfer_result_mark(g["name"], matched_champion) if champion
+                        g["source_mark"] if t.get("winner_market_id")
+                        else golfer_result_mark(g["name"], matched_champion) if champion
                         else g.get("source_mark") or no_source_mark("source_evidence_incomplete")
                     ),
                     **({"rendered_percent": g["rendered_percent"]}
@@ -18365,7 +18431,7 @@ def _tournament_blended_market_ids(t: dict) -> frozenset[int]:
         if _NON_WINNER_MARKET_RE.search(name):
             continue
         blended.add(market_id)
-    return frozenset(blended)
+    return frozenset(blended.union(t.get("settled_winner_sibling_ids") or ()))
 
 
 def _drop_futures_blended_into_tournaments(items: list[dict]) -> list[dict]:
@@ -18452,7 +18518,7 @@ def _score_tournament(t: dict, now: datetime) -> int:
             if days_until <= 0 and days_until >= -4:
                 # Currently in progress or just started (4-day tournament window)
                 score += 20
-            elif days_until < -4:
+            elif days_until < -4 and not t.get("winner_market_id"):
                 # Stale — started more than 4 days ago, probably over
                 return 0
             elif days_until <= 3:

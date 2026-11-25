@@ -108,7 +108,6 @@ const snapshot: FactoryData = {
       level: "amber",
       number: 12997,
       waiting_since: "2026-11-18T17:21:00Z",
-      machines: { running: 40, waiting: 95 },
     },
   ],
   jams: [],
@@ -181,9 +180,8 @@ it("keeps the same crate, hold, machine queue, build and caption information und
     const text = floor.textContent;
     expect(text).toContain("test_floor");
     expect(text).toContain(
-      "#12999 has waited 40 minutes for a turn at the loading dock.",
+      "#12999 has waited 40 minutes for a merge.",
     );
-    expect(text).toContain("40 jobs running, 95 waiting");
     expect(text).toContain("TestFlight build 5801 is posted.");
     expect(text).toContain("Written by a model from the counts on this page");
     expect(
@@ -237,10 +235,39 @@ it("keeps each named figure at one supported station or on a rest bench", () => 
   const roster = placeCrew({ ...snapshot, changes: open, transitions: [] }, now, open);
   expect(roster).toHaveLength(8);
   expect(roster.filter(person => person.identity === "B")).toEqual([
-    { identity: "B", pose: "waiting", position: { line: "Server", station: "Test" } },
+    { identity: "B", pose: "waiting", change: open[0], position: { line: "Server", station: "Test" } },
   ]);
-  expect(roster).toContainEqual({ identity: "E", pose: "asleep", position: { line: "Website", station: "Write" } });
+  expect(roster).toContainEqual({ identity: "E", pose: "asleep", change: open[2], position: { line: "Website", station: "Write" } });
   expect(roster).toContainEqual({ identity: "W", pose: "asleep" });
+});
+
+it("puts the figure’s station and matching crate before the lane check-in", async () => {
+  watchMotion();
+  const data: FactoryData = {
+    ...snapshot,
+    transitions: [],
+    changes: [
+      { ...base, checks_running: true },
+      { ...base, number: 13007, station: "Review", last_activity: now },
+    ],
+    crew_posts: { B: { at: now } },
+  };
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />));
+    expect(container.querySelector('[data-crew-station="Test"] [data-floor-figure][data-identity="B"]')).not.toBeNull();
+    const card = container.querySelector('[data-crew="B"]');
+    const station = card?.querySelector('[data-card-station="Test"]');
+    expect(station?.textContent).toBe("At Checks · #12998");
+    expect(station?.nextElementSibling?.textContent).toBe("Tests are running.");
+    const checkIn = card?.querySelector('[data-source="check-in"]');
+    expect(checkIn?.textContent).toBe("Posted on NOW at 10:00 AM PT");
+    expect(station?.compareDocumentPosition(checkIn!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(container.querySelector('[data-crew="W"] [data-card-station="rest"]')?.textContent).toBe("At the rest bench");
+  } finally {
+    await act(async () => root.unmount());
+  }
 });
 
 it("shows a signed lane as active without a crate and displays only its recorded wait number", async () => {
@@ -266,7 +293,7 @@ it("shows a signed lane as active without a crate and displays only its recorded
     const spare = container.querySelector('[data-crew="W"]');
     const quiet = container.querySelector('[data-crew="C"]');
     expect(apple?.getAttribute("data-pose")).toBe("working");
-    expect(apple?.textContent).toContain("Active at 9:57 AM PT");
+    expect(apple?.textContent).toContain("Posted on NOW at 9:57 AM PT");
     expect(apple?.textContent).not.toContain("There is no recent activity");
     expect(spare?.textContent).toContain("Waiting on #12998");
     expect(quiet?.getAttribute("data-pose")).toBe("asleep");
@@ -302,7 +329,7 @@ it("offers the recorded crew cards and replays an earlier move when the fresh fl
     crew_week: { since: at, builders: { B: { changes: 2, stations: ["Test"], hours: [9] } } },
   }} lastGoodAt={now} renderedAt={now} />));
   try {
-    expect(rootElement.querySelectorAll("[data-crew]")).toHaveLength(8);
+    expect(rootElement.querySelectorAll("[data-crew]")).toHaveLength(9);
     expect(rootElement.querySelector('[data-crew="B"]')?.textContent).toContain("Recorded changes shipped this week2");
     expect(rootElement.textContent).toContain("9:00 AM PT · Website");
     await act(async () => reduce());
@@ -424,6 +451,43 @@ it("checks for a new floor every minute while the page is visible", async () => 
     expect(container.querySelector('[data-factory][data-reader="behind"]')).toBeTruthy();
     expect(container.querySelectorAll("[data-bay]")).toHaveLength(18);
     expect(container.textContent).toContain("Last read 10:01 AM PT");
+  } finally {
+    await act(async () => root.unmount());
+    global.fetch = savedFetch;
+  }
+});
+
+it("reports a collector failure when the unchanged floor crosses the fifteen-minute grace", async () => {
+  watchMotion();
+  const savedFetch = global.fetch;
+  const data = { ...snapshot, generated_at: "2026-11-18T17:46:30Z" };
+  const firstRead = "2026-11-18T18:01:00Z";
+  const secondRead = "2026-11-18T18:02:00Z";
+  const response = (renderedAt: string, failed: boolean) => ({
+    ok: true,
+    json: async () => ({
+      data,
+      lastGoodAt: data.generated_at,
+      readAt: renderedAt,
+      renderedAt,
+      readFailed: false,
+      buildCommit: null,
+      snapshotDigest: "unchanged",
+      activity: { checkedAt: renderedAt, collector: { at: renderedAt, failed } },
+    }),
+  });
+  global.fetch = jest.fn().mockResolvedValueOnce(response(firstRead, false))
+    .mockResolvedValueOnce(response(secondRead, true));
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<FactoryFloor data={data} lastGoodAt={data.generated_at} renderedAt={now} />));
+    await act(async () => { jest.advanceTimersByTime(60_000); });
+    expect(container.querySelector('[data-reading-state="current"]')).toBeTruthy();
+    await act(async () => { jest.advanceTimersByTime(60_000); });
+    expect(container.querySelector('[data-reading-state="failed"][data-motion="paused"]')).toBeTruthy();
+    expect(container.querySelectorAll("[data-bay]")).toHaveLength(18);
+    expect(document.title).toBe("Not updating. | The Factory");
   } finally {
     await act(async () => root.unmount());
     global.fetch = savedFetch;
@@ -579,7 +643,10 @@ it("labels the TestFlight build with the Pacific time of the recorded post", asy
   const postedAt = "2026-11-17T23:05:00Z";
   const data = {
     ...snapshot,
-    signals: { ...snapshot.signals, testflight_post: { build: 5832, at: postedAt } },
+    signals: {
+      ...snapshot.signals,
+      testflight_post: { build: 5832, at: postedAt, commit: "a".repeat(40) },
+    },
   };
 
   try {
@@ -601,7 +668,7 @@ it("uses amber for a missing reading or a stopped refresh and green only for a v
     signals: { tests: "passing", testflight: "success" },
   };
   expect(floorVerdict(clear, false, now)).toMatchObject({ level: "green", text: "All clear." });
-  expect(floorVerdict(clear, true, now)).toMatchObject({ level: "amber", text: "Not updating." });
+  expect(floorVerdict(clear, true, now)).toMatchObject({ level: "amber", text: "Showing the last published floor." });
   expect(floorVerdict({ ...clear, stops: undefined }, false, now).level).toBe("amber");
   expect(floorVerdict({ ...clear, signals: { ...clear.signals, tests: "unknown" } }, false, now).level).toBe("amber");
   expect(floorVerdict(null, true, now).level).toBe("amber");

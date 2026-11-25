@@ -171,6 +171,19 @@ final class NavigationCoordinator: ObservableObject {
             navigate(to: .containerHub(slug: pathComponents[1], name: name ?? "Collection"), tab: .leagues)
             return true
 
+        case "collections":
+            // #13103: shared set URLs (`https://bainluck.com/collections/<slug>`,
+            // `https://www.bainluck.com/collections/<slug>`, or `bainluck://collections/<slug>`)
+            // open `ContainerHubView` directly on Discover so Back lands on the front page.
+            guard pathComponents.count == 2 else { return false }
+            let slug = pathComponents[1]
+            guard slug.count <= 200,
+                  slug.range(of: "^[a-z0-9]+(?:-[a-z0-9]+)*$", options: .regularExpression) != nil,
+                  (try? ContainerHubService.path(for: slug)) != nil else { return false }
+            let name = queryItems?.first(where: { $0.name == "name" })?.value
+            navigate(to: .containerHub(slug: slug, name: name ?? ""), tab: .discover)
+            return true
+
         case "tournaments":
             // The US Open link. `bainluck.com/tournaments/<slug>` is a real web
             // page and `Route.tournamentHub` is a real screen that Browse and

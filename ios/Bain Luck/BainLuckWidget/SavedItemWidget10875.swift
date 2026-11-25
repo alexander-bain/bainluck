@@ -26,6 +26,13 @@ struct SavedItemWidgetEntry10875: TimelineEntry {
         return false
     }
 
+    /// #12316 / 254: A — promote a pinned/selected game in the iPhone Smart Stack
+    /// shortly before kickoff and while it is on, then drop back once it ends.
+    var relevance: TimelineEntryRelevance? {
+        let spec = SavedWidgetTimeline10875.relevance(content, selection: selection, at: date)
+        return TimelineEntryRelevance(score: spec.score, duration: spec.duration)
+    }
+
     /// Where a tap goes: the chosen item's own detail whenever it is the
     /// reader's saved item, otherwise My Stuff, where saved items are managed.
     var url: URL? {
@@ -56,7 +63,15 @@ struct SavedItemWidgetProvider10875: AppIntentTimelineProvider {
         let now = Date()
         let selection = configuration.selection
         let first = await entry(for: selection, look: configuration.look12466, at: now)
-        let entries = SavedWidgetTimeline10875.entryDates(first.content, selection: selection, now: now)
+        #if os(iOS)
+        let entryTimes = context.family == .accessoryRectangular
+            ? SavedLockScreenMatchupAdapter13432.timelineDates(content: first.content, selection: selection, now: now)
+            : SavedWidgetTimeline10875.entryDates(first.content, selection: selection, now: now)
+        #else
+        let entryTimes = SavedWidgetTimeline10875.entryDates(first.content, selection: selection, now: now)
+        #endif
+        let relevanceDates = SavedWidgetTimeline10875.relevanceBoundaryDates(first.content, selection: selection, now: now)
+        let entries = Array(Set(entryTimes + relevanceDates)).sorted()
             .map { SavedItemWidgetEntry10875(date: $0, selection: selection, content: first.content,
                                              art: first.art, logos: first.logos, look: first.look) }
         let next = SavedWidgetTimeline10875.nextRequest(first.content, selection: selection, now: now)
@@ -146,7 +161,16 @@ struct SavedItemWidgetView10875: View {
                         SavedLockCircle12466(model: model)
                     }
                 case .accessoryRectangular:
-                    if entry.look == .today || reading.shares == nil {
+                    if let matchupState = lockScreenMatchupState {
+                        switch matchupState {
+                        case .matchup(let matchup):
+                            WatchMatchupComplication217(reading: matchup)
+                        case .postFinalEnded(let title):
+                            SavedLockPostFinalEndedView13432(title: title)
+                        case .fallbackText:
+                            SavedRectangular10875(reading: reading, entry: entry)
+                        }
+                    } else if entry.look == .today || reading.shares == nil {
                         SavedRectangular10875(reading: reading, entry: entry)
                     } else {
                         SavedLockRectangle12466(model: model)
@@ -202,7 +226,38 @@ struct SavedItemWidgetView10875: View {
         (family == .systemSmall || family == .systemMedium) && entry.isRefreshable12305
     }
 
+    private var lockScreenMatchupState: SavedLockScreenRectangleState13432? {
+        #if os(iOS)
+        guard family == .accessoryRectangular,
+              entry.look != .today,
+              case .detail(.game(let event), let isOffline) = entry.content,
+              let reading = entry.reading,
+              let art = entry.art else { return nil }
+        return SavedLockScreenMatchupAdapter13432.resolve(
+            event: event,
+            reading: reading,
+            art: art,
+            logos: entry.logos,
+            side: entry.selection?.side,
+            isOffline: isOffline,
+            now: entry.date
+        )
+        #else
+        return nil
+        #endif
+    }
+
     private var accessibilityText: String {
+        if let matchupState = lockScreenMatchupState {
+            switch matchupState {
+            case .matchup(let matchup):
+                return matchup.accessibilityText + (entry.isOffline ? " Not updated: Bain Luck couldn't be reached." : "")
+            case .postFinalEnded(let title):
+                return "\(title). Game ended. Open Bain Luck."
+            case .fallbackText:
+                break
+            }
+        }
         guard let reading = entry.reading else { return SavedWidgetMessage10875(entry.content).spoken }
         let clock = SavedClock10875.text(reading.observedAt, relativeTo: entry.date).map { " Recorded \($0)." } ?? ""
         return reading.spoken + clock + (entry.isOffline ? " Not updated: Bain Luck couldn't be reached." : "")
@@ -516,33 +571,13 @@ struct SavedMessage10875: View {
 
     #if os(iOS)
     private func accessoryMessageTier(titleSize: CGFloat?, detailSize: CGFloat?, spacing: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: spacing) {
-            Group {
-                if let titleSize {
-                    Text(message.title)
-                        .font(HeadlineStyleTable199.names(.widget, scaledSize: titleSize))
-                } else {
-                    Text(message.title)
-                        .font(.headline)
-                }
-            }
-            .lineLimit(nil)
-            .fixedSize(horizontal: false, vertical: true)
-
-            Group {
-                if let detailSize {
-                    Text(message.lockScreenDetail)
-                        .font(HeadlineStyleTable199.quietText(.widget, scaledSize: detailSize))
-                } else {
-                    Text(message.lockScreenDetail)
-                        .font(.caption2)
-                }
-            }
-            .foregroundStyle(.secondary)
-            .lineLimit(nil)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        SavedLockMessageTierView13432(
+            titleText: Text(message.title),
+            detailText: Text(message.lockScreenDetail),
+            titleSize: titleSize,
+            detailSize: detailSize,
+            spacing: spacing
+        )
     }
     #endif
 }

@@ -435,7 +435,7 @@ def test_projection_matches_yaml_all_eight_shards_and_six_db_groups():
     )
     for name, (_, _, _, block) in projection.items():
         assert block
-    assert len(projection) == 22  # #10708: + native-backend-readers; Nov 18: + shared-tail-2
+    assert len(projection) == 31  # 16 shards + 7 db groups + 8 singleton jobs
 
 
 @pytest.mark.parametrize("mutation", ["short", "changed_total", "duplicate"])
@@ -548,7 +548,7 @@ def test_unknown_db_condition_is_not_silently_excluded_from_coverage():
 
 
 @pytest.mark.parametrize(
-    "identity", [f"backend-tests-{i}" for i in range(1, 9)] + ["golden-baseline-floor"]
+    "identity", [f"backend-tests-{i}" for i in range(1, 17)] + ["golden-baseline-floor"]
 )
 def test_each_history_reader_must_observe_the_recorded_master_A_not_later_B(identity):
     api = fixture()

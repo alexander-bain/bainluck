@@ -313,8 +313,11 @@ python3 "$ROOT/tools/watch_ui_products.py" verify --repo "$ROOT" --sha "$SHA" \
   --output "$RUN/package" > "$OUT/products-verification.json"
 boot_until_ready "$PHONE_UDID"
 boot_until_ready "$TEST_UDID"
-wait_services_ready "$PHONE_UDID" com.apple.SpringBoard
-wait_services_ready "$TEST_UDID" com.apple.Carousel
+if ! wait_services_ready "$PHONE_UDID" com.apple.SpringBoard \
+  || ! wait_services_ready "$TEST_UDID" com.apple.Carousel; then
+  echo 'pre-suite simulator services not ready; one shutdown and boot of this pair' >> "$OUT/preflight.log"
+  reboot_pair_until_ready
+fi
 XCODE_ARGS=(-xctestrun "$XCTESTRUN" -destination "platform=watchOS Simulator,id=$TEST_UDID" -parallel-testing-enabled NO)
 # Warm-up, never counted: xcodebuild installs the runner and re-installs the app,
 # and the first launch plus first pick afterwards (first complication reload) can
@@ -328,6 +331,8 @@ xcodebuild test-without-building "${XCODE_ARGS[@]}" "-only-testing:$WARMUP_CASE"
   -test-timeouts-enabled YES -default-test-execution-time-allowance 240 \
   -maximum-test-execution-time-allowance 240 \
   > "$OUT/tests-warmup.log" 2>&1 || echo "warm-up exit $? (not judged)" >> "$OUT/preflight.log"
+xcrun simctl terminate "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp >/dev/null 2>&1 || true
+wait_services_ready "$TEST_UDID" com.apple.Carousel || true
 PHASE='BainLuckWatchUITests full suite from the same built products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 # The hang watchdog stops xcodebuild only when a test has overrun and the log then
@@ -340,7 +345,8 @@ run_xctest_suite() {
     -maximum-test-execution-time-allowance 540 \
     > "$OUT/tests.log" 2>&1 &
   local xcodebuild_pid=$!
-  python3 "$ROOT/tools/watch_ui_hang_watchdog.py" "$OUT/tests.log" "$xcodebuild_pid" "$OUT/hang-watchdog.json" &
+  python3 "$ROOT/tools/watch_ui_hang_watchdog.py" "$OUT/tests.log" "$xcodebuild_pid" "$OUT/hang-watchdog.json" \
+    --watch-udid "$TEST_UDID" --clockface-receipt "$OUT/clockface-recovery.json" --poll-seconds 2 &
   local watchdog_pid=$!
   if wait "$xcodebuild_pid"; then
     TEST_EXIT=0
@@ -352,13 +358,14 @@ run_xctest_suite() {
 }
 run_xctest_suite
 # Retry ONCE, only when the run died on a dropped simulator or runner connection,
-# or a launch the simulator never accepted, and no test failed a check or ran out of
-# time in its own steps (tools/watch_ui_infra_retry.py).
+# a launch the simulator never accepted, or repeated com.apple.clockface idle hangs,
+# and no test failed a check or ran out of time in its own steps (tools/watch_ui_infra_retry.py).
 # The first log is kept beside the retry's; infra-retry.json records the reason.
 if [[ "$TEST_EXIT" -ne 0 ]] \
   && python3 "$ROOT/tools/watch_ui_infra_retry.py" "$OUT/tests.log" "$OUT/infra-retry.json"; then
   cp "$OUT/tests.log" "$OUT/tests-infra-abort.log"
   [[ ! -f "$OUT/hang-watchdog.json" ]] || mv "$OUT/hang-watchdog.json" "$OUT/hang-watchdog-infra-abort.json"
+  [[ ! -f "$OUT/clockface-recovery.json" ]] || mv "$OUT/clockface-recovery.json" "$OUT/clockface-recovery-infra-abort.json"
   rm -rf "$RESULT"
   reboot_pair_until_ready
   run_xctest_suite

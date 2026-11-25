@@ -1,10 +1,10 @@
-"""#8843 — search must print the 2028 presidential winner once, not once per venue.
+"""#8843 / #13089 — search keeps the election call and inauguration distinct.
 
 `bainluck.com/search?q=election` (390px, 2026-09-26 ~15:15Z) showed Polymarket
 `112897` "Presidential Election Winner 2028" (JD Vance 21%) and Kalshi `108326`
 "2028 U.S. Presidential Election winner?" (J.D. Vance 20%) as two rows. The
-fixtures are those production rows: id, source, name, tier, and the first
-listed contender names in the venue's own spelling (db-query, 2026-09-26 16:45Z).
+fixtures are those production rows. #13089 checked their rules: one grades
+the election call and the other grades inauguration.
 """
 
 from __future__ import annotations
@@ -113,14 +113,15 @@ def test_precondition_the_question_key_splits_the_specimen():
     [(POLY_2028, KALSHI_2028), (KALSHI_2028, POLY_2028)],
     ids=["polymarket-first", "kalshi-first"],
 )
-def test_the_specimen_prints_once_and_the_ranking_picks_the_venue(first, second):
-    assert _page([first, second]) == [first.id]
+def test_13089_keeps_both_settlement_rules_in_rank_order(first, second):
+    assert _page([first, second]) == [first.id, second.id]
 
 
 def test_the_page_as_served_keeps_the_party_board():
     """The served family: headline 112897, members 108326 and 108327."""
     assert _page([POLY_2028, KALSHI_2028, KALSHI_PARTY]) == [
         POLY_2028.id,
+        KALSHI_2028.id,
         KALSHI_PARTY.id,
     ]
 

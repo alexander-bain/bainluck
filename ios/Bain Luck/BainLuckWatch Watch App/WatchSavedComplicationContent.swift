@@ -1,9 +1,9 @@
 import SwiftUI
 import WidgetKit
 
-/// Large rectangular (`accessoryRectangular`) selected-game reading for #4933,
-/// with honest launcher fallback when no valid shared snapshot exists.
-/// Circular and corner families remain explicit launchers.
+/// Selected-game and saved-market complication views (`#4933`, `#13430`):
+/// circular and corner slots follow the iPhone small Lock Screen rules (`LockScreenSmallSlotFit13430`),
+/// falling back to the bookmark launcher only when no fresh reading exists.
 struct WatchSavedComplicationContent: View {
     let snapshot: WatchComplicationSnapshot?
     var now: Date = Date()
@@ -115,23 +115,103 @@ struct WatchSavedComplicationContent: View {
 
 struct WatchSavedCircularComplicationContent: View {
     let snapshot: WatchComplicationSnapshot?
+    var now: Date = Date()
 
     var body: some View {
-        Image(systemName: "bookmark")
-            .font(.system(size: 18))
+        if let model = snapshot?.smallSlotModel(now: now) {
+            Group {
+                if let share = model.gaugeShare, model.isGame {
+                    Gauge(value: min(max(share, 0), 1)) {
+                        Text(model.subjectLabel)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.55)
+                    } currentValueLabel: {
+                        Text(model.value)
+                            .font(.system(size: 14, weight: .bold).monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                            .padding(.horizontal, 1)
+                    }
+                    .gaugeStyle(.accessoryCircular)
+                    .widgetAccentable()
+                } else {
+                    ZStack {
+                        AccessoryWidgetBackground()
+                        VStack(spacing: 0) {
+                            Text(model.subjectLabel)
+                                .font(.system(size: 9, weight: .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                            Text(model.value)
+                                .font(.system(size: 15, weight: .bold).monospacedDigit())
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
+                                .widgetAccentable()
+                        }
+                        .padding(4)
+                    }
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(model.accessibilityText)
+            .accessibilityIdentifier("watch.complication.circular.reading")
+        } else {
+            ZStack {
+                AccessoryWidgetBackground()
+                Image(systemName: "bookmark")
+                    .font(.system(size: 18))
+            }
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel("Open your selected game in Bain Luck, or choose a game")
             .accessibilityIdentifier("watch.complication.circular.fallback")
+        }
     }
 }
 
 struct WatchSavedCornerComplicationContent: View {
     let snapshot: WatchComplicationSnapshot?
+    var now: Date = Date()
+    @Environment(\.showsWidgetLabel) private var showsWidgetLabel
 
     var body: some View {
-        Image(systemName: "bookmark")
-            .font(.system(size: 18))
-            .accessibilityLabel("Open your selected game in Bain Luck, or choose a game")
-            .accessibilityIdentifier("watch.complication.corner.fallback")
+        if let model = snapshot?.smallSlotModel(now: now) {
+            Group {
+                if showsWidgetLabel {
+                    Text(model.value)
+                        .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
+                        .minimumScaleFactor(0.55)
+                        .lineLimit(1)
+                        .widgetCurvesContent()
+                        .widgetAccentable()
+                        .widgetLabel {
+                            Text(model.cornerLabel)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                        }
+                } else {
+                    VStack(spacing: 0) {
+                        Text(model.subjectLabel)
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.55)
+                        Text(model.value)
+                            .font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.55)
+                            .widgetAccentable()
+                    }
+                    .padding(2)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(model.accessibilityText)
+            .accessibilityIdentifier("watch.complication.corner.reading")
+        } else {
+            Image(systemName: "bookmark")
+                .font(.system(size: 18))
+                .accessibilityLabel("Open your selected game in Bain Luck, or choose a game")
+                .accessibilityIdentifier("watch.complication.corner.fallback")
+        }
     }
 }
 
