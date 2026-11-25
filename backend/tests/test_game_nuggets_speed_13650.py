@@ -118,6 +118,33 @@ def _sample_game_markets(event_id: int):
     }
 
 
+def _settled_game_markets(event_id: int) -> dict:
+    payload = _sample_game_markets(event_id)
+    for bucket in ("totals", "spreads", "player_props"):
+        for row in payload[bucket]:
+            row["status"] = "resolved"
+            row["is_winner"] = True
+            row["resolution_source"] = "kalshi"
+            row["hit"] = True
+    payload["open_winner_quote"] = None
+    return payload
+
+
+def _sample_team_progression(event_id: int) -> dict:
+    return {
+        "event_id": event_id,
+        "league": "nba",
+        "grid_url": "/basketball/nba",
+        "home_team": {
+            "name": "Boston Celtics",
+            "stages": [
+                {"key": "make_playoffs", "label": "Make Playoffs", "probability": 0.91, "state": "live"}
+            ],
+        },
+        "away_team": None,
+    }
+
+
 @pytest.fixture(autouse=True)
 def _reset_nuggets_caches(monkeypatch):
     game_nuggets_cache.clear_l1()
@@ -131,7 +158,7 @@ async def test_finished_game_writes_kept_copy_and_serves_from_cache_across_build
     monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **kw: dummy_redis)
 
     ev = _make_fake_event(event_id=15350164, status="completed")
-    gm = _sample_game_markets(15350164)
+    gm = _settled_game_markets(15350164)
 
     async def _fake_exec(stmt):
         sql = str(stmt)
@@ -151,7 +178,7 @@ async def test_finished_game_writes_kept_copy_and_serves_from_cache_across_build
     fake_db = SimpleNamespace(execute=AsyncMock(side_effect=_fake_exec))
     gm_mock = AsyncMock(return_value=gm)
     rf_mock = AsyncMock(return_value={"home_team_futures": [], "away_team_futures": []})
-    tp_mock = AsyncMock(return_value={})
+    tp_mock = AsyncMock(return_value=_sample_team_progression(15350164))
 
     monkeypatch.setattr(
         events_route,
@@ -159,8 +186,8 @@ async def test_finished_game_writes_kept_copy_and_serves_from_cache_across_build
         AsyncMock(return_value=SimpleNamespace(event=ev, event_id=15350164)),
     )
     monkeypatch.setattr(events_route, "get_game_markets", gm_mock)
-    monkeypatch.setattr(events_route, "get_related_futures", rf_mock)
-    monkeypatch.setattr(events_route, "get_team_progression", tp_mock)
+    monkeypatch.setattr(events_route, "_load_fast_nugget_stakes", rf_mock)
+    monkeypatch.setattr(events_route, "_load_nuggets_team_progression", tp_mock)
 
     # First read builds once and stores 7-day kept copy in Redis.
     first = await events_route.build_event_nuggets(15350164, fake_db, limit=12, now=NOW)
@@ -446,3 +473,276 @@ async def test_load_nuggets_open_season_markets_reuses_discovery_and_orders_newe
     cold_sql = captured_sql[0]
     assert "futures_markets.llm_sport_category =" in cold_sql
     assert "futures_markets.id DESC" in cold_sql
+
+
+@pytest.mark.asyncio
+async def test_finished_game_swallowed_error_does_not_keep_seven_day_copy(monkeypatch):
+    dummy_redis = _DummyRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **kw: dummy_redis)
+
+    ev = _make_fake_event(event_id=15350171, status="completed")
+    gm = _settled_game_markets(15350171)
+
+    async def _fake_exec(stmt):
+        sql = str(stmt)
+        if "FROM teams" in sql:
+            return _FakeScalarResult(many=[])
+        return _FakeScalarResult(one=ev)
+
+    fake_db = SimpleNamespace(execute=AsyncMock(side_effect=_fake_exec))
+    monkeypatch.setattr(
+        events_route,
+        "resolve_served_event",
+        AsyncMock(return_value=SimpleNamespace(event=ev, event_id=15350171)),
+    )
+    monkeypatch.setattr(events_route, "get_game_markets", AsyncMock(return_value=gm))
+    monkeypatch.setattr(
+        events_route,
+        "_load_fast_nugget_stakes",
+        AsyncMock(side_effect=RuntimeError("transient stakes read error")),
+    )
+    monkeypatch.setattr(
+        events_route,
+        "_load_nuggets_team_progression",
+        AsyncMock(return_value=_sample_team_progression(15350171)),
+    )
+
+    await events_route.build_event_nuggets(15350171, fake_db, limit=12, now=NOW)
+    raw_json, ttl = dummy_redis.data[game_nuggets_cache.cache_key(15350171)]
+    assert ttl == game_nuggets_cache.FRESH_TTL_LIVE == 30
+    assert json.loads(raw_json)["is_final"] is False
+    assert 15350171 not in game_nuggets_cache._l1_cache
+
+
+@pytest.mark.asyncio
+async def test_finished_game_missing_league_context_does_not_keep_seven_day_copy(monkeypatch):
+    dummy_redis = _DummyRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **kw: dummy_redis)
+
+    ev = _make_fake_event(event_id=15350172, status="completed", sport_key="basketball_nba")
+    gm = _settled_game_markets(15350172)
+
+    async def _fake_exec(stmt):
+        sql = str(stmt)
+        if "FROM teams" in sql:
+            return _FakeScalarResult(many=[])
+        return _FakeScalarResult(one=ev)
+
+    fake_db = SimpleNamespace(execute=AsyncMock(side_effect=_fake_exec))
+    monkeypatch.setattr(
+        events_route,
+        "resolve_served_event",
+        AsyncMock(return_value=SimpleNamespace(event=ev, event_id=15350172)),
+    )
+    monkeypatch.setattr(events_route, "get_game_markets", AsyncMock(return_value=gm))
+    monkeypatch.setattr(
+        events_route,
+        "_load_fast_nugget_stakes",
+        AsyncMock(return_value={"home_team_futures": [], "away_team_futures": []}),
+    )
+
+    # Empty Redis -> both bainluck:league_context:nba and playoff grid keys missing
+    await events_route.build_event_nuggets(15350172, fake_db, limit=12, now=NOW)
+    raw_json, ttl = dummy_redis.data[game_nuggets_cache.cache_key(15350172)]
+    assert ttl == game_nuggets_cache.FRESH_TTL_LIVE == 30
+    assert json.loads(raw_json)["is_final"] is False
+    assert 15350172 not in game_nuggets_cache._l1_cache
+
+
+@pytest.mark.asyncio
+async def test_finished_game_unsettled_market_or_open_winner_quote_not_seven_day(monkeypatch):
+    dummy_redis = _DummyRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **kw: dummy_redis)
+
+    ev = _make_fake_event(event_id=15350173, status="completed")
+
+    async def _fake_exec(stmt):
+        sql = str(stmt)
+        if "FROM teams" in sql:
+            return _FakeScalarResult(many=[])
+        return _FakeScalarResult(one=ev)
+
+    fake_db = SimpleNamespace(execute=AsyncMock(side_effect=_fake_exec))
+    monkeypatch.setattr(
+        events_route,
+        "resolve_served_event",
+        AsyncMock(return_value=SimpleNamespace(event=ev, event_id=15350173)),
+    )
+    monkeypatch.setattr(
+        events_route,
+        "_load_fast_nugget_stakes",
+        AsyncMock(return_value={"home_team_futures": [], "away_team_futures": []}),
+    )
+    monkeypatch.setattr(
+        events_route,
+        "_load_nuggets_team_progression",
+        AsyncMock(return_value=_sample_team_progression(15350173)),
+    )
+
+    # Case A: one prop is still open / unsettled
+    gm_unsettled = _settled_game_markets(15350173)
+    gm_unsettled["player_props"][0] = dict(_sample_game_markets(15350173)["player_props"][0], status="open")
+    monkeypatch.setattr(events_route, "get_game_markets", AsyncMock(return_value=gm_unsettled))
+
+    await events_route.build_event_nuggets(15350173, fake_db, limit=12, now=NOW)
+    raw_a, ttl_a = dummy_redis.data[game_nuggets_cache.cache_key(15350173)]
+    assert ttl_a == game_nuggets_cache.FRESH_TTL_LIVE == 30
+    assert json.loads(raw_a)["is_final"] is False
+
+    # Case B: rows settled cleanly, but open_winner_quote is still non-null
+    dummy_redis.data.clear()
+    gm_open_quote = _settled_game_markets(15350173)
+    gm_open_quote["open_winner_quote"] = {"team": "Boston Celtics", "probability": 0.99}
+    monkeypatch.setattr(events_route, "get_game_markets", AsyncMock(return_value=gm_open_quote))
+
+    await events_route.build_event_nuggets(15350173, fake_db, limit=12, now=NOW)
+    raw_b, ttl_b = dummy_redis.data[game_nuggets_cache.cache_key(15350173)]
+    assert ttl_b == game_nuggets_cache.FRESH_TTL_LIVE == 30
+    assert json.loads(raw_b)["is_final"] is False
+
+
+def test_read_cached_league_context_derives_from_grid_and_warm_sync_writes_ttl(monkeypatch):
+    dummy_redis = _DummyRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **kw: dummy_redis)
+
+    grid_payload = {
+        "columns": [
+            {"key": "make_playoffs", "label": "Make Playoffs"},
+            {"key": "championship", "label": "Champion"},
+        ],
+        "teams": [
+            {
+                "name": "Boston Celtics",
+                "team_id": 10,
+                "short_name": "BOS",
+                "stages": [
+                    {"key": "make_playoffs", "label": "Make Playoffs", "probability": 0.94, "state": "live"},
+                ],
+            }
+        ],
+    }
+
+    # Case 1: warm sync writes bainluck:league_context:nba with 3900s TTL
+    assert league_context.write_league_context_from_grid_sync(dummy_redis, "nba", grid_payload) is True
+    _, warm_ttl = dummy_redis.data["bainluck:league_context:nba"]
+    assert warm_ttl == league_context.LEAGUE_CONTEXT_WARM_TTL == 3900
+
+    # Case 2: if league_context key is evicted, read_cached_league_context derives from playoff grid in Redis
+    dummy_redis.data.clear()
+    dummy_redis.setex("bainluck:category:playoffs:nba", 3600, json.dumps(grid_payload))
+    ctx = league_context.read_cached_league_context("nba")
+    assert ctx is not None
+    assert "boston celtics" in ctx.teams
+    assert "bainluck:league_context:nba" in dummy_redis.data
+
+
+@pytest.mark.asyncio
+async def test_live_game_uses_shared_redis_without_l1_worker_divergence(monkeypatch):
+    dummy_redis = _DummyRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **kw: dummy_redis)
+
+    ev = _make_fake_event(event_id=14780599, status="in_progress")
+    gm = _sample_game_markets(14780599)
+
+    async def _fake_exec(stmt):
+        sql = str(stmt)
+        if "FROM teams" in sql:
+            return _FakeScalarResult(many=[])
+        return _FakeScalarResult(one=ev)
+
+    fake_db = SimpleNamespace(execute=AsyncMock(side_effect=_fake_exec))
+    gm_mock = AsyncMock(return_value=gm)
+    monkeypatch.setattr(
+        events_route,
+        "resolve_served_event",
+        AsyncMock(return_value=SimpleNamespace(event=ev, event_id=14780599)),
+    )
+    monkeypatch.setattr(events_route, "get_game_markets", gm_mock)
+    monkeypatch.setattr(
+        events_route,
+        "_load_fast_nugget_stakes",
+        AsyncMock(return_value={"home_team_futures": [], "away_team_futures": []}),
+    )
+    monkeypatch.setattr(
+        events_route,
+        "_load_nuggets_team_progression",
+        AsyncMock(return_value=_sample_team_progression(14780599)),
+    )
+
+    first = await events_route.build_event_nuggets(14780599, fake_db, limit=12, now=NOW)
+    assert first.get("generated_at")
+    key = game_nuggets_cache.cache_key(14780599)
+    raw_json, ttl = dummy_redis.data[key]
+    assert ttl == game_nuggets_cache.FRESH_TTL_LIVE == 30
+    assert json.loads(raw_json)["is_final"] is False
+    # Process-local L1 must remain empty for live games so two workers never diverge
+    assert 14780599 not in game_nuggets_cache._l1_cache
+
+    # Second read comes from shared Redis L2 with zero rebuild
+    second = await events_route.build_event_nuggets(14780599, fake_db, limit=6, now=NOW)
+    assert len(second["nuggets"]) <= 6
+    assert gm_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_nuggets_fresh_requires_admin_secret(monkeypatch):
+    dummy_redis = _DummyRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **kw: dummy_redis)
+    admin_tok = "a" * 32
+    monkeypatch.setenv("ADMIN_TOKEN", admin_tok)
+
+    ev = _make_fake_event(event_id=14780582, status="in_progress")
+
+    async def _fake_exec(stmt):
+        sql = str(stmt)
+        if "FROM teams" in sql:
+            return _FakeScalarResult(many=[])
+        return _FakeScalarResult(one=ev)
+
+    fake_db = SimpleNamespace(execute=AsyncMock(side_effect=_fake_exec))
+    gm_mock = AsyncMock(return_value=_sample_game_markets(14780582))
+    monkeypatch.setattr(
+        events_route,
+        "resolve_served_event",
+        AsyncMock(return_value=SimpleNamespace(event=ev, event_id=14780582)),
+    )
+    monkeypatch.setattr(events_route, "get_game_markets", gm_mock)
+    monkeypatch.setattr(
+        events_route,
+        "_load_fast_nugget_stakes",
+        AsyncMock(return_value={"home_team_futures": [], "away_team_futures": []}),
+    )
+    monkeypatch.setattr(
+        events_route,
+        "_load_nuggets_team_progression",
+        AsyncMock(return_value={}),
+    )
+
+    async def _db_override():
+        yield fake_db
+
+    prior = dict(app.dependency_overrides)
+    app.dependency_overrides[get_db] = _db_override
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            unauth = await client.get("/api/events/14780582/nuggets?fresh=true")
+            assert unauth.status_code in (401, 403)
+            assert gm_mock.await_count == 0
+
+            # Query-param ?secret= must still be rejected per #252 Item 3
+            legacy_q = await client.get(f"/api/events/14780582/nuggets?fresh=true&secret={admin_tok}")
+            assert legacy_q.status_code in (401, 403)
+            assert gm_mock.await_count == 0
+
+            authed = await client.get(
+                "/api/events/14780582/nuggets?fresh=true",
+                headers={"Authorization": f"Bearer {admin_tok}"},
+            )
+            assert authed.status_code == 200
+            assert gm_mock.await_count == 1
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(prior)
+

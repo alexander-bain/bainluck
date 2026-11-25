@@ -32055,9 +32055,6 @@ async def get_team_progression(
     return _response
 
 
-_ORIG_GET_RELATED_FUTURES = get_related_futures
-_ORIG_GET_TEAM_PROGRESSION = get_team_progression
-
 NUGGETS_REQUEST_TIMEOUT_SECONDS = float(os.getenv("GAME_NUGGETS_TIMEOUT_SECONDS", "8.0"))
 NUGGETS_SQL_STATEMENT_TIMEOUT_MS = int(os.getenv("GAME_NUGGETS_SQL_TIMEOUT_MS", "6500"))
 _NUGGETS_SEASON_MARKETS_TTL = 300
@@ -32424,19 +32421,6 @@ async def _load_nuggets_team_progression(
     db: AsyncSession,
 ) -> dict[str, Any]:
     """Read team progression from cache only; never block nuggets on cold grid rebuild."""
-    if get_team_progression is not _ORIG_GET_TEAM_PROGRESSION:
-        try:
-            res = await get_team_progression(resolved_id, db=db)
-            return res if isinstance(res, dict) else {}
-        except HTTPException as exc:
-            if exc.status_code in (503, 504):
-                raise
-            return {}
-        except Exception as exc:
-            if _is_timeout_or_query_canceled(exc):
-                raise
-            return {}
-
     try:
         from app.tasks.redis_state import get_redis_client
 
@@ -32447,14 +32431,22 @@ async def _load_nuggets_team_progression(
     except Exception as exc:
         logger.debug("nuggets: progression redis read failed for event %s: %s", resolved_id, exc)
 
-    from app.config.league_configs import LEAGUE_TO_SPORT, get_league_for_sport_key
-    from app.services.league_context import enrich_event_with_cached_context
-
-    league_ctx = enrich_event_with_cached_context(event, sport_key)
-    if not league_ctx or not sport_key:
+    if not sport_key:
         return {}
+
+    from app.config.league_configs import LEAGUE_TO_SPORT, get_league_for_sport_key
+    from app.services.league_context import _format_event_league_context, read_cached_league_context
+
     config = get_league_for_sport_key(sport_key)
     if not config:
+        return {}
+
+    ctx = read_cached_league_context(config.slug)
+    if ctx is None:
+        return {"_league_context_missing": True}
+
+    league_ctx = _format_event_league_context(event, config, ctx)
+    if not league_ctx:
         return {}
     sport_group = LEAGUE_TO_SPORT.get(config.slug, "")
     grid_url = f"/{sport_group}/{config.slug}" if sport_group else f"/playoffs/{config.slug}"
@@ -32566,6 +32558,7 @@ async def _build_event_nuggets_inner(
 
     safe_event_id = getattr(event, "id", None)
     sport_key = event.sport.key if getattr(event, "sport", None) else None
+    build_complete = True
 
     try:
         game_markets = await get_game_markets(resolved_id, db=db, fresh=False, response=None)
@@ -32581,36 +32574,50 @@ async def _build_event_nuggets_inner(
             raise
         logger.warning("nuggets: game_markets read failed for event %s", safe_event_id, exc_info=True)
         game_markets = {}
+        build_complete = False
 
-    if get_related_futures is not _ORIG_GET_RELATED_FUTURES:
-        try:
-            related_futures = await get_related_futures(resolved_id, debug=False, db=db)
-        except HTTPException as exc:
-            if exc.status_code in (503, 504):
-                raise
-            related_futures = {}
-        except Exception as exc:
-            if _is_timeout_or_query_canceled(exc):
-                raise
-            logger.warning("nuggets: related_futures read failed for event %s", safe_event_id, exc_info=True)
-            related_futures = {}
-    else:
-        try:
-            related_futures = await _load_fast_nugget_stakes(
-                db,
-                event,
-                resolved_id,
-                sport_key,
-                by_tid,
-                event_is_finished=is_final,
-            )
-        except Exception as exc:
-            if _is_timeout_or_query_canceled(exc):
-                raise
-            logger.warning("nuggets: fast stakes read failed for event %s", safe_event_id, exc_info=True)
-            related_futures = {}
+    try:
+        related_futures = await _load_fast_nugget_stakes(
+            db,
+            event,
+            resolved_id,
+            sport_key,
+            by_tid,
+            event_is_finished=is_final,
+        )
+    except HTTPException as exc:
+        if exc.status_code in (503, 504):
+            raise
+        logger.warning("nuggets: fast stakes HTTP error for event %s", safe_event_id, exc_info=True)
+        related_futures = {}
+        build_complete = False
+    except Exception as exc:
+        if _is_timeout_or_query_canceled(exc):
+            raise
+        logger.warning("nuggets: fast stakes read failed for event %s", safe_event_id, exc_info=True)
+        related_futures = {}
+        build_complete = False
 
-    team_progression = await _load_nuggets_team_progression(resolved_id, event, sport_key, db)
+    try:
+        team_progression = await _load_nuggets_team_progression(resolved_id, event, sport_key, db)
+    except HTTPException as exc:
+        if exc.status_code in (503, 504):
+            raise
+        logger.warning("nuggets: progression HTTP error for event %s", safe_event_id, exc_info=True)
+        team_progression = {}
+        build_complete = False
+    except Exception as exc:
+        if _is_timeout_or_query_canceled(exc):
+            raise
+        logger.warning("nuggets: progression read failed for event %s", safe_event_id, exc_info=True)
+        team_progression = {}
+        build_complete = False
+
+    if isinstance(team_progression, dict) and team_progression.get("_league_context_missing"):
+        build_complete = False
+        team_progression = {
+            k: v for k, v in team_progression.items() if k != "_league_context_missing"
+        }
 
     event_info = {
         "event_id": resolved_id,
@@ -32630,8 +32637,13 @@ async def _build_event_nuggets_inner(
         limit=NUGGET_DEFAULT_LIMIT,
         now=clock_now,
     )
+    keep_seven_days = bool(
+        is_final
+        and build_complete
+        and game_nuggets_cache.game_markets_fully_settled(game_markets)
+    )
     if use_cache:
-        game_nuggets_cache.write(resolved_id, full_payload, is_final=is_final)
+        game_nuggets_cache.write(resolved_id, full_payload, is_final=keep_seven_days)
     return game_nuggets_cache.slice_nuggets_payload(full_payload, clamped_limit)
 
 
@@ -32685,11 +32697,17 @@ async def build_event_nuggets(
 @router.get("/{event_id}/nuggets")
 async def get_event_nuggets(
     event_id: int,
+    request: Request,
     limit: int = Query(12, ge=1, le=12),
     fresh: bool = Query(False),
+    secret: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Ranked below-the-charts nuggets and kind counts for an event (#13511, #13650)."""
+    if fresh:
+        from app.routes.admin_utils import _check_admin_secret
+
+        _check_admin_secret(secret, request=request)
     return await build_event_nuggets(event_id, db, limit=limit, use_cache=not fresh)
 
 
