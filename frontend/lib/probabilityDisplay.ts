@@ -171,6 +171,25 @@ export function formatProbabilityPercent(
   return joinParts(probabilityParts(prob, options));
 }
 
+/** Grouped rows carry a legacy integer and may carry the unfloored allocation. */
+export function formatGroupedProbability(row: {
+  probability?: unknown;
+  rendered_percent?: unknown;
+  unfloored_percent?: unknown;
+}): string {
+  const probability = typeof row.probability === "number" || typeof row.probability === "string"
+    ? probabilityValue(row.probability)
+    : NaN;
+  const legacy = typeof row.rendered_percent === "number" && Number.isFinite(row.rendered_percent)
+    ? row.rendered_percent
+    : null;
+  if (!Number.isFinite(probability)) return legacy === null ? NO_READING : `${legacy}%`;
+  const allocated = typeof row.unfloored_percent === "number" && Number.isFinite(row.unfloored_percent)
+    ? row.unfloored_percent
+    : legacy;
+  return formatProbabilityPercent(probability, { rendered: allocated });
+}
+
 /**
  * UX-P048 — the single home for "what UNIT is a movement value in".
  *

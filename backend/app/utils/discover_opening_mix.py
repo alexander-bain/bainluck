@@ -129,11 +129,30 @@ _ODD_SLUGS: frozenset[str] = frozenset(
     {
         *_PURE_ODD_SLUGS,
         "machinery-white-christmas",
+    }
+)
+_OPENING_EXCLUDED_WEATHER_SLUGS: frozenset[str] = frozenset(
+    {
         "roundup-tomorrows-highs",
         "roundup-will-it-snow",
         "for-scale-snow-in-dc",
     }
 )
+
+
+def is_opening_weather_excluded_roundup(item: Mapping[str, Any]) -> bool:
+    """Weather forecast roundups (e.g. ``roundup-tomorrows-highs``) sit outside seats 1..10 (#13645)."""
+    if not isinstance(item, Mapping):
+        return False
+    slug = (_roundup_item_slug(item) or "").strip().lower()
+    if slug in _OPENING_EXCLUDED_WEATHER_SLUGS:
+        return True
+    data = item.get("data")
+    if isinstance(data, Mapping):
+        raw_id = str(data.get("id") or data.get("story_key") or "").strip().lower()
+        if raw_id in {"roundup:tomorrows-highs", "roundup:will-it-snow", "roundup:for-scale-snow-in-dc"}:
+            return True
+    return False
 _ENTERTAINMENT_SLUGS: frozenset[str] = frozenset(
     {
         "machinery-2026-summed-up",
@@ -1040,6 +1059,7 @@ def apply_discover_opening_mix(
         and _is_grouped_feed_card(it)
         and it.get("type") != "concept"
         and not is_same_deadline_roundup(it)
+        and not is_opening_weather_excluded_roundup(it)
         and not _contains_live_event_signal(it, now=effective_now)
         and _is_roundup_opening_eligible(it, items, now=effective_now)
     ]
@@ -1267,10 +1287,14 @@ def apply_discover_opening_mix(
         _add_group(*best_candidate)
 
     # Sparse-deck fallback if non-PWM grouped supply fell below target.
+    # #13542 / 329: A: keep `TOPIC_SPORTS` at `TOPIC_MAX_TOTAL[TOPIC_SPORTS]` (2,
+    # including any chosen single) across both relaxed-topic and relaxed-form
+    # fallbacks so a form cap on non-sports cards never pulls a 3rd sports card
+    # into the first ten; only a genuinely sports-only empty deck may add a 3rd.
     relaxed_non_pwm_caps = {
         TOPIC_ODD: 4,
         TOPIC_ENTERTAINMENT: 4,
-        TOPIC_SPORTS: 3,
+        TOPIC_SPORTS: TOPIC_MAX_TOTAL[TOPIC_SPORTS],
         TOPIC_TECH_BUSINESS: 3,
         TOPIC_PWM: 1,
     }
@@ -1342,14 +1366,28 @@ def apply_discover_opening_mix(
                 if _can_take_group(it, relaxed_non_pwm_caps, enforce_form_cap=False):
                     _add_group(idx, it)
 
+    # Final truly-empty-non-sports fallback: allow a 3rd sports group only after all
+    # non-sports caps and form-cap relaxations are exhausted.
+    if len(chosen_groups) < non_pwm_grouped_target:
+        empty_deck_caps = {**relaxed_non_pwm_caps, TOPIC_SPORTS: 3}
+        for idx, it in sorted_groups:
+            if len(chosen_groups) >= non_pwm_grouped_target:
+                break
+            if idx in chosen_indices or classify_discover_opening_topic(it) == TOPIC_PWM:
+                continue
+            if _group_conflicts_with_single(it):
+                continue
+            if _can_take_group(it, empty_deck_caps, enforce_form_cap=False):
+                _add_group(idx, it)
+
     if chosen_pwm_seat10 is not None:
         chosen_groups.append(chosen_pwm_seat10)
 
     # If grouped supply was below `grouped_target`, fill remaining opening seats with
-    # non-PWM singles first while honoring PWM <= 1.
+    # non-PWM/cap-respecting singles first while honoring PWM <= 1.
     needed_singles = seat_count - len(chosen_groups) - len(chosen_singles)
     if needed_singles > 0:
-        for pass_non_pwm_only in (True, False):
+        for pass_mode in ("non_pwm_under_cap", "non_pwm_any", "any"):
             if needed_singles <= 0:
                 break
             for idx, it in singles_sorted:
@@ -1358,7 +1396,9 @@ def apply_discover_opening_mix(
                 if idx in chosen_indices:
                     continue
                 t = classify_discover_opening_topic(it)
-                if pass_non_pwm_only and t == TOPIC_PWM:
+                if pass_mode in ("non_pwm_under_cap", "non_pwm_any") and t == TOPIC_PWM:
+                    continue
+                if pass_mode == "non_pwm_under_cap" and topic_counts[t] >= TOPIC_MAX_TOTAL[t]:
                     continue
                 if t == TOPIC_PWM and topic_counts[TOPIC_PWM] >= TOPIC_MAX_TOTAL[TOPIC_PWM]:
                     continue

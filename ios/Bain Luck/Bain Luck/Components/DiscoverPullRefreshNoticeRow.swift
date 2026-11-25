@@ -52,5 +52,6 @@ struct DiscoverPullRefreshNoticeRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(notice.accessibilityLabel)
         .accessibilityIdentifier(DiscoverPullRefreshNotice.identifier)
+        .noteReviewPromptTrouble12304(when: notice.offersRetry)
     }
 }

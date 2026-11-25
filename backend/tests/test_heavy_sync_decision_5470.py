@@ -940,6 +940,19 @@ def test_an_unreadable_fact_proceeds_because_this_is_a_cost_gate():
     assert (no_reply.code, no_reply.verdict) == (CLEAR, "UNKNOWN")
     assert "did not answer" in no_reply.reason
 
+    partial_body = _inspect_body([])
+    partial_body["_cache"] = {
+        "cached": False,
+        "age_s": 0.0,
+        "partial": True,
+        "missing_active_workers": ["celery@worker-heavy"],
+    }
+    assert sync.active_task_names(partial_body) is None
+    partial = sync.inflight_verdict(
+        active=sync.active_task_names(partial_body), heavy=_heavy_set()
+    )
+    assert (partial.code, partial.verdict) == (CLEAR, "UNKNOWN")
+
 
 def test_an_attended_run_bypasses_the_in_flight_veto():
     """Same licence as the clock and the floor: a person may accept one lost
@@ -1305,7 +1318,7 @@ def test_the_confirm_degrades_to_a_single_read_at_the_edge(tmp_path):
     to the very fallback this docstring says it degrades to. So the deadlines
     are now swept across the turn, and the first of them is that specimen.
     """
-    for deadline in (1, 30, 36, sync.CONFIRM_SEPARATION_SECONDS):
+    for deadline in (1, 30, sync.CONFIRM_SEPARATION_SECONDS - 1, sync.CONFIRM_SEPARATION_SECONDS):
         code, reads, sleeps, _ = _run_wait_loop(
             tmp_path / f"d{deadline}", bodies=[IDLE_BODY, IDLE_BODY],
             deadlines=[deadline],
@@ -1345,9 +1358,11 @@ def test_the_bands_edge_is_a_whole_turn_of_the_wait_loop():
         sync.CONFIRM_SEPARATION_SECONDS
         == sync.INFLIGHT_POLL_SECONDS + sync.INFLIGHT_READ_SECONDS
     )
-    assert sync.INFLIGHT_READ_SECONDS >= 26, (
-        "the inspect broadcast measured 25.6-29.6 s over eight production "
-        "reads; rounding it DOWN puts the edge back inside a turn"
+    from app.routes.admin_celery import _INSPECT_TOTAL_TIMEOUT_S
+
+    assert sync.INFLIGHT_READ_SECONDS >= int(_INSPECT_TOTAL_TIMEOUT_S), (
+        "INFLIGHT_READ_SECONDS must cover _INSPECT_TOTAL_TIMEOUT_S by construction "
+        "until post-release production timing is recorded on #13532"
     )
     # A turn still has to fit in the band, or the loop would break on its first
     # read at every minute and the confirm would never run at all.

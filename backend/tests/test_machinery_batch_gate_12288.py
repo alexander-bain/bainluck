@@ -198,6 +198,32 @@ def test_wording_headline_over_five_lines_at_390px() -> None:
     assert not res.ok
     assert any(e.rule == "headline_too_long_390px" for e in res.errors)
 
+    # Regression (#13530): calibrated 298px inner card width sees 4L orphan-% headlines as 4L.
+    critics_4l = (
+        "Christopher Nolan leads Critics Choice Director at 75%, "
+        "with Paul Giamatti leading Oscars Supporting Actor at 41%"
+    )
+    broadway_4l = (
+        "2026\u201327 Broadway attendance finishing above 13,500,000 is at 96%, "
+        "with Mt. Joy returning to Red Rocks at 95%"
+    )
+    assert estimate_headline_lines_390px(critics_4l) == 4
+    assert estimate_headline_lines_390px(broadway_4l) == 4
+    assert (
+        estimate_headline_lines_390px(
+            "Christopher Nolan leads Critics Choice Director at 75%, "
+            "with Paul Giamatti leading Supporting Actor at 41%"
+        )
+        <= 3
+    )
+    assert (
+        estimate_headline_lines_390px(
+            "ARIRANG topping 2026 album sales is at 81%, "
+            "with Avengers: Doomsday leading box office at 89%"
+        )
+        <= 3
+    )
+
 
 @pytest.mark.asyncio
 async def test_public_rule_assembly_fails_when_public_set_comes_up_short(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -389,6 +415,40 @@ def test_form_rules_enforce_duel_threshold_tile_pictures_and_history_chart() -> 
         ],
     }
     assert check_machinery_form_rules(card=tight_duel).ok
+
+    three_way_duel = {
+        "slug": "test-ryder-duel",
+        "form_id": "duel_bar",
+        "title": "Team Europe leads Team USA 52%–41% in the 2027 Ryder Cup race",
+        "rows": [
+            {"label": "Team Europe", "rendered_percent": 52},
+            {"label": "Team USA", "rendered_percent": 41},
+            {"label": "Tie", "rendered_percent": 7},
+        ],
+    }
+    assert check_machinery_form_rules(card=three_way_duel).ok
+
+    weak_three_way_duel = {
+        **three_way_duel,
+        "rows": [
+            {"label": "Team Europe", "rendered_percent": 78},
+            {"label": "Team USA", "rendered_percent": 15},
+            {"label": "Tie", "rendered_percent": 7},
+        ],
+    }
+    assert {e.rule for e in check_machinery_form_rules(card=weak_three_way_duel).errors} == {
+        "form_duel_trailing_under_20"
+    }
+
+    bad_three_way_duel = {
+        **three_way_duel,
+        "rows": [
+            {"label": "Team Europe", "rendered_percent": 45},
+            {"label": "Team USA", "rendered_percent": 35},
+            {"label": "Third Team", "rendered_percent": 20},
+        ],
+    }
+    assert not check_machinery_form_rules(card=bad_three_way_duel).ok
 
     # 2. contender_spotlight & sibling_fields_grid require real pictures unless scale_ordered.
     no_pic_art = {"url": None, "kind": "monogram", "initials": "AB"}

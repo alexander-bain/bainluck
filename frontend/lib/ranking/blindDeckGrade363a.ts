@@ -140,6 +140,82 @@ export function buildCardToPileMap(piles: PileBucket[]): Record<string, string> 
   return map;
 }
 
+/** Pre-fix grade_forms_deck clicks before the v2 UI rollout are void (filter by time, never delete). */
+export const GRADE_FORMS_VALID_AFTER_ISO = "2026-11-24T22:00:00Z";
+
+export function createInitialEmptyPiles(): PileBucket[] {
+  return [{ pile_id: "pile-1", label: "Pile 1", item_ids: [] }];
+}
+
+function nextPileId(piles: PileBucket[]): string {
+  const maxN = piles.reduce((acc, p) => {
+    const m = /^pile-(\d+)$/.exec(p.pile_id);
+    return m ? Math.max(acc, Number(m[1])) : acc;
+  }, 0);
+  return `pile-${maxN + 1}`;
+}
+
+export function addEmptyPile(piles: PileBucket[]): PileBucket[] {
+  const id = nextPileId(piles);
+  return [...piles, { pile_id: id, label: `Pile ${piles.length + 1}`, item_ids: [] }];
+}
+
+export function removeCardPreservingEmptyPiles(
+  piles: PileBucket[],
+  itemId: string,
+): PileBucket[] {
+  const base = piles.length > 0 ? piles : createInitialEmptyPiles();
+  return base.map((pile) => ({
+    ...pile,
+    item_ids: pile.item_ids.filter((id) => id !== itemId),
+  }));
+}
+
+export function moveCardToPilePreservingEmpty(
+  piles: PileBucket[],
+  itemId: string,
+  targetPileId: string,
+): PileBucket[] {
+  const cleaned = removeCardPreservingEmptyPiles(piles, itemId);
+  if (!cleaned.some((p) => p.pile_id === targetPileId)) {
+    return [
+      ...cleaned,
+      { pile_id: targetPileId, label: `Pile ${cleaned.length + 1}`, item_ids: [itemId] },
+    ];
+  }
+  return cleaned.map((pile) =>
+    pile.pile_id === targetPileId
+      ? { ...pile, item_ids: [...pile.item_ids, itemId] }
+      : pile,
+  );
+}
+
+export function pruneEmptyPilesForSave(piles: PileBucket[]): PileBucket[] {
+  return piles
+    .filter((p) => p.item_ids.length > 0)
+    .map((p, idx) => ({ ...p, label: `Pile ${idx + 1}` }));
+}
+
+export function isPostFixFormsJudgmentRow(
+  row: {
+    created_at?: string | null;
+    label_metadata?: { ui_version?: number; timestamp?: string; piles?: unknown } | null;
+  },
+  resetAfterIso?: string | null,
+): boolean {
+  const meta = row?.label_metadata;
+  if (!meta || !Array.isArray(meta.piles) || meta.piles.length === 0) return false;
+  if (typeof meta.ui_version !== "number" || meta.ui_version < 2) return false;
+  const rawTs = row.created_at || meta.timestamp || "";
+  const ms = Date.parse(rawTs);
+  if (Number.isNaN(ms) || ms < Date.parse(GRADE_FORMS_VALID_AFTER_ISO)) return false;
+  if (resetAfterIso) {
+    const resetMs = Date.parse(resetAfterIso);
+    if (!Number.isNaN(resetMs) && ms <= resetMs) return false;
+  }
+  return true;
+}
+
 export function canonicalContainerGradesString(
   deckId: string,
   grades: Record<string, ContainerGradeEntry>,

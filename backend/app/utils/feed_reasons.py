@@ -6,6 +6,7 @@ Returns empty string when the card UI already tells the story — avoids
 repeating scores, odds, or team names visible on the card.
 """
 
+import math
 import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -601,9 +602,10 @@ def humanize_outcome_names_for_feed(
     ]
 
 
-def _point_change(value: float) -> float:
-    """Convert a probability delta to percentage points for display."""
-    return round(abs(value) * 100, 1)
+def _point_change(value: float) -> int:
+    """Convert a probability delta to whole percentage points, half-up (#13602)."""
+    scaled = round(abs(float(value)) * 100, 6)  # 8.499999999999998 -> 8.5
+    return int(math.floor(scaled + 0.5))  # 8.5 -> 9, 4.49 -> 4, 0.49 -> 0
 
 
 def _is_printable_move(value: Optional[float]) -> bool:
@@ -1062,10 +1064,8 @@ def binary_affirmative_probability(outcomes: list[dict]) -> Optional[float]:
 
 
 def _points(value: float) -> str:
-    """ "37.5 points" / "1 point" — never "1.0 points"."""
+    """ "38 points" / "1 point" — whole points only, never tenths or "1 points" (#13602)."""
     magnitude = _point_change(value)
-    if magnitude == int(magnitude):
-        magnitude = int(magnitude)
     return f"{magnitude} point{'' if magnitude == 1 else 's'}"
 
 
@@ -1107,7 +1107,7 @@ def compose_binary_card_copy(
 
     moved_today = (
         "major_movement_24h" in reasons or "moderate_movement_24h" in reasons
-    ) and top_mover_change is not None
+    ) and _is_printable_move(top_mover_change)
     if moved_today:
         direction = "Up" if top_mover_change > 0 else "Down"
         return composed(
@@ -2448,8 +2448,10 @@ def generate_futures_reason(
     # divergence alone falls to the leader sentence below and says what it knows.)
 
     # Major movement
-    if "major_movement_24h" in reasons:
-        if top_mover_name and top_mover_change is not None and _mover_sayable:
+    if "major_movement_24h" in reasons and (
+        top_mover_change is None or _is_printable_move(top_mover_change)
+    ):
+        if top_mover_name and _is_printable_move(top_mover_change) and _mover_sayable:
             # #6903's residual: a bare date IS nameable on a board of bare
             # dates, and naming it is the only way this sentence can carry the
             # number without hanging it on a board that has no probability.
@@ -2467,8 +2469,10 @@ def generate_futures_reason(
     # the card falls through to a movement or leader sentence it can support.)
 
     # Moderate movement
-    if "moderate_movement_24h" in reasons:
-        if top_mover_name and top_mover_change is not None and _mover_sayable:
+    if "moderate_movement_24h" in reasons and (
+        top_mover_change is None or _is_printable_move(top_mover_change)
+    ):
+        if top_mover_name and _is_printable_move(top_mover_change) and _mover_sayable:
             # Same resolver as the major rung above — see `movement_subject`.
             if movement_subject(top_mover_name, leader_name) != MOVEMENT_SUBJECT_NAMED:
                 return f"Odds shifting in {market_name}"
@@ -2715,7 +2719,7 @@ def generate_futures_headline(
     if (
         "major_movement_24h" in reasons
         and top_mover_name
-        and top_mover_change is not None
+        and _is_printable_move(top_mover_change)
         and _mover_sayable
     ):
         direction = "up" if top_mover_change > 0 else "down"
@@ -2736,7 +2740,7 @@ def generate_futures_headline(
     if (
         "moderate_movement_24h" in reasons
         and top_mover_name
-        and top_mover_change is not None
+        and _is_printable_move(top_mover_change)
         and _mover_sayable
     ):
         direction = "up" if top_mover_change > 0 else "down"

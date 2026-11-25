@@ -144,7 +144,8 @@ enum DiscoverPictureChart191A {
     nonisolated static func build(
         event: FeedEventData,
         prematch: PrematchReading?,
-        history: EventHistoryResponse?
+        history: EventHistoryResponse?,
+        showsLiveTenths: Bool = false
     ) -> Model {
         let isFinished = EventState.isFinished(event.status)
         let isLive = event.status == "live"
@@ -244,20 +245,33 @@ enum DiscoverPictureChart191A {
                 return ("Final", false)
             }
 
-            guard let curP = currentSideProb,
-                  let tenthsText = CompactGameCard12616.formatSingleLiveTenths(curP) else {
+            guard let curP = currentSideProb else {
                 return ("Current win chance unavailable", false)
             }
-
-            if let preP = pregameSideProb {
-                let deltaPts = (curP - preP) * 100.0
-                if abs(deltaPts) >= 0.05 {
-                    let sign = deltaPts >= 0 ? "+" : "-"
-                    let formattedDelta = String(format: "%@%.1f pts", sign, abs(deltaPts))
-                    return ("Now \(tenthsText) \(plottedTeamCode) (\(formattedDelta))", true)
+            if showsLiveTenths {
+                guard let tenthsText = CompactGameCard12616.formatSingleLiveTenths(curP) else {
+                    return ("Current win chance unavailable", false)
                 }
+                if let preP = pregameSideProb {
+                    let deltaPts = (curP - preP) * 100.0
+                    if abs(deltaPts) >= 0.05 {
+                        let sign = deltaPts >= 0 ? "+" : "-"
+                        let formattedDelta = String(format: "%@%.1f pts", sign, abs(deltaPts))
+                        return ("Now \(tenthsText) \(plottedTeamCode) (\(formattedDelta))", true)
+                    }
+                }
+                return ("Now \(tenthsText) \(plottedTeamCode)", true)
+            } else {
+                let wholeText = formatProbability(curP, renderedPercent: nil)
+                if let preP = pregameSideProb {
+                    let deltaRounded = Int(((curP - preP) * 100.0).rounded())
+                    if abs(deltaRounded) >= 1 {
+                        let sign = deltaRounded >= 0 ? "+" : "-"
+                        return ("Now \(wholeText) \(plottedTeamCode) (\(sign)\(abs(deltaRounded)) pts)", true)
+                    }
+                }
+                return ("Now \(wholeText) \(plottedTeamCode)", true)
             }
-            return ("Now \(tenthsText) \(plottedTeamCode)", true)
         }()
 
         let threeWayPoints = SoccerThreeLineChart211A.extractCardPoints(
@@ -545,6 +559,7 @@ struct DiscoverPictureChartPanel191AView: View {
     var onHistoryResolved: ((EventHistoryResponse) -> Void)? = nil
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.liveOddsRefreshActive) private var liveOddsRefreshActive
     @ScaledMetric(relativeTo: .body) private var rawPlotHeight: CGFloat = 126
     @ScaledMetric(relativeTo: .caption2) private var yAxisFontSize: CGFloat = 9.5
 
@@ -564,7 +579,8 @@ struct DiscoverPictureChartPanel191AView: View {
         DiscoverPictureChart191A.build(
             event: event,
             prematch: prematch,
-            history: effectiveHistory
+            history: effectiveHistory,
+            showsLiveTenths: liveOddsRefreshActive
         )
     }
 

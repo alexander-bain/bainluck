@@ -511,6 +511,7 @@ struct EventDetailView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
+                .noteReviewPromptTrouble12304()
             }
         }
         return stackBoundary12278 {
@@ -653,6 +654,9 @@ struct EventDetailView: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 6)
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            AnalyticsService.trackGamePageAction(actionKind: "open", section: "models", sport: event.sport)
+                        })
                     }
                 }
                 .background(usesApprovedHeadlinePresentation9483(event) ? Color.clear : Color.cardBackground)
@@ -1673,6 +1677,27 @@ struct EventDetailView: View {
             event.homeTeamData?.record.map { "\(named.home) \($0)" },
         ].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Resolves `EventSportHeadlines12472.Model` through `PeriodLabel.liveStatusText`
+    /// so arrival previews share the exact shipped headline contract (#4880, #11934).
+    static func resolvedHeadlineModel(for event: EventDetail) -> EventSportHeadlines12472.Model {
+        let hasScore = showsScore(
+            status: event.status,
+            away: event.awayScore,
+            home: event.homeScore
+        ) && event.scoreSourceUnavailable != true
+        return EventSportHeadlines12472.resolve(
+            event: event,
+            awayFullName: event.awayTeam,
+            homeFullName: event.homeTeam,
+            liveStatusText: PeriodLabel.liveStatusText(
+                period: event.espn?.period,
+                gameClock: event.espn?.gameClock
+            ),
+            hasScore: hasScore,
+            numberStreams: false
+        )
     }
 
     private func heroSection(_ event: EventDetail) -> some View {
@@ -3106,9 +3131,15 @@ struct EventDetailView: View {
             VStack(spacing: 0) {
                 Divider()
                 Button {
+                    let willExpand = !showSources
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        showSources.toggle()
+                        showSources = willExpand
                     }
+                    AnalyticsService.trackGamePageAction(
+                        actionKind: willExpand ? "expand" : "collapse",
+                        section: "sources",
+                        sport: event.sport
+                    )
                 } label: {
                     HStack {
                         Spacer()

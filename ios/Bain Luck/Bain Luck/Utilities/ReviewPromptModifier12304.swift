@@ -64,9 +64,32 @@ struct ReviewPromptModifier12304: ViewModifier {
     }
 }
 
+/// #12304 — records trouble when a view displays a read error or retry notice so
+/// the rating prompt stays silent for the rest of the run.
+struct ReviewPromptTroubleModifier12304: ViewModifier {
+    let active: Bool
+    let signals: ReviewPromptSignals12304
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { if active { signals.noteTrouble() } }
+            .onChange(of: active) { _, isActive in
+                if isActive { signals.noteTrouble() }
+            }
+    }
+}
+
 extension View {
     /// #12304 — attach once, at the app's root.
     func reviewPrompt12304(navigation: NavigationCoordinator) -> some View {
         modifier(ReviewPromptModifier12304(navigation: navigation))
+    }
+
+    /// #12304 — mark this run as troubled whenever a read failure ("Couldn't load" / "Try again") is shown.
+    func noteReviewPromptTrouble12304(
+        when active: Bool = true,
+        signals: ReviewPromptSignals12304 = .shared
+    ) -> some View {
+        modifier(ReviewPromptTroubleModifier12304(active: active, signals: signals))
     }
 }

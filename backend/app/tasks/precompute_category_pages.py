@@ -3952,6 +3952,12 @@ async def _precompute_grids(report: dict | None = None):
                     rc.setex(cache_key, 3600, payload)
                     rc.setex(f"{cache_key}:stale", 86400, payload)
                     _record_grid_market_ids(rc, slug, result)
+                    try:
+                        from app.services.league_context import write_league_context_from_grid_sync
+
+                        write_league_context_from_grid_sync(rc, slug, result)
+                    except Exception:
+                        logger.debug("league_context warm skipped for %s", slug, exc_info=True)
                     warmed.append(slug)
                     leagues[slug] = {
                         "outcome": "ok",

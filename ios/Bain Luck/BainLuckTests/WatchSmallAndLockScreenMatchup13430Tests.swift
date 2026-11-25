@@ -158,6 +158,40 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
         XCTAssertEqual(above99.smallSlotModel(now: now)?.value, ">99%")
     }
 
+    func testWatchCircularMarketNeverHidesSubjectBehindBareGauge13430() throws {
+        let obs = now.addingTimeInterval(-30)
+        let reading = WatchRectangularReading(
+            version: 1, eventID: 9303, kind: .futureForecast,
+            homeName: "2028 Democratic Nominee", awayName: "Newsom",
+            home: nil, away: nil,
+            homePercent: 23, homeScore: nil, awayScore: nil, commenceTime: nil,
+            stateLabel: "Market", observedAt: obs, scoreObservedAt: nil
+        )
+        let marketSnap = WatchComplicationSnapshot(
+            eventID: 9303, title: "2028 Democratic Nominee", detail: "Newsom 23%",
+            observedAt: obs, savedAt: now, circularReading: nil, rectangularReading: reading
+        )
+        let smallModel = try XCTUnwrap(marketSnap.smallSlotModel(now: now))
+        XCTAssertEqual(smallModel.subjectLabel, "Newsom")
+        XCTAssertEqual(smallModel.cornerLabel, "Newsom")
+        XCTAssertEqual(smallModel.value, "23%")
+        XCTAssertFalse(smallModel.isGame)
+
+        let watchContentSource = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("BainLuckWatch Watch App/WatchSavedComplicationContent.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(
+            watchContentSource.contains(#"model.isGame ? model.subjectLabel : """#),
+            "Circular slot must never render a bare Gauge percent without its subject"
+        )
+        XCTAssertFalse(watchContentSource.contains("Circular and corner families remain explicit launchers"))
+        XCTAssertTrue(watchContentSource.contains("if let share = model.gaugeShare, model.isGame"))
+    }
+
     func testSmallSlotModelAndLockScreenFitShareSingleRule() {
         XCTAssertEqual(SavedLockScreenFit10875.shortVerdicts, LockScreenSmallSlotFit13430.shortVerdicts)
         XCTAssertEqual(SavedLockScreenFit10875.ringLimit, LockScreenSmallSlotFit13430.ringLimit)
@@ -223,7 +257,8 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
         if case .matchup(let r) = resolveLockScreen(beforeEvent) {
             XCTAssertEqual(r.stage, .before)
             XCTAssertEqual(r.bigText, "56%")
-            XCTAssertTrue(r.smallLine.hasPrefix("LAC · "))
+            XCTAssertEqual(r.bigOwnerLabel, "LAC")
+            XCTAssertFalse(r.smallLine.hasPrefix("LAC · "))
             XCTAssertNil(r.away.score)
             XCTAssertNil(r.threeWay)
         } else {
@@ -233,8 +268,9 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
         // Explicit away choice overrides favorite on the single big Lock Screen number.
         if case .matchup(let rAway) = resolveLockScreen(beforeEvent, side: .away) {
             XCTAssertEqual(rAway.bigText, "44%")
+            XCTAssertEqual(rAway.bigOwnerLabel, "NE")
             XCTAssertFalse(rAway.bigIsHome)
-            XCTAssertTrue(rAway.smallLine.hasPrefix("NE · "))
+            XCTAssertFalse(rAway.smallLine.hasPrefix("NE · "))
         } else {
             XCTFail("Expected explicit away choice matchup")
         }
@@ -255,25 +291,28 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
         if case .matchup(let fresh) = resolveLockScreen(liveEvent) {
             XCTAssertEqual(fresh.stage, .during)
             XCTAssertEqual(fresh.bigText, "74%")
+            XCTAssertEqual(fresh.bigOwnerLabel, "BAL")
             XCTAssertEqual(fresh.away.score, 10)
             XCTAssertEqual(fresh.home.score, 17)
-            XCTAssertEqual(fresh.smallLine, "BAL · Q3 4:12")
+            XCTAssertEqual(fresh.smallLine, "Q3 4:12")
         } else {
             XCTFail("Expected fresh live matchup")
         }
 
-        // Past Watch's 120s threshold -> switches smallLine to "BAL · As of ...".
+        // Past Watch's 120s threshold -> switches smallLine to "As of ..." with owner kept on primary line.
         let agedNow = freshObs.addingTimeInterval(WatchRectangularReading.liveAgeThresholdSeconds + 1)
         if case .matchup(let aged) = resolveLockScreen(liveEvent, at: agedNow) {
             XCTAssertEqual(aged.stage, .during)
-            XCTAssertTrue(aged.smallLine.hasPrefix("BAL · As of "), "Unexpected aged smallLine: \(aged.smallLine)")
+            XCTAssertEqual(aged.bigOwnerLabel, "BAL")
+            XCTAssertTrue(aged.smallLine.hasPrefix("As of "), "Unexpected aged smallLine: \(aged.smallLine)")
         } else {
             XCTFail("Expected aged live matchup")
         }
 
         // Offline forces "As of ..." even if recent.
         if case .matchup(let offlineM) = resolveLockScreen(liveEvent, isOffline: true) {
-            XCTAssertTrue(offlineM.smallLine.hasPrefix("BAL · As of "))
+            XCTAssertEqual(offlineM.bigOwnerLabel, "BAL")
+            XCTAssertTrue(offlineM.smallLine.hasPrefix("As of "))
         } else {
             XCTFail("Expected offline As of matchup")
         }
@@ -295,12 +334,13 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
         if case .matchup(let after) = resolveLockScreen(finalEvent) {
             XCTAssertEqual(after.stage, .after)
             XCTAssertEqual(after.bigText, "29%")
+            XCTAssertEqual(after.bigOwnerLabel, "TOR")
             XCTAssertFalse(after.bigIsHome)
             XCTAssertTrue(after.away.isWinner)
             XCTAssertFalse(after.home.isWinner)
             XCTAssertEqual(after.away.score, 105)
             XCTAssertEqual(after.home.score, 102)
-            XCTAssertEqual(after.smallLine, "TOR pregame · Final")
+            XCTAssertEqual(after.smallLine, "Pregame · Final")
         } else {
             XCTFail("Expected post-final matchup")
         }
@@ -355,8 +395,9 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
         if case .matchup(let homeOnlyM) = resolveLockScreen(soccerHomeOnly, side: nil) {
             XCTAssertNil(homeOnlyM.threeWay)
             XCTAssertEqual(homeOnlyM.bigText, "52%")
+            XCTAssertEqual(homeOnlyM.bigOwnerLabel, "ARS")
             XCTAssertTrue(homeOnlyM.bigIsHome)
-            XCTAssertTrue(homeOnlyM.smallLine.hasPrefix("ARS · "))
+            XCTAssertFalse(homeOnlyM.smallLine.hasPrefix("ARS · "))
         } else {
             XCTFail("Expected home-only draw-priced matchup")
         }
@@ -377,7 +418,8 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
         if case .matchup(let drawAfter) = resolveLockScreen(soccerDrawFinal) {
             XCTAssertEqual(drawAfter.stage, .after)
             XCTAssertEqual(drawAfter.bigText, "28%")
-            XCTAssertEqual(drawAfter.smallLine, "Draw pregame · Final")
+            XCTAssertEqual(drawAfter.bigOwnerLabel, "Draw")
+            XCTAssertEqual(drawAfter.smallLine, "Pregame · Final")
             XCTAssertFalse(drawAfter.home.isWinner)
             XCTAssertFalse(drawAfter.away.isWinner)
         } else {
@@ -440,8 +482,9 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
             away: .init(abbreviation: "TOR", inkHex: "#ce1141", crestPNG: nil, score: 105, isWinner: true),
             home: .init(abbreviation: "DET", inkHex: "#c8102e", crestPNG: nil, score: 102, isWinner: false),
             bigText: "29%",
+            bigOwnerLabel: "TOR",
             bigIsHome: false,
-            smallLine: "TOR pregame · Final",
+            smallLine: "Pregame · Final",
             accessibilityText: "Final. Raptors 105, Pistons 102."
         )
         for line in [threeWay.smallLine, nbaFinal.smallLine] {
@@ -451,9 +494,33 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
             XCTAssertFalse(lower.contains("checked"))
             XCTAssertFalse(lower.contains("saved"))
         }
-        XCTAssertTrue(nbaFinal.smallLine.contains("pregame"))
+        XCTAssertTrue(nbaFinal.smallLine.lowercased().contains("pregame"))
+
+        // #13649 contracts: <=3% crest padding + explicit owner on primary line across Watch (41/45/49 mm) & Lock Screen.
+        XCTAssertLessThanOrEqual(WatchMatchupComplication217.crestPaddingFraction, 0.03)
+        let collegeReading = WatchMatchupReading217(
+            stage: .during,
+            away: .init(abbreviation: "M-OH", inkHex: "#c41230", crestPNG: nil, score: 49, isWinner: false),
+            home: .init(abbreviation: "TA&M", inkHex: "#ffffff", crestPNG: nil, score: 62, isWinner: false),
+            bigText: "78%",
+            bigOwnerLabel: "TA&M",
+            bigIsHome: true,
+            smallLine: "2H 8:14",
+            accessibilityText: "Miami OH at Texas A&M. 78%."
+        )
+        XCTAssertEqual(collegeReading.bigOwnerLabel, "TA&M")
 
         #if canImport(UIKit)
+        for wSize in [CGSize(width: 171.5, height: 73), CGSize(width: 185, height: 79), CGSize(width: 199, height: 84.5)] {
+            let cw = WatchMatchupComplication217(reading: collegeReading)
+                .background(Color.black)
+                .environment(\.widgetRenderingMode, .fullColor)
+                .environment(\.colorScheme, .dark)
+                .frame(width: wSize.width, height: wSize.height)
+            let rw = rendererForMeasurement(cw, at: .large)
+            rw.scale = 2
+            XCTAssertNotNil(rw.uiImage)
+        }
         for size in [CGSize(width: 157, height: 68), CGSize(width: 172, height: 76)] {
             for dt in [DynamicTypeSize.large, .accessibility5] {
                 for scheme in [ColorScheme.dark, .light] {
@@ -609,8 +676,8 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
             ("2-during", try matchupTile(liveE, away: "lac", home: "bal")),
             ("3-aged", try matchupTile(agedE, away: "lac", home: "bal")),
             ("4-soccer-3way", try matchupTile(soccerE, away: "mci", home: "ars")),
-            ("5-final", try matchupTile(finalE, away: "tor", home: "det")),
-            ("6-post-final-3h", try matchupTile(finalE, away: "tor", home: "det", at: finalObs.addingTimeInterval(3 * 3600))),
+            ("5-final", try matchupTile(finalE, away: "tor", home: "det_nba")),
+            ("6-post-final-3h", try matchupTile(finalE, away: "tor", home: "det_nba", at: finalObs.addingTimeInterval(3 * 3600))),
             ("7-market", marketView),
             ("8-cannot-show", cannotShowView),
         ]
