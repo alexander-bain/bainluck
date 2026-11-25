@@ -579,6 +579,8 @@ final class FirstRunChecklist364ATests: XCTestCase {
         // Fix f: small copy fixes + Fable #13593 review guards
         XCTAssertTrue(viewSrc.contains("or just type what you like"))
         XCTAssertFalse(viewSrc.contains("or a plain note"))
+        XCTAssertTrue(viewSrc.contains("Pick a few to shape your Discover."))
+        XCTAssertFalse(viewSrc.contains("Tap the ones you"))
         XCTAssertTrue(viewSrc.contains("We\\u{2019}ll ask before any alert"))
         XCTAssertFalse(viewSrc.contains("prompt appears only after you tap Turn on"))
         XCTAssertFalse(FirstRunSentenceMode359A.isEnabledInBuild, "Point 1: sentence box stays off in build until Alex rules")

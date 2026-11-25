@@ -1039,7 +1039,7 @@ struct FirstRunExploreSetsStepView364A: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Tap the ones you\u{2019}d open.")
+                    Text("Pick a few to shape your Discover.")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
