@@ -143,6 +143,8 @@ nonisolated enum DiscoverPriceRefresh {
                 }
             }
             if !hasVector, let prior = observation(old.priceObservedAt) {
+                if authoritative, new.fieldPriceCoverageIncomplete == true,
+                   (new.topOutcomes ?? []).isEmpty { return true }
                 guard let next = observation(new.priceObservedAt), next >= prior else { return false }
             }
             return true
@@ -183,12 +185,16 @@ nonisolated enum DiscoverPriceRefresh {
     }
 
     static func replacing(_ held: FeedItem, with fresh: FeedItem, event: FeedEventData? = nil) -> FeedItem {
-        FeedItem(type: held.type, score: held.score, reason: held.reason,
-                 headline: held.headline, contextSummary: held.contextSummary,
-                 event: event ?? fresh.event, futures: fresh.futures,
-                 tournament: held.tournament, concept: held.concept, bundle: held.bundle,
-                 personalized: held.personalized, baseScore: held.baseScore,
-                 multiplier: held.multiplier, personalizationReasons: held.personalizationReasons)
+        let fieldCopyIsPriceBound = fresh.futures?.fieldPriceCoverageIncomplete != nil
+            || held.futures?.fieldPriceCoverageIncomplete != nil
+        return FeedItem(type: held.type, score: held.score,
+                        reason: fieldCopyIsPriceBound ? fresh.reason : held.reason,
+                        headline: fieldCopyIsPriceBound ? fresh.headline : held.headline,
+                        contextSummary: fieldCopyIsPriceBound ? fresh.contextSummary : held.contextSummary,
+                        event: event ?? fresh.event, futures: fresh.futures,
+                        tournament: held.tournament, concept: held.concept, bundle: held.bundle,
+                        personalized: held.personalized, baseScore: held.baseScore,
+                        multiplier: held.multiplier, personalizationReasons: held.personalizationReasons)
     }
 
     static func isStrictlyNewer(_ incoming: FeedItem, than held: FeedItem, fence: MarketFence? = nil) -> Bool {

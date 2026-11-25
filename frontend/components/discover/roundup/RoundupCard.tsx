@@ -39,6 +39,7 @@ export function RoundupCard({
   positionIndex,
   nowMs,
   previewOnly = false,
+  onDismiss,
 }: {
   title: string;
   contract: FeedRoundupContract | null | undefined;
@@ -51,11 +52,13 @@ export function RoundupCard({
   nowMs?: number;
   /** When true (e.g. `/grade/groupings`), renders the card shell without requiring a live collection route or action bar. */
   previewOnly?: boolean;
+  onDismiss?: () => void;
 }) {
   const [clock] = useState(() => nowMs ?? Date.now());
   const now = nowMs ?? clock;
   const destination = previewOnly ? null : admitCollectionRef(collectionRef);
   if (!previewOnly && !destination) return null;
+  const canonicalSetId = contract?.machinery_card?.slug || collectionRef?.slug || bundleId;
 
   // #12577: Award category paired-metric card (Nominated % + Wins %, with TMDB posters & expander).
   // Checked before legacy `buildRoundupCardModel` because machinery groupings (#12288)
@@ -103,7 +106,9 @@ export function RoundupCard({
               title={paired.title || title}
               sharedQuestion={paired.title || title}
               storyKey={storyKey ?? bundleId}
+              setId={canonicalSetId}
               positionIndex={positionIndex}
+              onDismiss={onDismiss}
             />
           </div>
         )}
@@ -124,7 +129,9 @@ export function RoundupCard({
               title={contract.machinery_card.title || title}
               sharedQuestion={contract.machinery_card.title || title}
               storyKey={storyKey ?? bundleId}
+              setId={canonicalSetId}
               positionIndex={positionIndex}
+              onDismiss={onDismiss}
             />
           </div>
         )}
@@ -251,7 +258,9 @@ export function RoundupCard({
           title={model.title}
           sharedQuestion={model.title}
           storyKey={storyKey ?? bundleId}
+          setId={canonicalSetId}
           positionIndex={positionIndex}
+          onDismiss={onDismiss}
         />
       </div>
     </div>

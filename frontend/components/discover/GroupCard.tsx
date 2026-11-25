@@ -27,6 +27,8 @@ interface GroupCardProps {
   imageUrl?: string | null;
   imagePresentation?: string | null;
   positionIndex?: number;
+  setId?: string | null;
+  onDismiss?: () => void;
 }
 
 /**
@@ -53,7 +55,7 @@ interface GroupCardProps {
  * cards side by side in one scroll are one card family (notice 35), and these
  * two differed in seat count, label, colour and border at once.
  */
-export function GroupCard({ items, title, sharedQuestion, imageUrl, imagePresentation, positionIndex }: GroupCardProps) {
+export function GroupCard({ items, title, sharedQuestion, imageUrl, imagePresentation, positionIndex, setId, onDismiss }: GroupCardProps) {
   const [expanded, setExpanded] = useState(false);
   const primary = items[0];
   const peek = items.slice(0, bundleSeatCount(items.length));
@@ -136,7 +138,9 @@ export function GroupCard({ items, title, sharedQuestion, imageUrl, imagePresent
         items={items}
         title={title}
         sharedQuestion={displayedQuestion}
+        setId={setId}
         positionIndex={positionIndex}
+        onDismiss={onDismiss}
       />
     </div>
   );

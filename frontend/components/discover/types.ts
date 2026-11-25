@@ -24,6 +24,11 @@ export interface ActionBarProps {
   itemId: number | string;
   onShare?: () => void;
   /**
+   * #13644 — Grouped card `✕` ("Not for me") beside the heart. Optional so single
+   * cards that keep their top-right `DismissBtn` stay byte-identical.
+   */
+  onDismiss?: () => void;
+  /**
    * UX-P234 (board item 16): the pin, on the surface that never had one. OPTIONAL
    * and omitted by default, so the five card types that do not yet have a pin
    * binding are byte-identical — this ship wires futures only, which is the half

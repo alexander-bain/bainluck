@@ -587,16 +587,13 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                       <span className="font-mono text-xs font-semibold tabular-nums text-text-muted" title={`Rank ${rank} by probability`} aria-label={`Rank ${rank}`}>{rank}</span>
                     )}
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        {/* UX-P263 (#2561): `truncate` is what lets
-                            compactOutcomeName leave a non-person label alone.
-                            The column measures 170px and nothing here wrapped
-                            before, so this clips only the labels that used to
-                            be initialised into nonsense — and it clips them at
-                            the real pixel boundary, which a character count
-                            cannot do across fonts, accents and the 390px
-                            viewport. The full string stays on `title`. */}
-                        <span className={`min-w-0 truncate text-xs leading-tight text-text-primary ${leads ? "font-bold" : "font-semibold"}`} title={row.label}>{displayName}</span>
+                      <div className="flex items-start gap-1.5">
+                        {/* #13720: wrap long verbatim outcome labels cleanly inside the
+                            row column instead of single-line CSS truncation (`truncate`).
+                            Person-name compaction via `compactOutcomeName` still runs
+                            above so #2561 behavior is preserved while music/party titles
+                            remain completely legible at 390 px and 1280 px. */}
+                        <span className={`min-w-0 break-words text-xs leading-tight text-text-primary ${leads ? "font-bold" : "font-semibold"}`} title={row.label}>{displayName}</span>
                         <MovementBadge m={row.movement} prob={row.probability} />
                       </div>
                       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border">

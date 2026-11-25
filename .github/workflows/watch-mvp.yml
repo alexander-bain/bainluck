@@ -3,6 +3,10 @@ name: Watch MVP
 # A separate hosted runner: no local Native simulator or iPhone test resource.
 # This is scoped verification for #4932, not an iPhone release prerequisite.
 on:
+  schedule:
+    # 3:00 AM PT in winter, 4:00 AM in summer (11:00 UTC) — nightly journeys & compatibility on master.
+    - cron: "0 11 * * *"
+  workflow_dispatch: {}
   pull_request:
     paths:
       - 'ios/Bain Luck/BainLuckWatch Watch App/**'
@@ -244,6 +248,7 @@ jobs:
   iphone-compatibility:
     name: Watch change iPhone compatibility
     needs: watch-mvp
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: xcode-27
     # #12513: the full suite on Xcode 27.2 ran 62 min and was cut at 60.
     timeout-minutes: 90
@@ -289,6 +294,7 @@ jobs:
   watch-ui-products:
     name: Build exact simulator products once for five fresh pairs
     needs: watch-mvp
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: xcode-27
     # Must cover watch_ui_stage.py's 90m (5400s) products budget + 7m artifact uploads.
     timeout-minutes: 105
@@ -350,6 +356,7 @@ jobs:
       matrix:
         shard: [corner, readings, navigation, controls, widgets]
     needs: watch-ui-products
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: xcode-27
     # Reduced selected-game scope: exact101 cases across five isolated pairs.
     # #12513: 39-case navigation shard + 19m prepare exceeds 50m/60m on Xcode 27.2.
@@ -446,7 +453,7 @@ jobs:
   watch-ui-complete:
     name: Watch full UI coverage from isolated pairs
     needs: [watch-scope, watch-ui-journey]
-    if: always() && needs.watch-scope.outputs.relevant == 'true'
+    if: always() && needs.watch-scope.outputs.relevant == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -496,6 +503,7 @@ jobs:
   companion-archive:
     name: Watch inside unsigned iPhone archive
     needs: watch-mvp
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: xcode-27
     timeout-minutes: 45
     env:

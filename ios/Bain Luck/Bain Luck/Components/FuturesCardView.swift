@@ -86,10 +86,13 @@ struct FuturesCardView: View {
                 }
             }
 
-            // Remaining count
-            if let total = futures.outcomeCount,
-               let shown = futures.topOutcomes?.count,
-               total > shown {
+            if futures.status == "open", futures.fieldPriceCoverageIncomplete == true {
+                Text("Limited price coverage")
+                    .font(.caption2)
+                    .foregroundStyle(DS.textSecondaryReadable)
+            } else if let total = futures.outcomeCount,
+                      let shown = futures.topOutcomes?.count,
+                      total > shown {
                 Text("+\(total - shown) more")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)

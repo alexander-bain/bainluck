@@ -1118,7 +1118,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                         reserveSlotWhenMissing
                       />
                     )}
-                    <div className="mt-1.5 line-clamp-2 break-words text-[11px] font-semibold leading-tight text-text-primary">
+                    <div className="mt-1.5 break-words text-[11px] font-semibold leading-tight text-text-primary">
                       {name}
                     </div>
                     <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
