@@ -85,6 +85,7 @@ private struct MyStuffLandingBody295A: View {
         )
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
+                SiriProbabilityTip12315(horizontalPadding: 0)
                 if showsChecklistBanner364A && checklistStore.state.showsInMyStuff {
                     MyStuffChecklistBanner364A(
                         state: checklistBinding,
@@ -92,7 +93,6 @@ private struct MyStuffLandingBody295A: View {
                         onDismiss: { checklistStore.dismissFromMyStuff() }
                     )
                 }
-
                 followingAndPinsStrip
 
                 if landingVM.loading
