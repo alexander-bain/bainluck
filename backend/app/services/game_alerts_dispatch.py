@@ -13,9 +13,13 @@ Triggers for pinned games (default-off behind ``GAME_ALERTS_PUSH_ENABLED=true``)
    the likeliest result. At most once per game per phone. Suppressed on any
    phone already showing that game's Live Activity (260: A), and skipped for
    ephemeral App Clip rows (which opt in for final-score only).
-3. **Final (260: A, #13079):** completed/closed game — sent to every opted-in
-   phone, including phones showing that game's Live Activity and valid (< 8 h)
-   App Clip rows.
+3. **Final (260: A, #13079, #13088):** ``completed`` game (never ``closed``) within
+   15 minutes of becoming final by the feed's own clock (``completed_at``),
+   naming a winner only from settled ``result`` (waiting up to 10 minutes
+   for settled ``result`` before falling back to ``"Final score"`` with no
+   ``"won"``) — sent to every opted-in phone, including phones showing that
+   game's Live Activity and valid (< 8 h) App Clip rows. First beat after
+   switch-on claims existing finals as done and sends nothing.
 
 Every alert uses standard interruption level (never Time Sensitive, 261: A),
 carries ``event_id`` in userInfo for tap routing, enforces once-per-device-per-
@@ -31,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import math
 import re
-from typing import Awaitable, Callable, Protocol
+from typing import Awaitable, Callable, Literal, Protocol
 from uuid import UUID
 
 from sqlalchemy import exists, or_, select
@@ -39,7 +43,7 @@ from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.activitykit import ActivityKitRegistration
-from app.models.models import Event, UserPin
+from app.models.models import Event, Sport, UserPin
 from app.models.push_device import PushDevice
 from app.services.activitykit_apns import APNsResult
 from app.services.apns_alert import (
@@ -58,6 +62,7 @@ from app.utils.activitykit_payload import OBSERVATION_MAX_AGE
 from app.utils.activitykit_projection import project_activitykit_snapshot
 from app.utils.activitykit_start_payload import build_activitykit_start_alert
 from app.utils.draw_priced_winner import sport_prices_a_draw
+from app.utils.game_state import normalize_live_game_state
 from app.utils.graded_card import rendered_percent
 
 _DEVICES = PushDevice.__table__
@@ -72,8 +77,14 @@ LIVE_ALERT_LEAD = timedelta(minutes=15)
 START_JUST_LIVE_WINDOW = timedelta(minutes=15)
 #: Max live soccer clock minute that still qualifies as "just started".
 SOCCER_JUST_STARTED_MAX_MINUTE = 15
-#: Bounded final-alert lookback so historic finished rows never fire phantom buzzes.
+#: Bounded final-alert bootstrap lookback (switch-on claim window only).
 FINAL_ALERT_LOOKBACK = timedelta(hours=12)
+#: Final alert only fires within 15 minutes of game completion by feed clock (#13088).
+FINAL_ALERT_MAX_AGE = timedelta(minutes=15)
+#: Wait up to 10 minutes after completion for settled result before neutral score fallback.
+FINAL_RESULT_WAIT = timedelta(minutes=10)
+#: Maximum bootstrap final IDs claimed on first beat after switch-on.
+FINAL_BOOTSTRAP_LIMIT = 500
 #: Once-per-(device, event, trigger) dedup TTL in Redis.
 ALERT_DEDUP_TTL_SECONDS = 48 * 3600
 #: Expiration horizon for APNs delivery attempts.
@@ -106,8 +117,22 @@ _TERMINAL_PERIOD_RE = re.compile(
     re.IGNORECASE,
 )
 _END_OF_PERIOD_RE = re.compile(r"\bend\s+of\b", re.IGNORECASE)
-_OVERTIME_RE = re.compile(
-    r"\b(?:\d*\s*ot|overtime|extra\s*time|et|so|shootout|penalties|pens)\b",
+_SCHEDULE_CLOCK_RE = re.compile(
+    r"\b(?:\d{1,2}:\d{2}\s*(?:am|pm)|(?:am|pm)\s*(?:et|edt|est|ct|cdt|cst|mt|mdt|mst|pt|pdt|pst)"
+    r"|(?:est|edt|cst|cdt|mst|mdt|pst|pdt|utc|gmt|tbd|delayed|intermission)"
+    r"|january|february|march|april|may|june|july|august|september|october|november|december)\b"
+    r"|\b\d{1,2}/\d{1,2}\b",
+    re.IGNORECASE,
+)
+_GENERAL_OT_RE = re.compile(r"\b(?:\d*\s*ot|overtime)\b", re.IGNORECASE)
+_SOCCER_ET_PHRASE_RE = re.compile(r"\b(?:extra\s*time|aet)\b", re.IGNORECASE)
+_SOCCER_ET_STANDALONE_RE = re.compile(
+    r"^(?:\d{1,3}(?::\d{2})?\s*[-–]\s*|\d+(?:st|nd|rd|th)?\s+)?et$",
+    re.IGNORECASE,
+)
+_SHOOTOUT_PHRASE_RE = re.compile(r"\b(?:shootout|penalties|pens)\b", re.IGNORECASE)
+_SHOOTOUT_STANDALONE_RE = re.compile(
+    r"^(?:\d{1,3}(?::\d{2})?\s*[-–]\s*|\d+(?:st|nd|rd|th)?\s+)?so$",
     re.IGNORECASE,
 )
 _QUARTER_4_RE = re.compile(r"\b(?:4th(?:\s+quarter|\s+qtr)?|q4)\b", re.IGNORECASE)
@@ -118,8 +143,27 @@ _INNING_RE = re.compile(
     re.IGNORECASE,
 )
 _TENNIS_FINAL_SET_RE = re.compile(
-    r"\b(?:final\s+set|(?:3rd|5th)\s+set|set\s+[35])\b", re.IGNORECASE
+    r"\b(?:final\s+set|deciding\s+set|5th\s+set|set\s+5)\b", re.IGNORECASE
 )
+
+
+def _matches_overtime(text: str, sport_key: str | None = None) -> bool:
+    if _SCHEDULE_CLOCK_RE.search(text):
+        return False
+    if _GENERAL_OT_RE.search(text):
+        return True
+    sport = (sport_key or "").strip().lower()
+    allow_soccer_et = not sport or sport.startswith("soccer_")
+    if allow_soccer_et and (
+        _SOCCER_ET_PHRASE_RE.search(text) or _SOCCER_ET_STANDALONE_RE.match(text)
+    ):
+        return True
+    allow_shootout = not sport or sport.startswith(("icehockey_", "soccer_"))
+    if allow_shootout and (
+        _SHOOTOUT_PHRASE_RE.search(text) or _SHOOTOUT_STANDALONE_RE.match(text)
+    ):
+        return True
+    return False
 
 _NEUTRAL_VS_SPORTS = (
     "soccer_",
@@ -148,10 +192,11 @@ def is_final_period(sport_key: str | None, period: str | None) -> bool:
         return False
     if _END_OF_PERIOD_RE.search(text):
         return False
-    if _OVERTIME_RE.search(text):
-        return True
-
+    if _SCHEDULE_CLOCK_RE.search(text):
+        return False
     sport = (sport_key or "").strip().lower()
+    if _matches_overtime(text, sport):
+        return True
     if sport.startswith("americanfootball_"):
         return bool(_QUARTER_4_RE.search(text))
     if sport == "basketball_ncaab":
@@ -288,7 +333,7 @@ def _three_way_rendered_percents(
     return (home_pct, away_pct, draw_pct)
 
 
-def _parse_commence_time(value: object) -> datetime | None:
+def _parse_aware_utc(value: object) -> datetime | None:
     if isinstance(value, datetime):
         if value.utcoffset() is None:
             return None
@@ -302,6 +347,42 @@ def _parse_commence_time(value: object) -> datetime | None:
             return None
         return dt.astimezone(timezone.utc)
     return None
+
+
+def _final_alert_window_status(
+    detail: Mapping[str, object],
+    *,
+    now: datetime,
+    snapshot=None,
+) -> Literal["ready", "wait_result", "ineligible"]:
+    """Classify a candidate final event under #13088 items 1 & 2.
+
+    - Requires ``lifecycle == "final"`` (never ``"closed"``).
+    - Requires an authoritative feed completion clock (``completed_at`` after
+      ``commence_time``, within ``[now - 15m, now]``).
+    - If ``result`` is settled (``home`` / ``away`` / ``draw``), returns ``ready``.
+    - If ``result`` is not in yet, waits up to ``FINAL_RESULT_WAIT`` (10m) before
+      falling back to neutral ``"Final score"`` (if scores exist); returns
+      ``ineligible`` if >15m or scoreless after the wait.
+    """
+    snap = snapshot if snapshot is not None else project_activitykit_snapshot(detail)
+    if snap.lifecycle != "final":
+        return "ineligible"
+    completed_at = _parse_aware_utc(detail.get("completed_at"))
+    if completed_at is None:
+        return "ineligible"
+    ct = _parse_aware_utc(detail.get("commence_time"))
+    if ct is not None and completed_at <= ct:
+        return "ineligible"
+    elapsed = now.astimezone(timezone.utc) - completed_at
+    if not (timedelta(0) <= elapsed <= FINAL_ALERT_MAX_AGE):
+        return "ineligible"
+    if snap.result in {"home", "away", "draw"}:
+        return "ready"
+    if elapsed < FINAL_RESULT_WAIT:
+        return "wait_result"
+    has_scores = snap.away_score is not None and snap.home_score is not None
+    return "ready" if has_scores else "ineligible"
 
 
 def _probability_is_fresh(
@@ -323,7 +404,9 @@ def is_first_period(period: str | None) -> bool:
         return False
     if _TERMINAL_PERIOD_RE.search(text) or _END_OF_PERIOD_RE.search(text):
         return False
-    if _OVERTIME_RE.search(text):
+    if _SCHEDULE_CLOCK_RE.search(text):
+        return False
+    if _matches_overtime(text):
         return False
     return bool(_FIRST_PERIOD_RE.search(text))
 
@@ -363,7 +446,7 @@ def is_just_started(detail: Mapping[str, object], *, now: datetime) -> bool:
     snapshot = project_activitykit_snapshot(detail)
     if snapshot.lifecycle != "live":
         return False
-    ct = _parse_commence_time(detail.get("commence_time"))
+    ct = _parse_aware_utc(detail.get("commence_time"))
     if ct is None:
         return False
     elapsed = now.astimezone(timezone.utc) - ct
@@ -520,41 +603,40 @@ def build_game_alert_payload(
         )
 
     if trigger_kind == "final":
-        if snapshot.lifecycle not in {"final", "closed"}:
+        if _final_alert_window_status(detail, now=now, snapshot=snapshot) != "ready":
             return None
         has_scores = (
             snapshot.away_score is not None and snapshot.home_score is not None
         )
-        if has_scores:
-            if snapshot.result == "home" or (
-                snapshot.result is None and snapshot.home_score > snapshot.away_score
-            ):
-                title = (
-                    f"Final: {home} {snapshot.home_score}–{snapshot.away_score} {away}"
-                )
-                body = f"{home} won"
-            elif snapshot.result == "away" or (
-                snapshot.result is None and snapshot.away_score > snapshot.home_score
-            ):
-                title = (
-                    f"Final: {away} {snapshot.away_score}–{snapshot.home_score} {home}"
-                )
-                body = f"{away} won"
-            else:
-                title = (
-                    f"Final: {away} {snapshot.away_score}–{snapshot.home_score} {home}"
-                )
-                body = "Draw" if snapshot.result == "draw" else "Final score"
+        # #13088 item 1: winner named ONLY from settled `result`; when settled
+        # result has not arrived after FINAL_RESULT_WAIT (10 min), send the score
+        # with "Final score" and no "won".
+        if snapshot.result == "home":
+            title = (
+                f"Final: {home} {snapshot.home_score}–{snapshot.away_score} {away}"
+                if has_scores
+                else f"Final: {_matchup_title(away, home, snapshot.sport)}"
+            )
+            body = f"{home} won"
+        elif snapshot.result == "away":
+            title = (
+                f"Final: {away} {snapshot.away_score}–{snapshot.home_score} {home}"
+                if has_scores
+                else f"Final: {_matchup_title(away, home, snapshot.sport)}"
+            )
+            body = f"{away} won"
+        elif snapshot.result == "draw":
+            title = (
+                f"Final: {away} {snapshot.away_score}–{snapshot.home_score} {home}"
+                if has_scores
+                else f"Final: {_matchup_title(away, home, snapshot.sport)}"
+            )
+            body = "Draw"
         else:
-            title = f"Final: {_matchup_title(away, home, snapshot.sport)}"
-            if snapshot.result == "home":
-                body = f"{home} won"
-            elif snapshot.result == "away":
-                body = f"{away} won"
-            elif snapshot.result == "draw":
-                body = "Draw"
-            else:
-                body = "Final"
+            title = (
+                f"Final: {away} {snapshot.away_score}–{snapshot.home_score} {home}"
+            )
+            body = "Final score"
         return GameAlertPush(
             event_id=snapshot.event_id,
             trigger_kind="final",
@@ -568,7 +650,7 @@ def build_game_alert_payload(
 
 
 class GameAlertDedupStore(Protocol):
-    """Atomic once-per-(trigger, event, device) claim; releases only on retry."""
+    """Atomic once-per-(trigger, event, device) claim plus event-level final state."""
 
     async def claim(
         self,
@@ -585,9 +667,19 @@ class GameAlertDedupStore(Protocol):
         device_id: UUID,
     ) -> None: ...
 
+    async def is_finals_bootstrapped(self) -> bool: ...
+
+    async def mark_finals_bootstrapped(self) -> None: ...
+
+    async def is_final_done(self, event_id: int) -> bool: ...
+
+    async def mark_final_done(self, event_id: int, ttl_seconds: int) -> None: ...
+
 
 class RedisGameAlertDedupStore:
     """Bounded Redis NX+EX dedup backed by the shared process pool."""
+
+    BOOTSTRAPPED_KEY = "game_alert:finals_bootstrapped"
 
     def __init__(self, client_factory=None) -> None:
         self._client_factory = client_factory
@@ -604,6 +696,10 @@ class RedisGameAlertDedupStore:
         trigger_kind: AlertTriggerKind, event_id: int, device_id: UUID
     ) -> str:
         return f"game_alert:{trigger_kind}:{event_id}:{device_id}"
+
+    @staticmethod
+    def final_done_key(event_id: int) -> str:
+        return f"game_alert:final_done:{event_id}"
 
     async def claim(
         self,
@@ -632,6 +728,36 @@ class RedisGameAlertDedupStore:
 
         await asyncio.to_thread(_del)
 
+    async def is_finals_bootstrapped(self) -> bool:
+        def _exists():
+            return bool(self._client().exists(self.BOOTSTRAPPED_KEY))
+
+        return await asyncio.to_thread(_exists)
+
+    async def mark_finals_bootstrapped(self) -> None:
+        def _set():
+            self._client().set(self.BOOTSTRAPPED_KEY, "1")
+
+        await asyncio.to_thread(_set)
+
+    async def is_final_done(self, event_id: int) -> bool:
+        k = self.final_done_key(event_id)
+
+        def _exists():
+            return bool(self._client().exists(k))
+
+        return await asyncio.to_thread(_exists)
+
+    async def mark_final_done(
+        self, event_id: int, ttl_seconds: int = ALERT_DEDUP_TTL_SECONDS
+    ) -> None:
+        k = self.final_done_key(event_id)
+
+        def _set():
+            self._client().set(k, "1", ex=ttl_seconds)
+
+        await asyncio.to_thread(_set)
+
 
 class AlertTransportFactory(Protocol):
     def for_env(self, apns_env: str) -> APNsAlertTransport: ...
@@ -649,14 +775,19 @@ class GameAlertDispatchSummary:
     final_accepted: int = 0
     skipped_dedup: int = 0
     skipped_active_la: int = 0
+    skipped_final_done: int = 0
+    skipped_light_live: int = 0
+    bootstrapped_finals_claimed: int = 0
     token_forgotten: int = 0
     retryable: int = 0
     rejected: int = 0
+    failed: int = 0
 
     def as_dict(self) -> dict[str, int | str]:
+        terminal = "partial" if self.failed > 0 else "ok"
         return {
-            "status": "ok",
-            "terminal": "ok",
+            "status": terminal,
+            "terminal": terminal,
             "live_events_scanned": self.live_events_scanned,
             "final_events_scanned": self.final_events_scanned,
             "attempted": self.attempted,
@@ -666,10 +797,81 @@ class GameAlertDispatchSummary:
             "final_accepted": self.final_accepted,
             "skipped_dedup": self.skipped_dedup,
             "skipped_active_la": self.skipped_active_la,
+            "skipped_final_done": self.skipped_final_done,
+            "skipped_light_live": self.skipped_light_live,
+            "bootstrapped_finals_claimed": self.bootstrapped_finals_claimed,
             "token_forgotten": self.token_forgotten,
             "retryable": self.retryable,
             "rejected": self.rejected,
+            "failed": self.failed,
         }
+
+
+@dataclass(frozen=True)
+class _LightLiveState:
+    event_id: int
+    sport_key: str | None
+    status: str | None
+    commence_time: datetime | None
+    period: str | None
+    game_clock: str | None
+
+
+def _live_event_needs_full_detail(state: _LightLiveState, *, now: datetime) -> bool:
+    """Conservative light-read filter before loading full event detail (#13088 item 4)."""
+    norm_period, norm_clock = normalize_live_game_state(
+        state.sport_key,
+        state.period,
+        state.game_clock,
+        status=state.status,
+    )
+    if state.commence_time is not None:
+        ct = state.commence_time
+        if ct.tzinfo is None:
+            ct = ct.replace(tzinfo=timezone.utc)
+        elapsed = now.astimezone(timezone.utc) - ct.astimezone(timezone.utc)
+        if -START_JUST_LIVE_WINDOW <= elapsed <= START_JUST_LIVE_WINDOW:
+            if norm_period is None or is_first_period(norm_period):
+                if not _is_soccer_sport(state.sport_key):
+                    return True
+                soccer_min = _parse_soccer_minute_any_period(norm_clock)
+                if soccer_min is None or soccer_min <= SOCCER_JUST_STARTED_MAX_MINUTE:
+                    return True
+    if _is_soccer_sport(state.sport_key):
+        parsed = parse_soccer_clock(norm_clock, period=norm_period)
+        return bool(parsed is not None and parsed[0] >= SOCCER_CLOSE_LATE_MIN_MINUTE)
+    return is_final_period(state.sport_key, norm_period)
+
+
+async def _load_light_live_states(
+    db: AsyncSession, event_ids: list[int]
+) -> dict[int, _LightLiveState]:
+    if not event_ids:
+        return {}
+    stmt = (
+        select(
+            Event.id,
+            Sport.key,
+            Event.status,
+            Event.commence_time,
+            Event.period,
+            Event.game_clock,
+        )
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(Event.id.in_(event_ids))
+    )
+    rows = (await db.execute(stmt)).all()
+    return {
+        int(r[0]): _LightLiveState(
+            event_id=int(r[0]),
+            sport_key=r[1],
+            status=r[2],
+            commence_time=r[3],
+            period=r[4],
+            game_clock=r[5],
+        )
+        for r in rows
+    }
 
 
 async def _canonical_detail_reader(db: AsyncSession, event_id: int) -> dict:
@@ -719,18 +921,26 @@ def build_live_alert_event_ids_query(
 
 
 def build_final_alert_event_ids_query(
-    *, now: datetime, limit: int = MAX_EVENTS_PER_BEAT
+    *,
+    now: datetime,
+    limit: int = MAX_EVENTS_PER_BEAT,
+    include_bootstrap: bool = False,
 ):
+    window = FINAL_ALERT_LOOKBACK if include_bootstrap else FINAL_ALERT_MAX_AGE
     return (
         select(Event.id)
         .where(
-            Event.status.in_(("completed", "closed")),
-            Event.commence_time.is_not(None),
-            Event.commence_time >= now - FINAL_ALERT_LOOKBACK,
-            Event.commence_time <= now,
+            # #13088 items 1 & 2: never fire "Final" for `closed` rows, and
+            # require an authoritative feed completion clock within 15 min
+            # (or 12 h during first-beat switch-on bootstrap claim).
+            Event.status == "completed",
+            Event.completed_at.is_not(None),
+            Event.completed_at >= now - window,
+            Event.completed_at <= now,
+            or_(Event.commence_time.is_(None), Event.completed_at > Event.commence_time),
             _has_addressable_notification_pin(now),
         )
-        .order_by(Event.commence_time.desc(), Event.id.asc())
+        .order_by(Event.completed_at.desc(), Event.id.asc())
         .limit(limit)
     )
 
@@ -746,6 +956,15 @@ async def find_final_alert_event_ids(
     db: AsyncSession, *, now: datetime, limit: int = MAX_EVENTS_PER_BEAT
 ) -> list[int]:
     query = build_final_alert_event_ids_query(now=now, limit=limit)
+    return list((await db.execute(query)).scalars().all())
+
+
+async def find_bootstrap_final_alert_event_ids(
+    db: AsyncSession, *, now: datetime, limit: int = FINAL_BOOTSTRAP_LIMIT
+) -> list[int]:
+    query = build_final_alert_event_ids_query(
+        now=now, limit=limit, include_bootstrap=True
+    )
     return list((await db.execute(query)).scalars().all())
 
 
@@ -816,47 +1035,68 @@ async def _deliver_for_targets(
     targets: list[AlertTarget],
     clock: datetime,
     counters: dict[str, int],
-) -> None:
-    if not targets:
-        return
-    for target in targets:
-        push = build_game_alert_payload(
-            detail,
-            trigger_kind=trigger_kind,
-            device_id=target.device_id,
-            now=clock,
-        )
-        if push is None:
-            return
-        claimed = await dedup.claim(
-            trigger_kind, event_id, target.device_id, ALERT_DEDUP_TTL_SECONDS
-        )
-        if not claimed:
-            counters["skipped_dedup"] += 1
-            continue
+) -> tuple[int, int]:
+    """Deliver one event's trigger across targets with per-target fault isolation.
 
-        counters["attempted"] += 1
-        jwt = await provider_token()
-        transport = transports.for_env(target.apns_env)
-        result: APNsResult = await transport.send(
-            push,
-            device_token=target.token,
-            topic=target.topic,
-            provider_token=jwt,
-        )
-        if result.outcome == "accepted":
-            counters["accepted"] += 1
-            counters[f"{trigger_kind}_accepted"] += 1
-        elif result.outcome == "unavailable":
-            async with sessions() as db:
-                await forget_token(db, "notification_token", target.token)
-                await db.commit()
-            counters["token_forgotten"] += 1
-        elif result.outcome == "retry":
-            await dedup.release(trigger_kind, event_id, target.device_id)
-            counters["retryable"] += 1
-        else:
-            counters["rejected"] += 1
+    Returns ``(event_failed, event_retryable)`` so event-level completion checks
+    never mark a game done after a transient error or raised exception.
+    """
+    if not targets:
+        return (0, 0)
+    event_failed = 0
+    event_retryable = 0
+    for target in targets:
+        claimed = False
+        send_finished = False
+        try:
+            push = build_game_alert_payload(
+                detail,
+                trigger_kind=trigger_kind,
+                device_id=target.device_id,
+                now=clock,
+            )
+            if push is None:
+                return (event_failed, event_retryable)
+            claimed = await dedup.claim(
+                trigger_kind, event_id, target.device_id, ALERT_DEDUP_TTL_SECONDS
+            )
+            if not claimed:
+                counters["skipped_dedup"] += 1
+                continue
+
+            counters["attempted"] += 1
+            jwt = await provider_token()
+            transport = transports.for_env(target.apns_env)
+            result: APNsResult = await transport.send(
+                push,
+                device_token=target.token,
+                topic=target.topic,
+                provider_token=jwt,
+            )
+            send_finished = True
+            if result.outcome == "accepted":
+                counters["accepted"] += 1
+                counters[f"{trigger_kind}_accepted"] += 1
+            elif result.outcome == "unavailable":
+                async with sessions() as db:
+                    await forget_token(db, "notification_token", target.token)
+                    await db.commit()
+                counters["token_forgotten"] += 1
+            elif result.outcome == "retry":
+                await dedup.release(trigger_kind, event_id, target.device_id)
+                counters["retryable"] += 1
+                event_retryable += 1
+            else:
+                counters["rejected"] += 1
+        except Exception:
+            if claimed and not send_finished:
+                try:
+                    await dedup.release(trigger_kind, event_id, target.device_id)
+                except Exception:
+                    pass
+            counters["failed"] += 1
+            event_failed += 1
+    return (event_failed, event_retryable)
 
 
 async def dispatch_game_alerts(
@@ -880,10 +1120,23 @@ async def dispatch_game_alerts(
     reader = detail_reader or _canonical_detail_reader
     find_live = live_finder or (lambda db, ts: find_live_alert_event_ids(db, now=ts))
     find_final = final_finder or (lambda db, ts: find_final_alert_event_ids(db, now=ts))
+    bootstrapped = await dedup.is_finals_bootstrapped()
 
+    light_live_states: dict[int, _LightLiveState] = {}
+    bootstrap_claimed = 0
     async with sessions() as db:
         live_event_ids = await find_live(db, clock)
-        final_event_ids = await find_final(db, clock)
+        if detail_reader is None and live_event_ids:
+            light_live_states = await _load_light_live_states(db, live_event_ids)
+        if bootstrapped:
+            final_event_ids = await find_final(db, clock)
+        else:
+            bootstrap_ids = (
+                await final_finder(db, clock)
+                if final_finder is not None
+                else await find_bootstrap_final_alert_event_ids(db, now=clock)
+            )
+            final_event_ids = []
 
     counters: dict[str, int] = {
         "attempted": 0,
@@ -893,104 +1146,152 @@ async def dispatch_game_alerts(
         "final_accepted": 0,
         "skipped_dedup": 0,
         "skipped_active_la": 0,
+        "skipped_final_done": 0,
+        "skipped_light_live": 0,
+        "bootstrapped_finals_claimed": 0,
         "token_forgotten": 0,
         "retryable": 0,
         "rejected": 0,
+        "failed": 0,
     }
+
+    if not bootstrapped:
+        # #13088 item 2: first beat after switch-on claims already-final games
+        # so none fire late; failures still increment `failed` without aborting.
+        for eid in bootstrap_ids:
+            try:
+                await dedup.mark_final_done(eid, ALERT_DEDUP_TTL_SECONDS)
+                bootstrap_claimed += 1
+            except Exception:
+                counters["failed"] += 1
+        try:
+            await dedup.mark_finals_bootstrapped()
+        except Exception:
+            counters["failed"] += 1
+        counters["bootstrapped_finals_claimed"] = bootstrap_claimed
 
     # --- 1 & 2. Live events: Starts (258: A) + Close Late (259: A, 260: A) ---
     for event_id in live_event_ids:
-        async with sessions() as db:
-            detail = await reader(db, event_id)
-            start_active = is_just_started(detail, now=clock)
-            start_candidates = (
-                await _all_kickoff_alert_targets(
-                    db, event_id, now=clock, min_app_version=min_app_version
+        light = light_live_states.get(event_id)
+        if light is not None and not _live_event_needs_full_detail(light, now=clock):
+            counters["skipped_light_live"] += 1
+            continue
+        try:
+            async with sessions() as db:
+                detail = await reader(db, event_id)
+                start_active = is_just_started(detail, now=clock)
+                start_candidates = (
+                    await _all_kickoff_alert_targets(
+                        db, event_id, now=clock, min_app_version=min_app_version
+                    )
+                    if start_active
+                    else []
                 )
-                if start_active
-                else []
-            )
-            close_late_active = is_close_late(detail, now=clock)
-            close_candidates = (
-                await _all_alert_targets(db, event_id, now=clock)
-                if close_late_active
-                else []
-            )
-            all_ids = list(
-                {t.device_id for t in start_candidates}
-                | {t.device_id for t in close_candidates}
-            )
-            active_la_ids = await _active_la_device_ids(
-                db, event_id, all_ids, now=clock
-            )
+                close_late_active = is_close_late(detail, now=clock)
+                close_candidates = (
+                    await _all_alert_targets(db, event_id, now=clock)
+                    if close_late_active
+                    else []
+                )
+                all_ids = list(
+                    {t.device_id for t in start_candidates}
+                    | {t.device_id for t in close_candidates}
+                )
+                active_la_ids = (
+                    await _active_la_device_ids(db, event_id, all_ids, now=clock)
+                    if all_ids
+                    else set()
+                )
 
-        # Starts (258: A): only phones that cannot start a Live Activity and
-        # are not already showing one; skip ephemeral App Clip (#13088: final-only).
-        eligible_starts: list[AlertTarget] = []
-        for target in start_candidates:
-            if target.platform == "appclip":
+            # Starts (258: A): only phones that cannot start a Live Activity and
+            # are not already showing one; skip ephemeral App Clip (#13088: final-only).
+            if start_active:
+                eligible_starts: list[AlertTarget] = []
+                for target in start_candidates:
+                    if target.platform == "appclip":
+                        continue
+                    if target.device_id in active_la_ids:
+                        counters["skipped_active_la"] += 1
+                        continue
+                    eligible_starts.append(target)
+
+                await _deliver_for_targets(
+                    sessions=sessions,
+                    transports=transports,
+                    provider_token=provider_token,
+                    dedup=dedup,
+                    detail=detail,
+                    event_id=event_id,
+                    trigger_kind="start",
+                    targets=eligible_starts,
+                    clock=clock,
+                    counters=counters,
+                )
+
+            # Close late (259: A, 260: A): suppress phones already showing that
+            # game's Live Activity; skip ephemeral App Clip (final-only per #13079).
+            if close_late_active:
+                eligible_close: list[AlertTarget] = []
+                for target in close_candidates:
+                    if target.platform == "appclip":
+                        continue
+                    if target.device_id in active_la_ids:
+                        counters["skipped_active_la"] += 1
+                        continue
+                    eligible_close.append(target)
+
+                await _deliver_for_targets(
+                    sessions=sessions,
+                    transports=transports,
+                    provider_token=provider_token,
+                    dedup=dedup,
+                    detail=detail,
+                    event_id=event_id,
+                    trigger_kind="close_late",
+                    targets=eligible_close,
+                    clock=clock,
+                    counters=counters,
+                )
+        except Exception:
+            counters["failed"] += 1
+
+    # --- 3. Final events (260: A + #13079 App Clip + #13088 items 1-4) ---
+    for event_id in final_event_ids:
+        try:
+            if await dedup.is_final_done(event_id):
+                counters["skipped_final_done"] += 1
                 continue
-            if target.device_id in active_la_ids:
-                counters["skipped_active_la"] += 1
+
+            async with sessions() as db:
+                detail = await reader(db, event_id)
+                window_status = _final_alert_window_status(detail, now=clock)
+                if window_status != "ready":
+                    final_targets = []
+                else:
+                    final_targets = await _all_alert_targets(db, event_id, now=clock)
+
+            if window_status == "wait_result":
                 continue
-            eligible_starts.append(target)
+            if window_status == "ineligible":
+                await dedup.mark_final_done(event_id, ALERT_DEDUP_TTL_SECONDS)
+                continue
 
-        await _deliver_for_targets(
-            sessions=sessions,
-            transports=transports,
-            provider_token=provider_token,
-            dedup=dedup,
-            detail=detail,
-            event_id=event_id,
-            trigger_kind="start",
-            targets=eligible_starts,
-            clock=clock,
-            counters=counters,
-        )
-
-        # Close late (259: A, 260: A): suppress phones already showing that
-        # game's Live Activity; skip ephemeral App Clip (final-only per #13079).
-        if close_late_active:
-            eligible_close: list[AlertTarget] = []
-            for target in close_candidates:
-                if target.platform == "appclip":
-                    continue
-                if target.device_id in active_la_ids:
-                    counters["skipped_active_la"] += 1
-                    continue
-                eligible_close.append(target)
-
-            await _deliver_for_targets(
+            evt_failed, evt_retryable = await _deliver_for_targets(
                 sessions=sessions,
                 transports=transports,
                 provider_token=provider_token,
                 dedup=dedup,
                 detail=detail,
                 event_id=event_id,
-                trigger_kind="close_late",
-                targets=eligible_close,
+                trigger_kind="final",
+                targets=final_targets,
                 clock=clock,
                 counters=counters,
             )
-
-    # --- 3. Final events (260: A + #13079 App Clip) ---
-    for event_id in final_event_ids:
-        async with sessions() as db:
-            detail = await reader(db, event_id)
-            final_targets = await _all_alert_targets(db, event_id, now=clock)
-
-        await _deliver_for_targets(
-            sessions=sessions,
-            transports=transports,
-            provider_token=provider_token,
-            dedup=dedup,
-            detail=detail,
-            event_id=event_id,
-            trigger_kind="final",
-            targets=final_targets,
-            clock=clock,
-            counters=counters,
-        )
+            if evt_failed == 0 and evt_retryable == 0:
+                await dedup.mark_final_done(event_id, ALERT_DEDUP_TTL_SECONDS)
+        except Exception:
+            counters["failed"] += 1
 
     return GameAlertDispatchSummary(
         live_events_scanned=len(live_event_ids),

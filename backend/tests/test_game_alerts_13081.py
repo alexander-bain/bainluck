@@ -34,10 +34,15 @@ from app.services.apns_alert import (
     GameAlertPush,
 )
 from app.services.game_alerts_dispatch import (
+    _LightLiveState,
+    RedisGameAlertDedupStore,
+    _live_event_needs_full_detail,
+    build_final_alert_event_ids_query,
     build_game_alert_payload,
     dispatch_game_alerts,
     is_close_late,
     is_final_period,
+    is_first_period,
     is_just_started,
     parse_soccer_clock,
 )
@@ -76,6 +81,7 @@ def _event_detail(
     away_score: int | None = 96,
     result: str | None = None,
     commence_time: datetime | None = None,
+    completed_at: datetime | None = None,
     prob_observed_at: datetime | None = NOW,
 ) -> dict:
     detail: dict = {
@@ -92,6 +98,8 @@ def _event_detail(
     }
     if commence_time is not None:
         detail["commence_time"] = commence_time.isoformat()
+    if completed_at is not None:
+        detail["completed_at"] = completed_at.isoformat()
     if home_prob is not None and away_prob is not None:
         detail["hero_probability"] = home_prob
         detail["hero_probability_away"] = away_prob
@@ -108,9 +116,11 @@ def _event_detail(
 
 
 class _MemoryDedup:
-    def __init__(self) -> None:
+    def __init__(self, *, bootstrapped: bool = False) -> None:
         self.claimed: set[tuple[str, int, UUID]] = set()
         self.released: list[tuple[str, int, UUID]] = []
+        self.bootstrapped = bootstrapped
+        self.final_done: set[int] = set()
 
     async def claim(self, trigger_kind, event_id, device_id, ttl_seconds) -> bool:
         key = (trigger_kind, event_id, device_id)
@@ -123,6 +133,18 @@ class _MemoryDedup:
         key = (trigger_kind, event_id, device_id)
         self.claimed.discard(key)
         self.released.append(key)
+
+    async def is_finals_bootstrapped(self) -> bool:
+        return self.bootstrapped
+
+    async def mark_finals_bootstrapped(self) -> None:
+        self.bootstrapped = True
+
+    async def is_final_done(self, event_id: int) -> bool:
+        return event_id in self.final_done
+
+    async def mark_final_done(self, event_id: int, ttl_seconds: int = 0) -> None:
+        self.final_done.add(event_id)
 
 
 class _RecordingTransport:
@@ -298,7 +320,10 @@ class TestCloseLateRule259A:
             ("soccer_epl", "Extra Time", True),
             ("soccer_epl", "1st Half", False),
             ("tennis_atp_us_open", "Final Set", True),
-            ("tennis_atp_us_open", "3rd Set", True),
+            ("tennis_atp_us_open", "5th Set", True),
+            ("tennis_atp_us_open", "Set 5", True),
+            ("tennis_atp_us_open", "3rd Set", False),
+            ("tennis_atp_us_open", "Set 3", False),
             ("tennis_atp_us_open", "1st Set", False),
         ],
     )
@@ -470,6 +495,7 @@ class TestFableLookGuards:
             home_prob=None,
             away_prob=None,
             result="home",
+            completed_at=NOW - timedelta(minutes=2),
         )
         push = build_game_alert_payload(
             tennis_final, trigger_kind="final", device_id=uuid4(), now=NOW
@@ -477,6 +503,7 @@ class TestFableLookGuards:
         assert push is not None
         assert push.body == "Sinner won"
         assert "win" not in push.body.lower()
+        assert "interruption-level" not in json.loads(push.to_apns_body().decode())["aps"]
 
 
 # --- 3. Dispatcher triggers, 258/260 suppression, dedup, 410, App Clip -------
@@ -575,6 +602,7 @@ class TestGameAlertsDispatch:
             home_prob=None,
             away_prob=None,
             result="home",
+            completed_at=NOW - timedelta(minutes=2),
         )
 
         details = {500: start_detail, 501: live_late_detail, 502: final_detail}
@@ -583,7 +611,7 @@ class TestGameAlertsDispatch:
             return details[eid]
 
         pool = _RecordingPool()
-        dedup = _MemoryDedup()
+        dedup = _MemoryDedup(bootstrapped=True)
         summary = await dispatch_game_alerts(
             _dummy_sessions(),
             pool,
@@ -643,7 +671,8 @@ class TestGameAlertsDispatch:
             final_finder=lambda db, ts: _const([502]),
         )
         assert summary2.attempted == 0
-        assert summary2.skipped_dedup == 5
+        assert summary2.skipped_dedup == 2
+        assert summary2.skipped_final_done == 1
 
     @pytest.mark.asyncio
     async def test_start_loop_skips_appclip_even_when_present_in_start_candidates(
@@ -707,11 +736,12 @@ class TestGameAlertsDispatch:
             home_prob=None,
             away_prob=None,
             result="home",
+            completed_at=NOW - timedelta(minutes=2),
         )
         details = {510: start_detail, 511: final_detail}
 
         pool = _RecordingPool()
-        dedup = _MemoryDedup()
+        dedup = _MemoryDedup(bootstrapped=True)
         summary = await dispatch_game_alerts(
             _dummy_sessions(),
             pool,
@@ -765,7 +795,7 @@ class TestGameAlertsDispatch:
                 HEX_TOKEN_B: APNsResult("retry", "apns_transient", 5),
             }
         )
-        dedup = _MemoryDedup()
+        dedup = _MemoryDedup(bootstrapped=True)
         final_detail = _event_detail(
             event_id=600,
             status="completed",
@@ -775,6 +805,7 @@ class TestGameAlertsDispatch:
             home_prob=None,
             away_prob=None,
             result="home",
+            completed_at=NOW - timedelta(minutes=2),
         )
         summary = await dispatch_game_alerts(
             _dummy_sessions(sess),
@@ -1011,3 +1042,503 @@ class TestSoccerCloseLate271A:
 
 async def _const(value):
     return value
+
+
+
+# --- 5. #13088 Fable 9:22 PM PT items 1-4 & 6 + Hot List #42 isolation ------
+
+
+class _FakeRedis:
+    """Minimal in-memory Redis double exercising RedisGameAlertDedupStore."""
+
+    def __init__(self) -> None:
+        self.kv: dict[str, str] = {}
+
+    def exists(self, key: str) -> int:
+        return 1 if key in self.kv else 0
+
+    def set(self, key: str, value: str, nx: bool = False, ex: int | None = None) -> bool:
+        if nx and key in self.kv:
+            return False
+        self.kv[key] = value
+        return True
+
+    def delete(self, key: str) -> int:
+        return 1 if self.kv.pop(key, None) is not None else 0
+
+
+class TestFable922ClosedAndSettledResult:
+    def test_closed_status_never_builds_final_payload_and_excluded_from_sql(self):
+        closed_detail = _event_detail(
+            event_id=801,
+            status="closed",
+            home_score=105,
+            away_score=99,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result=None,
+            commence_time=NOW - timedelta(hours=3),
+            completed_at=NOW - timedelta(minutes=2),
+        )
+        assert (
+            build_game_alert_payload(
+                closed_detail, trigger_kind="final", device_id=uuid4(), now=NOW
+            )
+            is None
+        )
+        sql = str(build_final_alert_event_ids_query(now=NOW))
+        assert "closed" not in sql.lower()
+        assert "completed_at" in sql
+
+    def test_unresolved_final_waits_10_minutes_then_sends_neutral_final_score_without_won(self):
+        detail_early = _event_detail(
+            event_id=802,
+            status="completed",
+            away_team="Celtics",
+            home_team="Lakers",
+            home_score=110,
+            away_score=98,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result=None,
+            commence_time=NOW - timedelta(hours=3),
+            completed_at=NOW - timedelta(minutes=4),
+        )
+        assert (
+            build_game_alert_payload(
+                detail_early, trigger_kind="final", device_id=uuid4(), now=NOW
+            )
+            is None
+        )
+
+        # Once 10 minutes have passed without a settled result -> neutral "Final score" (no "won").
+        detail_after_wait = dict(
+            detail_early, completed_at=(NOW - timedelta(minutes=11)).isoformat()
+        )
+        push = build_game_alert_payload(
+            detail_after_wait, trigger_kind="final", device_id=uuid4(), now=NOW
+        )
+        assert push is not None
+        assert push.title == "Final: Celtics 98–110 Lakers"
+        assert push.body == "Final score"
+        assert "won" not in push.body.lower()
+        assert "interruption-level" not in json.loads(push.to_apns_body().decode())["aps"]
+
+    @pytest.mark.asyncio
+    async def test_dispatch_waits_for_result_then_delivers_winner_and_marks_done(
+        self, monkeypatch
+    ):
+        import app.services.game_alerts_dispatch as mod
+
+        dev = uuid4()
+        target = AlertTarget(dev, "ios", "production", alert_topic("ios"), HEX_TOKEN_A)
+        monkeypatch.setattr(mod, "alert_targets", lambda *a, **kw: _const([target]))
+        monkeypatch.setattr(mod, "_active_la_device_ids", lambda *a, **kw: _const(set()))
+
+        pending_detail = _event_detail(
+            event_id=803,
+            status="completed",
+            away_team="Celtics",
+            home_team="Lakers",
+            home_score=110,
+            away_score=98,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result=None,
+            commence_time=NOW - timedelta(hours=3),
+            completed_at=NOW - timedelta(minutes=3),
+        )
+        dedup = _MemoryDedup(bootstrapped=True)
+        pool1 = _RecordingPool()
+        s1 = await dispatch_game_alerts(
+            _dummy_sessions(),
+            pool1,
+            lambda: _const(VALID_JWT),
+            dedup,
+            now=NOW,
+            detail_reader=lambda db, eid: _const(pending_detail),
+            live_finder=lambda db, ts: _const([]),
+            final_finder=lambda db, ts: _const([803]),
+        )
+        assert s1.attempted == 0
+        assert not await dedup.is_final_done(803)
+
+        settled_detail = dict(pending_detail, hero_settled_result="home")
+        pool2 = _RecordingPool()
+        s2 = await dispatch_game_alerts(
+            _dummy_sessions(),
+            pool2,
+            lambda: _const(VALID_JWT),
+            dedup,
+            now=NOW + timedelta(minutes=1),
+            detail_reader=lambda db, eid: _const(settled_detail),
+            live_finder=lambda db, ts: _const([]),
+            final_finder=lambda db, ts: _const([803]),
+        )
+        assert s2.final_accepted == 1
+        assert pool2.by_env["production"].sent[0][1].body == "Lakers won"
+        assert await dedup.is_final_done(803)
+
+
+class TestFable922FinalFreshnessAndBootstrap:
+    @pytest.mark.parametrize(
+        ("commence_offset_h", "completed_at"),
+        [
+            (3, None),  # missing completed_at
+            (3, NOW - timedelta(minutes=16)),  # older than 15 minutes
+            (3, NOW + timedelta(minutes=1)),  # future completion clock
+            (1, NOW - timedelta(hours=2)),  # inverted completed_at <= commence_time
+        ],
+    )
+    def test_stale_missing_or_inverted_completed_at_never_fires(
+        self, commence_offset_h, completed_at
+    ):
+        detail = _event_detail(
+            event_id=810,
+            status="completed",
+            home_score=3,
+            away_score=1,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result="home",
+            commence_time=NOW - timedelta(hours=commence_offset_h),
+            completed_at=completed_at,
+        )
+        assert (
+            build_game_alert_payload(
+                detail, trigger_kind="final", device_id=uuid4(), now=NOW
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_first_beat_after_switch_on_claims_existing_finals_and_sends_nothing(
+        self, monkeypatch
+    ):
+        import app.services.game_alerts_dispatch as mod
+
+        dev = uuid4()
+        target = AlertTarget(dev, "ios", "production", alert_topic("ios"), HEX_TOKEN_A)
+        monkeypatch.setattr(mod, "alert_targets", lambda *a, **kw: _const([target]))
+        monkeypatch.setattr(mod, "_active_la_device_ids", lambda *a, **kw: _const(set()))
+
+        existing_final = _event_detail(
+            event_id=811,
+            status="completed",
+            home_score=2,
+            away_score=0,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result="home",
+            commence_time=NOW - timedelta(hours=4),
+            completed_at=NOW - timedelta(minutes=3),
+        )
+        fresh_final = _event_detail(
+            event_id=812,
+            status="completed",
+            home_score=4,
+            away_score=1,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result="home",
+            commence_time=NOW - timedelta(hours=3),
+            completed_at=NOW + timedelta(minutes=1),
+        )
+        redis = _FakeRedis()
+        dedup = RedisGameAlertDedupStore(lambda: redis)
+        pool1 = _RecordingPool()
+        calls: list[int] = []
+
+        async def _reader(db, eid):
+            calls.append(eid)
+            return existing_final if eid == 811 else fresh_final
+
+        # Beat 1 (cold Redis -> unbootstrapped): claims 811, calls reader 0 times, sends 0 alerts.
+        s1 = await dispatch_game_alerts(
+            _dummy_sessions(),
+            pool1,
+            lambda: _const(VALID_JWT),
+            dedup,
+            now=NOW,
+            detail_reader=_reader,
+            live_finder=lambda db, ts: _const([]),
+            final_finder=lambda db, ts: _const([811]),
+        )
+        assert s1.bootstrapped_finals_claimed == 1
+        assert s1.final_accepted == 0
+        assert calls == []
+        assert await dedup.is_finals_bootstrapped()
+        assert await dedup.is_final_done(811)
+
+        # Beat 2 (after bootstrap): skips 811 without calling reader; delivers 812.
+        pool2 = _RecordingPool()
+        s2 = await dispatch_game_alerts(
+            _dummy_sessions(),
+            pool2,
+            lambda: _const(VALID_JWT),
+            dedup,
+            now=NOW + timedelta(minutes=2),
+            detail_reader=_reader,
+            live_finder=lambda db, ts: _const([]),
+            final_finder=lambda db, ts: _const([811, 812]),
+        )
+        assert s2.skipped_final_done == 1
+        assert s2.final_accepted == 1
+        assert calls == [812]
+
+
+class TestPerGameAndPerTargetIsolation:
+    @pytest.mark.asyncio
+    async def test_reader_failure_on_first_event_still_delivers_healthy_sibling(
+        self, monkeypatch
+    ):
+        import app.services.game_alerts_dispatch as mod
+
+        dev = uuid4()
+        target = AlertTarget(dev, "ios", "production", alert_topic("ios"), HEX_TOKEN_A)
+        monkeypatch.setattr(mod, "alert_targets", lambda *a, **kw: _const([target]))
+        monkeypatch.setattr(mod, "_active_la_device_ids", lambda *a, **kw: _const(set()))
+
+        healthy_live = _event_detail(
+            event_id=902,
+            sport="basketball_nba",
+            status="live",
+            period="4th Quarter",
+            home_prob=0.52,
+            away_prob=0.48,
+            commence_time=NOW - timedelta(hours=2),
+        )
+        healthy_final = _event_detail(
+            event_id=904,
+            status="completed",
+            home_score=5,
+            away_score=3,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result="home",
+            completed_at=NOW - timedelta(minutes=2),
+        )
+
+        async def _reader(db, eid):
+            if eid in {901, 903}:
+                raise RuntimeError("statement timeout 57014")
+            return healthy_live if eid == 902 else healthy_final
+
+        pool = _RecordingPool()
+        dedup = _MemoryDedup(bootstrapped=True)
+        summary = await dispatch_game_alerts(
+            _dummy_sessions(),
+            pool,
+            lambda: _const(VALID_JWT),
+            dedup,
+            now=NOW,
+            detail_reader=_reader,
+            live_finder=lambda db, ts: _const([901, 902]),
+            final_finder=lambda db, ts: _const([903, 904]),
+        )
+        assert summary.failed == 2
+        assert summary.close_late_accepted == 1
+        assert summary.final_accepted == 1
+        payload = summary.as_dict()
+        assert payload["status"] == "partial"
+        assert payload["terminal"] == "partial"
+        assert payload["failed"] == 2
+        assert HEX_TOKEN_A not in json.dumps(payload)
+
+    @pytest.mark.asyncio
+    async def test_claim_exception_on_one_device_still_delivers_sibling(self, monkeypatch):
+        import app.services.game_alerts_dispatch as mod
+
+        dev1, dev2 = uuid4(), uuid4()
+        t1 = AlertTarget(dev1, "ios", "production", alert_topic("ios"), HEX_TOKEN_A)
+        t2 = AlertTarget(dev2, "ios", "production", alert_topic("ios"), HEX_TOKEN_B)
+        monkeypatch.setattr(mod, "alert_targets", lambda *a, **kw: _const([t1, t2]))
+
+        class _FlakyClaimDedup(_MemoryDedup):
+            async def claim(self, trigger_kind, event_id, device_id, ttl_seconds):
+                if device_id == dev1:
+                    raise ConnectionError("redis blip")
+                return await super().claim(trigger_kind, event_id, device_id, ttl_seconds)
+
+        detail = _event_detail(
+            event_id=910,
+            status="completed",
+            home_score=3,
+            away_score=1,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result="home",
+            completed_at=NOW - timedelta(minutes=2),
+        )
+        pool = _RecordingPool()
+        summary = await dispatch_game_alerts(
+            _dummy_sessions(),
+            pool,
+            lambda: _const(VALID_JWT),
+            _FlakyClaimDedup(bootstrapped=True),
+            now=NOW,
+            detail_reader=lambda db, eid: _const(detail),
+            live_finder=lambda db, ts: _const([]),
+            final_finder=lambda db, ts: _const([910]),
+        )
+        assert summary.failed == 1
+        assert summary.final_accepted == 1
+        assert summary.as_dict()["terminal"] == "partial"
+        assert [row[0] for row in pool.by_env["production"].sent] == [HEX_TOKEN_B]
+
+    @pytest.mark.asyncio
+    async def test_send_exception_releases_claim_and_delivers_sibling(self, monkeypatch):
+        import app.services.game_alerts_dispatch as mod
+
+        dev1, dev2 = uuid4(), uuid4()
+        t1 = AlertTarget(dev1, "ios", "production", alert_topic("ios"), HEX_TOKEN_A)
+        t2 = AlertTarget(dev2, "ios", "production", alert_topic("ios"), HEX_TOKEN_B)
+        monkeypatch.setattr(mod, "alert_targets", lambda *a, **kw: _const([t1, t2]))
+
+        class _FlakyTransport(_RecordingTransport):
+            async def send(self, push, *, device_token, topic, provider_token):
+                if device_token == HEX_TOKEN_A:
+                    raise TimeoutError("apns socket reset")
+                return await super().send(
+                    push,
+                    device_token=device_token,
+                    topic=topic,
+                    provider_token=provider_token,
+                )
+
+        class _FlakyPool(_RecordingPool):
+            def for_env(self, apns_env):
+                if "production" not in self.by_env:
+                    self.by_env["production"] = _FlakyTransport()
+                return self.by_env["production"]
+
+        detail = _event_detail(
+            event_id=911,
+            status="completed",
+            home_score=2,
+            away_score=0,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result="home",
+            completed_at=NOW - timedelta(minutes=2),
+        )
+        dedup = _MemoryDedup(bootstrapped=True)
+        pool = _FlakyPool()
+        summary = await dispatch_game_alerts(
+            _dummy_sessions(),
+            pool,
+            lambda: _const(VALID_JWT),
+            dedup,
+            now=NOW,
+            detail_reader=lambda db, eid: _const(detail),
+            live_finder=lambda db, ts: _const([]),
+            final_finder=lambda db, ts: _const([911]),
+        )
+        assert summary.failed == 1
+        assert summary.final_accepted == 1
+        assert summary.as_dict()["terminal"] == "partial"
+        assert ("final", 911, dev1) in dedup.released
+        assert not await dedup.is_final_done(911)
+        assert [row[0] for row in pool.by_env["production"].sent] == [HEX_TOKEN_B]
+
+
+class TestSingleReadFinalAndLightLivePreRead:
+    @pytest.mark.parametrize(
+        ("state", "expected"),
+        [
+            (
+                _LightLiveState(
+                    1,
+                    "basketball_nba",
+                    "live",
+                    NOW - timedelta(minutes=40),
+                    "2nd Quarter",
+                    "6:15",
+                ),
+                False,
+            ),
+            (
+                _LightLiveState(
+                    2,
+                    "basketball_nba",
+                    "live",
+                    NOW - timedelta(minutes=5),
+                    "1st Quarter",
+                    "9:10",
+                ),
+                True,
+            ),
+            (
+                _LightLiveState(
+                    3,
+                    "basketball_nba",
+                    "live",
+                    NOW - timedelta(hours=2),
+                    "4th Quarter",
+                    "3:20",
+                ),
+                True,
+            ),
+            (
+                _LightLiveState(
+                    4, "soccer_epl", "live", NOW - timedelta(minutes=65), "2nd Half", "60'"
+                ),
+                False,
+            ),
+            (
+                _LightLiveState(
+                    5, "soccer_epl", "live", NOW - timedelta(minutes=85), "2nd Half", "78'"
+                ),
+                True,
+            ),
+            (
+                _LightLiveState(
+                    6, "icehockey_nhl", "live", NOW - timedelta(minutes=50), "2nd Period", "12:00"
+                ),
+                False,
+            ),
+        ],
+    )
+    def test_light_live_filter_skips_quiet_midgame_rows_conservatively(
+        self, state, expected
+    ):
+        assert _live_event_needs_full_detail(state, now=NOW) is expected
+
+
+class TestTightenedPeriodPatterns:
+    @pytest.mark.parametrize(
+        ("sport", "period", "expected"),
+        [
+            ("basketball_nba", "7:30 PM ET", False),
+            ("americanfootball_nfl", "Wed, Nov 25 at 8:00 PM ET", False),
+            ("icehockey_nhl", "10:00 AM ET", False),
+            ("baseball_mlb", "SO", False),
+            ("basketball_nba", "ET", False),
+            ("icehockey_nhl", "SO", True),
+            ("icehockey_nhl", "0:00 - SO", True),
+            ("basketball_nba", "SoCal Classic", False),
+            ("soccer_epl", "ET", True),
+            ("soccer_epl", "105:00 - ET", True),
+            ("soccer_epl", "Extra Time", True),
+            ("soccer_epl", "AET", True),
+            ("soccer_epl", "Penalties", True),
+            ("tennis_atp_french_open", "3rd Set", False),
+            ("tennis_atp_wimbledon", "Set 3", False),
+            ("tennis_atp_us_open", "Deciding Set", True),
+            ("tennis_atp_us_open", "5th Set", True),
+        ],
+    )
+    def test_schedule_et_and_bo5_tennis_false_positives_blocked(
+        self, sport, period, expected
+    ):
+        assert is_final_period(sport, period) is expected
+        assert is_first_period("7:30 PM ET") is False
