@@ -308,7 +308,7 @@ class TestMissingMemberLookupBelowFour13544:
                         "name": "What 2026 Googled",
                         "kicker": "YEAR IN SEARCH",
                         "category": "culture",
-                        "why_better_together": "Top Google search markets capture what people looked up most in 2026.",
+                        "why_better_together": "Searched people, movies and TV shows capture what the world looked up on Google in 2026.",
                         "look": "bars",
                         "selector_kind": "fun_tag",
                         "member_ids": [m.market_id for m in google_members],

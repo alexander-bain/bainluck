@@ -1258,6 +1258,10 @@ def _has_unified_parent_frame(set_title: str, member_titles: Sequence[str]) -> b
         return True
 
     title_toks = _split_norm_tokens(set_title)
+    if "album" in title_toks and all(
+        "album" in f or ("release" in f and "song" not in f) for f in folded
+    ):
+        return True
     for key, variants in _SPLIT_SUBJECT_ALIASES.items():
         if key == "elon" and "elon" not in title_toks:
             continue
@@ -1750,6 +1754,11 @@ def validate_scout_proposed_set(
             trimmed_members.append((out_row.market_id, out_reason))
             dropped.append((out_row.market_id, out_reason))
             dropped_rows.append((out_row, out_reason))
+    elif len(deduped_rows) < min_members:
+        return (
+            None,
+            f"too_few_live_members:{len(deduped_rows)}<{min_members}",
+        )
 
     added_member_ids: list[int] = []
     if fill_missing_members and len(deduped_rows) < preferred_min_members:
