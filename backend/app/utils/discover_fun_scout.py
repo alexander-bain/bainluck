@@ -1091,7 +1091,7 @@ def check_scout_no_politics_only_set(
 
 
 _CONSUMER_PRICE_SET_TITLE_RE = re.compile(
-    r"\b(?:what\s+(?:things|stuff)\s+cost|everyday\s+prices?|consumer\s+prices?)\b",
+    r"\b(?:what\s+(?:things|stuff)\s+costs?|everyday\s+prices?)\b",
     re.IGNORECASE,
 )
 _CONSUMER_PRICE_MEMBER_RE = re.compile(
@@ -1132,9 +1132,9 @@ def check_scout_price_set_context(
         if not has_ctx:
             missing_context += 1
 
-    is_price_set = bool(_CONSUMER_PRICE_SET_TITLE_RE.search(name or "")) or (
-        price_hits >= max(2, math.ceil(len(members) * 0.5))
-    )
+    is_price_set = (
+        bool(_CONSUMER_PRICE_SET_TITLE_RE.search(name or "")) and price_hits >= 2
+    ) or (price_hits >= max(2, math.ceil(len(members) * 0.5)))
     if is_price_set and missing_context > 0:
         return f"price_set_missing_row_context:{missing_context}/{len(members)}"
     return None

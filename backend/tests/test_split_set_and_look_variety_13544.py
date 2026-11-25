@@ -183,6 +183,26 @@ def test_price_set_guard_blocks_bare_price_sets_and_allows_contextualized_rows()
         ]
         assert check_scout_price_set_context(card["title"], rows_with_ctx) is None
 
+    # Fable #13706 review point 2: match "What Stuff Costs Now" (costs?) + >=2 member hits,
+    # and never false-positive on an inflation set titled "Consumer prices in December".
+    stuff_rows = [
+        _row_from_member({"market_id": 9901, "source": "kalshi", "title": "U.S. average retail gas price by December?"}),
+        _row_from_member({"market_id": 9902, "source": "kalshi", "title": "Retail diesel price on Dec 31?"}),
+        _row_from_member({"market_id": 9903, "source": "kalshi", "title": "Will Costco raise hot dog price in 2026?"}),
+        _row_from_member({"market_id": 9904, "source": "kalshi", "title": "Netflix standard plan price above $20?"}),
+        _row_from_member({"market_id": 9905, "source": "kalshi", "title": "Spotify Duo price increase?"}),
+        _row_from_member({"market_id": 9906, "source": "kalshi", "title": "AMC movie ticket average?"}),
+    ]
+    err_stuff = check_scout_price_set_context("What Stuff Costs Now", stuff_rows)
+    assert err_stuff is not None and err_stuff.startswith("price_set_missing_row_context:")
+
+    inflation_rows = [
+        _row_from_member({"market_id": 9911, "source": "kalshi", "title": "December CPI YoY above 2.7%?"}),
+        _row_from_member({"market_id": 9912, "source": "kalshi", "title": "Core CPI MoM above 0.3%?"}),
+        _row_from_member({"market_id": 9913, "source": "kalshi", "title": "PCE inflation above 2.5%?"}),
+    ]
+    assert check_scout_price_set_context("Consumer prices in December", inflation_rows) is None
+
 
 def test_retired_scout_sets_include_deck2_drops_and_load_durably(monkeypatch) -> None:
     import importlib
