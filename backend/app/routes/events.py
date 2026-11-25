@@ -158,7 +158,11 @@ from app.utils.draw_priced_winner import (
 )
 from app.utils.market_identity import ticker_game_date
 from app.utils.game_market_class import (
+    OU_NON_TEAM_SUBJECT_RE,
+    extract_ou_subject,
+    fold_ascii,
     is_game_winner_market,
+    is_named_team_ou_market,
     kalshi_series_period,
     names_a_scoped_segment,
     outcomes_refute_game_winner,
@@ -23684,6 +23688,11 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
             return "half_total"
         if any(x in lower for x in _QUARTER_PATTERNS):
             return "quarter_total"
+        # #13754: "A vs. B: <Team> O/U N" (without "team") is one club's scoring
+        # ladder, never the combined-game total. Period & non-scoring checks above
+        # have already run so "1st Half <Team> O/U" stays period-scoped.
+        if is_named_team_ou_market(name):
+            return "team_total"
         # Name says "total" but no period marker — check ticker for period
         ticker_type = _classify_from_ticker(external_id) if external_id else None
         if ticker_type and ticker_type.endswith("_total"):
@@ -28220,15 +28229,15 @@ async def _build_game_markets(
     # 7. Deduplicate totals — split game_total vs team_total vs period totals
     seen_thresholds: dict[float, dict] = {}
     team_total_items: list[dict] = []
-    home_lower = (event.home_team_name or "").lower()
-    away_lower = (event.away_team_name or "").lower()
+    home_lower = fold_ascii(event.home_team_name or "")
+    away_lower = fold_ascii(event.away_team_name or "")
     # A word both club names share ("york", "angeles") identifies neither.
     _home_words = {w for w in home_lower.split() if len(w) >= 4}
     _away_words = {w for w in away_lower.split() if len(w) >= 4}
     _home_words, _away_words = _home_words - _away_words, _away_words - _home_words
 
     def _clubs_named(text: str | None) -> set[str]:
-        low = (text or "").lower()
+        low = fold_ascii(text or "")
         named = set()
         if any(w in low for w in _home_words):
             named.add("home")
@@ -28255,6 +28264,16 @@ async def _build_game_markets(
             # points") or both, so only a one-club leg is left out.
             if len(_clubs_named(t.get("outcome_name"))) == 1:
                 continue
+            # #13754 fallback: a stored/market row whose O/U subject names one
+            # club of this event routes to `team_totals`, never `totals`.
+            _ou_subj = extract_ou_subject(t.get("market_name"))
+            if (
+                _ou_subj
+                and not OU_NON_TEAM_SUBJECT_RE.search(_ou_subj)
+                and len(_clubs_named(_ou_subj)) == 1
+            ):
+                t["market_type"] = "team_total"
+        if t["market_type"] == "game_total":
             key = t["threshold"]
             incumbent = seen_thresholds.get(key)
             if incumbent is None:
@@ -28283,7 +28302,12 @@ async def _build_game_markets(
             # capped Raiders rungs with Patriots prices. A text naming both clubs
             # attributes neither — an untagged row is served as it is, never
             # guessed onto a side.
-            named = _clubs_named(t.get("outcome_name")) or _clubs_named(t.get("market_name"))
+            _tt_subj = extract_ou_subject(t.get("market_name"))
+            named = (
+                _clubs_named(t.get("outcome_name"))
+                or (_clubs_named(_tt_subj) if _tt_subj else set())
+                or _clubs_named(t.get("market_name"))
+            )
             side = next(iter(named)) if len(named) == 1 else None
             if side == "home":
                 t["team_name"] = event.home_team_name
