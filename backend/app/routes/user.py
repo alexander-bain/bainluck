@@ -40,6 +40,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
 from app.dependencies.auth import get_current_user, get_optional_user
+from app.utils.surface_rank import (
+    MY_STUFF_SURFACE_PROFILE,
+    order_my_stuff_team_buckets,
+)
 from app.models.models import (
     User,
     UserPin,
@@ -3063,27 +3067,12 @@ async def _query_team_futures(
     # #237 Item 3: prefer coherent fields.
     _prefer_coherent_team_items(per_team_items)
 
-    # Round-robin fill: strongest team (by its top market) leads each round.
-    items: list[dict] = []
-    if per_team_items:
-        ordered_team_ids = sorted(
-            per_team_items.keys(),
-            key=lambda tid: (per_team_items[tid][0].get("probability") or 0),
-            reverse=True,
-        )
-        depth = 0
-        while len(items) < limit:
-            progressed = False
-            for tid in ordered_team_ids:
-                bucket = per_team_items[tid]
-                if depth < len(bucket):
-                    items.append(bucket[depth])
-                    progressed = True
-                    if len(items) >= limit:
-                        break
-            if not progressed:
-                break
-            depth += 1
+    # Round-robin fill via shared Stage 2 My Stuff surface ranker.
+    items = order_my_stuff_team_buckets(
+        per_team_items,
+        limit=limit,
+        profile=MY_STUFF_SURFACE_PROFILE,
+    )
 
     if _screen_incomplete and not items:
         raise TeamFuturesScreenUnavailableError()
