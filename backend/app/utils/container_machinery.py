@@ -3637,6 +3637,7 @@ async def _load_snapshot_from_db(
 
         detail_by_mid: dict[int, dict[str, Any]] = {}
         mpn_by_mid: dict[int, dict[str, Any]] = {}
+        unsupported_field_ids: set[int] = set()
         selected_vt_rows = [
             vt_rows_by_id[mid] for mid in sorted(candidate_mids) if mid in vt_rows_by_id
         ]
@@ -3670,8 +3671,13 @@ async def _load_snapshot_from_db(
                     normalize_numbers=False,
                 )
                 _apply_verified_title_to_detail(
-                    detail, await _resolve_verified_title(db, fm), fm
+                    detail, await _resolve_verified_title(db, fm), fm,
+                    check_grouped_field_coverage=fm.id in title_matched_mids,
                 )
+                if detail.get("field_price_coverage_incomplete"):
+                    unsupported_field_ids.add(fm.id)
+                    if fm.id not in paired_stage_mids:
+                        continue
                 d_outs = list(detail.get("outcomes") or ())
                 card_pcts = rendered_card_percents([row.get("probability") for row in d_outs])
                 by_oid: dict[int, int] = {}
@@ -3742,7 +3748,7 @@ async def _load_snapshot_from_db(
 
         for pm in prelim_markets:
             mid = int(pm["id"])
-            if mid not in detail_by_mid:
+            if mid in unsupported_field_ids or mid not in detail_by_mid:
                 continue
             screened_outs = detail_by_mid[mid]["top_outcomes"]
             if not screened_outs:
