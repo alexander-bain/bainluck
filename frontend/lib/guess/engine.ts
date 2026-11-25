@@ -1,13 +1,11 @@
 // Scoring and standings for /guess. Pure functions, no React, no network.
 //
-// The rules a player meets:
-//   • a slider card pays 20 points less one for every point off (a count card
-//     loses `step` for each one off);
-//   • a pick or ladder card pays 20 for the answer, a few for the next best;
-//   • an order card pays by how many of the three pairs are the right way round.
+// The one rule a player meets: a slider pays 20 points, less one for every
+// point off. A count card loses `step` for each one off. A duo card is two
+// sliders and pays the average of the two.
 //
-// Two house entries sit beside the players. THE COIN always says 50% and picks
-// at random; it is the opponent a person has when playing alone or first.
+// Two house entries sit beside the players. THE COIN always says 50% (and half
+// on a count); it is the opponent a person has when playing alone or first.
 // TOGETHER is the group's average guess scored as if it were one more player,
 // so a group can see whether it was smarter than its members.
 
@@ -15,69 +13,18 @@ import type { GamePack, PackCard, PlayerEntry } from "./types";
 
 export const FULL_POINTS = 20;
 
-/** Every way to rank three things, surest first. A guess on an order card is an index into this. */
-export const ORDER_PERMS: readonly (readonly [number, number, number])[] = [
-  [0, 1, 2],
-  [0, 2, 1],
-  [1, 0, 2],
-  [1, 2, 0],
-  [2, 0, 1],
-  [2, 1, 0],
-];
-
-const ORDER_POINTS = [0, 5, 12, FULL_POINTS] as const;
+/** A duo guess packs two percents into one number: `first * DUO_BASE + second`. */
+export const DUO_BASE = 101;
 
 export const COIN_NAME = "The Coin";
 export const TOGETHER_NAME = "Together";
 
-/** Item indices of an order card, surest first. */
-export function rightOrder(card: PackCard): number[] {
-  if (card.kind !== "order") return [];
-  return card.items
-    .map((item, index) => ({ index, percent: item.percent ?? 0 }))
-    .sort((a, b) => b.percent - a.percent)
-    .map((x) => x.index);
+export function packDuo(first: number, second: number): number {
+  return first * DUO_BASE + second;
 }
 
-/** How many of the three pairs a ranking has the right way round. */
-export function pairsRight(card: PackCard, guess: number): number {
-  if (card.kind !== "order") return 0;
-  const perm = ORDER_PERMS[guess];
-  if (!perm) return 0;
-  const place = new Map<number, number>();
-  perm.forEach((item, position) => place.set(item, position));
-  let right = 0;
-  for (let a = 0; a < card.items.length; a += 1) {
-    for (let b = a + 1; b < card.items.length; b += 1) {
-      const pa = card.items[a].percent ?? 0;
-      const pb = card.items[b].percent ?? 0;
-      const aFirst = (place.get(a) ?? 0) < (place.get(b) ?? 0);
-      if (pa > pb === aFirst) right += 1;
-    }
-  }
-  return right;
-}
-
-/** How far a slider guess is from the answer. `null` for cards without a slider. */
-export function missFor(card: PackCard, guess: number): number | null {
-  if (card.kind === "chance" || card.kind === "count") return Math.abs(guess - card.answer);
-  return null;
-}
-
-export function pointsFor(card: PackCard, guess: number | null): number {
-  if (guess === null || !Number.isFinite(guess)) return 0;
-  switch (card.kind) {
-    case "chance":
-      return Math.max(0, FULL_POINTS - Math.abs(guess - card.answer));
-    case "count":
-      return Math.max(0, FULL_POINTS - card.step * Math.abs(guess - card.answer));
-    case "pick":
-    case "ladder":
-      if (guess === card.answer) return FULL_POINTS;
-      return card.partial[String(guess)] ?? 0;
-    case "order":
-      return ORDER_POINTS[pairsRight(card, guess)] ?? 0;
-  }
+export function duoParts(guess: number): [number, number] {
+  return [Math.floor(guess / DUO_BASE), guess % DUO_BASE];
 }
 
 /** The largest value a guess on this card can take. */
@@ -87,19 +34,61 @@ export function maxGuess(card: PackCard): number {
       return 100;
     case "count":
       return card.max;
-    case "pick":
-    case "ladder":
-      return card.options.length - 1;
-    case "order":
-      return ORDER_PERMS.length - 1;
+    case "duo":
+      return packDuo(100, 100);
   }
 }
 
 export function isValidGuess(card: PackCard, guess: number | null): guess is number {
-  return guess !== null && Number.isInteger(guess) && guess >= 0 && guess <= maxGuess(card);
+  if (guess === null || !Number.isInteger(guess) || guess < 0 || guess > maxGuess(card)) return false;
+  return card.kind !== "duo" || duoParts(guess)[0] <= 100;
 }
 
-/** A small seeded generator, so the Coin and the win chances are the same on every phone. */
+/**
+ * How far a guess is from the answer, in the card's own units. On a duo card it
+ * is the larger of the two misses, which is the one a line would be about.
+ */
+export function missFor(card: PackCard, guess: number): number {
+  if (card.kind === "duo") {
+    const [a, b] = duoParts(guess);
+    return Math.max(Math.abs(a - card.parts[0].answer), Math.abs(b - card.parts[1].answer));
+  }
+  return Math.abs(guess - card.answer);
+}
+
+function sliderPoints(miss: number, step: number): number {
+  return Math.max(0, FULL_POINTS - step * miss);
+}
+
+export function pointsFor(card: PackCard, guess: number | null): number {
+  if (!isValidGuess(card, guess)) return 0;
+  switch (card.kind) {
+    case "chance":
+      return sliderPoints(Math.abs(guess - card.answer), 1);
+    case "count":
+      return sliderPoints(Math.abs(guess - card.answer), card.step);
+    case "duo": {
+      const [a, b] = duoParts(guess);
+      const first = sliderPoints(Math.abs(a - card.parts[0].answer), 1);
+      const second = sliderPoints(Math.abs(b - card.parts[1].answer), 1);
+      return Math.round((first + second) / 2);
+    }
+  }
+}
+
+/** The guess that earns full points. */
+export function fullGuess(card: PackCard): number {
+  return card.kind === "duo" ? packDuo(card.parts[0].answer, card.parts[1].answer) : card.answer;
+}
+
+/** Where every slider starts: the middle. It is also what the Coin says. */
+export function startGuess(card: PackCard): number {
+  if (card.kind === "chance") return 50;
+  if (card.kind === "count") return Math.round(card.max / 2);
+  return packDuo(50, 50);
+}
+
+/** A small seeded generator, so the win chances are the same on every phone. */
 export function seeded(seed: string): () => number {
   let h = 1779033703 ^ seed.length;
   for (let i = 0; i < seed.length; i += 1) {
@@ -116,13 +105,9 @@ export function seeded(seed: string): () => number {
   };
 }
 
-/** The Coin's guess: 50% on a chance card, half on a count card, a seeded random pick otherwise. */
+/** The Coin's guess: the middle of every slider. */
 export function coinGuess(pack: GamePack, index: number): number {
-  const card = pack.cards[index];
-  if (card.kind === "chance") return 50;
-  if (card.kind === "count") return Math.round(card.max / 2);
-  const roll = seeded(`${pack.code}:coin:${card.id}`)();
-  return Math.min(maxGuess(card), Math.floor(roll * (maxGuess(card) + 1)));
+  return startGuess(pack.cards[index]);
 }
 
 export function coinEntry(pack: GamePack): PlayerEntry {
@@ -135,34 +120,19 @@ export function coinEntry(pack: GamePack): PlayerEntry {
   };
 }
 
-/**
- * The group's one guess on a card: the rounded average on a slider, the most
- * picked option on a pick or ladder (a tie goes to whoever in the tie guessed
- * first), and on an order card the ranking by average position.
- */
+function mean(values: number[]): number {
+  return Math.round(values.reduce((sum, v) => sum + v, 0) / values.length);
+}
+
+/** The group's one guess on a card: the rounded average of every slider. */
 export function togetherGuess(card: PackCard, guesses: number[]): number | null {
   const valid = guesses.filter((g) => isValidGuess(card, g));
   if (valid.length === 0) return null;
-  if (card.kind === "chance" || card.kind === "count") {
-    return Math.round(valid.reduce((sum, g) => sum + g, 0) / valid.length);
+  if (card.kind === "duo") {
+    const pairs = valid.map(duoParts);
+    return packDuo(mean(pairs.map((p) => p[0])), mean(pairs.map((p) => p[1])));
   }
-  if (card.kind === "pick" || card.kind === "ladder") {
-    const tally = new Map<number, number>();
-    valid.forEach((g) => tally.set(g, (tally.get(g) ?? 0) + 1));
-    let best = valid[0];
-    for (const g of valid) {
-      if ((tally.get(g) ?? 0) > (tally.get(best) ?? 0)) best = g;
-    }
-    return best;
-  }
-  const positionSum = [0, 0, 0];
-  valid.forEach((g) => {
-    ORDER_PERMS[g].forEach((item, position) => {
-      positionSum[item] += position;
-    });
-  });
-  const ranked = [0, 1, 2].sort((a, b) => positionSum[a] - positionSum[b] || a - b);
-  return ORDER_PERMS.findIndex((perm) => perm.every((item, i) => item === ranked[i]));
+  return mean(valid);
 }
 
 export function togetherEntry(pack: GamePack, players: PlayerEntry[]): PlayerEntry {
@@ -294,6 +264,17 @@ export function cleanName(raw: string): string {
     .trim();
 }
 
+/**
+ * What a line calls each player: the first word of their name, unless two
+ * players would then be called the same thing, in which case everyone keeps
+ * their whole name. "Sam Lee said 29%" reads like a summons.
+ */
+export function spokenNames(names: string[]): Map<string, string> {
+  const first = names.map((n) => n.split(" ")[0]);
+  const clash = new Set(first.map((f) => f.toLowerCase())).size !== first.length;
+  return new Map(names.map((n, i) => [n, clash ? n : first[i]]));
+}
+
 /** "Ann", "Ann and Bo", "Ann, Bo and Cy". */
 export function joinNames(names: string[]): string {
   if (names.length <= 1) return names[0] ?? "";
@@ -313,44 +294,31 @@ export function emptyEntry(pack: GamePack, name: string, from: PlayerEntry["from
 
 /** A guess in words, as it is shown beside a player's name. */
 export function guessLabel(card: PackCard, guess: number | null): string {
-  if (guess === null || !isValidGuess(card, guess)) return "";
+  if (!isValidGuess(card, guess)) return "";
   switch (card.kind) {
     case "chance":
       return `${guess}%`;
     case "count":
       return `${guess} of ${card.max}`;
-    case "pick":
-    case "ladder":
-      return card.options[guess].short;
-    case "order":
-      return ORDER_PERMS[guess].map((item) => card.items[item].short).join(", then ");
+    case "duo": {
+      const [a, b] = duoParts(guess);
+      return `${a}% and ${b}%`;
+    }
   }
 }
 
-/** The guess that earns full points. */
-export function fullGuess(card: PackCard): number {
-  if (card.kind === "order") {
-    const right = rightOrder(card);
-    return ORDER_PERMS.findIndex((perm) => perm.every((item, i) => item === right[i]));
-  }
-  return card.answer;
-}
-
-/** A short name for what the card asks the player to do. */
+/** A short name for what the card asks the player to do. Kept short: it shares one line of a phone with the topic. */
 export function kindLabel(card: PackCard): string {
-  switch (card.kind) {
-    case "chance":
+  switch (card.flavor) {
+    case "straight":
       return "Guess the chance";
+    case "given":
+      return "With a clue";
+    case "rest":
+      return "Not the favorites";
     case "count":
       return "How many?";
-    case "ladder":
-      return "By what year?";
-    case "order":
-      return "Put them in order";
-    case "pick":
-      if (card.flavor === "pair") return "This or that";
-      if (card.flavor === "field") return "Name the favorite";
-      if (card.flavor === "longshot") return "Find the long shot";
-      return "Find the match";
+    case "duo":
+      return "Two at once";
   }
 }

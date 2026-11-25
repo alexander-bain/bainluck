@@ -1,15 +1,22 @@
-// /guess — scoring, the Coin, the group's joint guess, standings and the link.
+// /guess — scoring, the Coin, the group's joint guess, standings, the link and
+// the chance of winning. Every card is a slider (429: A).
 
 import {
   cleanName,
   coinEntry,
   coinGuess,
+  duoParts,
   emptyEntry,
+  fullGuess,
+  guessLabel,
+  isValidGuess,
   joinNames,
-  ORDER_PERMS,
-  pairsRight,
+  kindLabel,
+  packDuo,
   pointsFor,
+  spokenNames,
   standings,
+  startGuess,
   togetherGuess,
   togetherReport,
   topicWins,
@@ -29,16 +36,14 @@ function player(name: string, pick: (card: PackCard, index: number) => number, f
   entry.guesses = pack.cards.map((card, i) => pick(card, i));
   return entry;
 }
-const perfect = (card: PackCard): number => {
-  if (card.kind === "order") return ORDER_PERMS.findIndex((_, i) => pointsFor(card, i) === 20);
-  return card.answer;
-};
+const perfect = (card: PackCard): number => fullGuess(card);
+const farEnd = (answer: number, max: number): number => (answer >= max / 2 ? 0 : max);
 const hopeless = (card: PackCard): number => {
-  if (card.kind === "chance") return card.answer >= 50 ? 0 : 100;
-  if (card.kind === "count") return card.answer >= card.max / 2 ? 0 : card.max;
-  if (card.kind === "order") return ORDER_PERMS.findIndex((_, i) => pointsFor(card, i) === 0);
-  return card.options.findIndex((_, i) => pointsFor(card, i) === 0);
+  if (card.kind === "chance") return farEnd(card.answer, 100);
+  if (card.kind === "count") return farEnd(card.answer, card.max);
+  return packDuo(farEnd(card.parts[0].answer, 100), farEnd(card.parts[1].answer, 100));
 };
+const live = (p: PlayerEntry, upTo: number): PlayerEntry => ({ ...p, guesses: p.guesses.map((g, i) => (i < upTo ? g : null)) });
 
 describe("/guess — scoring", () => {
   it("a chance card pays 20 less one for every point off, never below zero", () => {
@@ -47,52 +52,65 @@ describe("/guess — scoring", () => {
     expect(pointsFor(card, card.answer + 7 > 100 ? card.answer - 7 : card.answer + 7)).toBe(13);
     expect(pointsFor(card, card.answer >= 50 ? card.answer - 40 : card.answer + 40)).toBe(0);
     expect(pointsFor(card, null)).toBe(0);
+    expect(pointsFor(card, 101)).toBe(0);
+    expect(pointsFor(card, 12.5)).toBe(0);
   });
 
-  it("a pick card pays 20 for the answer, 8 for the next best where there is one, else nothing", () => {
-    for (const card of pack.cards) {
-      if (card.kind !== "pick" && card.kind !== "ladder") continue;
-      const paid = card.options.map((_, i) => pointsFor(card, i));
-      expect(paid[card.answer]).toBe(20);
-      expect(paid.filter((p) => p === 20).length).toBe(1);
-      expect(paid.every((p) => p === 20 || p === 8 || p === 0)).toBe(true);
-    }
+  it("a count card loses its step for each one off", () => {
+    const card = byKind("count");
+    expect(pointsFor(card, card.answer)).toBe(20);
+    expect(pointsFor(card, card.answer + 3)).toBe(Math.max(0, 20 - 3 * card.step));
+    expect(pointsFor(card, card.max + 1)).toBe(0);
   });
 
-  it("an order card pays by pairs the right way round: 0, 5, 12, 20", () => {
-    const card = byKind("order");
-    const paid = ORDER_PERMS.map((_, i) => [pairsRight(card, i), pointsFor(card, i)]);
-    expect(paid.map(([, p]) => p).sort((a, b) => a - b)).toEqual([0, 5, 5, 12, 12, 20]);
-    for (const [pairs, points] of paid) expect(points).toBe([0, 5, 12, 20][pairs]);
+  it("a two-number card holds both guesses in one number and pays the average of the two", () => {
+    const card = byKind("duo");
+    const [a, b] = [card.parts[0].answer, card.parts[1].answer];
+    expect(duoParts(packDuo(37, 100))).toEqual([37, 100]);
+    expect(duoParts(packDuo(0, 0))).toEqual([0, 0]);
+    expect(pointsFor(card, packDuo(a, b))).toBe(20);
+    // One slider dead on, the other hopeless: half marks.
+    expect(pointsFor(card, packDuo(a, farEnd(b, 100)))).toBe(10);
+    // 4 off and 7 off: 16 and 13, which average to 14.5 and round up.
+    const near = (v: number, by: number) => (v + by > 100 ? v - by : v + by);
+    expect(pointsFor(card, packDuo(near(a, 4), near(b, 7)))).toBe(15);
+    expect(isValidGuess(card, packDuo(100, 100))).toBe(true);
+    expect(isValidGuess(card, packDuo(100, 100) + 1)).toBe(false);
+    expect(isValidGuess(card, -1)).toBe(false);
   });
 
   it("a perfect game scores 20 a card and a hopeless one scores nothing", () => {
-    expect(totalPoints(pack, player("P", perfect))).toBe(20 * pack.cards.length);
-    expect(totalPoints(pack, player("H", hopeless))).toBe(0);
+    expect(totalPoints(pack, player("A", perfect))).toBe(20 * pack.cards.length);
+    expect(totalPoints(pack, player("Z", hopeless))).toBe(0);
+  });
+
+  it("says a guess in words, and names what each card asks for", () => {
+    expect(guessLabel(byKind("chance"), 42)).toBe("42%");
+    expect(guessLabel(byKind("count"), 9)).toBe(`9 of ${byKind("count").max}`);
+    expect(guessLabel(byKind("duo"), packDuo(80, 5))).toBe("80% and 5%");
+    expect(guessLabel(byKind("chance"), null)).toBe("");
+    expect(new Set(pack.cards.map(kindLabel)).size).toBe(new Set(pack.cards.map((c) => c.flavor)).size);
   });
 });
 
 describe("/guess — the Coin and the group", () => {
-  it("the Coin says 50% on a chance card, half on a count card, and the same pick on every phone", () => {
+  it("the Coin leaves every slider in the middle", () => {
     pack.cards.forEach((card, i) => {
       const g = coinGuess(pack, i);
+      expect(g).toBe(startGuess(card));
       if (card.kind === "chance") expect(g).toBe(50);
       if (card.kind === "count") expect(g).toBe(Math.round(card.max / 2));
-      expect(coinGuess(pack, i)).toBe(g);
-      expect(Number.isInteger(g)).toBe(true);
+      if (card.kind === "duo") expect(duoParts(g)).toEqual([50, 50]);
     });
     expect(coinEntry(pack).from).toBe("house");
   });
 
-  it("the group's guess is the average on a slider and the most picked option on a pick", () => {
-    const chance = byKind("chance");
-    expect(togetherGuess(chance, [10, 20, 60])).toBe(30);
-    const pick = byKind("pick");
-    expect(togetherGuess(pick, [1, 0, 1])).toBe(1);
-    expect(togetherGuess(pick, [0, 1])).toBe(0); // a tie goes to whoever in the tie guessed first
-    expect(togetherGuess(pick, [])).toBeNull();
-    const order = byKind("order");
-    expect(togetherGuess(order, [0, 0, 5])).toBe(0);
+  it("the group's guess is the average of every slider, each of a pair on its own", () => {
+    expect(togetherGuess(byKind("chance"), [10, 20, 60])).toBe(30);
+    expect(togetherGuess(byKind("count"), [4, 9])).toBe(7);
+    expect(togetherGuess(byKind("duo"), [packDuo(90, 10), packDuo(70, 30)])).toBe(packDuo(80, 20));
+    expect(togetherGuess(byKind("chance"), [])).toBeNull();
+    expect(togetherGuess(byKind("chance"), [40, 999])).toBe(40);
   });
 
   it("names the player who cost the group most, only when leaving them out adds five points or more", () => {
@@ -122,13 +140,16 @@ describe("/guess — the Coin and the group", () => {
     expect(wins.find((w) => w.topic !== "Sports")?.names).toEqual([]);
   });
 
-  it("cleans names and joins them", () => {
+  it("cleans names, joins them, and calls people by first name unless two would clash", () => {
     expect(cleanName("  Dr. <b>Evil</b>!!  ")).toBe("Dr bEvilb");
     expect(cleanName("a".repeat(40)).length).toBe(12);
     expect(cleanName("José-María")).toBe("José-María");
     expect(joinNames(["A"])).toBe("A");
     expect(joinNames(["A", "B"])).toBe("A and B");
     expect(joinNames(["A", "B", "C"])).toBe("A, B and C");
+    expect(spokenNames(["Sam Lee", "Jo"]).get("Sam Lee")).toBe("Sam");
+    expect(spokenNames(["Sam Lee", "Sam Roe"]).get("Sam Lee")).toBe("Sam Lee");
+    expect(spokenNames(["Sam Lee", "sam"]).get("sam")).toBe("sam");
   });
 });
 
@@ -138,6 +159,7 @@ describe("/guess — the link carries the group", () => {
   bo.name = cleanName("Bo O'Neil-2");
   ann.ratings[3] = 5;
   ann.good[0] = true;
+  const n = pack.cards.length;
 
   it("round-trips names, guesses, ratings and marks, using only characters a chat keeps", () => {
     const fragment = encodeGroup(pack, [ann, bo, coinEntry(pack)]);
@@ -154,6 +176,16 @@ describe("/guess — the link carries the group", () => {
     expect(back.players.every((p) => p.from === "link")).toBe(true);
   });
 
+  it("carries both numbers of a two-number card, at every corner of the two sliders", () => {
+    const at = pack.cards.findIndex((c) => c.kind === "duo");
+    for (const pair of [packDuo(0, 0), packDuo(100, 100), packDuo(0, 100), packDuo(100, 0), packDuo(63, 7)]) {
+      const one = player("Dee", perfect);
+      one.guesses[at] = pair;
+      const back = decodeGroup(pack, encodeGroup(pack, [one]));
+      expect(back.ok && back.players[0].guesses[at]).toBe(pair);
+    }
+  });
+
   it("carries a half-finished game", () => {
     const half = player("Half", perfect);
     half.guesses = half.guesses.map((g, i) => (i < pack.perRound ? g : null));
@@ -164,13 +196,14 @@ describe("/guess — the link carries the group", () => {
   it("treats a link as data from a stranger: never throws, drops what is not valid", () => {
     expect(decodeGroup(pack, "")).toEqual({ ok: false, reason: "none" });
     expect(decodeGroup(pack, "#section")).toEqual({ ok: false, reason: "none" });
-    expect(decodeGroup(pack, "#g=zz.Ann-00-0-0")).toEqual({ ok: false, reason: "other-edition" });
-    expect(decodeGroup(pack, `#g=${pack.code}.%E0%A4%A-xx-0-0`)).toEqual({ ok: false, reason: "unreadable" });
-    expect(decodeGroup(pack, `#g=${pack.code}.<script>-ff-9-9`)).toEqual({ ok: false, reason: "unreadable" });
-    const n = pack.cards.length;
-    const wild = `#g=${pack.code}.${encodeURIComponent("<img src=x>")}-${"ff".repeat(n)}-${"9".repeat(n)}-${"7".repeat(n)}`;
+    expect(decodeGroup(pack, "#g=zz.Ann-000-0-0")).toEqual({ ok: false, reason: "other-edition" });
+    // A link from the first set on this page, which used two characters a card.
+    expect(decodeGroup(pack, `#g=a1.Ann-${"0a".repeat(14)}-${"1".repeat(14)}-${"0".repeat(14)}`)).toEqual({ ok: false, reason: "other-edition" });
+    expect(decodeGroup(pack, `#g=${pack.code}.%E0%A4%A-xxx-0-0`)).toEqual({ ok: false, reason: "unreadable" });
+    expect(decodeGroup(pack, `#g=${pack.code}.<script>-fff-9-9`)).toEqual({ ok: false, reason: "unreadable" });
+    const wild = `#g=${pack.code}.${encodeURIComponent("<img src=x>")}-${"fff".repeat(n)}-${"9".repeat(n)}-${"7".repeat(n)}`;
     expect(decodeGroup(pack, wild)).toEqual({ ok: false, reason: "unreadable" }); // every guess out of range
-    const mixed = `#g=${pack.code}.${encodeURIComponent("<b>Eve</b>")}-${"01".repeat(n)}-${"9".repeat(n)}-${"1".repeat(n)}`;
+    const mixed = `#g=${pack.code}.${encodeURIComponent("<b>Eve</b>")}-${"001".repeat(n)}-${"9".repeat(n)}-${"1".repeat(n)}`;
     const back = decodeGroup(pack, mixed);
     expect(back.ok).toBe(true);
     if (back.ok) {
@@ -178,7 +211,7 @@ describe("/guess — the link carries the group", () => {
       expect(back.players[0].ratings.every((r) => r === 0)).toBe(true);
       back.players[0].guesses.forEach((g) => expect(g === null || g === 1).toBe(true));
     }
-    const crowd = `#g=${pack.code}.${Array.from({ length: 60 }, (_, i) => `P${i}-${"01".repeat(n)}-${"0".repeat(n)}-${"0".repeat(n)}`).join(".")}`;
+    const crowd = `#g=${pack.code}.${Array.from({ length: 60 }, (_, i) => `P${i}-${"001".repeat(n)}-${"0".repeat(n)}-${"0".repeat(n)}`).join(".")}`;
     const many = decodeGroup(pack, crowd);
     expect(many.ok && many.players.length).toBe(24);
   });
@@ -193,8 +226,8 @@ describe("/guess — the link carries the group", () => {
   });
 
   it("writes a short message in the sender's voice, with the link on its own line", () => {
-    expect(shareMessage([{ name: "Ann", points: 143 }], 96, "https://bainluck.com/guess#g=a1.x")).toBe(
-      "I scored 143 on Guess the Chance. That beats a coin flip by 47. Your turn:\nhttps://bainluck.com/guess#g=a1.x",
+    expect(shareMessage([{ name: "Ann", points: 143 }], 96, "https://bainluck.com/guess#g=b1.x")).toBe(
+      "I scored 143 on Guess the Chance. That beats a coin flip by 47. Your turn:\nhttps://bainluck.com/guess#g=b1.x",
     );
     expect(shareMessage([{ name: "Ann", points: 80 }], 92, "u")).toContain("A coin flip beat me by 12.");
     expect(shareMessage([{ name: "Ann", points: 80 }], 80, "u")).toContain("I tied a coin flip.");
@@ -226,7 +259,6 @@ describe("/guess — chance of winning", () => {
 
   it("never looks at cards still to come, even when they are already answered", () => {
     // Someone who finished yesterday must not give their result away at card 1.
-    const live = (p: PlayerEntry, upTo: number): PlayerEntry => ({ ...p, guesses: p.guesses.map((g, i) => (i < upTo ? g : null)) });
     for (const upTo of [0, 1, 4, 10]) {
       expect(winChances(pack, [ann, cy], upTo)).toEqual(winChances(pack, [live(ann, upTo), live(cy, upTo)], upTo));
     }
@@ -238,8 +270,35 @@ describe("/guess — chance of winning", () => {
     expect(winChances(pack, [ann], 3)).toEqual([1]);
   });
 
-  it("favors a player still playing who has been far better so far", () => {
-    const live = (p: PlayerEntry, upTo: number): PlayerEntry => ({ ...p, guesses: p.guesses.map((g, i) => (i < upTo ? g : null)) });
+  it("does not make a no-hoper of anyone after two cards", () => {
+    // The scores three people really had after two cards of the first live set:
+    // 33, 3 and 9. The first version then showed 86%, 4% and 10%, on two cards'
+    // evidence. Two cards are mostly luck, so the leader is short of 85% and
+    // the player in last is above 5%.
+    const scores = [
+      [13, 20],
+      [3, 0],
+      [9, 0],
+    ];
+    const first = pack.cards[0];
+    const second = pack.cards[1];
+    if (first.kind !== "chance" || second.kind !== "chance") throw new Error("this test wants two chance cards first");
+    const off = (answer: number, points: number) => (answer + (20 - points) <= 100 ? answer + (20 - points) : answer - (20 - points));
+    const people = scores.map((s, n) => {
+      const entry = emptyEntry(pack, `P${n + 1}`, "here");
+      entry.guesses[0] = off(first.answer, s[0]);
+      entry.guesses[1] = off(second.answer, s[1]);
+      return entry;
+    });
+    expect(people.map((p) => totalPoints(pack, p))).toEqual([33, 3, 9]);
+    const early = winChances(pack, people, 2);
+    expect(early[0]).toBeLessThan(0.85);
+    expect(early[0]).toBeGreaterThan(0.5);
+    expect(early[1]).toBeGreaterThan(0.05);
+    expect(early[2]).toBeGreaterThan(early[1]);
+  });
+
+  it("still favors a player who has been far better over half the game", () => {
     const mid = winChances(pack, [live(ann, 7), live(cy, 7)], 7);
     expect(mid[0]).toBeGreaterThan(0.9);
     const history = winChanceHistory(pack, [live(ann, 7), live(cy, 7)], 7);

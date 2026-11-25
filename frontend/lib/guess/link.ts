@@ -11,7 +11,8 @@
 //   #g=<edition>.<player>.<player>…
 //   <player> = <name>-<guesses>-<ratings>-<good>
 //     name     percent-encoded, with `-` and `.` encoded too
-//     guesses  two hex digits a card, `xx` for a card not answered
+//     guesses  three base-36 digits a card, `zzz` for a card not answered
+//              (three, because a two-slider card holds two percents in one number)
 //     ratings  one digit a card, 0 to 5
 //     good     one digit a card, 0 or 1
 //
@@ -24,6 +25,10 @@ import type { GamePack, PlayerEntry } from "./types";
 
 export const MAX_LINK_PLAYERS = 24;
 
+/** Characters a guess takes in a link. 36³ is 46,656, above the largest guess any card allows. */
+const GUESS_WIDTH = 3;
+const NO_GUESS = "z".repeat(GUESS_WIDTH);
+
 function encodeName(name: string): string {
   return encodeURIComponent(name).replace(/[-._~!*'()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
@@ -32,7 +37,7 @@ function encodeEntry(pack: GamePack, entry: PlayerEntry): string {
   const guesses = pack.cards
     .map((card, i) => {
       const g = entry.guesses[i] ?? null;
-      return isValidGuess(card, g) ? g.toString(16).padStart(2, "0") : "xx";
+      return isValidGuess(card, g) ? g.toString(36).padStart(GUESS_WIDTH, "0") : NO_GUESS;
     })
     .join("");
   const ratings = pack.cards.map((_, i) => String(Math.max(0, Math.min(5, Math.trunc(entry.ratings[i] ?? 0))))).join("");
@@ -66,7 +71,7 @@ export function decodeGroup(pack: GamePack, fragment: string): DecodedGroup {
     const fields = part.split("-");
     if (fields.length !== 4) continue;
     const [rawName, rawGuesses, rawRatings, rawGood] = fields;
-    if (rawGuesses.length !== n * 2 || rawRatings.length !== n || rawGood.length !== n) continue;
+    if (rawGuesses.length !== n * GUESS_WIDTH || rawRatings.length !== n || rawGood.length !== n) continue;
     let name = "";
     try {
       name = cleanName(decodeURIComponent(rawName));
@@ -75,9 +80,9 @@ export function decodeGroup(pack: GamePack, fragment: string): DecodedGroup {
     }
     if (!name) continue;
     const guesses = pack.cards.map((card, i) => {
-      const hex = rawGuesses.slice(i * 2, i * 2 + 2);
-      if (!/^[0-9a-f]{2}$/i.test(hex)) return null;
-      const value = parseInt(hex, 16);
+      const digits = rawGuesses.slice(i * GUESS_WIDTH, (i + 1) * GUESS_WIDTH).toLowerCase();
+      if (digits === NO_GUESS || !/^[0-9a-z]+$/.test(digits)) return null;
+      const value = parseInt(digits, 36);
       return isValidGuess(card, value) ? value : null;
     });
     if (guesses.every((g) => g === null)) continue;
