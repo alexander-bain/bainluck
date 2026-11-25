@@ -17,6 +17,14 @@ struct WatchPinnedHomeView12640: View {
     @State private var showingMoreActions = false
     @State private var crestRevision = 0
 
+    private var currentTelemetrySurface: WatchTelemetrySurface {
+        switch store.selectedTarget {
+        case .event: return .matchupGame
+        case .future: return .pinnedMarket
+        case nil: return .pinsHome
+        }
+    }
+
     var body: some View {
         ScrollViewReader { scroll in
             ScrollView {
@@ -61,11 +69,16 @@ struct WatchPinnedHomeView12640: View {
                     }
                 }
                 #endif
+                WatchTelemetry.shared.screen(currentTelemetrySurface)
                 WatchTelemetry.shared.pullWatchPinsIfReachable()
                 store.triggerRefresh()
             }
+            .onChange(of: store.selectedTarget) { _, _ in
+                WatchTelemetry.shared.screen(currentTelemetrySurface)
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
+                    WatchTelemetry.shared.screen(currentTelemetrySurface)
                     WatchTelemetry.shared.pullWatchPinsIfReachable()
                     store.triggerRefresh()
                 }
@@ -217,6 +230,7 @@ struct WatchPinnedHomeView12640: View {
             }
 
             Button {
+                WatchTelemetry.shared.action(.refreshPins, surface: currentTelemetrySurface)
                 WatchTelemetry.shared.pullWatchPinsIfReachable()
                 store.triggerRefresh(userInitiated: true)
             } label: {
@@ -242,6 +256,7 @@ struct WatchPinnedHomeView12640: View {
                     return false
                 }()
                 Button {
+                    WatchTelemetry.shared.action(.openPinnedGame, surface: .pinsHome)
                     store.selectEvent(game.id)
                     if inSheet { choosingFromPins = false }
                 } label: {
@@ -262,6 +277,7 @@ struct WatchPinnedHomeView12640: View {
                     return false
                 }()
                 Button {
+                    WatchTelemetry.shared.action(.openPinnedMarket, surface: .pinsHome)
                     store.selectFuture(market.id, outcomeID: outcome.id)
                     if inSheet { choosingFromPins = false }
                 } label: {
@@ -466,6 +482,7 @@ struct WatchPinnedHomeView12640: View {
             }
 
             Button {
+                WatchTelemetry.shared.action(.refreshPins, surface: currentTelemetrySurface)
                 store.triggerRefresh(userInitiated: true)
             } label: {
                 Label(store.isRefreshing ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
@@ -508,6 +525,7 @@ struct WatchPinnedHomeView12640: View {
                 ForEach(market.pricedOutcomes) { outcome in
                     if let formatted = outcome.formattedProbability {
                         Button {
+                            WatchTelemetry.shared.action(.chooseOutcome, surface: .pinnedMarket)
                             store.chooseFutureOutcome(marketID: market.id, outcomeID: outcome.id)
                             choosingOutcome = false
                         } label: {
@@ -570,15 +588,17 @@ struct WatchPinnedHomeView12640: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("watch.pins.continue-on-phone")
                 }
-                NavigationLink("Diagnostics") {
-                    WatchDiagnosticsView().dynamicTypeSize(dynamicTypeSize)
-                }
-                .accessibilityIdentifier("watch.diagnostics")
             }
+
+            NavigationLink("Diagnostics") {
+                WatchDiagnosticsView().dynamicTypeSize(dynamicTypeSize)
+            }
+            .accessibilityIdentifier("watch.diagnostics")
 
             if store.selectedTarget != nil {
                 Divider()
                 Button {
+                    WatchTelemetry.shared.action(.clearSelection, surface: currentTelemetrySurface)
                     choosingFromPins = false
                     choosingOutcome = false
                     showingHandoffHelp = false

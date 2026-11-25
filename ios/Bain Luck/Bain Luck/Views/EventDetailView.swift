@@ -650,6 +650,9 @@ struct EventDetailView: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 6)
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            AnalyticsService.trackGamePageAction(actionKind: "open", section: "models", sport: event.sport)
+                        })
                     }
                 }
                 .background(usesApprovedHeadlinePresentation9483(event) ? Color.clear : Color.cardBackground)
@@ -3124,9 +3127,15 @@ struct EventDetailView: View {
             VStack(spacing: 0) {
                 Divider()
                 Button {
+                    let willExpand = !showSources
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        showSources.toggle()
+                        showSources = willExpand
                     }
+                    AnalyticsService.trackGamePageAction(
+                        actionKind: willExpand ? "expand" : "collapse",
+                        section: "sources",
+                        sport: event.sport
+                    )
                 } label: {
                     HStack {
                         Spacer()

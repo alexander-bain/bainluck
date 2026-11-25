@@ -182,6 +182,7 @@ final class FirstRunChecklistStore364A: ObservableObject {
 
         prefs.boostedCategories = Array(categories).sorted()
         prefs.boostedTerms = Array(terms).sorted()
+        prefs.savedAtEpoch = Date().timeIntervalSince1970
         prefs.save(defaults: defaults)
     }
 

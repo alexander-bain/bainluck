@@ -38,8 +38,9 @@ import math
 import os
 import re
 import unicodedata
+from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -77,6 +78,8 @@ SCOUT_MONTHLY_CAP_USD = 30.0
 #: Ruling 385: A (#13102) daily staging cap and minimum set size.
 SCOUT_MAX_NEW_SETS_PER_DAY = 10
 SCOUT_MIN_LIVE_MEMBERS = 3
+#: #13544: target minimum size before stopping missing-member catalog lookup.
+SCOUT_PREFERRED_MIN_MEMBERS = 4
 
 #: Ruling 385: A (#13102): staged scout sets NEVER auto-promote to public;
 #: promotion happens only after Alex grades "Keep".
@@ -212,6 +215,19 @@ class ScoutProposedSet:
     title_ilike: Optional[str] = None
     template: Optional[str] = None
     footer: Optional[str] = None
+    narrowed_name: Optional[str] = None
+    narrowed_why_better_together: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ScoutSplitSetFinding:
+    """Detected split-set fault where a subset shares a subject the rest lack (#13544)."""
+
+    reason: str
+    shared_feature: str
+    coherent_indices: tuple[int, ...]
+    outlier_indices: tuple[int, ...]
+    trimmable: bool = True
 
 
 @dataclass(frozen=True)
@@ -231,6 +247,10 @@ class ScoutValidatedSet:
     footer: str
     dropped_members: tuple[tuple[int, str], ...] = ()
     deduped_members: tuple[tuple[int, int], ...] = ()
+    trimmed_members: tuple[tuple[int, str], ...] = ()
+    added_member_ids: tuple[int, ...] = ()
+    trimmed_member_details: tuple[dict[str, Any], ...] = ()
+    added_members: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass
@@ -1090,6 +1110,710 @@ def check_scout_no_politics_only_set(
     return None
 
 
+# ---------------------------------------------------------------------------
+# #13544: Split-set coherence gate and <4-member missing-member fill
+# ---------------------------------------------------------------------------
+
+_SPLIT_QUOTED_RE = re.compile(r'["\u201c][^"\u201d]{2,140}["\u201d]')
+_SPLIT_UNIFIED_ANCHOR_STOP: frozenset[str] = frozenset(
+    {
+        "a", "an", "the", "in", "on", "at", "to", "of", "for", "by", "or", "and",
+        "is", "are", "be", "will", "who", "what", "when", "where", "which", "how",
+        "many", "more", "most", "this", "that", "his", "her", "their", "its", "with",
+        "from", "as", "before", "after", "during", "next", "new", "first", "last",
+        "best", "year", "years", "2025", "2026", "2027", "2028", "2029", "2030",
+        "1", "2", "3", "2nd", "3rd", "vs", "get", "gets", "make", "makes", "hit",
+        "hits", "win", "wins", "winner", "winners", "does", "do", "have", "has",
+        "one", "two", "three", "four", "five", "six", "other", "another", "any",
+        "all", "over", "under", "into", "out", "up", "about", "among", "highest",
+        "biggest", "total", "show", "movie", "film", "game", "work", "season",
+        "series", "person", "time",
+    }
+)
+_SPLIT_TITLE_SUBJECT_STOP: frozenset[str] = _SPLIT_UNIFIED_ANCHOR_STOP | frozenset(
+    {
+        "pure", "long", "shot", "shots", "hardest", "problem", "problems",
+        "science", "earth", "rattled", "gavel", "drop", "summed", "title",
+        "titles", "still", "big", "minus", "football", "wild", "card", "cards",
+        "stuff", "thing", "things", "cost", "costs", "now", "ever", "come",
+        "never", "finale", "week", "night", "countdown", "showdown", "fresh",
+        "rotten", "put", "ring", "take", "takes", "home", "gold", "nomination",
+        "nominations", "opening", "weekend", "box", "office", "america", "top",
+        "song", "songs", "album", "albums", "chart", "music", "tv", "back",
+        "release", "released", "announce", "announced",
+    }
+)
+_SPLIT_SUBJECT_ALIASES: dict[str, tuple[str, ...]] = {
+    "gta": ("gta vi", "grand theft auto vi", "grand theft auto 6", "gta 6"),
+    "elon": ("elon musk", "elon", "tesla", "spacex", "xai", "neuralink"),
+    "record": ("record", "album", "selling", "sales", "cd", "vinyl"),
+    "moon": ("moon", "lunar"),
+    "taylor": ("taylor swift", "taylor"),
+    "cast": ("cast",),
+    "festival": ("festival",),
+    "headliner": ("headliner", "headliners"),
+}
+_SPLIT_CLAUSE_STARTERS: frozenset[str] = frozenset(
+    {
+        "will", "who", "what", "when", "where", "which", "how", "is", "are",
+        "does", "do", "can", "could", "should", "would", "top", "next",
+        "major", "human", "best", "most", "first", "last", "new", "another",
+        "two", "three",
+    }
+)
+_SPLIT_PERSON_NON_NAMES: frozenset[str] = frozenset(
+    {
+        "united states", "new york", "los angeles", "san francisco", "new orleans",
+        "golden globe", "golden globes", "rotten tomatoes", "box office", "big game",
+        "world cup", "super bowl", "hall of fame", "year in search", "game awards",
+        "the game awards", "millennium prize", "best picture", "best actor",
+        "best actress", "best director", "best supporting", "best original",
+        "best narrative", "best audio", "best mobile", "best television",
+        "opening weekend", "top spotify", "top us", "sport illustrated",
+        "sports illustrated", "swimsuit issue", "saturday night", "night live",
+        "human moon", "first week", "album equivalent", "equivalent units",
+        "physical and", "digital sales", "sales combined", "cover models",
+        "cover model", "new episode", "stranger things", "hunger games",
+        "angry birds", "open world", "cliff booth", "miami vice",
+        "miles morales", "iron man", "dune part", "avengers doomsday",
+        "grand theft", "theft auto", "nuclear fusion", "merriam webster",
+        "oxford word", "time person", "sports personality", "bbc sports",
+        "critics choice", "choice awards", "the voice", "dancing with",
+        "minnesota yacht", "yacht club", "club festival", "jazz heritage",
+        "largest company", "searched person", "spotify artist", "spotify song",
+        "spotify album", "motion picture", "sale growth", "sales growth",
+    }
+)
+_SPLIT_PLATFORM_BRANDS: tuple[str, ...] = (
+    "spotify",
+    "billboard",
+    "apple music",
+    "netflix",
+    "youtube",
+    "tiktok",
+    "instagram",
+    "twitch",
+    "hbo",
+    "disney+",
+    "hulu",
+    "amazon",
+    "vogue",
+    "espn",
+    "pitchfork",
+    "rolling stone",
+    "metacritic",
+    "rotten tomatoes",
+)
+_AWAITED_RELEASE_PATTERN_RE = re.compile(
+    r"(?:\bwhen\s+will\b.*\brelease\b"
+    r"|\bnew\s+(?:album|episode|season|trailer|game|book)\b"
+    r"|\bannounced?\s+(?:before|in\s+202\d)\b"
+    r"|\breleased?\s+(?:by|before|in\s+202\d)\b)",
+    re.IGNORECASE,
+)
+_AWAITED_TITLE_HINT_RE = re.compile(
+    r"\b(?:come\s+out|ever|await(?:ed|ing)|release\s+date|this\s+year\s+or\s+never|countdown)\b",
+    re.IGNORECASE,
+)
+
+
+def _split_fold(text: str) -> str:
+    folded = _fold_text(text)
+    return re.sub(r"\bu\.s\.\b", "us", folded)
+
+
+def _split_singularize(word: str) -> str:
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 4 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
+def _split_norm_tokens(text: str) -> set[str]:
+    return {
+        _split_singularize(tok)
+        for tok in re.findall(r"[a-z0-9]+", _split_fold(text))
+        if not tok.isdigit() and len(tok) > 2
+    }
+
+
+def _strip_quoted_substrings(text: str) -> str:
+    return _SPLIT_QUOTED_RE.sub(" ", text or "")
+
+
+def _has_unified_parent_frame(set_title: str, member_titles: Sequence[str]) -> bool:
+    """Return True when every member belongs to one explicit unifying frame."""
+    if len(member_titles) < 2:
+        return True
+    folded = [_split_fold(t) for t in member_titles]
+
+    vs_m = re.search(
+        r"\b([a-z0-9][a-z0-9\s'&-]{1,24}?)\s+vs\.?\s+([a-z0-9][a-z0-9\s'&-]{1,24})\b",
+        _split_fold(set_title),
+    )
+    if vs_m:
+        left_toks = _split_norm_tokens(vs_m.group(1)) - _SPLIT_UNIFIED_ANCHOR_STOP
+        right_toks = _split_norm_tokens(vs_m.group(2)) - _SPLIT_UNIFIED_ANCHOR_STOP
+        combined = left_toks | right_toks
+        if left_toks and right_toks and all(_split_norm_tokens(t) & combined for t in member_titles):
+            return True
+
+    if all(f.startswith("top us ") for f in folded):
+        return True
+    if all(re.search(r"\bwhen will\b.*\brelease\b", f) for f in folded):
+        return True
+
+    title_toks = _split_norm_tokens(set_title)
+    if "album" in title_toks and all(
+        "album" in f or ("release" in f and "song" not in f) for f in folded
+    ):
+        return True
+    for key, variants in _SPLIT_SUBJECT_ALIASES.items():
+        # "elon" in title allows Elon-company sets (e.g. Elon + Tesla); never bypass Taylor sets.
+        if key == "taylor":
+            continue
+        if key == "elon" and "elon" not in title_toks:
+            continue
+        if all(any(re.search(rf"\b{re.escape(v)}s?\b", f) for v in variants) for f in folded):
+            return True
+
+    shows = [_extract_show_season(_strip_quoted_substrings(t)) for t in member_titles]
+    if shows and shows[0] and all(s == shows[0] for s in shows):
+        return True
+
+    if all("big game" in f for f in folded):
+        return True
+    return False
+
+
+def _extract_split_named_persons(text: str) -> set[str]:
+    persons: set[str] = set()
+    for clause in re.split(r"[:\u00b7?!.;]+", _strip_quoted_substrings(text)):
+        for match in re.finditer(r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,3})\b", clause):
+            words = match.group(1).split()
+            while words and _split_fold(words[0]) in _SPLIT_CLAUSE_STARTERS:
+                words.pop(0)
+            if len(words) < 2:
+                continue
+            cand = _split_fold(" ".join(words[:2]))
+            if cand not in _SPLIT_PERSON_NON_NAMES:
+                persons.add(cand)
+    return persons
+
+
+def detect_scout_split_set(
+    set_title: str,
+    members: Sequence[ScoutMarketRow],
+) -> Optional[ScoutSplitSetFinding]:
+    """Detect when a strict subset (2 <= k < N) shares a narrower subject (#13544)."""
+    n = len(members)
+    if n < 3:
+        return None
+    titles = [m.title or "" for m in members]
+    if _has_unified_parent_frame(set_title, titles):
+        return None
+
+    stripped = [_strip_quoted_substrings(t) for t in titles]
+    stripped_folded = [_split_fold(t) for t in stripped]
+    tok_sets = [_split_norm_tokens(t) for t in stripped]
+
+    # Detector A: Title concrete subject token fits strict subset (2 <= k < N)
+    title_words = [
+        _split_singularize(w)
+        for w in re.findall(r"[a-z0-9]+", _split_fold(set_title))
+        if len(w) > 2 and not w.isdigit()
+    ]
+    for tw in title_words:
+        if tw in _SPLIT_TITLE_SUBJECT_STOP:
+            continue
+        variants = _SPLIT_SUBJECT_ALIASES.get(tw, (tw,))
+        matched = tuple(
+            i
+            for i, (sf, ts) in enumerate(zip(stripped_folded, tok_sets))
+            if tw in ts or any(re.search(rf"\b{re.escape(v)}s?\b", sf) for v in variants)
+        )
+        if 2 <= len(matched) < n:
+            outliers = tuple(i for i in range(n) if i not in matched)
+            return ScoutSplitSetFinding(
+                reason="title_subject_split",
+                shared_feature=tw,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector B1: Structured colon/middot series prefix shared by 2 <= k < N
+    prefix_map: dict[str, list[int]] = defaultdict(list)
+    for i, raw in enumerate(stripped):
+        m = re.match(r"^\s*([A-Z][A-Za-z0-9&'.\-\s]{3,40}?)\s*(?::|\u00b7)\s+\S", raw)
+        if m:
+            pfx = re.sub(r"\s+", " ", _split_fold(m.group(1))).strip()
+            if len(pfx) >= 4 and pfx not in {"next", "top", "who", "what"}:
+                prefix_map[pfx].append(i)
+    for pfx, idxs in sorted(prefix_map.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if 2 <= len(idxs) < n:
+            matched = tuple(idxs)
+            outliers = tuple(i for i in range(n) if i not in idxs)
+            return ScoutSplitSetFinding(
+                reason="series_prefix_split",
+                shared_feature=pfx,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector B2: TV show with "Season N" shared by 2 <= k < N
+    show_names: set[str] = set()
+    for raw in stripped:
+        m = re.search(
+            r"\b([A-Z][A-Za-z0-9'&]+(?:\s+(?:the|with|of|and|[A-Z][A-Za-z0-9'&]+)){0,4})\s+Season\s+\d+\b",
+            raw,
+        )
+        if m:
+            show = re.sub(r"^(?:who will (?:win|host)|will)\s+", "", _split_fold(m.group(1))).strip()
+            if len(show) >= 4:
+                show_names.add(show)
+    for show in sorted(show_names):
+        matched = tuple(
+            i for i, sf in enumerate(stripped_folded) if re.search(rf"\b{re.escape(show)}\b", sf)
+        )
+        if 2 <= len(matched) < n:
+            outliers = tuple(i for i in range(n) if i not in matched)
+            return ScoutSplitSetFinding(
+                reason="show_season_split",
+                shared_feature=show,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector B3: Named person outside quotes shared by 2 <= k < N
+    person_map: dict[str, list[int]] = defaultdict(list)
+    for i, raw in enumerate(titles):
+        for person in _extract_split_named_persons(raw):
+            person_map[person].append(i)
+    for person, idxs in sorted(person_map.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if 2 <= len(idxs) < n:
+            matched = tuple(idxs)
+            outliers = tuple(i for i in range(n) if i not in idxs)
+            return ScoutSplitSetFinding(
+                reason="named_person_split",
+                shared_feature=person,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector B4: Platform / chart brand shared by 2 <= k < N
+    for brand in _SPLIT_PLATFORM_BRANDS:
+        matched = tuple(
+            i for i, sf in enumerate(stripped_folded) if re.search(rf"\b{re.escape(brand)}\b", sf)
+        )
+        if 2 <= len(matched) < n:
+            outliers = tuple(i for i in range(n) if i not in matched)
+            return ScoutSplitSetFinding(
+                reason="platform_brand_split",
+                shared_feature=brand,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector C: Trailing structured colon template suffix shared by 2 <= k < N
+    suffix_map: dict[str, list[int]] = defaultdict(list)
+    for i, raw in enumerate(stripped):
+        m = re.search(r":\s*([A-Za-z][A-Za-z\s]{1,28})\s*$", raw)
+        if m:
+            words = [_split_singularize(w) for w in re.findall(r"[a-z]+", _split_fold(m.group(1)))]
+            key = " ".join(words)
+            if key and key not in {"2026", "2027", "year"}:
+                suffix_map[key].append(i)
+    for sfx, idxs in sorted(suffix_map.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if 2 <= len(idxs) < n:
+            matched = tuple(idxs)
+            outliers = tuple(i for i in range(n) if i not in idxs)
+            return ScoutSplitSetFinding(
+                reason="template_suffix_split",
+                shared_feature=sfx,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector D1: Skipped ordinal rank (e.g. biggest/1st and 3rd without 2nd)
+    ranks_found: dict[int, int] = {}
+    for i, sf in enumerate(stripped_folded):
+        if re.search(r"\b(?:1st|first)\s+(?:biggest|highest|place|largest)\b|\b(?:has|be)\s+(?:the\s+)?biggest\b", sf):
+            ranks_found[1] = i
+        elif re.search(r"\b(?:2nd|second)\s+(?:biggest|highest|place|largest)\b", sf):
+            ranks_found[2] = i
+        elif re.search(r"\b(?:3rd|third)\s+(?:biggest|highest|place|largest)\b", sf):
+            ranks_found[3] = i
+    if 1 in ranks_found and 3 in ranks_found and 2 not in ranks_found:
+        matched = tuple(sorted(ranks_found.values()))
+        outliers = tuple(i for i in range(n) if i not in matched)
+        return ScoutSplitSetFinding(
+            reason="skipped_ordinal_rank",
+            shared_feature="1_and_3_missing_2",
+            coherent_indices=matched,
+            outlier_indices=outliers,
+            trimmable=False,
+        )
+
+    # Detector D2: Question stem shared by 2 <= k < N
+    stem_map: dict[str, list[int]] = defaultdict(list)
+    for i, sf in enumerate(stripped_folded):
+        m = re.match(r"^(which\s+[a-z]+\s+has)\b", sf)
+        if m:
+            stem_map[m.group(1)].append(i)
+    for stem, idxs in sorted(stem_map.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if 2 <= len(idxs) < n:
+            matched = tuple(idxs)
+            outliers = tuple(i for i in range(n) if i not in idxs)
+            return ScoutSplitSetFinding(
+                reason="question_stem_split",
+                shared_feature=stem,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    return None
+
+
+def trim_scout_split_set(
+    set_title: str,
+    members: Sequence[ScoutMarketRow],
+) -> tuple[list[ScoutMarketRow], list[tuple[ScoutMarketRow, str]], Optional[ScoutSplitSetFinding]]:
+    """Trim a split set down to its coherent narrower core when trimmable (#13544)."""
+    finding = detect_scout_split_set(set_title, members)
+    if finding is None:
+        return list(members), [], None
+    reason_str = f"split_set:{finding.reason}:{finding.shared_feature}"
+    if not finding.trimmable:
+        return [], [(m, reason_str) for m in members], finding
+    trim_reason = f"split_set_trimmed:{finding.reason}:{finding.shared_feature}"
+    kept = [members[i] for i in finding.coherent_indices]
+    trimmed = [(members[i], trim_reason) for i in finding.outlier_indices]
+    return kept, trimmed, finding
+
+
+def _matches_title_ilike(title: str, pattern: Optional[str]) -> bool:
+    raw_pat = (pattern or "").strip()
+    if not raw_pat:
+        return False
+    regex_parts = [re.escape(part) for part in raw_pat.split("%")]
+    regex_str = "^" + ".*".join(regex_parts) + "$"
+    if "%" not in raw_pat:
+        regex_str = re.escape(raw_pat)
+    return bool(re.search(regex_str, title or "", re.IGNORECASE))
+
+
+_STRUCTURED_PREFIX_RE = re.compile(
+    r"^\s*([A-Z][A-Za-z0-9&'.\-\s]{3,40}?)\s*(?::|\u00b7)\s+\S"
+)
+_STRUCTURED_SUFFIX_RE = re.compile(r":\s*([A-Za-z][A-Za-z\s]{1,28})\s*$")
+_SHOW_SEASON_RE = re.compile(
+    r"\b([A-Z][A-Za-z0-9'&]+(?:\s+(?:the|with|of|and|[A-Z][A-Za-z0-9'&]+)){0,4}\s+Season\s+\d+)\b"
+)
+_GENERIC_PREFIXES = frozenset({"next", "top", "who", "what"})
+_TEMPLATE_PHRASE_BOILERPLATE_RE = re.compile(
+    r"\b(?:released?\s+by|announced?\s+(?:by|before|this)|this\s+year|before\s+202\d|in\s+202\d)\b"
+)
+
+
+def _extract_structured_prefix(stripped_title: str) -> tuple[str, str]:
+    match = _STRUCTURED_PREFIX_RE.match(stripped_title or "")
+    if not match:
+        return "", ""
+    raw_pfx = re.sub(r"\s+", " ", match.group(1)).strip()
+    folded_pfx = re.sub(r"\s+", " ", _split_fold(raw_pfx)).strip()
+    if len(folded_pfx) < 4 or folded_pfx in _GENERIC_PREFIXES:
+        return "", ""
+    return folded_pfx, raw_pfx
+
+
+def _extract_structured_suffix(stripped_title: str) -> str:
+    match = _STRUCTURED_SUFFIX_RE.search(stripped_title or "")
+    if not match:
+        return ""
+    words = [_split_singularize(w) for w in re.findall(r"[a-z]+", _split_fold(match.group(1)))]
+    key = " ".join(words)
+    if key in {"", "2026", "2027", "year"}:
+        return ""
+    return key
+
+
+def _extract_show_season(stripped_title: str) -> str:
+    match = _SHOW_SEASON_RE.search(stripped_title or "")
+    if not match:
+        return ""
+    cleaned = re.sub(r"^(?:who will (?:win|host)|will)\s+", "", _split_fold(match.group(1))).strip()
+    return re.sub(r"\s+", " ", cleaned)
+
+
+def _extract_shared_template_phrase(stripped_titles: Sequence[str]) -> Optional[str]:
+    """Find the longest non-person 3+-word contiguous template phrase shared by all members."""
+    if len(stripped_titles) < 2:
+        return None
+    norm_lists: list[list[str]] = []
+    for raw in stripped_titles:
+        words = re.findall(r"[a-z0-9]+", _split_fold(raw))
+        if len(words) < 3:
+            return None
+        norm_lists.append(words)
+
+    first = norm_lists[0]
+    rest_joined = [" ".join(w) for w in norm_lists[1:]]
+    best: Optional[str] = None
+    best_score = (0, 0)
+    for start in range(len(first)):
+        for end in range(len(first), start + 2, -1):
+            span = first[start:end]
+            phrase = " ".join(span)
+            if len(phrase) < 12 or _TEMPLATE_PHRASE_BOILERPLATE_RE.search(phrase):
+                continue
+            content = [w for w in span if w not in _SPLIT_UNIFIED_ANCHOR_STOP and not w.isdigit()]
+            if len(content) < 2:
+                continue
+            pattern = re.compile(rf"(?:^|\s){re.escape(phrase)}(?:$|\s)")
+            if not all(pattern.search(joined) for joined in rest_joined):
+                continue
+            title_case = " ".join(w.capitalize() for w in span)
+            if _extract_split_named_persons(title_case):
+                continue
+            score = (len(content), len(span))
+            if score > best_score:
+                best_score = score
+                best = phrase
+    return best
+
+
+def _is_templated_title_ilike(pattern: str) -> bool:
+    cleaned = re.sub(r"%+", " ", (pattern or "").strip()).strip()
+    if not cleaned:
+        return False
+    if ":" in cleaned or re.search(r"\bseason\s+\d+\b", cleaned, re.IGNORECASE):
+        return not bool(_extract_split_named_persons(cleaned))
+    words = [
+        w
+        for w in re.findall(r"[a-z0-9]+", _split_fold(cleaned))
+        if w not in _SPLIT_UNIFIED_ANCHOR_STOP and not w.isdigit()
+    ]
+    return len(words) >= 3 and not bool(_extract_split_named_persons(cleaned))
+
+
+def _compound_title_has_dropped_facet(
+    set_title: str, kept_rows: Sequence[ScoutMarketRow]
+) -> Optional[str]:
+    """Return missing side label if a trimmed compound 'A & B' title lost a side."""
+    parts = re.split(r"\s+(?:&|and|vs\.?)\s+", set_title.strip(), flags=re.IGNORECASE)
+    if len(parts) < 2:
+        return None
+    kept_tokens: set[str] = set()
+    for row in kept_rows:
+        kept_tokens |= _split_norm_tokens(row.title or "")
+    for part in parts:
+        part_tokens = _split_norm_tokens(part) - _SPLIT_TITLE_SUBJECT_STOP
+        if part_tokens and not (part_tokens & kept_tokens):
+            return part.strip()
+    return None
+
+
+def _fill_missing_scout_members_with_details(
+    name: str,
+    category: str,
+    look: str,
+    members: Sequence[ScoutMarketRow],
+    catalog_by_id: Mapping[int, ScoutMarketRow],
+    *,
+    title_ilike: Optional[str] = None,
+    tagged_by_id: Optional[Mapping[int, ScoutTaggedMarket]] = None,
+    target_min_members: int = SCOUT_PREFERRED_MIN_MEMBERS,
+    max_members: int = 6,
+    min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
+    now: Optional[datetime] = None,
+) -> tuple[list[ScoutMarketRow], list[dict[str, Any]]]:
+    """Search the catalog using only structural title templates (#13544 / #13703)."""
+    del tagged_by_id  # Template-only fill: never expand solely by tagging group.
+    out = list(members)
+    if len(out) >= target_min_members or len(out) >= max_members:
+        return out, []
+    if len(out) < 2 and not (title_ilike or "").strip():
+        return out, []
+
+    existing_ids = {m.market_id for m in out}
+    existing_tkeys = {_normalized_title_key(m.title) for m in out if m.title}
+    existing_ckeys = {
+        (m.canonical_market_key or "").strip().lower()
+        for m in out
+        if (m.canonical_market_key or "").strip()
+    }
+
+    titles = [m.title or "" for m in out]
+    stripped = [_strip_quoted_substrings(t) for t in titles]
+
+    # Derive strict template anchors shared by ALL existing members.
+    shared_prefix: Optional[str] = None
+    pfx_pairs = [_extract_structured_prefix(raw) for raw in stripped]
+    if pfx_pairs and pfx_pairs[0][0] and all(p == pfx_pairs[0][0] for p, _ in pfx_pairs):
+        raw_pfx_sample = pfx_pairs[0][1]
+        if not _extract_split_named_persons(f"{raw_pfx_sample}: Placeholder"):
+            shared_prefix = pfx_pairs[0][0]
+
+    shared_suffix: Optional[str] = None
+    suffixes = [_extract_structured_suffix(raw) for raw in stripped]
+    if suffixes and suffixes[0] and all(s == suffixes[0] for s in suffixes):
+        shared_suffix = suffixes[0]
+
+    shared_show_season: Optional[str] = None
+    shows = [_extract_show_season(raw) for raw in stripped]
+    if shows and shows[0] and all(s == shows[0] for s in shows):
+        shared_show_season = shows[0]
+
+    shared_phrase = _extract_shared_template_phrase(stripped)
+
+    raw_ilike = (title_ilike or "").strip()
+    ilike_pat = raw_ilike if raw_ilike and _is_templated_title_ilike(raw_ilike) else None
+
+    if not any([ilike_pat, shared_prefix, shared_suffix, shared_show_season, shared_phrase]):
+        return out, []
+
+    anchor_parts: list[str] = []
+    if shared_suffix:
+        anchor_parts.append(f"template_suffix:{shared_suffix}")
+    if shared_prefix:
+        anchor_parts.append(f"template_prefix:{shared_prefix}")
+    if shared_show_season:
+        anchor_parts.append(f"show_season:{shared_show_season}")
+    if shared_phrase:
+        anchor_parts.append(f"template_phrase:{shared_phrase}")
+    if ilike_pat:
+        anchor_parts.append(f"title_ilike:{ilike_pat}")
+    fill_reason = "+".join(anchor_parts)
+
+    phrase_re = (
+        re.compile(rf"(?:^|\s){re.escape(shared_phrase)}(?:$|\s)")
+        if shared_phrase
+        else None
+    )
+
+    non_political_set = (category or "").strip().lower() not in _SCOUT_POLITICAL_CATEGORIES
+    scored_candidates: list[tuple[tuple[float, float, int], ScoutMarketRow]] = []
+    for cand in catalog_by_id.values():
+        if cand.market_id in existing_ids:
+            continue
+        tkey = _normalized_title_key(cand.title)
+        ckey = (cand.canonical_market_key or "").strip().lower()
+        if (tkey and tkey in existing_tkeys) or (ckey and ckey in existing_ckeys):
+            continue
+        ok, _ = check_scout_member(cand, min_volume=min_volume, now=now)
+        if not ok:
+            continue
+        if non_political_set and _is_political_market(cand):
+            continue
+        if _SCOUT_MECHANICAL_FAMILY_RE.search(cand.title or ""):
+            continue
+        if look == "map" and not _extract_specific_places(cand.title or ""):
+            continue
+
+        cand_stripped = _strip_quoted_substrings(cand.title or "")
+        cand_word_str = " ".join(re.findall(r"[a-z0-9]+", _split_fold(cand_stripped)))
+
+        relevance = 0.0
+        if ilike_pat:
+            if not _matches_title_ilike(cand.title or "", ilike_pat):
+                continue
+            relevance += 5.0
+        if shared_prefix:
+            cand_pfx, _ = _extract_structured_prefix(cand_stripped)
+            if cand_pfx != shared_prefix:
+                continue
+            relevance += 4.0
+        if shared_suffix:
+            cand_sfx = _extract_structured_suffix(cand_stripped)
+            if cand_sfx != shared_suffix:
+                continue
+            relevance += 4.0
+        if shared_show_season:
+            cand_show = _extract_show_season(cand_stripped)
+            if cand_show != shared_show_season:
+                continue
+            relevance += 4.0
+        if phrase_re is not None:
+            if not phrase_re.search(cand_word_str):
+                continue
+            relevance += 3.5
+
+        if relevance <= 0.0:
+            continue
+        if (cand.category or "").strip().lower() == (category or "").strip().lower():
+            relevance += 0.5
+        vol = float(cand.volume) if cand.volume is not None else 0.0
+        scored_candidates.append(((-relevance, -vol, cand.market_id), cand))
+
+    scored_candidates.sort(key=lambda pair: pair[0])
+    added_details: list[dict[str, Any]] = []
+    limit = min(target_min_members, max_members)
+    for _, cand in scored_candidates:
+        if len(out) >= limit:
+            break
+        tkey = _normalized_title_key(cand.title)
+        ckey = (cand.canonical_market_key or "").strip().lower()
+        if (tkey and tkey in existing_tkeys) or (ckey and ckey in existing_ckeys):
+            continue
+        trial = out + [cand]
+        if detect_scout_split_set(name, trial) is not None:
+            continue
+        out = trial
+        added_details.append(
+            {
+                "market_id": cand.market_id,
+                "title": cand.title,
+                "reason": fill_reason,
+            }
+        )
+        existing_ids.add(cand.market_id)
+        if tkey:
+            existing_tkeys.add(tkey)
+        if ckey:
+            existing_ckeys.add(ckey)
+
+    return out, added_details
+
+
+def fill_missing_scout_members(
+    name: str,
+    category: str,
+    look: str,
+    members: Sequence[ScoutMarketRow],
+    catalog_by_id: Mapping[int, ScoutMarketRow],
+    *,
+    title_ilike: Optional[str] = None,
+    tagged_by_id: Optional[Mapping[int, ScoutTaggedMarket]] = None,
+    target_min_members: int = SCOUT_PREFERRED_MIN_MEMBERS,
+    max_members: int = 6,
+    min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
+    now: Optional[datetime] = None,
+) -> tuple[list[ScoutMarketRow], list[int]]:
+    """Search the full live catalog for missing siblings when a set has <4 members (#13544)."""
+    out, details = _fill_missing_scout_members_with_details(
+        name,
+        category,
+        look,
+        members,
+        catalog_by_id,
+        title_ilike=title_ilike,
+        tagged_by_id=tagged_by_id,
+        target_min_members=target_min_members,
+        max_members=max_members,
+        min_volume=min_volume,
+        now=now,
+    )
+    return out, [int(item["market_id"]) for item in details]
+
+
 def validate_scout_proposed_set(
     proposal: ScoutProposedSet,
     catalog_by_id: Mapping[int, ScoutMarketRow],
@@ -1099,6 +1823,9 @@ def validate_scout_proposed_set(
     existing_slugs: frozenset[str] = frozenset(),
     min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
     min_members: int = SCOUT_MIN_LIVE_MEMBERS,
+    preferred_min_members: int = SCOUT_PREFERRED_MIN_MEMBERS,
+    tagged_by_id: Optional[Mapping[int, ScoutTaggedMarket]] = None,
+    fill_missing_members: bool = True,
     now: Optional[datetime] = None,
 ) -> tuple[Optional[ScoutValidatedSet], Optional[str]]:
     """Run all code-enforced checks on one model-proposed set."""
@@ -1131,6 +1858,13 @@ def validate_scout_proposed_set(
     if selector_kind == "title_ilike" and not (proposal.title_ilike or "").strip():
         return None, "missing_title_ilike_selector"
 
+    kicker = (proposal.kicker or "DISCOVER SET").strip().upper()[:32]
+    category = (proposal.category or "culture").strip().lower()
+    footer = (
+        (proposal.footer or "").strip()
+        or "Separate markets grouped together. They do not add up to 100%."
+    )
+
     passing: list[ScoutMarketRow] = []
     dropped: list[tuple[int, str]] = []
     dropped_rows: list[tuple[ScoutMarketRow, str]] = []
@@ -1150,18 +1884,103 @@ def validate_scout_proposed_set(
                 dropped_rows.append((row, reason_str))
 
     deduped_rows, deduped_pairs = dedupe_cross_venue_members(passing)
+
+    early_mech_err = check_scout_no_mechanical_sales_downloads(name, why, deduped_rows)
+    if early_mech_err is not None:
+        return None, early_mech_err
+
+    trimmed_members: list[tuple[int, str]] = []
+    trimmed_member_details: list[dict[str, Any]] = []
+    narrowed_rows, trimmed_outliers, split_finding = trim_scout_split_set(name, deduped_rows)
+    if split_finding is not None and not split_finding.trimmable:
+        return (
+            None,
+            f"split_set:{split_finding.reason}:{split_finding.shared_feature}",
+        )
+    if split_finding is not None:
+        # Never lean on missing-member fill to rescue a trim that dropped below min_members.
+        if len(narrowed_rows) < min_members:
+            return (
+                None,
+                f"split_set_too_small_after_trim:{split_finding.reason}:"
+                f"{split_finding.shared_feature}:{len(narrowed_rows)}<{min_members}",
+            )
+        deduped_rows = narrowed_rows
+        for out_row, out_reason in trimmed_outliers:
+            trimmed_members.append((out_row.market_id, out_reason))
+            trimmed_member_details.append(
+                {
+                    "market_id": out_row.market_id,
+                    "title": out_row.title,
+                    "reason": out_reason,
+                }
+            )
+            dropped.append((out_row.market_id, out_reason))
+            dropped_rows.append((out_row, out_reason))
+
+        dropped_facet = (
+            _compound_title_has_dropped_facet(name, deduped_rows)
+            if split_finding.reason == "title_subject_split"
+            else None
+        )
+        if split_finding.reason != "title_subject_split" or dropped_facet is not None:
+            narrow_name = (proposal.narrowed_name or "").strip()
+            narrow_why = (proposal.narrowed_why_better_together or "").strip()
+            if (
+                not narrow_name
+                or not narrow_why
+                or _normalized_title_key(narrow_name) == _normalized_title_key(name)
+            ):
+                return (
+                    None,
+                    f"split_set_needs_narrow_title:{split_finding.reason}:{split_finding.shared_feature}",
+                )
+            narrow_ok, narrow_taste_reason = check_fun_taste_guard(narrow_name)
+            if not narrow_ok:
+                return None, f"set_title_{narrow_taste_reason}"
+            if _SCOUT_NON_FUN_HARM_RE.search(narrow_name):
+                return None, "set_title_taste_guard:severe_harm"
+            if detect_scout_split_set(narrow_name, deduped_rows) is not None:
+                return (
+                    None,
+                    f"split_set_needs_narrow_title:{split_finding.reason}:{split_finding.shared_feature}",
+                )
+            name = narrow_name
+            why = narrow_why
+    elif len(deduped_rows) < min_members:
+        return (
+            None,
+            f"too_few_live_members:{len(deduped_rows)}<{min_members}",
+        )
+
+    added_details: list[dict[str, Any]] = []
+    if fill_missing_members and len(deduped_rows) < preferred_min_members:
+        deduped_rows, added_details = _fill_missing_scout_members_with_details(
+            name,
+            category,
+            look,
+            deduped_rows,
+            catalog_by_id,
+            title_ilike=(proposal.title_ilike or "").strip() or None,
+            tagged_by_id=tagged_by_id,
+            target_min_members=preferred_min_members,
+            min_volume=min_volume,
+            now=now,
+        )
+    added_member_ids = [int(item["market_id"]) for item in added_details]
+
     if len(deduped_rows) < min_members:
         return (
             None,
             f"too_few_live_members:{len(deduped_rows)}<{min_members}",
         )
 
-    kicker = (proposal.kicker or "DISCOVER SET").strip().upper()[:32]
-    category = (proposal.category or "culture").strip().lower()
-    footer = (
-        (proposal.footer or "").strip()
-        or "Separate markets grouped together. They do not add up to 100%."
-    )
+    recheck_split = detect_scout_split_set(name, deduped_rows)
+    if recheck_split is not None:
+        return (
+            None,
+            f"split_set:{recheck_split.reason}:{recheck_split.shared_feature}",
+        )
 
     for rule_err in (
         check_scout_voice_words(name, kicker, why, footer),
@@ -1188,6 +2007,10 @@ def validate_scout_proposed_set(
             footer=footer,
             dropped_members=tuple(dropped),
             deduped_members=tuple(deduped_pairs),
+            trimmed_members=tuple(trimmed_members),
+            added_member_ids=tuple(added_member_ids),
+            trimmed_member_details=tuple(trimmed_member_details),
+            added_members=tuple(added_details),
         ),
         None,
     )
@@ -1230,6 +2053,24 @@ def build_scout_rule_file_definition(
     else:
         rule["selector"] = {"fun_tag": validated_set.slug}
 
+    trimmed_records = [dict(item) for item in validated_set.trimmed_member_details]
+    if not trimmed_records and validated_set.trimmed_members:
+        trimmed_records = [
+            {"market_id": int(mid), "title": "", "reason": str(reason)}
+            for mid, reason in validated_set.trimmed_members
+        ]
+    added_records = [dict(item) for item in validated_set.added_members]
+    if not added_records and validated_set.added_member_ids:
+        member_titles = {int(m.market_id): m.title for m in validated_set.members}
+        added_records = [
+            {
+                "market_id": int(mid),
+                "title": member_titles.get(int(mid), ""),
+                "reason": "catalog_fill",
+            }
+            for mid in validated_set.added_member_ids
+        ]
+
     definition: dict[str, Any] = {
         "slug": validated_set.slug,
         "stage": "preview",
@@ -1258,6 +2099,8 @@ def build_scout_rule_file_definition(
             "created_at": created_at.astimezone(timezone.utc).isoformat(),
             "verified_member_count": len(validated_set.members),
             "fun_tag": validated_set.slug,
+            "trimmed_members": trimmed_records,
+            "added_members": added_records,
         },
         "rule": rule,
     }
@@ -1385,6 +2228,79 @@ def retire_scout_set(
     updated = [r for r in retired_sets if _slugify(str(r.get("slug") or "")) != clean_slug]
     updated.append(entry)
     return updated
+
+
+def _normalize_reader_dismissed_sets(
+    reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
+) -> dict[str, int]:
+    """Normalize reader bundle dismissals (`{set_id: count}`) for scout prompts."""
+    if isinstance(reader_dismissed_sets, Mapping):
+        out: dict[str, int] = {}
+        for k, v in reader_dismissed_sets.items():
+            clean_id = str(k or "").strip()
+            try:
+                cnt = int(v)
+            except (TypeError, ValueError):
+                cnt = 0
+            if clean_id and cnt > 0:
+                out[clean_id] = cnt
+        return out
+    out = {}
+    for row in reader_dismissed_sets:
+        if not isinstance(row, Mapping):
+            continue
+        clean_id = str(row.get("item_id") or row.get("set_id") or "").strip()
+        try:
+            cnt = int(row.get("dismiss_count") or row.get("count") or 0)
+        except (TypeError, ValueError):
+            cnt = 0
+        if clean_id and cnt > 0:
+            out[clean_id] = out.get(clean_id, 0) + cnt
+    return out
+
+
+async def load_reader_dismissed_sets(
+    db: Any,
+    *,
+    lookback_days: int = 30,
+    now: Optional[datetime] = None,
+) -> dict[str, int]:
+    """Read user-provenance grouped-card ('not for me') dismissals by set (#13644).
+
+    Queries ``DiscoverInteraction`` rows written by the grouped card ``✕`` button
+    (``item_type == 'bundle'``, ``action in ('dismiss', 'unlike')``,
+    ``provenance == 'user'``) so the scout (385: A) can read per-set dismissals.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.models import DiscoverInteraction
+
+    ref_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    cutoff = ref_now - timedelta(days=max(1, int(lookback_days)))
+    stmt = (
+        select(
+            DiscoverInteraction.item_id,
+            func.count(DiscoverInteraction.id).label("dismiss_count"),
+        )
+        .where(
+            DiscoverInteraction.item_type == "bundle",
+            DiscoverInteraction.action.in_(("dismiss", "unlike")),
+            DiscoverInteraction.provenance == "user",
+            DiscoverInteraction.created_at >= cutoff,
+        )
+        .group_by(DiscoverInteraction.item_id)
+        .order_by(
+            func.count(DiscoverInteraction.id).desc(),
+            DiscoverInteraction.item_id.asc(),
+        )
+    )
+    rows = (await db.execute(stmt)).all()
+    counts: dict[str, int] = {}
+    for raw_id, count in rows:
+        clean_id = str(raw_id or "").strip()
+        if clean_id and int(count or 0) > 0:
+            counts[clean_id] = int(count)
+    return counts
 
 
 # ---------------------------------------------------------------------------
@@ -1595,6 +2511,7 @@ def run_scout_set_writing_pass(
     approved_examples: Sequence[FunMarketEntry],
     retired_sets: Sequence[Mapping[str, Any]] = (),
     morning_grades: Sequence[Mapping[str, Any]] = (),
+    reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
     job_budget: Optional[JobBudget] = None,
     min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
     now: Optional[datetime] = None,
@@ -1628,6 +2545,10 @@ def run_scout_set_writing_pass(
         "7. No politics-only, cabinet/government-exit, or routine election sets.\n"
         "8. Taste guard: no named person's pregnancy, health, affairs, divorce, arrest, trial, or death "
         "(engagements are allowed); no war/violence/nukes. Never repeat a retired/down-graded set.\n"
+        "9. Set unity (#13544): NEVER bundle a subset sharing a narrower person, show, platform, award, "
+        "or template (e.g. 2 Taylor Swift or Critics Choice or Spotify rows) alongside unrelated filler rows; "
+        "if a strong set has fewer than 4 members, include all available matching sibling markets from the catalog "
+        "(never skip an ordinal rank like 2nd when 1st and 3rd are included).\n"
         "Return strict JSON only:\n"
         '{"sets": [{"slug": str, "name": str, "kicker": str, "category": str, '
         '"why_better_together": str, "look": "map"|"faces"|"bars", '
@@ -1668,10 +2589,15 @@ def run_scout_set_writing_pass(
         f"{f.family_key} (open={f.open_count}, sample={f.sample_title})"
         for f in uncovered_families[:80]
     ]
+    normalized_reader_dismissed = _normalize_reader_dismissed_sets(reader_dismissed_sets)
+    top_reader_dismissed = sorted(
+        normalized_reader_dismissed.items(), key=lambda kv: (-kv[1], kv[0])
+    )[:20]
     user_prompt = (
         f"Approved examples: {json.dumps(_approved_examples_summary(approved_examples))}\n"
         f"Retired sets (do NOT repeat): {json.dumps(list(retired_sets)[:20])}\n"
         f"Recent morning grades: {json.dumps(list(morning_grades)[:20])}\n"
+        f"Reader dismissed sets ('not for me'): {json.dumps(dict(top_reader_dismissed))}\n"
         f"Uncovered sentinel families ({len(family_lines)}):\n"
         + "\n".join(family_lines)
         + f"\n\nTagged group counts ({len(group_counts)} themes): "
@@ -1740,6 +2666,7 @@ def run_nightly_fun_scout(
     approved_examples: Optional[Sequence[FunMarketEntry]] = None,
     retired_sets: Sequence[Mapping[str, Any]] = (),
     morning_grades: Sequence[Mapping[str, Any]] = (),
+    reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
     existing_slugs: frozenset[str] = frozenset(),
     licence_state: Optional[ScoutLicenceState] = None,
     prior_monthly_spend_usd: float = 0.0,
@@ -1777,6 +2704,7 @@ def run_nightly_fun_scout(
             retired_sets=retired_sets,
             job_budget=job_budget,
         )
+    normalized_reader_dismissed = _normalize_reader_dismissed_sets(reader_dismissed_sets)
     proposals, set_model_used, set_cost = run_scout_set_writing_pass(
         tagged,
         catalog_by_id,
@@ -1785,6 +2713,7 @@ def run_nightly_fun_scout(
         approved_examples=examples,
         retired_sets=retired_sets,
         morning_grades=morning_grades,
+        reader_dismissed_sets=normalized_reader_dismissed,
         job_budget=job_budget,
         min_volume=min_volume,
         now=run_now,
@@ -1800,6 +2729,7 @@ def run_nightly_fun_scout(
     validated: list[ScoutValidatedSet] = []
     rejected: list[dict[str, Any]] = []
     seen_slugs = set(existing_slugs)
+    tagged_by_id = {t.market_id: t for t in tagged}
     for prop in proposals:
         vset, err = validate_scout_proposed_set(
             prop,
@@ -1808,6 +2738,7 @@ def run_nightly_fun_scout(
             retired_title_keys=retired_title_keys,
             existing_slugs=frozenset(seen_slugs),
             min_volume=min_volume,
+            tagged_by_id=tagged_by_id,
             now=run_now,
         )
         if vset is not None:
@@ -1963,3 +2894,263 @@ def evaluate_tagging_pass_against_seed_sets(
         "unique_seed_survived": len(unique_seed_ids & tagged_ids),
         "groups": groups_report,
     }
+
+
+def build_fun_scout_set_producer(definition: Mapping[str, Any]) -> Any:
+    """Build a ``RoundupProducer`` from a Nightly Fun Scout rule definition (#13102)."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.models.models import FuturesMarket
+    from app.utils.container_presentation import market_destination
+    from app.utils.discover_fun_tags import fun_market_ids_for_sub_tag
+    from app.utils.roundup_containers import (
+        RoundupMembers,
+        RoundupProducer,
+        RoundupRefusal,
+    )
+
+    validated = validate_roundup_definition(dict(definition))
+    if isinstance(validated.get("sections"), Sequence) and not isinstance(
+        validated.get("sections"), (str, bytes)
+    ) and len(validated["sections"]) > 0:
+        from app.utils.container_machinery import build_container_machinery_producer
+
+        return build_container_machinery_producer(validated)
+
+    rule = dict(validated.get("rule") or {})
+    selector = rule.get("selector") if isinstance(rule.get("selector"), Mapping) else {}
+    fun_tag = str(selector.get("fun_tag") or "").strip()
+    title_ilike = str(rule.get("title_ilike") or selector.get("title_ilike") or "").strip()
+    scout_meta = validated.get("scout") if isinstance(validated.get("scout"), Mapping) else {}
+    graded_ids = [
+        int(mid)
+        for mid in (scout_meta.get("graded_member_ids") or ())
+        if isinstance(mid, int) and mid > 0
+    ]
+    allow_rule_additions = bool(rule.get("allow_rule_additions"))
+    min_members = max(1, int(rule.get("min_numbered_members") or SCOUT_MIN_LIVE_MEMBERS))
+    card_rows = max(1, int(rule.get("card_rows") or 4))
+    open_status = "open"
+
+    async def _produce(db: Any) -> RoundupMembers | RoundupRefusal:
+        if graded_ids:
+            graded_stmt = (
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.status == open_status,
+                    FuturesMarket.id.in_(graded_ids),
+                )
+            )
+            graded_rows = list((await db.execute(graded_stmt)).scalars().all())
+            graded_order = {mid: idx for idx, mid in enumerate(graded_ids)}
+            graded_rows.sort(
+                key=lambda m: (
+                    graded_order.get(int(getattr(m, "id", 0) or 0), len(graded_order)),
+                    int(getattr(m, "id", 0) or 0),
+                )
+            )
+            market_rows = list(graded_rows)
+            if allow_rule_additions and (title_ilike or fun_tag):
+                detector = globals().get("detect_scout_split_set")
+                row_cls = globals().get("ScoutMarketRow")
+                if callable(detector) and row_cls is not None:
+                    extra_rows: list[Any] = []
+                    if title_ilike:
+                        extra_stmt = (
+                            select(FuturesMarket)
+                            .options(selectinload(FuturesMarket.outcomes))
+                            .where(
+                                FuturesMarket.status == open_status,
+                                FuturesMarket.name.ilike(title_ilike),
+                            )
+                            .limit(50)
+                        )
+                        extra_rows = list((await db.execute(extra_stmt)).scalars().all())
+                    elif fun_tag:
+                        extra_ids = [int(mid) for mid in fun_market_ids_for_sub_tag(fun_tag)]
+                        if extra_ids:
+                            extra_stmt = (
+                                select(FuturesMarket)
+                                .options(selectinload(FuturesMarket.outcomes))
+                                .where(
+                                    FuturesMarket.status == open_status,
+                                    FuturesMarket.id.in_(extra_ids),
+                                )
+                            )
+                            extra_rows = list((await db.execute(extra_stmt)).scalars().all())
+                    seen_mids = {int(getattr(m, "id")) for m in market_rows}
+                    default_cat = str(validated.get("category") or "culture")
+                    extra_rows.sort(
+                        key=lambda m: (
+                            -(float(getattr(m, "volume", None) or 0.0)),
+                            int(getattr(m, "id", 0) or 0),
+                        )
+                    )
+                    for extra in extra_rows:
+                        eid = int(getattr(extra, "id"))
+                        if eid in seen_mids:
+                            continue
+                        trial_markets = market_rows + [extra]
+                        trial_scout_rows = [
+                            row_cls(
+                                market_id=int(getattr(m, "id")),
+                                title=str(getattr(m, "question", None) or getattr(m, "name", None) or "").strip(),
+                                category=str(getattr(m, "category", None) or default_cat),
+                                source=str(getattr(m, "source", None) or "kalshi"),
+                            )
+                            for m in trial_markets
+                        ]
+                        if detector(str(validated["name"]), trial_scout_rows) is None:
+                            market_rows = trial_markets
+                            seen_mids.add(eid)
+        elif title_ilike:
+            stmt = (
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.status == open_status,
+                    FuturesMarket.name.ilike(title_ilike),
+                )
+                .limit(50)
+            )
+            market_rows = list((await db.execute(stmt)).scalars().all())
+            market_rows.sort(
+                key=lambda m: (
+                    -(float(getattr(m, "volume", None) or 0.0)),
+                    int(getattr(m, "id", 0) or 0),
+                )
+            )
+        elif fun_tag:
+            candidate_ids = [int(mid) for mid in fun_market_ids_for_sub_tag(fun_tag)]
+            if not candidate_ids:
+                return RoundupRefusal(("empty_fun_scout_selector",))
+            stmt = (
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.status == open_status,
+                    FuturesMarket.id.in_(candidate_ids),
+                )
+            )
+            market_rows = list((await db.execute(stmt)).scalars().all())
+            market_rows.sort(
+                key=lambda m: (
+                    -(float(getattr(m, "volume", None) or 0.0)),
+                    int(getattr(m, "id", 0) or 0),
+                )
+            )
+        else:
+            return RoundupRefusal(("missing_fun_scout_selector",))
+
+        if len(market_rows) < min_members:
+            return RoundupRefusal(
+                (f"too_few_live_members:{len(market_rows)}<{min_members}",)
+            )
+
+        member_cards: list[dict[str, Any]] = []
+        rows_out: list[dict[str, Any]] = []
+        default_category = str(validated.get("category") or "culture")
+        for m in market_rows:
+            mid = int(getattr(m, "id"))
+            title = str(getattr(m, "question", None) or getattr(m, "name", None) or "").strip()
+            if not title:
+                continue
+            outs = sorted(
+                list(getattr(m, "outcomes", None) or ()),
+                key=lambda o: (
+                    getattr(o, "rank", None) or 9999,
+                    -(float(getattr(o, "current_probability", None) or 0.0)),
+                ),
+            )
+            # No made-up numbers (196-A): never invent 0.5 / "Yes" for missing prices/outcomes.
+            lead = None
+            prob: float | None = None
+            lead_name = ""
+            delta: float | None = None
+            for cand_out in outs:
+                cand_name = str(getattr(cand_out, "name", None) or "").strip()
+                raw_prob = getattr(cand_out, "current_probability", None)
+                if not cand_name or raw_prob is None:
+                    continue
+                try:
+                    p_val = float(raw_prob)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(p_val) or not (0.0 <= p_val <= 1.0):
+                    continue
+                lead = cand_out
+                prob = p_val
+                lead_name = cand_name
+                raw_delta = getattr(cand_out, "probability_change_24h", None)
+                if raw_delta is not None:
+                    try:
+                        d_val = float(raw_delta)
+                        if math.isfinite(d_val):
+                            delta = d_val
+                    except (TypeError, ValueError):
+                        delta = None
+                break
+            if lead is None or prob is None or not lead_name:
+                continue
+            member_cards.append(
+                {
+                    "id": mid,
+                    "name": title,
+                    "question": title,
+                    "category": str(getattr(m, "category", None) or default_category),
+                    "top_outcomes": [
+                        {
+                            "name": lead_name,
+                            "probability": round(prob, 4),
+                            "movement": round(delta, 4) if delta is not None else None,
+                        }
+                    ],
+                    "destination": market_destination(mid),
+                }
+            )
+            rows_out.append(
+                {
+                    "label": title,
+                    "probability": round(prob, 4),
+                    "rendered_percent": round(prob * 100),
+                    "movement": round(delta, 4) if delta is not None else None,
+                    "destination_href": f"/markets/{mid}",
+                }
+            )
+
+        if len(member_cards) < min_members:
+            return RoundupRefusal(
+                (f"too_few_live_members:{len(member_cards)}<{min_members}",)
+            )
+
+        return RoundupMembers(
+            member_cards,
+            rows_out[:card_rows],
+            footer=str(validated.get("footer") or ""),
+            title=str(validated["name"]),
+            kicker=str(validated.get("kicker") or "CURIOSITIES"),
+            destination_href=validated.get("destination_href"),
+        )
+
+    return RoundupProducer(
+        slug=str(validated["slug"]),
+        name=str(validated["name"]),
+        kind=str(validated.get("kind") or "roundup"),
+        category=str(validated.get("category") or "culture"),
+        section_title=validated.get("section_title") or str(validated["name"]),
+        footer=str(validated.get("footer") or ""),
+        produce=_produce,
+        membership=str(validated.get("membership") or "computed-produced"),
+        relations=tuple(validated["relations"]),
+        level=str(validated["level"]),
+        rule=rule,
+        tag=validated.get("tag"),
+        kicker=str(validated.get("kicker") or "CURIOSITIES"),
+        destination_href=validated.get("destination_href"),
+        stage=str(validated.get("stage") or "preview"),
+        look=str(validated.get("look") or "bars"),
+        enabled=(lambda: bool(validated["enabled"])) if "enabled" in validated else None,
+    )
+

@@ -60,7 +60,7 @@ export default function MarketBrowser({
           />
         )}
         <div
-          className="flex-1 min-w-0 flex gap-1 overflow-x-auto pb-1 lg:basis-full lg:flex-wrap lg:gap-1.5 lg:overflow-visible lg:pb-0"
+          className="basis-full flex flex-wrap gap-1.5"
           aria-label={`${label} categories`}
         >
           {groups.map((group) => (

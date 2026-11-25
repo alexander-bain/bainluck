@@ -56,7 +56,7 @@ struct SmallLiveGameView: View {
                 )
             }
             .padding(12)
-            .widgetURL(URL(string: "bainluck://events/\(game.id)"))
+            .widgetURL(WidgetLinkTagging13261.tagged(URL(string: "bainluck://events/\(game.id)"), kind: "live_games_small"))
         } else {
             noGamesView
         }
@@ -122,7 +122,7 @@ struct SmallLiveGameView: View {
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .widgetURL(URL(string: "bainluck://events"))
+        .widgetURL(WidgetLinkTagging13261.tagged(URL(string: "bainluck://events"), kind: "live_games_small"))
     }
 }
 
@@ -186,7 +186,7 @@ struct MediumLiveGamesView: View {
     }
 
     private func compactGameRow(_ game: WidgetGame) -> some View {
-        Link(destination: URL(string: "bainluck://events/\(game.id)")!) {
+        Link(destination: WidgetLinkTagging13261.tagged(URL(string: "bainluck://events/\(game.id)")!, kind: "live_games_medium")) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(game.sport.uppercased())
@@ -296,7 +296,7 @@ struct MediumLiveGamesView: View {
     }
 
     private func compactDiscoverRow(_ item: WidgetDiscoverItem, leaderSize: CGFloat, nameSize: CGFloat) -> some View {
-        Link(destination: URL(string: "bainluck://futures/\(item.id)")!) {
+        Link(destination: WidgetLinkTagging13261.tagged(URL(string: "bainluck://futures/\(item.id)")!, kind: "live_games_medium")) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.category.uppercased())
                     .font(.system(size: 8, weight: .bold))
@@ -354,7 +354,7 @@ struct MediumLiveGamesView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(12)
-        .widgetURL(URL(string: "bainluck://events"))
+        .widgetURL(WidgetLinkTagging13261.tagged(URL(string: "bainluck://events"), kind: "live_games_medium"))
     }
 }
 
@@ -417,7 +417,7 @@ struct LargeDashboardView: View {
     }
 
     private func largeGameRow(_ game: WidgetGame) -> some View {
-        Link(destination: URL(string: "bainluck://events/\(game.id)")!) {
+        Link(destination: WidgetLinkTagging13261.tagged(URL(string: "bainluck://events/\(game.id)")!, kind: "live_games_large")) {
             HStack(spacing: 8) {
                 // Away team
                 HStack(spacing: 6) {
@@ -537,7 +537,7 @@ struct LargeDashboardView: View {
     }
 
     private func largeDiscoverRow(_ item: WidgetDiscoverItem) -> some View {
-        Link(destination: URL(string: "bainluck://futures/\(item.id)")!) {
+        Link(destination: WidgetLinkTagging13261.tagged(URL(string: "bainluck://futures/\(item.id)")!, kind: "live_games_large")) {
             HStack(alignment: .top, spacing: 8) {
                 // Category pill
                 Text(item.category.uppercased())
@@ -597,7 +597,7 @@ struct LargeDashboardView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(14)
-        .widgetURL(URL(string: "bainluck://events"))
+        .widgetURL(WidgetLinkTagging13261.tagged(URL(string: "bainluck://events"), kind: "live_games_large"))
     }
 }
 
