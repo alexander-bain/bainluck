@@ -22,6 +22,26 @@ private let leagueGridSlugToSportKey: [String: String] = [
     "golf": "golf",
 ]
 
+// Grid slug -> canonical league display name for navigation bar + follow button (#13666 / #13662 item 1).
+// Never use the server's championship-grid `name` ("NBA Playoffs 2026-27") as the league page title:
+// in-season league pages show games first and that playoff string overflows 390pt.
+private let leagueGridSlugDisplayNames: [String: String] = [
+    "nba": "NBA",
+    "nfl": "NFL",
+    "mlb": "MLB",
+    "nhl": "NHL",
+    "wnba": "WNBA",
+    "ncaa-basketball": "NCAAB",
+    "ncaa-women-basketball": "WNCAAB",
+    "ncaa-football": "NCAAF",
+    "epl": "Premier League",
+    "mls": "MLS",
+    "la-liga": "La Liga",
+    "champions-league": "Champions League",
+    "bundesliga": "Bundesliga",
+    "golf": "Golf",
+]
+
 final class LeagueGridViewModel: ObservableObject {
     let slug: String
     @Published private(set) var grid: ChampionshipGridResponse?
@@ -51,7 +71,10 @@ final class LeagueGridViewModel: ObservableObject {
     }
 
     var displayName: String {
-        grid?.name ?? slug.replacingOccurrences(of: "-", with: " ").uppercased()
+        if let canonical = leagueGridSlugDisplayNames[slug] {
+            return canonical
+        }
+        return slug.replacingOccurrences(of: "-", with: " ").uppercased()
     }
 
     var liveGames: [FeedEventData] {
