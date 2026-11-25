@@ -2504,6 +2504,10 @@ jobs:
       id: db_13573_team_futures_q1_pg
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
       run: "python -m pytest tests/integration/test_team_futures_q1_pg_13573.py -v -rs > /tmp/teamfuturesq113573.txt 2>&1 || {\n  cat /tmp/teamfuturesq113573.txt\n  exit 1\n}\ncat /tmp/teamfuturesq113573.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/teamfuturesq113573.txt; then\n  echo \"::error::#13573 team futures Q1 gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]1 passed([,[:space:]]|$)\" /tmp/teamfuturesq113573.txt || {\n  echo \"::error::#13573 team futures Q1 gate did not execute its case\"\n  exit 1\n}\n"
+    - name: "#12818 search untraded 60-row window guard (real Postgres)"
+      id: db_12818_search_untraded_window_guard
+      if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+      run: bash ../.github/scripts/run-12612-pg-gates.sh search12818 tests/test_search_untraded_window_guard_12818.py
 
     - name: "#12252 shared tail \u2014 upload this attempt's 55-A retries for the flake sentinel"
       id: db_flaky_retries_upload
