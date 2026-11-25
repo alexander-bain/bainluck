@@ -64,6 +64,7 @@ private struct MyStuffLandingBody295A: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
+                SiriProbabilityTip12315(horizontalPadding: 0)
                 followingAndPinsStrip
 
                 if landingVM.loading

@@ -12,10 +12,12 @@ import SwiftUI
 /// iPhone and iPad only, like the contextual tips (#10876): no Mac placement
 /// has been seen.
 struct SiriProbabilityTip12315: View {
+    var horizontalPadding: CGFloat? = nil
     @AppStorage(SiriProbabilityTipRule12315.dismissedKey) private var dismissed = false
     @AppStorage(SiriProbabilityTipRule12315.usedKey) private var used = false
 
-    init() {
+    init(horizontalPadding: CGFloat? = nil) {
+        self.horizontalPadding = horizontalPadding
         // A `reset` launch clears the flags once per run, before they are read.
         _ = SiriProbabilityTipRule12315.launchOption
     }
@@ -26,7 +28,7 @@ struct SiriProbabilityTip12315: View {
                                              option: SiriProbabilityTipRule12315.launchOption) {
             SiriTipView(intent: GetProbabilityIntent10873(),
                         isVisible: Binding(get: { true }, set: { if !$0 { dismissed = true } }))
-                .padding(.horizontal)
+                .padding(.horizontal, horizontalPadding ?? 16)
                 .padding(.bottom, 8)
                 .accessibilityIdentifier("myStuffSiriTip12315")
         }
