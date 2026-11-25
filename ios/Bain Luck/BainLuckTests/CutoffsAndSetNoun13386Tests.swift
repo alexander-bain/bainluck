@@ -328,6 +328,127 @@ final class CutoffsAndSetNoun13386Tests: XCTestCase {
         return (img, lines)
     }
 
+    /// Reads 8.5 pt initials inside the rendered 22 pt colored circle badges on the left column
+    /// by detecting each colored circle band (`x: 5%..16%`), binarizing white interior glyph pixels
+    /// onto a high-contrast padded canvas at 4x scale, and running English Vision OCR.
+    private func recognizeBadgeTokens(in image: UIImage) throws -> Set<String> {
+        let cg = try XCTUnwrap(image.cgImage)
+        let w = cg.width, h = cg.height
+        let xStart = Int(Double(w) * 0.05)
+        let xEnd = Int(Double(w) * 0.16)
+        let sw = max(1, xEnd - xStart)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        var rgba = [UInt8](repeating: 0, count: sw * h * 4)
+        guard let strip = cg.cropping(to: CGRect(x: xStart, y: 0, width: sw, height: h)),
+              let stripCtx = CGContext(
+                  data: &rgba,
+                  width: sw,
+                  height: h,
+                  bitsPerComponent: 8,
+                  bytesPerRow: sw * 4,
+                  space: cs,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+              ) else {
+            XCTFail("Failed to allocate badge strip buffer")
+            return []
+        }
+        stripCtx.draw(strip, in: CGRect(x: 0, y: 0, width: sw, height: h))
+
+        var rowCounts = [Int](repeating: 0, count: h)
+        for y in 0..<h {
+            var count = 0
+            for x in 0..<sw {
+                let idx = (y * sw + x) * 4
+                let r = Int(rgba[idx]), g = Int(rgba[idx + 1]), b = Int(rgba[idx + 2])
+                if max(r, max(g, b)) - min(r, min(g, b)) > 40 { count += 1 }
+            }
+            rowCounts[y] = count
+        }
+
+        var bands: [(Int, Int)] = []
+        var inBand = false
+        var bandStart = 0
+        for y in 0..<h {
+            if rowCounts[y] >= 12 {
+                if !inBand { inBand = true; bandStart = y }
+            } else if inBand {
+                inBand = false
+                if y - bandStart >= 24 && y - bandStart <= 70 { bands.append((bandStart, y)) }
+            }
+        }
+        if inBand && h - bandStart >= 24 && h - bandStart <= 70 { bands.append((bandStart, h)) }
+
+        let cyrillicToLatin: [Character: Character] = [
+            "А": "A", "В": "B", "С": "C", "Е": "E", "Н": "H",
+            "К": "K", "М": "M", "О": "O", "Р": "P", "Т": "T", "Х": "X",
+        ]
+        var found: Set<String> = []
+        for (y0, y1) in bands {
+            var minX = sw, maxX = 0
+            for y in y0..<y1 {
+                for x in 0..<sw {
+                    let idx = (y * sw + x) * 4
+                    let r = Int(rgba[idx]), g = Int(rgba[idx + 1]), b = Int(rgba[idx + 2])
+                    if max(r, max(g, b)) - min(r, min(g, b)) > 40 {
+                        minX = min(minX, x)
+                        maxX = max(maxX, x)
+                    }
+                }
+            }
+            guard maxX - minX >= 24 else { continue }
+            let bw = maxX - minX + 1, bh = y1 - y0
+            let pad = 20, upscale = 4
+            let outW = (bw + pad * 2) * upscale, outH = (bh + pad * 2) * upscale
+            var tile = [UInt8](repeating: 255, count: bw * bh * 4)
+            for ty in 0..<bh {
+                for tx in 0..<bw {
+                    let dx = Double(tx) - Double(bw) / 2.0
+                    let dy = Double(ty) - Double(bh) / 2.0
+                    let radius = Double(min(bw, bh)) * 0.44
+                    if dx * dx + dy * dy <= radius * radius {
+                        let sIdx = ((y0 + ty) * sw + (minX + tx)) * 4
+                        let r = Int(rgba[sIdx]), g = Int(rgba[sIdx + 1]), b = Int(rgba[sIdx + 2])
+                        let lum = (r * 299 + g * 587 + b * 114) / 1000
+                        let chroma = max(r, max(g, b)) - min(r, min(g, b))
+                        let v: UInt8 = (lum > 140 && chroma < 80) ? 0 : 255
+                        let tIdx = (ty * bw + tx) * 4
+                        tile[tIdx] = v; tile[tIdx + 1] = v; tile[tIdx + 2] = v; tile[tIdx + 3] = 255
+                    }
+                }
+            }
+            guard let tCtx = CGContext(
+                      data: &tile, width: bw, height: bh, bitsPerComponent: 8, bytesPerRow: bw * 4, space: cs,
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+                  let tCG = tCtx.makeImage(),
+                  let uCtx = CGContext(
+                      data: nil, width: outW, height: outH, bitsPerComponent: 8, bytesPerRow: outW * 4, space: cs,
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else {
+                continue
+            }
+            uCtx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            uCtx.fill(CGRect(x: 0, y: 0, width: outW, height: outH))
+            uCtx.interpolationQuality = .high
+            uCtx.draw(tCG, in: CGRect(x: pad * upscale, y: pad * upscale, width: bw * upscale, height: bh * upscale))
+            guard let uCG = uCtx.makeImage() else { continue }
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            req.usesLanguageCorrection = false
+            req.automaticallyDetectsLanguage = false
+            req.recognitionLanguages = ["en-US"]
+            try VNImageRequestHandler(cgImage: uCG, options: [:]).perform([req])
+            let raw = (req.results ?? [])
+                .compactMap { $0.topCandidates(1).first?.string }
+                .joined()
+                .uppercased()
+            let normalized = String(raw.map { cyrillicToLatin[$0] ?? $0 })
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalized.isEmpty {
+                found.insert(normalized)
+            }
+        }
+        return found
+    }
+
     func testRenderedPagesZeroTruncationAndOptionalCaptures() throws {
         let outDir = ProcessInfo.processInfo.environment["BUILDER_C_RENDER_13386_DIR"]
         if let outDir, !outDir.isEmpty {
@@ -384,7 +505,8 @@ final class CutoffsAndSetNoun13386Tests: XCTestCase {
                 XCTAssertTrue(joined.contains("Oklahoma City 14%"), "NBA \(width) \(scheme):\n\(joined)")
                 XCTAssertTrue(joined.contains("Philadelphia 11%"), "NBA \(width) \(scheme):\n\(joined)")
                 XCTAssertTrue(joined.contains("Boston 10%"), "NBA \(width) \(scheme):\n\(joined)")
-                XCTAssertTrue(lines.contains { $0 == "SA" }, "Expected SA badge on NBA \(width) \(scheme):\n\(joined)")
+                let badgeTokens = try recognizeBadgeTokens(in: img)
+                XCTAssertTrue(badgeTokens.contains("SA") || lines.contains { $0 == "SA" }, "Expected SA badge on NBA \(width) \(scheme):\n\(lines.joined(separator: "\n"))\nbadges=\(badgeTokens)")
                 let tag = scheme == .dark ? "dark" : "light"
                 try maybeSave(img, "13386-nba-\(Int(width))-\(tag).png")
             }
@@ -829,9 +951,9 @@ final class CutoffsAndSetNoun13386Tests: XCTestCase {
             .background(bg)
 
             let (img, lines) = try renderAndOCR(view, width: 390, scheme: scheme)
-            let tokenSet = Set(lines)
+            let tokenSet = try recognizeBadgeTokens(in: img).union(Set(lines))
             for expected in ["CAR", "COL", "VGK", "FLA", "LAD", "MIL", "SD", "NYY", "SA", "OKC", "PHI", "BOS"] {
-                XCTAssertTrue(tokenSet.contains(expected), "Missing badge \(expected) at 390 \(scheme):\n\(lines.joined(separator: "\n"))")
+                XCTAssertTrue(tokenSet.contains(expected), "Missing badge \(expected) at 390 \(scheme):\n\(tokenSet)\nfull=\(lines.joined(separator: "\n"))")
             }
             for forbidden in ["HUR", "AVA", "PAN", "BRE", "SDP"] {
                 XCTAssertFalse(tokenSet.contains(forbidden), "Stale fallback badge \(forbidden) leaked at 390 \(scheme):\n\(lines.joined(separator: "\n"))")
