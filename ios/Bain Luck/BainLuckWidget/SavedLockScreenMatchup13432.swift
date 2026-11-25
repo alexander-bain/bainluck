@@ -90,8 +90,9 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                         away: buildSide(short: art.away.short, primaryHex: art.away.primaryHex, secondaryHex: art.away.secondaryHex, logo: awayLogo, score: awayScore, isWinner: false),
                         home: buildSide(short: art.home.short, primaryHex: art.home.primaryHex, secondaryHex: art.home.secondaryHex, logo: homeLogo, score: homeScore, isWinner: false),
                         bigText: "\(drawPre)%",
+                        bigOwnerLabel: "Draw",
                         bigIsHome: true,
-                        smallLine: "Draw pregame · Final",
+                        smallLine: "Pregame · Final",
                         accessibilityText: "Final. \(matchup), \(awayScore)–\(homeScore). Draw had \(drawPre)% pregame. Open your game in Bain Luck."
                     )
                 )
@@ -110,8 +111,9 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                     away: buildSide(short: art.away.short, primaryHex: art.away.primaryHex, secondaryHex: art.away.secondaryHex, logo: awayLogo, score: awayScore, isWinner: !homeWon),
                     home: buildSide(short: art.home.short, primaryHex: art.home.primaryHex, secondaryHex: art.home.secondaryHex, logo: homeLogo, score: homeScore, isWinner: homeWon),
                     bigText: "\(pct)%",
+                    bigOwnerLabel: winnerAbbr,
                     bigIsHome: homeWon,
-                    smallLine: "\(winnerAbbr) pregame · Final",
+                    smallLine: "Pregame · Final",
                     accessibilityText: "Final. \(winnerName) \(max(homeScore, awayScore)), \(loserName) \(min(homeScore, awayScore)). \(winnerName) had \(pct)% pregame. Open your game in Bain Luck."
                 )
             )
@@ -246,7 +248,7 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
             ownerName = out.ownerName
         }
 
-        let smallLine = threeWay == nil ? "\(ownerAbbr) · \(when)" : when
+        let smallLine = when
         let matchup = "\(event.awayTeam) at \(event.homeTeam)"
         let scorePart = validScores.map { " \(event.awayTeam) \($0.away), \(event.homeTeam) \($0.home)." } ?? ""
         let speech: String = {
@@ -262,6 +264,7 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                 away: buildSide(short: art.away.short, primaryHex: art.away.primaryHex, secondaryHex: art.away.secondaryHex, logo: awayLogo, score: validScores?.away, isWinner: false),
                 home: buildSide(short: art.home.short, primaryHex: art.home.primaryHex, secondaryHex: art.home.secondaryHex, logo: homeLogo, score: validScores?.home, isWinner: false),
                 bigText: bigText,
+                bigOwnerLabel: ownerAbbr,
                 bigIsHome: bigIsHome,
                 smallLine: smallLine,
                 accessibilityText: speech,
