@@ -105,6 +105,7 @@ async def test_write_prices_batches_snapshots_in_chunks_of_100():
     assert batch0[-1]["outcome_id"] == 100
     assert batch1[0]["outcome_id"] == 101
     assert batch1[-1]["outcome_id"] == 105
+    assert all(r["american_odds"] is not None and r["captured_at"] is not None for r in batch0 + batch1)
 
 
 async def test_write_prices_single_row_preserves_scalar_params():
@@ -191,6 +192,7 @@ async def test_venue_poll_30s_write_market_batches_moved_and_trailing_points(mon
     assert _snapshot_batch_sizes(session) == [3]
     rows = _snapshot_rows(session.snapshot_inserts[0][0])
     assert [r["outcome_id"] for r in rows] == [11, 12, 13]
+    assert all(r["american_odds"] is not None and r["captured_at"] is not None for r in rows)
     assert session.commits == 1
 
 

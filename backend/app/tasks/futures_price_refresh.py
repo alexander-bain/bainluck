@@ -1539,25 +1539,14 @@ def _mark_label_attempted(market_ids: list[int]) -> None:
 SNAPSHOT_INSERT_BATCH_SIZE = 100
 
 
-async def _insert_futures_odds_snapshots(
-    session,
+def _snapshot_row_batches(
     rows: list[dict],
     *,
     batch_size: int = SNAPSHOT_INSERT_BATCH_SIZE,
-) -> None:
-    """Insert ``FuturesOddsSnapshot`` rows in bounded multi-row batches (#13673)."""
-    if not rows:
-        return
-    from app.models.models import FuturesOddsSnapshot
-
+):
+    """Yield ``FuturesOddsSnapshot`` row chunks bounded by ``batch_size`` (#13673)."""
     for idx in range(0, len(rows), batch_size):
-        chunk = rows[idx : idx + batch_size]
-        stmt = (
-            pg_insert(FuturesOddsSnapshot).values(**chunk[0])
-            if len(chunk) == 1
-            else pg_insert(FuturesOddsSnapshot).values(chunk)
-        )
-        await session.execute(stmt)
+        yield rows[idx : idx + batch_size]
 
 
 async def _write_prices(
@@ -1661,7 +1650,7 @@ async def _write_prices(
       "no price" is refused upstream, and a refusal must not arrive here as a
       write.
     """
-    from app.models.models import FuturesOutcome
+    from app.models.models import FuturesOddsSnapshot, FuturesOutcome
     from app.utils.feed_market_quality import is_empty_book_midpoint
     from app.utils.market_staleness import OBSERVATION_LAG_DAYS  # #7582
     from app.utils.odds_math import probability_to_american
@@ -2022,7 +2011,22 @@ async def _write_prices(
             )
             written += 1
 
-    await _insert_futures_odds_snapshots(session, snapshot_rows)
+    for chunk in _snapshot_row_batches(snapshot_rows):
+        if len(chunk) == 1:
+            row = chunk[0]
+            stmt = pg_insert(FuturesOddsSnapshot).values(
+                outcome_id=row["outcome_id"],
+                bookmaker=row["bookmaker"],
+                probability=row["probability"],
+                american_odds=row["american_odds"],
+                yes_bid=row["yes_bid"],
+                yes_ask=row["yes_ask"],
+                last_price=row["last_price"],
+                captured_at=row["captured_at"],
+            )
+        else:
+            stmt = pg_insert(FuturesOddsSnapshot).values(chunk)
+        await session.execute(stmt)
 
     # ── #7582: stop publishing a price the venue stopped quoting ─────────────
     #

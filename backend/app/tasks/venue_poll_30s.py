@@ -924,8 +924,11 @@ async def write_market(
     The history bound runs after the write, on the last points of only the legs
     that moved plus the unchanged legs holding a deferred point.
     """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.models import FuturesOddsSnapshot
     from app.tasks.futures_price_refresh import (
-        _insert_futures_odds_snapshots,
+        _snapshot_row_batches,
         _write_prices,
     )
     from app.utils.futures_rank import rerank_market_field_skip_locked_stmt
@@ -982,7 +985,22 @@ async def write_market(
                 {"probability": prob, "yes_bid": bid, "yes_ask": ask},
                 "history_trailing_points",
             )
-    await _insert_futures_odds_snapshots(session, snapshot_rows)
+    for chunk in _snapshot_row_batches(snapshot_rows):
+        if len(chunk) == 1:
+            row = chunk[0]
+            stmt = pg_insert(FuturesOddsSnapshot).values(
+                outcome_id=row["outcome_id"],
+                bookmaker=row["bookmaker"],
+                probability=row["probability"],
+                american_odds=row["american_odds"],
+                yes_bid=row["yes_bid"],
+                yes_ask=row["yes_ask"],
+                last_price=row["last_price"],
+                captured_at=row["captured_at"],
+            )
+        else:
+            stmt = pg_insert(FuturesOddsSnapshot).values(chunk)
+        await session.execute(stmt)
     await session.commit()
     deferred.add |= defer
     deferred.remove |= undefer
