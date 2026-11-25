@@ -40,7 +40,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -2230,6 +2230,79 @@ def retire_scout_set(
     return updated
 
 
+def _normalize_reader_dismissed_sets(
+    reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
+) -> dict[str, int]:
+    """Normalize reader bundle dismissals (`{set_id: count}`) for scout prompts."""
+    if isinstance(reader_dismissed_sets, Mapping):
+        out: dict[str, int] = {}
+        for k, v in reader_dismissed_sets.items():
+            clean_id = str(k or "").strip()
+            try:
+                cnt = int(v)
+            except (TypeError, ValueError):
+                cnt = 0
+            if clean_id and cnt > 0:
+                out[clean_id] = cnt
+        return out
+    out = {}
+    for row in reader_dismissed_sets:
+        if not isinstance(row, Mapping):
+            continue
+        clean_id = str(row.get("item_id") or row.get("set_id") or "").strip()
+        try:
+            cnt = int(row.get("dismiss_count") or row.get("count") or 0)
+        except (TypeError, ValueError):
+            cnt = 0
+        if clean_id and cnt > 0:
+            out[clean_id] = out.get(clean_id, 0) + cnt
+    return out
+
+
+async def load_reader_dismissed_sets(
+    db: Any,
+    *,
+    lookback_days: int = 30,
+    now: Optional[datetime] = None,
+) -> dict[str, int]:
+    """Read user-provenance grouped-card ('not for me') dismissals by set (#13644).
+
+    Queries ``DiscoverInteraction`` rows written by the grouped card ``✕`` button
+    (``item_type == 'bundle'``, ``action in ('dismiss', 'unlike')``,
+    ``provenance == 'user'``) so the scout (385: A) can read per-set dismissals.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.models import DiscoverInteraction
+
+    ref_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    cutoff = ref_now - timedelta(days=max(1, int(lookback_days)))
+    stmt = (
+        select(
+            DiscoverInteraction.item_id,
+            func.count(DiscoverInteraction.id).label("dismiss_count"),
+        )
+        .where(
+            DiscoverInteraction.item_type == "bundle",
+            DiscoverInteraction.action.in_(("dismiss", "unlike")),
+            DiscoverInteraction.provenance == "user",
+            DiscoverInteraction.created_at >= cutoff,
+        )
+        .group_by(DiscoverInteraction.item_id)
+        .order_by(
+            func.count(DiscoverInteraction.id).desc(),
+            DiscoverInteraction.item_id.asc(),
+        )
+    )
+    rows = (await db.execute(stmt)).all()
+    counts: dict[str, int] = {}
+    for raw_id, count in rows:
+        clean_id = str(raw_id or "").strip()
+        if clean_id and int(count or 0) > 0:
+            counts[clean_id] = int(count)
+    return counts
+
+
 # ---------------------------------------------------------------------------
 # Step 2: Model prompts, response parsing, and two-stage runner
 # ---------------------------------------------------------------------------
@@ -2438,6 +2511,7 @@ def run_scout_set_writing_pass(
     approved_examples: Sequence[FunMarketEntry],
     retired_sets: Sequence[Mapping[str, Any]] = (),
     morning_grades: Sequence[Mapping[str, Any]] = (),
+    reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
     job_budget: Optional[JobBudget] = None,
     min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
     now: Optional[datetime] = None,
@@ -2515,10 +2589,15 @@ def run_scout_set_writing_pass(
         f"{f.family_key} (open={f.open_count}, sample={f.sample_title})"
         for f in uncovered_families[:80]
     ]
+    normalized_reader_dismissed = _normalize_reader_dismissed_sets(reader_dismissed_sets)
+    top_reader_dismissed = sorted(
+        normalized_reader_dismissed.items(), key=lambda kv: (-kv[1], kv[0])
+    )[:20]
     user_prompt = (
         f"Approved examples: {json.dumps(_approved_examples_summary(approved_examples))}\n"
         f"Retired sets (do NOT repeat): {json.dumps(list(retired_sets)[:20])}\n"
         f"Recent morning grades: {json.dumps(list(morning_grades)[:20])}\n"
+        f"Reader dismissed sets ('not for me'): {json.dumps(dict(top_reader_dismissed))}\n"
         f"Uncovered sentinel families ({len(family_lines)}):\n"
         + "\n".join(family_lines)
         + f"\n\nTagged group counts ({len(group_counts)} themes): "
@@ -2587,6 +2666,7 @@ def run_nightly_fun_scout(
     approved_examples: Optional[Sequence[FunMarketEntry]] = None,
     retired_sets: Sequence[Mapping[str, Any]] = (),
     morning_grades: Sequence[Mapping[str, Any]] = (),
+    reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
     existing_slugs: frozenset[str] = frozenset(),
     licence_state: Optional[ScoutLicenceState] = None,
     prior_monthly_spend_usd: float = 0.0,
@@ -2624,6 +2704,7 @@ def run_nightly_fun_scout(
             retired_sets=retired_sets,
             job_budget=job_budget,
         )
+    normalized_reader_dismissed = _normalize_reader_dismissed_sets(reader_dismissed_sets)
     proposals, set_model_used, set_cost = run_scout_set_writing_pass(
         tagged,
         catalog_by_id,
@@ -2632,6 +2713,7 @@ def run_nightly_fun_scout(
         approved_examples=examples,
         retired_sets=retired_sets,
         morning_grades=morning_grades,
+        reader_dismissed_sets=normalized_reader_dismissed,
         job_budget=job_budget,
         min_volume=min_volume,
         now=run_now,

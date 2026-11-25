@@ -23,8 +23,10 @@ export interface DeadlineFamilyCardProps {
   title?: string;
   sharedQuestion?: string | null;
   storyKey?: string | null;
+  setId?: string | null;
   positionIndex?: number;
   defaultExpanded?: boolean;
+  onDismiss?: () => void;
 }
 
 /**
@@ -42,8 +44,10 @@ export interface DeadlineFamilyCardProps {
 export function DeadlineFamilyCard({
   model,
   items = [],
+  setId,
   positionIndex,
   defaultExpanded = false,
+  onDismiss,
 }: DeadlineFamilyCardProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [imgErrored, setImgErrored] = useState(false);
@@ -375,12 +379,14 @@ export function DeadlineFamilyCard({
         title={model.title}
         sharedQuestion={model.sharedQuestion}
         storyKey={model.storyKey}
+        setId={setId ?? model.storyKey}
         positionIndex={positionIndex}
         priceObservedAt={
           model.familyState === "settled" || rep.isSettled
             ? null
             : rep.priceObservedAt
         }
+        onDismiss={onDismiss}
       />
     </article>
   );

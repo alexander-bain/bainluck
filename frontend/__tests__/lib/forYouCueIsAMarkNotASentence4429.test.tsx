@@ -71,7 +71,7 @@ describe("#4429 — every cue in the vocabulary is a mark", () => {
   it("CONTROL: the vocabulary is non-empty and every entry has both forms", () => {
     // Without this, every `it.each` below would iterate nothing and the file
     // would pass while asserting about no cue at all.
-    expect(FOR_YOU_VOCABULARY.length).toBeGreaterThanOrEqual(13);
+    expect(FOR_YOU_VOCABULARY.length).toBeGreaterThanOrEqual(11);
     for (const entry of FOR_YOU_VOCABULARY) {
       expect(entry.mark.length).toBeGreaterThan(0);
       expect(entry.label.length).toBeGreaterThan(0);
@@ -96,11 +96,9 @@ describe("#4429 — every cue in the vocabulary is a mark", () => {
     }
   );
 
-  it("🔴 the one Alex named reads as a mark", () => {
-    const cue = forYouCue(boosted(["discover_interest:0.22"]));
-    expect(cue?.mark).toBe("Following");
-    // 21 characters became 9. The claim did not change; its length did.
-    expect(cue?.label).toBe("A category you follow");
+  it("broad category/sport follow tokens (`discover_interest`, `sport_boost`) no longer draw cues (#13644)", () => {
+    expect(forYouCue(boosted(["discover_interest:0.22"]))).toBeNull();
+    expect(forYouCue(boosted(["sport_boost:0.20"]))).toBeNull();
   });
 
   it("the longest cue in the set is now shorter than the shortest old sentence", () => {

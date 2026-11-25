@@ -3330,6 +3330,35 @@ def _drop_dismissed_keyed_items(
     return [item for item in items if _keeps(item)]
 
 
+def _filter_dismissed_bundle_items(
+    items: list[dict],
+    ctx: PersonalizationContext,
+    *,
+    my_teams_only: bool = False,
+) -> list[dict]:
+    """Drop bundled/grouped cards that this viewer dismissed (#13644)."""
+    if my_teams_only or not ctx.recent_dismissed_keys:
+        return items
+    from app.utils.roundup_containers import _roundup_card_candidate_keys
+
+    dismissed = {
+        str(k).strip()
+        for k in ctx.recent_dismissed_keys
+        if isinstance(k, str) and str(k).strip()
+    }
+    if not dismissed:
+        return items
+
+    kept: list[dict] = []
+    for item in items:
+        if item.get("type") == "bundle" and (
+            _roundup_card_candidate_keys(item) & dismissed
+        ):
+            continue
+        kept.append(item)
+    return kept
+
+
 def _keyed_item_sport_identity(item: dict) -> tuple[str | None, str | None]:
     """``(sport_key, sport_category)`` for a string-keyed card, from the
     mappings that ALREADY name its sport — never from its title. #1927.
@@ -6739,6 +6768,9 @@ async def get_feed(
             _previous_at = _record_feed_timing(
                 _timings, _started_at, _previous_at, "roundups"
             )
+        feed_items = _filter_dismissed_bundle_items(
+            feed_items, ctx, my_teams_only=my_teams_only
+        )
 
         # T4-B2 / #5102: the pin, on the BUILD path. Applied to ``feed_items``
         # before the slice below, which is the only placement that works —
@@ -11702,8 +11734,8 @@ async def _load_personalization_context(
                     continue
             last_seen_dt = _utc(last_seen)
             if action in _DISCOVER_NEGATIVE_ACTIONS:
-                if item_id is None:
-                    recent_dismissed_keys.add(item_id_raw)
+                if item_id is None or item_type == "bundle":
+                    recent_dismissed_keys.add(str(item_id_raw).strip())
                 elif item_type == "event":
                     recent_dismissed_event_ids.add(item_id)
                 elif item_type == "futures":
