@@ -22,7 +22,6 @@ import { winChanceHistory, winChances } from "@/lib/guess/winChance";
 
 const byKind = <K extends PackCard["kind"]>(kind: K) =>
   pack.cards.find((c) => c.kind === kind) as Extract<PackCard, { kind: K }>;
-const indexOf = (card: PackCard) => pack.cards.indexOf(card);
 
 /** A player who answers every card with whatever `pick` returns. */
 function player(name: string, pick: (card: PackCard, index: number) => number, from: PlayerEntry["from"] = "here"): PlayerEntry {
