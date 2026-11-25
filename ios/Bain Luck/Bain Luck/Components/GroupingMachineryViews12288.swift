@@ -1754,6 +1754,7 @@ struct MachineryDiscoverCardView: View {
     @ScaledMetric(relativeTo: .headline) private var titleSize: CGFloat = 17
     @ScaledMetric(relativeTo: .subheadline) private var rowSize: CGFloat = 14
     @ScaledMetric(relativeTo: .caption) private var subSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .title3) private var duelPctSize: CGFloat = 21
 
     private var cardBgColor: Color {
         colorScheme == .dark ? Color(red: 0.11, green: 0.11, blue: 0.12) : DS.cardBg
@@ -1803,6 +1804,8 @@ struct MachineryDiscoverCardView: View {
 
             if card.isEventCard {
                 eventRowsBody
+            } else if card.formId == .duelBar, card.outcomeRows.count >= 2 {
+                duelBarBody
             } else {
                 outcomeRowsBody
             }
@@ -2014,6 +2017,159 @@ struct MachineryDiscoverCardView: View {
                 .padding(.vertical, 8)
                 if idx < rows.count - 1 {
                     Rectangle().fill(borderColor).frame(height: 1)
+                }
+            }
+        }
+    }
+
+    // MARK: - Pile 7 (`duel_bar` split bar on Discover cards)
+
+    @ViewBuilder
+    private var duelBarBody: some View {
+        let rows = Array(card.outcomeRows.prefix(3))
+        let midIdx: Int? = rows.count >= 3
+            ? (rows.firstIndex {
+                let lower = $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return lower == "tie" || lower == "draw" || lower == "neither"
+            } ?? 1)
+            : nil
+        let sides = rows.enumerated().filter { $0.offset != midIdx }.map(\.element)
+        if sides.count >= 2 {
+            let left = sides[0]
+            let right = sides[1]
+            let middle = midIdx.map { rows[$0] }
+            let colors = MachineryColorContrast12288.pairHexes(
+                awayHex: left.art?.accentColor,
+                homeHex: right.art?.accentColor,
+                scheme: colorScheme
+            )
+            let leftColor = Color(hex: colors.away)
+            let rightColor = Color(hex: colors.home)
+            let leftPct = max(0, left.renderedPercent)
+            let rightPct = max(0, right.renderedPercent)
+            let midPct = max(0, middle?.renderedPercent ?? 0)
+            let totalPct = max(1, leftPct + rightPct + midPct)
+
+            VStack(alignment: .leading, spacing: 10) {
+                if dynamicTypeSize >= .xxxLarge {
+                    VStack(alignment: .leading, spacing: 10) {
+                        duelSideRow(outcome: left, dotColor: leftColor)
+                        if let middle {
+                            duelSideRow(outcome: middle, dotColor: secondaryInk.opacity(0.45))
+                        }
+                        duelSideRow(outcome: right, dotColor: rightColor)
+                    }
+                } else {
+                    HStack(alignment: .top, spacing: 12) {
+                        HStack(spacing: 10) {
+                            MachinerySubjectArtView(art: left.art, width: 36, height: 36)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    if left.art?.verifiedURL == nil {
+                                        Circle().fill(leftColor).frame(width: 9, height: 9)
+                                    }
+                                    Text(left.name)
+                                        .font(.system(size: min(rowSize, 20), weight: .semibold))
+                                        .foregroundStyle(primaryInk)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                    Text(left.probabilityLabel)
+                                        .font(.system(size: min(duelPctSize, 26), weight: .heavy).monospacedDigit())
+                                        .foregroundStyle(primaryInk)
+                                    if let m = SourceMarkButton(left.sourceMark, number: left.probability, subject: left.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
+                                        m
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        HStack(spacing: 10) {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(right.name)
+                                        .font(.system(size: min(rowSize, 20), weight: .semibold))
+                                        .foregroundStyle(primaryInk)
+                                        .multilineTextAlignment(.trailing)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if right.art?.verifiedURL == nil {
+                                        Circle().fill(rightColor).frame(width: 9, height: 9)
+                                    }
+                                }
+                                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                    Text(right.probabilityLabel)
+                                        .font(.system(size: min(duelPctSize, 26), weight: .heavy).monospacedDigit())
+                                        .foregroundStyle(primaryInk)
+                                    if let m = SourceMarkButton(right.sourceMark, number: right.probability, subject: right.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
+                                        m
+                                    }
+                                }
+                            }
+                            MachinerySubjectArtView(art: right.art, width: 36, height: 36)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                }
+
+                GeometryReader { geo in
+                    let leftFrac = CGFloat(min(94, max(6, Int(round(Double(leftPct) * 100.0 / Double(totalPct)))))) / 100.0
+                    let midFrac = middle == nil ? 0 : CGFloat(max(4, Int(round(Double(midPct) * 100.0 / Double(totalPct))))) / 100.0
+                    HStack(spacing: 2) {
+                        Rectangle()
+                            .fill(leftColor)
+                            .frame(width: max(8, geo.size.width * leftFrac - 1))
+                        if middle != nil {
+                            Rectangle()
+                                .fill(secondaryInk.opacity(colorScheme == .dark ? 0.42 : 0.28))
+                                .frame(width: max(6, geo.size.width * midFrac - 1))
+                        }
+                        Rectangle()
+                            .fill(rightColor)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .frame(height: 11)
+                .clipShape(Capsule())
+
+                if let middle, !dynamicTypeSize.isAccessibilitySize {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(secondaryInk.opacity(colorScheme == .dark ? 0.42 : 0.28))
+                            .frame(width: 7, height: 7)
+                        Text("\(middle.name) \(middle.probabilityLabel)")
+                            .font(.system(size: min(subSize, 17), weight: .medium).monospacedDigit())
+                            .foregroundStyle(secondaryInk)
+                        if let m = SourceMarkButton(middle.sourceMark, number: middle.probability, subject: middle.name, subtitle: card.title, numberSize: min(subSize, 16), compactRow: true) {
+                            m
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    @ViewBuilder
+    private func duelSideRow(outcome: MachineryOutcomeVisual, dotColor: Color) -> some View {
+        HStack(spacing: 10) {
+            if outcome.art?.verifiedURL != nil {
+                MachinerySubjectArtView(art: outcome.art, width: 36, height: 36)
+            } else {
+                Circle().fill(dotColor).frame(width: 10, height: 10)
+            }
+            Text(outcome.name)
+                .font(.system(size: min(rowSize, 22), weight: .semibold))
+                .foregroundStyle(primaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 6)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(outcome.probabilityLabel)
+                    .font(.system(size: min(duelPctSize, 26), weight: .heavy).monospacedDigit())
+                    .foregroundStyle(primaryInk)
+                if let m = SourceMarkButton(outcome.sourceMark, number: outcome.probability, subject: outcome.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
+                    m
                 }
             }
         }
