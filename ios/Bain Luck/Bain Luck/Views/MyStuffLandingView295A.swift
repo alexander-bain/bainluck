@@ -64,6 +64,7 @@ private struct MyStuffLandingBody295A: View {
     @AppStorage(FirstRunStorageKeys212A.earnedSignInDismissedKey) private var earnedSignInDismissed = false
     @Environment(\.firstRunChecklistStore364A) private var checklistStore
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var cardSurface: Color {
         colorScheme == .dark ? Color.cardBackground : DS.cardBg
@@ -350,70 +351,87 @@ private struct MyStuffLandingBody295A: View {
     @ViewBuilder
     private var followingAndPinsStrip: some View {
         if !followManager.subjects.isEmpty || !pinManager.savedPins.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(followManager.subjects) { subject in
-                        Button {
-                            path.append(subject.route)
-                        } label: {
-                            HStack(spacing: 6) {
-                                if subject.kind == .team {
-                                    TeamLogoView(
-                                        url: subject.logoUrl,
-                                        teamName: subject.name,
-                                        color: Color(hex: MyStuffTeamTextColour.logoTintHex(subject.primaryColor)),
-                                        size: 18,
-                                        sportKey: subject.sportKey
-                                    )
-                                } else if subject.kind == .subject {
-                                    ChecklistThumbnail364A(
-                                        urlString: subject.logoUrl,
-                                        sfSymbol: FirstRunCard212A.sfSymbol(
-                                            forCategory: subject.affinityCategory ?? subject.slug,
-                                            isSports: false
-                                        ),
-                                        accentHex: subject.primaryColor ?? "#005CC2",
-                                        size: 18
-                                    )
-                                } else {
-                                    Image(systemName: subject.kind == .league ? "trophy.fill" : "square.stack.3d.up.fill")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                Text(subject.name)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                            }
-                            .padding(.horizontal, 12)
-                            .frame(minHeight: 36)
-                            .background(Capsule().fill(cardSurface))
-                            .overlay(Capsule().stroke(cardBorder, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if !pinManager.savedPins.isEmpty {
-                        Button(action: onManagePins) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "bookmark.fill")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(.orange)
-                                Text("\(pinManager.savedPins.count) pinned")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                            }
-                            .padding(.horizontal, 12)
-                            .frame(minHeight: 36)
-                            .background(Capsule().fill(cardSurface))
-                            .overlay(Capsule().stroke(cardBorder, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("myStuffManagePins")
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    followingAndPinsStripItems(fullWidthWrapping: true)
+                }
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        followingAndPinsStripItems(fullWidthWrapping: false)
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func followingAndPinsStripItems(fullWidthWrapping: Bool) -> some View {
+        ForEach(followManager.subjects) { subject in
+            Button {
+                path.append(subject.route)
+            } label: {
+                HStack(alignment: fullWidthWrapping ? .firstTextBaseline : .center, spacing: 6) {
+                    if subject.kind == .team {
+                        TeamLogoView(
+                            url: subject.logoUrl,
+                            teamName: subject.name,
+                            color: Color(hex: MyStuffTeamTextColour.logoTintHex(subject.primaryColor)),
+                            size: 18,
+                            sportKey: subject.sportKey
+                        )
+                    } else if subject.kind == .subject {
+                        ChecklistThumbnail364A(
+                            urlString: subject.logoUrl,
+                            sfSymbol: FirstRunCard212A.sfSymbol(
+                                forCategory: subject.affinityCategory ?? subject.slug,
+                                isSports: false
+                            ),
+                            accentHex: subject.primaryColor ?? "#005CC2",
+                            size: 18
+                        )
+                    } else {
+                        Image(systemName: subject.kind == .league ? "trophy.fill" : "square.stack.3d.up.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(subject.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(fullWidthWrapping ? nil : 1)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, fullWidthWrapping ? 8 : 0)
+                .frame(maxWidth: fullWidthWrapping ? .infinity : nil, minHeight: 36, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: fullWidthWrapping ? 16 : 18).fill(cardSurface))
+                .overlay(RoundedRectangle(cornerRadius: fullWidthWrapping ? 16 : 18).stroke(cardBorder, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+
+        if !pinManager.savedPins.isEmpty {
+            Button(action: onManagePins) {
+                HStack(spacing: 5) {
+                    Image(systemName: "bookmark.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text("\(pinManager.savedPins.count) pinned")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(fullWidthWrapping ? nil : 1)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, fullWidthWrapping ? 8 : 0)
+                .frame(maxWidth: fullWidthWrapping ? .infinity : nil, minHeight: 36, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: fullWidthWrapping ? 16 : 18).fill(cardSurface))
+                .overlay(RoundedRectangle(cornerRadius: fullWidthWrapping ? 16 : 18).stroke(cardBorder, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("myStuffManagePins")
         }
     }
 
