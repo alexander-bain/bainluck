@@ -39,6 +39,7 @@ final class ClipModel12307 {
         subject = next
         load = next == nil ? .unsupported : .loading
         lastUpdateFailed = false
+        ClipTelemetry13261.recordOpen(subject: next)
     }
 
     /// Called when no invocation has arrived in `invocationWait`.
