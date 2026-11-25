@@ -107,25 +107,25 @@ def read_nightly_scout_artifact(
 ) -> tuple[str, Optional[dict[str, Any]]]:
     """Read staged sets from Redis ``bainluck:fun_scout:run:<date>`` (fallback ``:latest``)."""
     resolved_date = deck_date.strip() if isinstance(deck_date, str) and deck_date.strip() else _today_pt_date(now)
-    rc = redis_client
-    if rc is None:
+    client = redis_client
+    if client is None:
         try:
             from app.tasks.redis_state import get_redis_client
 
-            rc = get_redis_client(fast_fail=True)
+            client = get_redis_client(fast_fail=True)
         except Exception as exc:
             logger.debug("scout_deck: redis unavailable reading nightly run: %s", type(exc).__name__)
             return resolved_date, None
 
-    if rc is None:
+    if client is None:
         return resolved_date, None
 
     try:
-        artifact = _decode_redis_json(rc.get(f"{SCOUT_RUN_REDIS_PREFIX}:{resolved_date}"))
+        artifact = _decode_redis_json(client.get(f"{SCOUT_RUN_REDIS_PREFIX}:{resolved_date}"))
         if artifact is not None:
             return resolved_date, artifact
         if not deck_date:
-            latest = _decode_redis_json(rc.get(SCOUT_LATEST_REDIS_KEY))
+            latest = _decode_redis_json(client.get(SCOUT_LATEST_REDIS_KEY))
             if latest is not None:
                 latest_date = str(latest.get("run_date") or "").strip()
                 if DATE_PARAM_RE.match(latest_date):
