@@ -1144,3 +1144,61 @@ def test_no_unittest_mock_in_prod_modules_and_mock_sessions_rejected():
         assert feh.session_supports_durable(bad) is False
         assert feh._session_supports_invalidation(bad) is False
         assert snap_mod._identity_map_event_finished(bad, 136061) is False
+
+
+def test_omit_pre_kickoff_points_preserve_range_all_counts():
+    kickoff = datetime(2026, 11, 24, 20, 0, tzinfo=timezone.utc)
+    in_game_pts = [
+        {"timestamp": (kickoff + timedelta(minutes=10)).isoformat()},
+        {"timestamp": (kickoff + timedelta(minutes=20)).isoformat()},
+        {
+            "timestamp": (kickoff + timedelta(hours=3)).isoformat(),
+            "evidence": {"kind": "final"},
+        },
+    ]
+
+    # 1) Explicit range=since_start (`preserve_range_all_counts=False`): keeps #2000 contract
+    meta_since_start = {"kalshi": {"snapshot_count": 2}}
+    events_route._omit_pre_kickoff_points(
+        commence_time=kickoff,
+        preserve_range_all_counts=False,
+        history=[],
+        bookmaker_history={},
+        win_prob_history={"kalshi": list(in_game_pts)},
+        win_prob_sources_meta=meta_since_start,
+        aggregate_line=[],
+        espn_history=[],
+    )
+    assert meta_since_start["kalshi"]["snapshot_count"] == 3
+
+    # 2) Cold-miss range=all fallback (`preserve_range_all_counts=True`): preserves stored count
+    # when nothing is trimmed and excludes terminal `final` when pre-kickoff points are trimmed.
+    meta_no_trim = {"kalshi": {"snapshot_count": 2}}
+    events_route._omit_pre_kickoff_points(
+        commence_time=kickoff,
+        preserve_range_all_counts=True,
+        history=[],
+        bookmaker_history={},
+        win_prob_history={"kalshi": list(in_game_pts)},
+        win_prob_sources_meta=meta_no_trim,
+        aggregate_line=[],
+        espn_history=[],
+    )
+    assert meta_no_trim["kalshi"]["snapshot_count"] == 2
+
+    mixed_pts = [
+        {"timestamp": (kickoff - timedelta(minutes=30)).isoformat()},
+        *in_game_pts,
+    ]
+    meta_trimmed = {"kalshi": {"snapshot_count": 3}}
+    events_route._omit_pre_kickoff_points(
+        commence_time=kickoff,
+        preserve_range_all_counts=True,
+        history=[],
+        bookmaker_history={},
+        win_prob_history={"kalshi": mixed_pts},
+        win_prob_sources_meta=meta_trimmed,
+        aggregate_line=[],
+        espn_history=[],
+    )
+    assert meta_trimmed["kalshi"]["snapshot_count"] == 2

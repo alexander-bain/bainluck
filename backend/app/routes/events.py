@@ -33744,6 +33744,7 @@ def _omit_pre_kickoff_points(
     *,
     commence_time,
     start_is_kickoff: bool = True,
+    preserve_range_all_counts: bool = False,
     history: list,
     bookmaker_history: dict,
     win_prob_history: dict,
@@ -33886,14 +33887,19 @@ def _omit_pre_kickoff_points(
         before_len = len(win_prob_history[source])
         kept = _since_kickoff(win_prob_history[source])
         win_prob_history[source] = kept
-        # Keep the advertised count honest — count stored readings, never the
-        # synthesized terminal `final` point (#8514 / #7878).
-        if source in win_prob_sources_meta and len(kept) < before_len:
-            win_prob_sources_meta[source]["snapshot_count"] = sum(
-                1
-                for p in kept
-                if (p.get("evidence") or {}).get("kind") != "final"
-            )
+        # Keep the advertised count honest: explicit range=since_start follows
+        # len(kept) (#2000), while cold-miss range=all fallback preserves the
+        # range=all stored-reading count when nothing was trimmed and excludes
+        # any synthesized terminal `final` point when trimming ran (#7878/#8514).
+        if source in win_prob_sources_meta:
+            if not preserve_range_all_counts:
+                win_prob_sources_meta[source]["snapshot_count"] = len(kept)
+            elif len(kept) < before_len:
+                win_prob_sources_meta[source]["snapshot_count"] = sum(
+                    1
+                    for p in kept
+                    if (p.get("evidence") or {}).get("kind") != "final"
+                )
 
     return omitted > 0
 
@@ -37396,6 +37402,7 @@ async def get_event_odds_history(
             # could reach. Trimming to it would delete the contest, not the
             # pre-match half.
             start_is_kickoff=not _commence_time_is_venue_expiration(event),
+            preserve_range_all_counts=_cold_miss_since_start_fallback,
             history=history,
             bookmaker_history=bookmaker_history,
             win_prob_history=win_prob_history,
