@@ -1110,6 +1110,18 @@ def check_scout_no_politics_only_set(
     return None
 
 
+_CONSUMER_PRICE_SET_TITLE_RE = re.compile(
+    r"\b(?:what\s+(?:things|stuff)\s+costs?|everyday\s+prices?)\b",
+    re.IGNORECASE,
+)
+_CONSUMER_PRICE_MEMBER_RE = re.compile(
+    r"(?:\b(?:ticket\s+price|eggs?\s+price|gas\s+prices?|diesel\s+price|"
+    r"hot\s+dog\s+combo\s+price|big\s+mac\s+price|burrito\s+price)\b|"
+    r":\s*price\s+in\s+20\d\d\b)",
+    re.IGNORECASE,
+)
+
+
 # ---------------------------------------------------------------------------
 # #13544: Split-set coherence gate and <4-member missing-member fill
 # ---------------------------------------------------------------------------
@@ -1215,6 +1227,44 @@ _AWAITED_TITLE_HINT_RE = re.compile(
     r"\b(?:come\s+out|ever|await(?:ed|ing)|release\s+date|this\s+year\s+or\s+never|countdown)\b",
     re.IGNORECASE,
 )
+
+
+def check_scout_price_set_context(
+    name: str,
+    members: Sequence[ScoutMarketRow | Mapping[str, Any]],
+) -> Optional[str]:
+    """Rule 3.7 (#13544 Ask 4): Keep consumer price sets off Discover without per-row context."""
+    if not members:
+        return None
+    titles: list[str] = []
+    missing_context = 0
+    price_hits = 0
+    for m in members:
+        if isinstance(m, Mapping):
+            t = str(m.get("title") or "")
+            meta = m.get("market_metadata")
+            has_ctx = bool(
+                str(m.get("context_line") or "").strip()
+                or (isinstance(meta, Mapping) and str(meta.get("context_line") or "").strip())
+            )
+        else:
+            t = str(m.title or "")
+            meta = m.market_metadata
+            has_ctx = bool(
+                isinstance(meta, Mapping) and str(meta.get("context_line") or "").strip()
+            )
+        titles.append(t)
+        if _CONSUMER_PRICE_MEMBER_RE.search(t):
+            price_hits += 1
+        if not has_ctx:
+            missing_context += 1
+
+    is_price_set = (
+        bool(_CONSUMER_PRICE_SET_TITLE_RE.search(name or "")) and price_hits >= 2
+    ) or (price_hits >= max(2, math.ceil(len(members) * 0.5)))
+    if is_price_set and missing_context > 0:
+        return f"price_set_missing_row_context:{missing_context}/{len(members)}"
+    return None
 
 
 def _split_fold(text: str) -> str:
@@ -1987,6 +2037,7 @@ def validate_scout_proposed_set(
         check_scout_no_mechanical_sales_downloads(name, why, deduped_rows),
         check_scout_no_politics_only_set(category, name, deduped_rows),
         check_scout_map_look_places(look, deduped_rows),
+        check_scout_price_set_context(name, deduped_rows),
         check_scout_blurb_matches_members(why, deduped_rows, dropped_rows),
     ):
         if rule_err is not None:

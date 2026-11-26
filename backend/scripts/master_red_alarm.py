@@ -26,10 +26,21 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 import re
 import sys
 import subprocess
 from typing import Iterable, Optional
+
+NOW_LINES_ISSUE_FILE = Path(__file__).resolve().parents[2] / ".github" / "now-lines-issue.txt"
+
+
+def read_now_lines_issue(path: Path = NOW_LINES_ISSUE_FILE) -> int:
+    """Return the active NOW-lines GitHub issue number from ``.github/now-lines-issue.txt``."""
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw.isdigit() or int(raw) <= 0:
+        raise ValueError(f"Invalid NOW-lines issue file {path}: {raw!r}")
+    return int(raw)
 
 #: The line is only for runs that really failed. `cancelled` is a superseded
 #: run (concurrency), not a red master.
@@ -200,7 +211,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     repo = os.environ["REPO"]
-    issue = int(os.environ["NOW_LINES_ISSUE"])
+    raw_issue = os.environ.get("NOW_LINES_ISSUE", "").strip()
+    issue = int(raw_issue) if raw_issue else read_now_lines_issue()
     run_id = int(os.environ["RUN_ID"])
 
     run = json.loads(_gh(f"repos/{repo}/actions/runs/{run_id}"))
