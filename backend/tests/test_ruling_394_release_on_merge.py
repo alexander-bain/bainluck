@@ -268,7 +268,11 @@ def test_394c_post_deploy_smoke_runs_for_real_after_either_deploy_job():
 
 def test_394d_master_red_alarm_holds_merges_and_names_run_and_release(monkeypatch):
     wf = yaml.safe_load(RED_ALARM_YML.read_text(encoding="utf-8"))
-    assert wf["env"]["NOW_LINES_ISSUE"] == "13580"
+    expected_issue = alarm.read_now_lines_issue()
+    assert expected_issue > 0
+    post_step = next(s for s in wf["jobs"]["alarm"]["steps"] if s.get("name") == "Post the stuck line")
+    assert ".github/now-lines-issue.txt" in post_step["run"]
+    assert "export NOW_LINES_ISSUE" in post_step["run"]
 
     posted = []
     reruns = []
@@ -283,12 +287,12 @@ def test_394d_master_red_alarm_holds_merges_and_names_run_and_release(monkeypatc
             })
         if "/logs" in path:
             return "FAILED tests/test_feed.py::test_x - AssertionError\n"
-        if "/issues/13580/comments?per_page=100" in path:
+        if f"/issues/{expected_issue}/comments?per_page=100" in path:
             return ""
         if path.endswith("/rerun-failed-jobs"):
             reruns.append(path)
             return ""
-        if path.endswith("/issues/13580/comments"):
+        if path.endswith(f"/issues/{expected_issue}/comments"):
             posted.append(body["body"])
             return "{}"
         return json.dumps({
@@ -303,7 +307,7 @@ def test_394d_master_red_alarm_holds_merges_and_names_run_and_release(monkeypatc
         })
 
     monkeypatch.setenv("REPO", "o/r")
-    monkeypatch.setenv("NOW_LINES_ISSUE", "13580")
+    monkeypatch.delenv("NOW_LINES_ISSUE", raising=False)
     monkeypatch.setenv("RUN_ID", "777")
     monkeypatch.setattr(alarm, "_gh", fake_gh)
 

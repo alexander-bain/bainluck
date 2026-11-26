@@ -27,10 +27,6 @@ permissions:
   contents: read
   issues: write
 
-env:
-  # Where lane status lines go (#13580 is the current NOW-lines issue).
-  NOW_LINES_ISSUE: "13580"
-
 jobs:
   alarm:
     # Only a push to master that failed or timed out. A cancelled run is a
@@ -53,12 +49,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          sparse-checkout: backend/scripts/master_red_alarm.py
+          sparse-checkout: |
+            .github/now-lines-issue.txt
+            backend/scripts/master_red_alarm.py
           sparse-checkout-cone-mode: false
       - name: Post the stuck line
         # Standard library plus `gh`; no install. Dispatch only prints.
+        # Active NOW-lines issue number lives in .github/now-lines-issue.txt.
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          NOW_LINES_ISSUE="$(tr -d '[:space:]' < .github/now-lines-issue.txt)"
+          case "$NOW_LINES_ISSUE" in
+            ''|*[!0-9]*) echo "::error::invalid .github/now-lines-issue.txt: $NOW_LINES_ISSUE" >&2; exit 1 ;;
+          esac
+          export NOW_LINES_ISSUE
           if [ "${{ github.event_name }}" = workflow_dispatch ]; then
             python3 backend/scripts/master_red_alarm.py --dry-run
           else
