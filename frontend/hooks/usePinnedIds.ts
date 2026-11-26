@@ -194,7 +194,7 @@ export function usePinnedIds(
 
       commit((current) => [...current, id]);
       trackPinItem({
-        item_type: pinType === "event" ? "event" : "market",
+        item_type: pinType,
         action: "pin",
       });
 
@@ -215,7 +215,7 @@ export function usePinnedIds(
       commit((current) => current.filter((existing) => existing !== id));
       if (wasPinned) {
         trackPinItem({
-          item_type: pinType === "event" ? "event" : "market",
+          item_type: pinType,
           action: "unpin",
         });
       }

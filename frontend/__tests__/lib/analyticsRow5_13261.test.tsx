@@ -95,7 +95,7 @@ describe("#13261 row 5 — Web follow_team and pin_item behind Allow (181-C)", (
       surface: "onboarding",
     });
     trackPinItem({ item_type: "event", action: "pin" });
-    trackPinItem({ item_type: "market", action: "unpin" });
+    trackPinItem({ item_type: "future", action: "unpin" });
     expect(emittedEvents("follow_team")).toHaveLength(0);
     expect(emittedEvents("pin_item")).toHaveLength(0);
 
@@ -130,7 +130,7 @@ describe("#13261 row 5 — Web follow_team and pin_item behind Allow (181-C)", (
       surface: "onboarding",
     });
     trackPinItem({ item_type: "event", action: "pin" });
-    trackPinItem({ item_type: "market", action: "unpin" });
+    trackPinItem({ item_type: "future", action: "unpin" });
 
     const followCalls = emittedEvents("follow_team");
     expect(followCalls).toHaveLength(1);
@@ -148,7 +148,7 @@ describe("#13261 row 5 — Web follow_team and pin_item behind Allow (181-C)", (
       action: "pin",
     });
     expect(pinCalls[1][2]).toMatchObject({
-      item_type: "market",
+      item_type: "future",
       action: "unpin",
     });
 

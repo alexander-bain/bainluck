@@ -22,7 +22,7 @@ export function trackFollowTeam(params: {
 
 /**
  * Emit a consent-gated `pin_item` event (#13261 row 5, 181-C).
- * Carries only item_type ('event' | 'market') and action ('pin' | 'unpin').
+ * Carries only item_type ('event' | 'future') and action ('pin' | 'unpin').
  */
 export function trackPinItem(params: PinItemParams): void {
   trackEvent('pin_item', {

@@ -1099,11 +1099,11 @@ export interface FollowTeamParams {
   action: 'follow' | 'unfollow';
   sport?: string;
   relation_type?: 'follow' | 'local' | 'alma_mater' | 'rival';
-  surface?: 'onboarding' | 'preferences' | 'team_page';
+  surface?: 'onboarding' | 'preferences';
 }
 
 export interface PinItemParams {
-  item_type: 'event' | 'market';
+  item_type: 'event' | 'future';
   action: 'pin' | 'unpin';
 }
 

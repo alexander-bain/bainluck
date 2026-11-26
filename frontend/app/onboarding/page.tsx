@@ -7,6 +7,7 @@ import { searchTeamsByLocation, searchTeams, submitOnboarding, fetchUserPreferen
 import { SPORT_CATEGORIES, getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import type { TeamSearchResult, OnboardingSubmission, UserFavoriteItem } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
+import { trackFollowTeam } from "@/lib/analytics/followPin";
 
 const STEP_NAMES = ['location', 'follow', 'alma_maters', 'interests', 'rivals'] as const;
 
@@ -305,27 +306,12 @@ export default function OnboardingPage() {
         selected: true,
       },
     ]);
-    track('follow_team', {
-      action: 'follow',
-      ...(team.sport_key ? { sport: team.sport_key } : {}),
-      relation_type: 'follow',
-      surface: 'onboarding',
-    });
     setFollowQuery("");
     setFollowResults([]);
   };
 
   const removeFollowTeam = (teamId: number) => {
-    const existing = followTeams.find((t) => t.id === teamId);
     setFollowTeams((prev) => prev.filter((t) => t.id !== teamId));
-    if (existing) {
-      track('follow_team', {
-        action: 'unfollow',
-        ...(existing.sport_key ? { sport: existing.sport_key } : {}),
-        relation_type: 'follow',
-        surface: 'onboarding',
-      });
-    }
   };
 
   // =========================================================================
@@ -508,6 +494,40 @@ export default function OnboardingPage() {
           total_sports: Object.values(sportAffinities).filter(v => v > 0).length,
           total_rivals: rivalTeams.length,
         });
+        for (const team of locationTeams) {
+          if (team.selected) {
+            trackFollowTeam({
+              action: 'follow',
+              sport: team.sport_key,
+              relation_type: 'local',
+              surface: 'onboarding',
+            });
+          }
+        }
+        for (const team of followTeams) {
+          trackFollowTeam({
+            action: 'follow',
+            sport: team.sport_key,
+            relation_type: 'follow',
+            surface: 'onboarding',
+          });
+        }
+        for (const team of almaMaterTeams) {
+          trackFollowTeam({
+            action: 'follow',
+            sport: team.sport_key,
+            relation_type: 'alma_mater',
+            surface: 'onboarding',
+          });
+        }
+        for (const team of rivalTeams) {
+          trackFollowTeam({
+            action: 'follow',
+            sport: team.sport_key,
+            relation_type: 'rival',
+            surface: 'onboarding',
+          });
+        }
         router.push("/?onboarded=1");
         return; // Success!
       } catch (err) {
