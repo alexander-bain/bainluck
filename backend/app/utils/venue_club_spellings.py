@@ -60,19 +60,15 @@ VENUE_CLUB_SPELLINGS: dict[str, str] = {
     # #13142: Women's college basketball spelling — Polymarket "Little Rock Trojans"
     # vs Odds API "Arkansas-Little Rock Trojans" (pair 15347844 / 15351848).
     "Little Rock Trojans": "Arkansas-Little Rock Trojans",
-    # #13594: UEFA Champions League / Europa League / Conference League club spellings
-    # split across Odds API, Polymarket, Kalshi, and ESPN.
-    "Internazionale": "Inter Milan",
+    # #13594: UEFA Europa League / Conference League club spellings (>=2 words each side)
+    # split across Odds API, Polymarket, Kalshi, and ESPN. Single-word club names live
+    # in LEAGUE_CLUB_SPELLINGS below (#8100 TestTheTable).
     "PFK Levski Sofia": "PFC Levski Sofia",
-    "Olympique de Marseille": "Marseille",
     "Olympiakós SFP": "Olympiakos Piraeus",
     "RU Saint-Gilloise": "Union Saint-Gilloise",
     "KKS Lech Poznań": "Lech Poznań",
-    "Ferencvarosi": "Ferencváros TC",
     "AC Sparta Praha": "Sparta Prague",
     "Qairat FK": "FC Kairat",
-    "Heart of Midlothian": "Hearts",
-    "AS Monaco": "Monaco",
     "FC København": "FC Copenhagen",
     "Crvena Zvezda": "Red Star Belgrade",
     "Kuopion PS": "KuPS Kuopio",
@@ -104,10 +100,34 @@ LEAGUE_CLUB_SPELLINGS: dict[str, dict[str, str]] = {
         "Hapoel Tel-Aviv": "Hapoel Tel Aviv",
         "ASVEL Lyon-Villeurbanne": "ASVEL Lyon Villeurbanne",
     },
+    "soccer_uefa_champs_league": {
+        "Internazionale": "Inter Milan",
+        "Olympique de Marseille": "Marseille",
+        "Ferencvarosi": "Ferencváros TC",
+        "AS Monaco": "Monaco",
+    },
+    "soccer_italy_serie_a": {
+        "Internazionale": "Inter Milan",
+    },
     "soccer_uefa_europa_league": {
         "AZ": "AZ Alkmaar",
         "Olympiacos": "Olympiakos Piraeus",
         "Milan": "AC Milan",
+        "Olympique de Marseille": "Marseille",
+        "Ferencvarosi": "Ferencváros TC",
+        "AS Monaco": "Monaco",
+    },
+    "soccer_uefa_europa_conference_league": {
+        "Heart of Midlothian": "Hearts",
+        "AS Monaco": "Monaco",
+        "Ferencvarosi": "Ferencváros TC",
+    },
+    "soccer_france_ligue_one": {
+        "Olympique de Marseille": "Marseille",
+        "AS Monaco": "Monaco",
+    },
+    "soccer_spl": {
+        "Heart of Midlothian": "Hearts",
     },
     "soccer_netherlands_eredivisie": {
         "AZ": "AZ Alkmaar",

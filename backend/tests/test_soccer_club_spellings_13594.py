@@ -44,6 +44,11 @@ _TWIN_MATCHUP_PAIRS = [
         ("VfB Stuttgart", "Inter Milan"),
     ),
     (
+        "soccer_italy_serie_a",
+        ("VfB Stuttgart", "Internazionale"),
+        ("VfB Stuttgart", "Inter Milan"),
+    ),
+    (
         "soccer_uefa_europa_league",
         ("PFC Levski Sofia", "Marseille"),
         ("PFK Levski Sofia", "Olympique de Marseille"),
@@ -74,37 +79,42 @@ _TWIN_MATCHUP_PAIRS = [
         ("AZ", "AC Sparta Praha"),
     ),
     (
-        "soccer_uefa_europa_conf_league",
+        "soccer_uefa_europa_conference_league",
         ("Mjällby AIF", "FC Kairat"),
         ("Mjällby AIF", "Qairat FK"),
     ),
     (
-        "soccer_uefa_europa_conf_league",
+        "soccer_uefa_europa_conference_league",
         ("AS Monaco", "Hearts"),
         ("Monaco", "Heart of Midlothian"),
     ),
     (
-        "soccer_uefa_europa_conf_league",
+        "soccer_spl",
+        ("Celtic", "Hearts"),
+        ("Celtic", "Heart of Midlothian"),
+    ),
+    (
+        "soccer_uefa_europa_conference_league",
         ("FC Copenhagen", "Inter Club d'Escaldes"),
         ("FC København", "Inter Club d'Escaldes"),
     ),
     (
-        "soccer_uefa_europa_conf_league",
+        "soccer_uefa_europa_conference_league",
         ("Red Star Belgrade", "Gent"),
         ("Crvena Zvezda", "Gent"),
     ),
     (
-        "soccer_uefa_europa_conf_league",
+        "soccer_uefa_europa_conference_league",
         ("KuPS Kuopio", "SC Braga"),
         ("Kuopion PS", "SC Braga"),
     ),
     (
-        "soccer_uefa_europa_conf_league",
+        "soccer_uefa_europa_conference_league",
         ("Sint Truiden", "Hajduk Split"),
         ("K. Sint-Truidense VV", "HNK Hajduk Split"),
     ),
     (
-        "soccer_uefa_europa_conf_league",
+        "soccer_uefa_europa_conference_league",
         ("Omonoia FC", "Juventus"),
         ("Omonia Nicosia", "Juventus"),
     ),
