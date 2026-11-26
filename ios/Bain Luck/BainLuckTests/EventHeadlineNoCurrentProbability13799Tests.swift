@@ -204,6 +204,100 @@ final class EventHeadlineNoCurrentProbability13799Tests: XCTestCase {
         }
     }
 
+    func testTwoWaySportWithOneSidedOddsOmitsProbabilityColumnAndPrintsNotice() throws {
+        let partialOddsCases: [(status: String, commenceTime: String, homeScore: Int?, awayScore: Int?, oddsJSON: String, expectedNotice: String)] = [
+            (
+                "scheduled",
+                "2026-11-28T03:00:00Z",
+                nil,
+                nil,
+                #"{"home_probability":0.62,"away_probability":null}"#,
+                "No probability yet"
+            ),
+            (
+                "live",
+                "2026-11-26T02:00:00Z",
+                60,
+                57,
+                #"{"home_probability":0.62,"away_probability":null}"#,
+                "No recent probability"
+            ),
+            (
+                "live",
+                "2026-11-26T02:00:00Z",
+                60,
+                57,
+                #"{"home_probability":null,"away_probability":0.38}"#,
+                "No recent probability"
+            ),
+        ]
+
+        for entry in partialOddsCases {
+            let event = try makeFixture(
+                status: entry.status,
+                sport: "basketball_nba",
+                commenceTime: entry.commenceTime,
+                homeScore: entry.homeScore,
+                awayScore: entry.awayScore,
+                currentOddsJSON: entry.oddsJSON
+            )
+            XCTAssertNil(
+                DrawPricedWinner.printablePair(
+                    away: event.currentOdds?.awayProbability,
+                    home: event.currentOdds?.homeProbability,
+                    sport: event.sport
+                ),
+                "Two-way sports must reject one-sided current odds before reaching resolveDuring's #5271 branch"
+            )
+            let isLive = entry.status == "live"
+            let model = try XCTUnwrap(
+                EventSportHeadlines12472.resolve(
+                    event: event,
+                    awayFullName: event.awayTeam,
+                    homeFullName: event.homeTeam,
+                    liveStatusText: isLive ? "Q2 · 6:12" : nil,
+                    hasScore: isLive,
+                    numberStreams: isLive,
+                    now: fixedNow
+                )
+            )
+            XCTAssertFalse(model.columns.contains { $0.role == .chance || $0.role == .now }, "Partial two-way column must be omitted")
+            XCTAssertEqual(model.probabilityUnavailableNotice, entry.expectedNotice)
+        }
+    }
+
+    func testDrawPricedLiveMatchMissingDrawWithholdsAwayPer5271WithoutHidingHome() throws {
+        // Only draw-priced sports (soccer) with draw_probability withheld reach resolveDuring's
+        // single-side `homeNow` branch: per #5271 Home prints alone and Away stays withheld rather
+        // than inventing `1 - home` or suppressing a valid Home probability.
+        let soccer = try makeFixture(
+            status: "live",
+            sport: "soccer_epl",
+            commenceTime: "2026-11-26T02:30:00Z",
+            homeScore: 1,
+            awayScore: 0,
+            currentOddsJSON: #"{"home_probability":0.52,"away_probability":0.48,"draw_probability":null}"#
+        )
+        let model = try XCTUnwrap(
+            EventSportHeadlines12472.resolve(
+                event: soccer,
+                awayFullName: soccer.awayTeam,
+                homeFullName: soccer.homeTeam,
+                liveStatusText: "63'",
+                hasScore: true,
+                numberStreams: true,
+                now: fixedNow
+            )
+        )
+        XCTAssertEqual(model.columns.map(\.role), [.score, .projected, .now])
+        XCTAssertEqual(model.rows.count, 2)
+        XCTAssertEqual(model.rows[0].role, .away)
+        XCTAssertEqual(model.rows[0].cells.last, "", "#5271 must withhold away probability rather than invent 1 - home")
+        XCTAssertEqual(model.rows[1].role, .home)
+        XCTAssertEqual(model.rows[1].cells.last, "52.0%")
+        XCTAssertNil(model.probabilityUnavailableNotice)
+    }
+
     // MARK: - Rendered headline proof + OCR + 390/320/AX5 sheet
 
     private func recognizeText(in image: UIImage) throws -> String {
@@ -317,14 +411,16 @@ final class EventHeadlineNoCurrentProbability13799Tests: XCTestCase {
         XCTAssertFalse(liveText.localizedCaseInsensitiveContains("Now"), "Empty Now header must be omitted: \(liveText)")
 
         let panels: [(String, UIImage)] = [
-            ("Before (no probability) · 390 Light", scheduledImg),
-            ("Live with score (no probability) · 390 Light", liveImg),
-            ("Live with score (no probability) · 390 Dark", renderCard(model: liveModel, width: 390, colorScheme: .dark, dynamicTypeSize: .large)),
-            ("Before (no probability) · 320 Light", renderCard(model: scheduledModel, width: 320, colorScheme: .light, dynamicTypeSize: .large)),
-            ("Live with score (no probability) · AX5 Light", renderCard(model: liveModel, width: 390, colorScheme: .light, dynamicTypeSize: .accessibility5)),
+            ("Before (no probability) · 390 Light · Default (.large)", scheduledImg),
+            ("Before (no probability) · 390 Dark · Default (.large)", renderCard(model: scheduledModel, width: 390, colorScheme: .dark, dynamicTypeSize: .large)),
+            ("Live with score (no probability) · 390 Light · Default (.large)", liveImg),
+            ("Live with score (no probability) · 390 Dark · Default (.large)", renderCard(model: liveModel, width: 390, colorScheme: .dark, dynamicTypeSize: .large)),
+            ("Before (no probability) · 320 Light · Default (.large)", renderCard(model: scheduledModel, width: 320, colorScheme: .light, dynamicTypeSize: .large)),
+            ("Live with score (no probability) · 390 AX5 Light · AX5 (.accessibility5)", renderCard(model: liveModel, width: 390, colorScheme: .light, dynamicTypeSize: .accessibility5)),
+            ("Live with score (no probability) · 390 AX5 Dark · AX5 (.accessibility5)", renderCard(model: liveModel, width: 390, colorScheme: .dark, dynamicTypeSize: .accessibility5)),
         ]
 
-        // Assemble single vertical contact sheet for proof review
+        // Assemble single vertical contact sheet for proof review (Simulator results, not phone)
         let pad: CGFloat = 20
         let labelH: CGFloat = 24
         let sheetWidthPt: CGFloat = 430
@@ -336,13 +432,13 @@ final class EventHeadlineNoCurrentProbability13799Tests: XCTestCase {
         fmt.scale = 2.0
         fmt.opaque = true
         let sheet = UIGraphicsImageRenderer(size: CGSize(width: sheetWidthPt, height: totalHeightPt), format: fmt).image { ctx in
-            UIColor.systemBackground.setFill()
+            UIColor(red: 0.96, green: 0.97, blue: 0.98, alpha: 1.0).setFill()
             ctx.fill(CGRect(x: 0, y: 0, width: sheetWidthPt, height: totalHeightPt))
             var y: CGFloat = pad
             for (caption, img) in panels {
                 let attrs: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 13, weight: .semibold),
-                    .foregroundColor: UIColor.secondaryLabel,
+                    .font: UIFont.systemFont(ofSize: 12, weight: .semibold),
+                    .foregroundColor: UIColor(red: 0.12, green: 0.16, blue: 0.23, alpha: 1.0),
                 ]
                 (caption as NSString).draw(at: CGPoint(x: 16, y: y), withAttributes: attrs)
                 y += labelH
@@ -350,8 +446,16 @@ final class EventHeadlineNoCurrentProbability13799Tests: XCTestCase {
                 y += img.size.height + pad
             }
         }
-        let outURL = FileManager.default.temporaryDirectory.appendingPathComponent("sheet-13799-no-current-probability.jpg")
-        if let jpg = sheet.jpegData(compressionQuality: 0.9) {
+        let envOut = ProcessInfo.processInfo.environment["TEST_RUNNER_EXPORT_13799_SHEET_PATH"]
+            ?? ProcessInfo.processInfo.environment["EXPORT_13799_SHEET_PATH"]
+        let outURL: URL
+        if let envOut, !envOut.isEmpty {
+            outURL = URL(fileURLWithPath: envOut)
+            try FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        } else {
+            outURL = FileManager.default.temporaryDirectory.appendingPathComponent("sheet-13799-no-current-probability.jpg")
+        }
+        if let jpg = sheet.jpegData(compressionQuality: 0.92) {
             try jpg.write(to: outURL)
             print("SHEET_13799=\(outURL.path)")
         }

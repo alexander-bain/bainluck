@@ -1240,6 +1240,8 @@ enum EventSportHeadlines12472 {
                     }
                     bar = .twoWay(awayShare: away, homeShare: pair.home, pregameAwayMarker: pregameMarker)
                 } else {
+                    // Draw-priced sport with only home win chance served (#5271):
+                    // print live home chance alone and withhold away; never invent `1 - home`.
                     homeNow = EventHeadlineTenths10090.pair(home: pair.home, away: nil).home
                 }
                 confidenceTier = Confidence.fromSources(

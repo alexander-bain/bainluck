@@ -20,6 +20,7 @@ struct EventSportHeadlineCard12472: View {
     let confirmedAt: Date?
     let revealForecast: LivePregameComparison11296.Headline?
 
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var measuredInnerWidth: CGFloat = 330
     @ScaledMetric(relativeTo: .title2) private var nowScaledSize: CGFloat = HeadlineStyleTable199.nowBaseSize(.page)
@@ -767,9 +768,10 @@ struct EventSportHeadlineCard12472: View {
 
     private func headlineUnavailableNoticeRow(_ text: String, identifier: String) -> some View {
         let cappedNoticeSize = min(baseQuietSize, stacksRowsVertically ? 20 : 14)
+        let noticeInk = colorScheme == .dark ? DS.textSecondaryReadable : HeadlineStyleTable199.quietInk
         return Text(text)
             .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: false, scaledSize: cappedNoticeSize))
-            .foregroundStyle(HeadlineStyleTable199.quietInk)
+            .foregroundStyle(noticeInk)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier(identifier)
