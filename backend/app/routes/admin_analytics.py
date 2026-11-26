@@ -133,6 +133,13 @@ _ONBOARDING_STAGES: tuple[tuple[str, str], ...] = (
     ("complete", "onboarding_complete"),
     ("skip", "onboarding_skip"),
 )
+# Blended funnel bars exclude `step` because iPhone fires onboarding_step on
+# screen view (including step 1) while web fires it on Next (#13314).
+_BLENDED_ONBOARDING_STAGES: tuple[tuple[str, str], ...] = (
+    ("start", "onboarding_start"),
+    ("complete", "onboarding_complete"),
+    ("skip", "onboarding_skip"),
+)
 _ONBOARDING_EVENT_TO_STAGE: dict[str, str] = {
     ev: stage for stage, ev in _ONBOARDING_STAGES
 }
@@ -143,7 +150,7 @@ def _build_onboarding_funnel(
     platform_events: list[dict[str, Any]],
     daily_events: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Summarize consented onboarding_start -> step -> complete / skip funnel (#13261 Row 4)."""
+    """Summarize consented onboarding_start -> complete / skip funnel (#13261 Row 4)."""
     totals: dict[str, dict[str, int]] = {
         stage: {"events": 0, "users": 0} for stage, _ in _ONBOARDING_STAGES
     }
@@ -159,12 +166,14 @@ def _build_onboarding_funnel(
 
     started_users = totals["start"]["users"]
     stages_out: list[dict[str, Any]] = []
-    for stage, ev in _ONBOARDING_STAGES:
+    for stage, ev in _BLENDED_ONBOARDING_STAGES:
         users = totals[stage]["users"]
-        if stage == "start":
-            rate = 100.0 if started_users > 0 else 0.0
+        if started_users == 0:
+            rate: float | None = None
+        elif stage == "start":
+            rate = 100.0
         else:
-            rate = round(users / started_users * 100, 1) if started_users > 0 else 0.0
+            rate = round(users / started_users * 100, 1)
         stages_out.append(
             {
                 "stage": stage,
@@ -209,18 +218,25 @@ def _build_onboarding_funnel(
         )
         bucket[stage] = max(bucket[stage], int(row.get("totalUsers", 0) or 0))
 
+    completed_users = totals["complete"]["users"]
+    skipped_users = totals["skip"]["users"]
+    left_without_finishing_or_skipping = max(
+        0, started_users - completed_users - skipped_users
+    )
+
     return {
         "summary": {
             "startedUsers": started_users,
             "steppedUsers": totals["step"]["users"],
-            "completedUsers": totals["complete"]["users"],
-            "skippedUsers": totals["skip"]["users"],
-            "completionRate": round(totals["complete"]["users"] / started_users * 100, 1)
+            "completedUsers": completed_users,
+            "skippedUsers": skipped_users,
+            "leftWithoutFinishingOrSkipping": left_without_finishing_or_skipping,
+            "completionRate": round(completed_users / started_users * 100, 1)
             if started_users > 0
-            else 0.0,
-            "skipRate": round(totals["skip"]["users"] / started_users * 100, 1)
+            else None,
+            "skipRate": round(skipped_users / started_users * 100, 1)
             if started_users > 0
-            else 0.0,
+            else None,
         },
         "stages": stages_out,
         "byPlatform": sorted(

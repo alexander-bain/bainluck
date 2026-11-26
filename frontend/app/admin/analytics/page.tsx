@@ -103,7 +103,7 @@ interface OnboardingStage {
   eventName: string;
   events: number;
   users: number;
-  rateFromStart: number;
+  rateFromStart: number | null;
 }
 
 interface OnboardingFunnelData {
@@ -112,8 +112,9 @@ interface OnboardingFunnelData {
     steppedUsers: number;
     completedUsers: number;
     skippedUsers: number;
-    completionRate: number;
-    skipRate: number;
+    leftWithoutFinishingOrSkipping?: number;
+    completionRate: number | null;
+    skipRate: number | null;
   };
   stages: OnboardingStage[];
   byPlatform: Array<{
@@ -750,14 +751,16 @@ function FunnelTab({ data }: { data: FunnelData }) {
           status={
             data.onboarding.summary.startedUsers === 0
               ? "warning"
-              : data.onboarding.summary.completionRate >= 50
+              : (data.onboarding.summary.completionRate ?? 0) >= 50
               ? "good"
               : "warning"
           }
           summary={
-            `${formatNum(data.onboarding.summary.startedUsers)} started · ` +
-            `${data.onboarding.summary.completionRate}% completed · ` +
-            `${data.onboarding.summary.skipRate}% skipped`
+            data.onboarding.summary.startedUsers === 0
+              ? "No one started in this window."
+              : `${formatNum(data.onboarding.summary.startedUsers)} started · ` +
+                `${data.onboarding.summary.completionRate ?? 0}% completed · ` +
+                `${data.onboarding.summary.skipRate ?? 0}% skipped`
           }
           ideal="High onboarding_start -> onboarding_complete completion with low skip rate."
           defaultExpanded
@@ -792,13 +795,29 @@ function FunnelTab({ data }: { data: FunnelData }) {
                     </div>
                     <div className="w-20 text-right">
                       <span className="text-xs font-medium text-text-secondary">
-                        {st.rateFromStart}%
+                        {st.rateFromStart != null ? st.rateFromStart + "%" : "—"}
                       </span>
                     </div>
                   </div>
                 );
               })}
             </div>
+
+            {data.onboarding.summary.startedUsers > 0 && (() => {
+              const left =
+                data.onboarding.summary.leftWithoutFinishingOrSkipping ??
+                Math.max(
+                  0,
+                  data.onboarding.summary.startedUsers -
+                    data.onboarding.summary.completedUsers -
+                    data.onboarding.summary.skippedUsers
+                );
+              return (
+                <p className="text-[11px] text-text-muted">
+                  {formatNum(left)} left without finishing or skipping (the website sends a skip only when leaving inside the site; closing the tab sends nothing).
+                </p>
+              );
+            })()}
 
             {data.onboarding.byPlatform.length > 0 && (
               <div className="overflow-x-auto">
@@ -847,6 +866,9 @@ function FunnelTab({ data }: { data: FunnelData }) {
                     ))}
                   </tbody>
                 </table>
+                <p className="text-[11px] text-text-muted mt-2">
+                  Step is shown per platform only: iPhone sends onboarding_step when a step is shown (including step 1 at start); the website sends it when pressing Next.
+                </p>
               </div>
             )}
           </div>

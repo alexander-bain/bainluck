@@ -40,20 +40,21 @@ def test_build_onboarding_funnel_rates_platforms_and_daily_trend() -> None:
     assert ob["summary"]["steppedUsers"] == 26
     assert ob["summary"]["completedUsers"] == 20
     assert ob["summary"]["skippedUsers"] == 8
+    assert ob["summary"]["leftWithoutFinishingOrSkipping"] == 4
     assert ob["summary"]["completionRate"] == 62.5
     assert ob["summary"]["skipRate"] == 25.0
 
+    # Blended bars compare Start, Complete, and Skip only (`step` lives per platform)
     by_stage = {s["stage"]: s for s in ob["stages"]}
-    assert [s["stage"] for s in ob["stages"]] == ["start", "step", "complete", "skip"]
+    assert [s["stage"] for s in ob["stages"]] == ["start", "complete", "skip"]
     assert by_stage["start"]["eventName"] == "onboarding_start"
     assert by_stage["start"]["rateFromStart"] == 100.0
-    assert by_stage["step"]["rateFromStart"] == 81.2
     assert by_stage["complete"]["rateFromStart"] == 62.5
     assert by_stage["skip"]["rateFromStart"] == 25.0
 
     plats = {p["platform"]: p for p in ob["byPlatform"]}
     assert plats["web"]["start"] == 20 and plats["web"]["complete"] == 12
-    assert plats["ios"]["start"] == 12 and plats["ios"]["skip"] == 4
+    assert plats["ios"]["start"] == 12 and plats["ios"]["step"] == 10 and plats["ios"]["skip"] == 4
     assert len(ob["dailyTrend"]) == 2
     assert ob["dailyTrend"][0]["date"] == "20261119"
     assert ob["dailyTrend"][0]["complete"] == 9
@@ -62,9 +63,10 @@ def test_build_onboarding_funnel_rates_platforms_and_daily_trend() -> None:
 def test_build_onboarding_funnel_handles_zero_starts_without_div_by_zero() -> None:
     ob = _build_onboarding_funnel([], [], [])
     assert ob["summary"]["startedUsers"] == 0
-    assert ob["summary"]["completionRate"] == 0.0
-    assert ob["summary"]["skipRate"] == 0.0
-    assert all(s["rateFromStart"] == 0.0 for s in ob["stages"])
+    assert ob["summary"]["leftWithoutFinishingOrSkipping"] == 0
+    assert ob["summary"]["completionRate"] is None
+    assert ob["summary"]["skipRate"] is None
+    assert all(s["rateFromStart"] is None for s in ob["stages"])
 
 
 @pytest.mark.asyncio
