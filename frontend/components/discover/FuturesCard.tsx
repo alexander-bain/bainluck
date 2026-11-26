@@ -243,7 +243,8 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const shareText = leader && leaderProbability
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
-  const heatmapCells = heatmapShownCells(data);
+  const now = new Date();
+  const heatmapCells = heatmapShownCells(data, now);
   // UX-P248 / CERT-678 repair — computed ONCE, above the variant fork, because
   // the fork is the defect. The first version of this ship read `forYouCue(item)`
   // inline at the single place it remembered to render, and this component has
@@ -260,7 +261,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
 
   if (heatmapCells) {
     const shownCells = heatmapCells;
-    const { betterThanEvenRung, leaderCell } = ladderMarks(shownCells);
+    const { betterThanEvenRung, leaderCell } = ladderMarks(shownCells, now);
     const lastAbove50Label = betterThanEvenRung?.label ?? null;
     // #7457 — whether the confidence glyph will actually DRAW, not whether the
     // payload carried a string. `SignalBars` returns null for a tier it doesn't
@@ -1266,9 +1267,33 @@ function heatmapPricedCells(data: FeedFuturesData): HeatmapRow[] | null {
   return heatmapRows;
 }
 
-function heatmapShownCells(data: FeedFuturesData): HeatmapRow[] | null {
+const HEATMAP_MAX_RUNGS = 8;
+
+/**
+ * Rungs drawn on the full card (#8713): date ladders longer than 8 rungs
+ * window around `betterThanEvenRung` (centered, clamped to bounds) so the
+ * named rung always appears on the card. Non-date ladders keep the first 8.
+ */
+export function heatmapShownCells(
+  data: FeedFuturesData,
+  now: Date = new Date(),
+): HeatmapRow[] | null {
   const priced = heatmapPricedCells(data);
-  return priced ? priced.slice(0, 8) : null;
+  if (!priced) return null;
+  if (priced.length <= HEATMAP_MAX_RUNGS || ladderKind(priced) !== "date") {
+    return priced.slice(0, HEATMAP_MAX_RUNGS);
+  }
+  const { betterThanEvenRung } = ladderMarks(priced, now);
+  if (!betterThanEvenRung) {
+    return priced.slice(0, HEATMAP_MAX_RUNGS);
+  }
+  const anchor = priced.indexOf(betterThanEvenRung);
+  if (anchor < 0) {
+    return priced.slice(0, HEATMAP_MAX_RUNGS);
+  }
+  const halfWindow = Math.floor(HEATMAP_MAX_RUNGS / 2);
+  const start = Math.min(Math.max(0, anchor - halfWindow), priced.length - HEATMAP_MAX_RUNGS);
+  return priced.slice(start, start + HEATMAP_MAX_RUNGS);
 }
 
 /**
@@ -1450,14 +1475,15 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // purpose — the leg the title names (#9401), the negated pair (UX-P238) — is
   // an answer to the question as asked and still wins; only its default, the
   // served first outcome, gives way.
+  const now = new Date();
   const hero = heroOutcome(data.top_outcomes, data.name);
   const allHeatmapCells = heatmapPricedCells(data);
   const compactLadderCells =
     allHeatmapCells && ladderKind(allHeatmapCells) === "date"
       ? allHeatmapCells
-      : heatmapShownCells(data);
+      : heatmapShownCells(data, now);
   const ladderRung = compactLadderCells
-    ? compactLadderHeadlineRung(compactLadderCells, hero?.name)
+    ? compactLadderHeadlineRung(compactLadderCells, hero?.name, now)
     : null;
   const leader = ladderRung && hero === data.top_outcomes[0]
     ? data.top_outcomes.find((o) => o.name.trim().toLowerCase() === ladderRung.key) ?? {
