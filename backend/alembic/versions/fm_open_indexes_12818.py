@@ -44,11 +44,18 @@ Revises: retired_team_redirects_13229
 from typing import Sequence, Union
 
 from alembic import op
+from sqlalchemy import text
 
 revision: str = "fm_open_indexes_12818"
 down_revision: Union[str, None] = "retired_team_redirects_13229"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+EXPECTED_INDEXES: tuple[str, ...] = (
+    "ix_fm_open_volume_24h",
+    "ix_fm_open_resolution_date",
+    "ix_fm_open_pm_event_slug",
+)
 
 
 def upgrade() -> None:
@@ -73,6 +80,33 @@ def upgrade() -> None:
         WHERE status = 'open' AND (market_metadata ->> 'polymarket_event_slug') IS NOT NULL
         """
     )
+    # Fail loudly if a pre-built CONCURRENTLY index exists in an INVALID state
+    # (`CREATE INDEX IF NOT EXISTS` silently skips existing invalid indexes).
+    rows = op.get_bind().execute(
+        text(
+            """
+            SELECT c.relname, i.indisvalid
+            FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indexrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = current_schema()
+              AND c.relname IN (
+                  'ix_fm_open_volume_24h',
+                  'ix_fm_open_resolution_date',
+                  'ix_fm_open_pm_event_slug'
+              )
+            """
+        )
+    ).all()
+    validity = {str(name): bool(is_valid) for name, is_valid in rows}
+    invalid_or_missing = [
+        name for name in EXPECTED_INDEXES if not validity.get(name, False)
+    ]
+    if invalid_or_missing:
+        raise RuntimeError(
+            f"{revision}: index(es) missing or invalid (indisvalid=false): "
+            f"{', '.join(invalid_or_missing)}"
+        )
 
 
 def downgrade() -> None:

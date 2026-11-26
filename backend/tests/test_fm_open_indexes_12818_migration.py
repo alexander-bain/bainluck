@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from app.utils.migration_lock_budget import batch_is_retryable
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -40,21 +42,44 @@ def test_revision_metadata_and_safety_rules():
     assert "CONCURRENTLY" not in executed.upper()
 
 
+def _make_fake_op(
+    execs: list[str],
+    drops: list[tuple[str, dict]],
+    index_rows: list[tuple[str, bool]],
+):
+    class _FakeResult:
+        def all(self):
+            return index_rows
+
+    class _FakeBind:
+        def execute(self, stmt):
+            execs.append(" ".join(str(stmt).split()))
+            return _FakeResult()
+
+    return SimpleNamespace(
+        execute=lambda sql: execs.append(" ".join(str(sql).split())),
+        get_bind=lambda: _FakeBind(),
+        drop_index=lambda name, **kw: drops.append((name, kw)),
+    )
+
+
 def test_upgrade_and_downgrade_emit_expected_partial_indexes(monkeypatch):
     mod = _load_migration()
     execs: list[str] = []
     drops: list[tuple[str, dict]] = []
+    valid_rows = [
+        ("ix_fm_open_volume_24h", True),
+        ("ix_fm_open_resolution_date", True),
+        ("ix_fm_open_pm_event_slug", True),
+    ]
 
-    fake_op = SimpleNamespace(
-        execute=lambda sql: execs.append(" ".join(str(sql).split())),
-        drop_index=lambda name, **kw: drops.append((name, kw)),
-    )
+    fake_op = _make_fake_op(execs, drops, valid_rows)
     monkeypatch.setattr(mod, "op", fake_op)
 
     mod.upgrade()
-    assert len(execs) == 3
+    assert len(execs) == 4
 
-    vol, res, slug = execs
+    vol, res, slug, check = execs
     assert "CREATE INDEX IF NOT EXISTS ix_fm_open_volume_24h" in vol
     assert "ON futures_markets (volume_24h DESC NULLS LAST, updated_at DESC NULLS LAST, id)" in vol
     assert "WHERE status = 'open'" in vol
@@ -67,9 +92,42 @@ def test_upgrade_and_downgrade_emit_expected_partial_indexes(monkeypatch):
     assert "ON futures_markets ((market_metadata ->> 'polymarket_event_slug') text_pattern_ops)" in slug
     assert "WHERE status = 'open' AND (market_metadata ->> 'polymarket_event_slug') IS NOT NULL" in slug
 
+    assert "pg_index" in check
+    assert "indisvalid" in check
+
     mod.downgrade()
     assert drops == [
         ("ix_fm_open_pm_event_slug", {"table_name": "futures_markets", "if_exists": True}),
         ("ix_fm_open_resolution_date", {"table_name": "futures_markets", "if_exists": True}),
         ("ix_fm_open_volume_24h", {"table_name": "futures_markets", "if_exists": True}),
     ]
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected_bad"),
+    [
+        (
+            [
+                ("ix_fm_open_volume_24h", True),
+                ("ix_fm_open_resolution_date", False),
+                ("ix_fm_open_pm_event_slug", True),
+            ],
+            "ix_fm_open_resolution_date",
+        ),
+        (
+            [
+                ("ix_fm_open_volume_24h", True),
+                ("ix_fm_open_resolution_date", True),
+            ],
+            "ix_fm_open_pm_event_slug",
+        ),
+    ],
+)
+def test_upgrade_raises_naming_invalid_or_missing_index(monkeypatch, rows, expected_bad):
+    mod = _load_migration()
+    execs: list[str] = []
+    fake_op = _make_fake_op(execs, [], rows)
+    monkeypatch.setattr(mod, "op", fake_op)
+
+    with pytest.raises(RuntimeError, match=expected_bad):
+        mod.upgrade()
