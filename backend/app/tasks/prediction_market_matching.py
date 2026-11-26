@@ -8025,6 +8025,7 @@ async def _phase2_persist_group_reading(
             away_win_probability=round(away_prob, 4),
             draw_probability=None if draw_prob is None else round(draw_prob, 4),
             is_completed=bool(getattr(anchor, "event_has_result", False)),
+            commence_time=getattr(anchor, "event_commence_time", None),
             game_state={
                 # `reading.market`, NOT the group's primary. The primary is only
                 # the row picked to iterate once per (event, source); since the
@@ -13291,6 +13292,7 @@ async def _poll_live_prediction_market_prices():
                         else None
                     ),
                     is_completed=(getattr(event, "status", None) in ("completed", "closed")),
+                    commence_time=getattr(event, "commence_time", None),
                 )
 
                 if is_new:

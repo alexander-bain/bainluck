@@ -20,6 +20,79 @@ from sqlalchemy import select
 STAT_MODEL_LIVE_HEARTBEAT_S = 60.0
 
 
+def _as_utc(dt: datetime | None) -> datetime | None:
+    if not isinstance(dt, datetime):
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _identity_map_event_commence_time(session, event_id: int) -> datetime | None:
+    """Zero-SQL check: return ``Event(event_id).commence_time`` if already loaded."""
+    try:
+        from app.models.models import Event
+
+        if session is None:
+            return None
+        imap = getattr(session, "identity_map", None)
+        if imap is None:
+            sync_sess = getattr(session, "sync_session", None)
+            if sync_sess is not None:
+                imap = getattr(sync_sess, "identity_map", None)
+        if imap is None or not (
+            getattr(type(imap), "__module__", "") or ""
+        ).startswith("sqlalchemy."):
+            return None
+        ev = imap.get((Event, (int(event_id),), None))
+        if ev is None:
+            return None
+        return _as_utc(getattr(ev, "commence_time", None))
+    except Exception:
+        return None
+
+
+def _is_real_sqlalchemy_session(session) -> bool:
+    if session is None:
+        return False
+    if (getattr(type(session), "__module__", "") or "").startswith("sqlalchemy."):
+        return True
+    sync_sess = getattr(session, "sync_session", None)
+    return sync_sess is not None and (
+        getattr(type(sync_sess), "__module__", "") or ""
+    ).startswith("sqlalchemy.")
+
+
+async def _resolve_event_commence_time(
+    session, event_id: int, commence_time: datetime | None
+) -> datetime | None:
+    resolved = _as_utc(commence_time)
+    if resolved is not None:
+        return resolved
+    resolved = _identity_map_event_commence_time(session, event_id)
+    if resolved is not None:
+        return resolved
+    if not _is_real_sqlalchemy_session(session):
+        return None
+    try:
+        from app.models.models import Event
+
+        res = await session.execute(
+            select(Event.commence_time).where(Event.id == event_id)
+        )
+        return _as_utc(res.scalar_one_or_none())
+    except Exception:
+        return None
+
+
+def _existing_snapshot_is_pre_start(existing, commence_time: datetime | None) -> bool:
+    start = _as_utc(commence_time)
+    cap = _as_utc(getattr(existing, "captured_at", None))
+    if start is None or cap is None:
+        return False
+    return cap <= start
+
+
 def _identity_map_event_finished(session, event_id: int) -> bool:
     """Zero-SQL check: True iff `Event(event_id)` is already loaded as completed/closed."""
     try:
@@ -103,6 +176,7 @@ async def _create_or_update_win_prob_snapshot(
     max_gap_seconds: float = None,
     draw_probability: float = None,
     observed_at: datetime = None,
+    commence_time: datetime = None,
 ) -> tuple:
     """
     Create a new WinProbSnapshot or update existing if value unchanged.
@@ -209,26 +283,51 @@ async def _create_or_update_win_prob_snapshot(
                 is_same = False
 
     if existing is None or not is_same:
-        # #922: completed/closed event — refresh the terminal point in place
-        # instead of appending a new late captured_at point. The live snapshots
-        # already captured the game through its final; this keeps the terminal
-        # value current without extending the time series past the real final.
+        # #922: completed/closed event — refresh the post-start terminal point
+        # in place instead of appending a new late captured_at point.
+        # #12108: NEVER overwrite a pre-start snapshot in place; doing so
+        # stamps terminal outcome values onto a pre-kickoff captured_at row and
+        # corrupts both pre-start calibration baselines and All-range charts.
+        resolved_commence = (
+            await _resolve_event_commence_time(session, event_id, commence_time)
+            if is_completed
+            else None
+        )
         if is_completed and existing is not None:
-            existing.home_win_probability = home_win_probability
-            existing.away_win_probability = away_win_probability
-            existing.draw_probability = draw_probability
-            if game_state is not None:
-                existing.game_state = game_state
-            existing.valid_until = now
-            existing.reading_count = (existing.reading_count or 0) + 1
-            await _invalidate_finished_if_applicable(
-                session, event_id, is_completed=True
+            existing_is_pre_start = _existing_snapshot_is_pre_start(
+                existing, resolved_commence
             )
-            return existing, False
+            existing_gs = getattr(existing, "game_state", None)
+            already_completed_terminal = (
+                isinstance(existing_gs, dict)
+                and existing_gs.get("_completed_terminal") is True
+            )
+            if not existing_is_pre_start or already_completed_terminal:
+                existing.home_win_probability = home_win_probability
+                existing.away_win_probability = away_win_probability
+                existing.draw_probability = draw_probability
+                if game_state is not None:
+                    existing.game_state = (
+                        {**game_state, "_completed_terminal": True}
+                        if already_completed_terminal
+                        else game_state
+                    )
+                existing.valid_until = now
+                existing.reading_count = (existing.reading_count or 0) + 1
+                await _invalidate_finished_if_applicable(
+                    session, event_id, is_completed=True
+                )
+                return existing, False
 
-        # Value changed — close out the old row and create a new one
+        # Value changed (or completed event whose latest row was captured before
+        # start) — close out the old row and create a new one.
         if existing is not None:
             existing.valid_until = now
+
+        new_game_state = game_state
+        if is_completed and resolved_commence is not None and now <= resolved_commence:
+            base_state = dict(game_state) if isinstance(game_state, dict) else {}
+            new_game_state = {**base_state, "_completed_terminal": True}
 
         snapshot = WinProbSnapshot(
             event_id=event_id,
@@ -236,7 +335,8 @@ async def _create_or_update_win_prob_snapshot(
             home_win_probability=home_win_probability,
             away_win_probability=away_win_probability,
             draw_probability=draw_probability,
-            game_state=game_state,
+            game_state=new_game_state,
+            captured_at=now,
             reading_count=1,
         )
         await _invalidate_finished_if_applicable(
