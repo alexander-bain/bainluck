@@ -12,7 +12,7 @@
   "category": "sports",
   "tag": "STREAKS",
   "section_title": "Active winning streaks and each team's chance to keep it alive",
-  "subtitle": "Teams on active 4+ game winning streaks with a priced next game, showing the chance each streak survives its next test.",
+  "subtitle": "Teams on active 4+ game winning streaks with an open next-game market, showing the chance each streak survives its next test.",
   "footer": "Each team's next game.",
   "score": 92.0,
   "rule": {
