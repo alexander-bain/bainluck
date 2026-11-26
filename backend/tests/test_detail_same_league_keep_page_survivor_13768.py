@@ -268,7 +268,8 @@ def test_13768_cross_board_winner_and_retired_exclusion_and_corner_flip_parity()
                 )
             )
 
-        # 2. Corner-flipped winner: page row (`16010`, id-less) vs flipped Odds-API winner (`16011`).
+        # 2. Corner-flipped winner across status slice: live page row (`16010`,
+        # id-less) vs scheduled Odds-API winner (`16011`).
         s.add(
             Event(
                 id=16010,
@@ -276,7 +277,7 @@ def test_13768_cross_board_winner_and_retired_exclusion_and_corner_flip_parity()
                 away_team_name="Maccabi Tel Aviv",
                 home_team_name="FC Bayern Munich",
                 commence_time=kickoff,
-                status="scheduled",
+                status="live",
                 external_id=None,
                 win_probability_sources={"kalshi": {"value": 0.60, "updated_at": src_stamp}},
             )
@@ -350,3 +351,107 @@ def test_13768_cross_board_winner_and_retired_exclusion_and_corner_flip_parity()
     assert detail_flip.folded_sources["polymarket"]["value"] == pytest.approx(0.65)
     assert list_flip.folded_sources["polymarket"]["value"] == pytest.approx(0.65)
     assert detail_flip.bookmaker_count == list_flip.bookmaker_count == 0
+
+
+def test_13768_same_league_same_status_loser_does_not_absorb_survivor_odds():
+    """In-slice loser (`id=43`, same league & status as `id=42`) stays unfolded on detail."""
+    eng = create_engine("sqlite://")
+    Base.metadata.create_all(eng)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    with Session(eng) as s:
+        s.add(Sport(id=75, key="soccer_epl", name="EPL", group="Soccer"))
+        s.add(
+            Event(
+                id=42,
+                sport_id=75,
+                external_id="fixture42",
+                home_team_name="Home",
+                away_team_name="Away",
+                commence_time=now,
+                status="live",
+                win_probability_sources={
+                    "espn": {
+                        "value": 0.63,
+                        "home_probability": 0.63,
+                        "away_probability": 0.27,
+                        "updated_at": now.isoformat(),
+                    }
+                },
+            )
+        )
+        s.add(
+            Event(
+                id=43,
+                sport_id=75,
+                external_id="fixture43",
+                home_team_name="Home",
+                away_team_name="Away",
+                commence_time=now,
+                status="live",
+                win_probability_sources={
+                    "espn": {
+                        "value": 0.63,
+                        "home_probability": 0.63,
+                        "away_probability": 0.27,
+                        "updated_at": now.isoformat(),
+                    }
+                },
+            )
+        )
+        s.add(
+            OddsSnapshot(
+                id=7001,
+                event_id=42,
+                bookmaker="draftkings",
+                home_moneyline=-170,
+                away_moneyline=270,
+                home_win_probability=0.63,
+                away_win_probability=0.27,
+                captured_at=now,
+                reading_count=1,
+            )
+        )
+        s.commit()
+
+    with Session(eng) as s:
+        db = _SyncAsAsync(s)
+        ev43 = _load_event(db, 43)
+        absorbed, complete = asyncio.run(
+            serve_fold_absorbed_rows_with_completeness(db, ev43, keep_page_survivor=True)
+        )
+        assert absorbed == []
+        assert complete is True
+
+        detail_43 = asyncio.run(
+            load_unified_game_reads(
+                db,
+                [ev43],
+                collapse_in_page=False,
+                include_same_league_external=True,
+                include_odds=True,
+                odds_query_fn=_portable_odds_query,
+                now=now,
+            )
+        ).by_id[43]
+        assert detail_43.bookmaker_count == 0
+        assert detail_43.latest_snapshots == []
+        assert detail_43.odds_data is None
+
+    with Session(eng) as s:
+        db = _SyncAsAsync(s)
+        ev42 = _load_event(db, 42)
+        ev43 = _load_event(db, 43)
+        list_batch = asyncio.run(
+            load_unified_game_reads(
+                db,
+                [ev42, ev43],
+                collapse_in_page=True,
+                include_same_league_external=True,
+                include_odds=True,
+                odds_query_fn=_portable_odds_query,
+                now=now,
+            )
+        )
+        assert list(list_batch.by_id.keys()) == [42]
+        assert list_batch.by_id[42].bookmaker_count == 1
