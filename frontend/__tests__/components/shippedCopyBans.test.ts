@@ -1456,6 +1456,7 @@ describe("production — the chunks a browser downloaded from bainluck.com", () 
 
 describe("#13806 — Discover candidate grouping JSONs carry no banned copy in reader lines", () => {
   const candidatesDir = path.resolve(__dirname, "../../../backend/data/groupings/candidates");
+  const discoverCandidatesDir = path.resolve(__dirname, "../../../backend/data/discover/candidates");
   const readerKeys = new Set([
     "title",
     "subtitle",
@@ -1504,6 +1505,18 @@ describe("#13806 — Discover candidate grouping JSONs carry no banned copy in r
       ALL_COPY_BANS
     );
     expect(pricingHits.map((h) => h.ban.id)).toContain("price-family");
+
+    const headlinersRetired = findBannedCopy(
+      "Artists priced to appear on stage — multiple guests can perform together, so chances do not add to 100%.",
+      ALL_COPY_BANS
+    );
+    expect(headlinersRetired.map((h) => h.ban.id)).toContain("price-family");
+
+    const streaksRetired = findBannedCopy(
+      "Teams on active 4+ game winning streaks with a priced next game, showing the chance each streak survives its next test.",
+      ALL_COPY_BANS
+    );
+    expect(streaksRetired.map((h) => h.ban.id)).toContain("price-family");
   });
 
   it("finds zero banned-language hits across all reader-visible lines in backend/data/groupings/candidates/*.json", () => {
@@ -1525,6 +1538,31 @@ describe("#13806 — Discover candidate grouping JSONs carry no banned copy in r
     }
     if (failures.length > 0) {
       throw new Error(`Banned reader copy in groupings/candidates JSONs:\n  ${failures.join("\n  ")}`);
+    }
+  });
+
+  it("finds zero banned-language hits across all reader-visible lines in backend/data/discover/candidates/*.json definitions", () => {
+    expect(fs.existsSync(discoverCandidatesDir)).toBe(true);
+    const files = fs
+      .readdirSync(discoverCandidatesDir)
+      .filter((f) => f.endsWith(".json") && !f.endsWith("-rows.json"))
+      .sort();
+    expect(files.length).toBeGreaterThan(0);
+
+    const failures: string[] = [];
+    for (const file of files) {
+      const parsed = JSON.parse(fs.readFileSync(path.join(discoverCandidatesDir, file), "utf8"));
+      const lines: Array<{ loc: string; text: string }> = [];
+      collectReaderLines(parsed, file, lines);
+      for (const { loc, text } of lines) {
+        const hits = findBannedCopy(text, ALL_COPY_BANS);
+        for (const hit of hits) {
+          failures.push(`${loc} [${hit.ban.id}: ${hit.matched}]: ${JSON.stringify(text)}`);
+        }
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(`Banned reader copy in discover/candidates JSONs:\n  ${failures.join("\n  ")}`);
     }
   });
 });
