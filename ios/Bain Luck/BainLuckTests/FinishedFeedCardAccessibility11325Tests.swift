@@ -168,7 +168,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let league = try XCTUnwrap(read.first { tokens($0.text).contains("NFL") }, "\(name): \(all)")
         let status = try XCTUnwrap(read.first { badgeTokens($0).contains { $0.caseInsensitiveCompare("Final") == .orderedSame } }, "\(name): \(all)")
         XCTAssertTrue(sameRow(league, status), "\(name): league and Final no longer share the top row — \(all)")
-        XCTAssertTrue(read.contains { $0.text.contains("Projected") }, "\(name): forecast line gone — \(all)")
+        XCTAssertTrue(read.contains { $0.text.contains("Pregame projection") }, "\(name): forecast line gone — \(all)")
     }
 
     func testALiveSportsCardAtAX5KeepsItsSingleRows() throws {
@@ -441,6 +441,72 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         }
     }
 
+    func testExport13730B4SheetWhenRequested() throws {
+        guard let dir = ProcessInfo.processInfo.environment["EXPORT_13730_B4_SHEET_DIR"], !dir.isEmpty else {
+            return
+        }
+        let outDir = URL(fileURLWithPath: dir, isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+        let nflOdds = try served(
+            14780563,
+            editing: #""ended_at": "#,
+            to: Self.constructedOpeningOdds + #", "ended_at": "#
+        )
+        let stuttgart = try leagueFeedEvent(Self.stuttgartLeagueRow)
+
+        let specs: [(String, FeedEventData, CGFloat, CGFloat, ColorScheme)] = [
+            ("nfl-320-light.png", nflOdds, 320, 290, .light),
+            ("nfl-320-dark.png", nflOdds, 320, 290, .dark),
+            ("soccer-320-light.png", stuttgart, 320, 315, .light),
+            ("soccer-320-dark.png", stuttgart, 320, 315, .dark),
+            ("nfl-393-light.png", nflOdds, 393, 290, .light),
+            ("nfl-393-dark.png", nflOdds, 393, 290, .dark),
+        ]
+
+        for (file, event, width, height, scheme) in specs {
+            let png = try renderSheetCard(
+                EventCardView(event: event, reason: nil),
+                width: width,
+                height: height,
+                scheme: scheme,
+                size: .large
+            )
+            try png.write(to: outDir.appendingPathComponent(file))
+        }
+    }
+
+    private func renderSheetCard<V: View>(
+        _ card: V,
+        width: CGFloat,
+        height: CGFloat,
+        scheme: ColorScheme,
+        size: DynamicTypeSize
+    ) throws -> Data {
+        let style: UIUserInterfaceStyle = scheme == .dark ? .dark : .light
+        let host = hostForMeasurement(
+            ScrollView { card.padding(.horizontal, 16) }
+                .environmentObject(pins)
+                .environment(\.colorScheme, scheme)
+                .background(Color(uiColor: .systemBackground)),
+            at: size
+        )
+        host.overrideUserInterfaceStyle = style
+        host.view.backgroundColor = .systemBackground
+        host.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        let window = UIWindow(frame: host.view.frame)
+        window.overrideUserInterfaceStyle = style
+        window.backgroundColor = .systemBackground
+        window.rootViewController = host
+        window.isHidden = false
+        settle(host, 0.8)
+        defer { window.isHidden = true }
+        let image = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        return try XCTUnwrap(image.pngData())
+    }
+
     // MARK: - Hosting and reading
 
     /// A line Vision read, and the rendered frame it was read from (so a line
@@ -467,10 +533,15 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let host = hostForMeasurement(
             ScrollView { card.padding(.horizontal, 16) }
                 .environmentObject(pins)
-                .environment(\.colorScheme, .light),
+                .environment(\.colorScheme, .light)
+                .background(Color.white),
             at: size)
+        host.overrideUserInterfaceStyle = .light
+        host.view.backgroundColor = .white
         host.view.frame = CGRect(x: 0, y: 0, width: width, height: 1400)
         let window = UIWindow(frame: host.view.frame)
+        window.overrideUserInterfaceStyle = .light
+        window.backgroundColor = .white
         window.rootViewController = host
         window.isHidden = false
         settle(host, 0.8)
@@ -999,6 +1070,7 @@ private final class RenderedFrame11325 {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
+        request.recognitionLanguages = ["en-US"]
         request.minimumTextHeight = 0
         try VNImageRequestHandler(cgImage: crop).perform([request])
         return (request.results ?? []).compactMap { o in
