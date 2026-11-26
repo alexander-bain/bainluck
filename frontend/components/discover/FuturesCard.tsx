@@ -1219,7 +1219,7 @@ function buildHeatmapRows(data: FeedFuturesData): HeatmapRow[] {
  * reads the SAME ladder: a group row and the card it expands into must not
  * disagree about which rungs exist.
  */
-function heatmapShownCells(data: FeedFuturesData): HeatmapRow[] | null {
+function heatmapPricedCells(data: FeedFuturesData): HeatmapRow[] | null {
   // #6505 — A ROW THE CARD CANNOT PUT A NUMBER ON IS NOT A ROW.
   //
   // Measured on production `/api/feed?limit=200`, 2026-09-16 07:2xZ, over the 123
@@ -1263,7 +1263,12 @@ function heatmapShownCells(data: FeedFuturesData): HeatmapRow[] | null {
   if (data.discover_card?.suggested_format !== "threshold_heatmap" || heatmapRows.length < heatmapMinRows) {
     return null;
   }
-  return heatmapRows.slice(0, 8);
+  return heatmapRows;
+}
+
+function heatmapShownCells(data: FeedFuturesData): HeatmapRow[] | null {
+  const priced = heatmapPricedCells(data);
+  return priced ? priced.slice(0, 8) : null;
 }
 
 /**
@@ -1280,12 +1285,25 @@ function heatmapShownCells(data: FeedFuturesData): HeatmapRow[] | null {
  * cumulative ladder is the loosest question — the defect #8647 removed from the
  * card and never from its compact twin.
  */
-function ladderMarks(shownCells: HeatmapRow[]): {
+function ladderMarks(
+  shownCells: HeatmapRow[],
+  now: Date = new Date(),
+): {
   betterThanEvenRung: HeatmapRow | null;
   ruleRung: HeatmapRow | null;
   leaderCell: HeatmapRow | null;
 } {
-  const above50 = shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
+  const isDate = ladderKind(shownCells) === "date";
+  let candidateCells = shownCells;
+  if (isDate) {
+    // Never highlight or caption a passed date rung while a today/future rung exists (#13422).
+    const todayIso = now.toISOString().slice(0, 10);
+    const upcoming = shownCells.filter((r) => !r.dateIso || r.dateIso >= todayIso);
+    if (upcoming.length > 0) {
+      candidateCells = upcoming;
+    }
+  }
+  const above50 = candidateCells.filter((r) => (r.probability ?? 0) >= 0.5);
   // #8647 — the caption names the MOST SPECIFIC rung the market still calls
   // better than even, and which end of `above50` that is depends on the axis.
   // On a comparator ladder ("Above 52 / Above 58 / Above 64") chances fall as
@@ -1298,7 +1316,7 @@ function ladderMarks(shownCells: HeatmapRow[]): {
   // 2027 / 2029 or later") has at most one rung over even, so it reads the same.
   const betterThanEvenRung =
     above50.length === 0 ? null
-    : ladderKind(shownCells) === "date" ? above50[0]
+    : isDate ? above50[0]
     : above50[above50.length - 1];
   // UX-1052 item 4 — the leader is the highest-probability rung, marked in
   // place. On a date ladder the rows are chronological, so "the answer" is
@@ -1314,12 +1332,12 @@ function ladderMarks(shownCells: HeatmapRow[]): {
   // rung stays the mark on every ladder: that is Alex's UX-1052 design
   // ("the leader marked"), not this fix's call to reverse.
   const ruleRung =
-    (ladderKind(shownCells) === "date" || atLeastLadder(shownCells)) && betterThanEvenRung
+    (isDate || atLeastLadder(shownCells)) && betterThanEvenRung
       ? betterThanEvenRung
       : null;
   const leaderCell =
     ruleRung ??
-    shownCells.reduce<HeatmapRow | null>(
+    candidateCells.reduce<HeatmapRow | null>(
       (best, r) =>
         r.probability == null ? best
         : best == null || r.probability > (best.probability ?? -1) ? r
@@ -1433,9 +1451,13 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // an answer to the question as asked and still wins; only its default, the
   // served first outcome, gives way.
   const hero = heroOutcome(data.top_outcomes, data.name);
-  const heatmapCells = heatmapShownCells(data);
-  const ladderRung = heatmapCells
-    ? compactLadderHeadlineRung(heatmapCells, hero?.name)
+  const allHeatmapCells = heatmapPricedCells(data);
+  const compactLadderCells =
+    allHeatmapCells && ladderKind(allHeatmapCells) === "date"
+      ? allHeatmapCells
+      : heatmapShownCells(data);
+  const ladderRung = compactLadderCells
+    ? compactLadderHeadlineRung(compactLadderCells, hero?.name)
     : null;
   const leader = ladderRung && hero === data.top_outcomes[0]
     ? data.top_outcomes.find((o) => o.name.trim().toLowerCase() === ladderRung.key) ?? {

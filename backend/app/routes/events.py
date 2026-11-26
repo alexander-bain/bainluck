@@ -29644,7 +29644,7 @@ async def _build_game_markets(
 # defect (LAT-P136 / P127-2 — the defect is that it was the ONLY cache the tier
 # had; see `utils/related_futures_cache.py` for the ten-event cold measurement).
 _related_futures_cache: dict[int, tuple[float, str, str, dict]] = {}
-# event_id → (timestamp, source_status, build_id, response)
+# event_id → (timestamp, source_status, cache_version, response)
 _RELATED_FUTURES_LIVE_TTL = 60
 _RELATED_FUTURES_MAX_SIZE = 10
 
@@ -29794,8 +29794,8 @@ def _read_related_futures_memo(event_id: int):
     entry = _related_futures_cache.get(event_id)
     if entry is None:
         return None
-    cached_at, cached_status, cached_build, cached_response = entry
-    if cached_build != _current_build_id():
+    cached_at, cached_status, cached_version, cached_response = entry
+    if cached_version != rfc.current_cache_version():
         return None
     age = _time.time() - cached_at
     ttl = (
@@ -29809,7 +29809,7 @@ def _read_related_futures_memo(event_id: int):
 
 
 def _write_related_futures_memo(event_id: int, source_status, response) -> None:
-    """The L1 write, with its size bound. Now stamped with the build (#6883).
+    """The L1 write, with its size bound. Stamped with `rfc.current_cache_version()`.
 
     The timestamp is the payload's own build time, not this moment — `_memo_stamp`,
     shared with the sibling tier, and the reason is #6394's: the read is not the
@@ -29820,13 +29820,15 @@ def _write_related_futures_memo(event_id: int, source_status, response) -> None:
     the bound is reached is the one holding the OLDEST CONTENT rather than the
     one this process happened to read first.
     """
+    from app.utils import related_futures_cache as rfc
+
     if len(_related_futures_cache) >= _RELATED_FUTURES_MAX_SIZE:
         oldest = min(_related_futures_cache, key=lambda k: _related_futures_cache[k][0])
         del _related_futures_cache[oldest]
     _related_futures_cache[event_id] = (
         _memo_stamp(response),
         str(source_status or ""),
-        _current_build_id(),
+        rfc.current_cache_version(),
         response,
     )
 

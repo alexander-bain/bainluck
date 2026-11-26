@@ -259,7 +259,7 @@ enum AnalyticsPrivacy {
         "event_id", "market_id", "item_id", "item_type", "result_type",
         "sport", "category", "status", "entry_method", "range", "surface", "source",
         // Auth / onboarding
-        "method", "step", "step_name", "teams_count",
+        "method", "entry_point", "step", "step_name", "teams_count",
         "last_step_completed", "last_step_name",
         "error_domain", "error_code", "underlying_domain", "underlying_code",
         // Discover interaction
