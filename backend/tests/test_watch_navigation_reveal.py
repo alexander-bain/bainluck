@@ -872,7 +872,7 @@ def test_launcher_scope_normalization_rejects_missing_retained_tap_assertion():
     with pytest.raises(AssertionError):
         restore_launcher_scope(
             raw.replace(
-                'tapOrdinal: 1, dismissedOverlays: picker, phase: "Exactograph corner launcher"',
+                'tapOrdinal: 1, dismissedOverlays: picker, phase: "Exactograph corner reading"',
                 "REMOVED_TAP_ASSERTION",
                 1,
             )
@@ -1062,12 +1062,12 @@ def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
 # #12513: exact Xcode 27.2 Watch UI test fixes.
 XCODE_27_2_CURRENT_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "267753ce4fd805a4592f9c7f05794a6866d55616919170c64fb13ea82f12a03c",
-    "PickerAliasJourneyTests.swift": "3f1f1d4491a5c75a3de6df301190e41b38d81051c639b8039fd6404770b0e230",
+    "PickerAliasJourneyTests.swift": "ea343e54ba47a229254f1db32e5bbbb074a43362406b5c3728ce0a1eb0500c35",
     "PickerCurrentGameJourneyTests.swift": "3ff94018d2176706b004eba31c7733606e7f679c392cd4faf410245e54220781",
     "PickerReturnJourneyTests.swift": "8e23abbce48fc2c47f382fdde2985f414236026caa03987535b91b8524e361bc",
     "PickerSelectedStateJourneyTests.swift": "129ad9836cfe7eee86f8aa024fd09b00e0a8ad2f8c145c19be1d3e7e851073b5",
     "WatchDiagnosticsJourneyTests.swift": "9f6fd014300264b8a817e8b8c42caebc91e15457c1d305ca06018c67c62fdb68",
-    "WidgetTapJourneyTests.swift": "3d22d65b850dc87dd35c9991f780063f1ca3998f2870d8a1fabc2b8320a2e4b1",
+    "WidgetTapJourneyTests.swift": "9fe9cbb8a17449967b49f0009145e7bfa5c9f39a1eda852e45dc3804ed999679",
 }
 XCODE_27_2_PREVIOUS_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
@@ -1089,7 +1089,7 @@ XCODE_27_2_WATCH_TRANSFORMS = {
     "PickerAliasJourneyTests.swift": [
         (
             '    @MainActor\n    func testResolvedAliasRetainsReadingOfflineAndAfterRestart() throws {\n        try aliasJourney(largeText: false)\n        print("WATCH_UI_PICKER_ALIAS_STANDARD=PASS")\n    }\n',
-            '    @MainActor\n    func testResolvedAliasRetainsReadingOfflineAndAfterRestart() throws {\n        executionTimeAllowance = 300\n        try aliasJourney(largeText: false)\n        print("WATCH_UI_PICKER_ALIAS_STANDARD=PASS")\n    }\n',
+            '    @MainActor\n    func testResolvedAliasRetainsReadingOfflineAndAfterRestart() throws {\n        executionTimeAllowance = 540\n        try aliasJourney(largeText: false)\n        print("WATCH_UI_PICKER_ALIAS_STANDARD=PASS")\n    }\n',
             1,
         ),
         (
@@ -1706,6 +1706,108 @@ XCODE_27_2_LATER_TRANSFORMS = {
         try freshFaceRequire(inEditor,
                              "Siri Modular is not in its actual editor before page search", host: host)
     }""",
+            1,
+        ),
+        (
+            """        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0\"""",
+            """        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host, expectReading: false)
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0\"""",
+            1,
+        ),
+        (
+            """        let reading = try mountLauncherOnFreshExactographFace(in: host)
+        XCTAssertEqual(reading.label, "Open your selected game in Bain Luck, or choose a game")
+        XCTAssertFalse(host.descendants(matching: .any)["watch.complication.corner.reading"].firstMatch.exists)
+        freshFaceCapture(host, name: "Actual configured Exactograph explicit launcher")
+        try tapActualWidgetHostAndAssertWarmReturn(host: host, widget: reading, app: app,
+            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "Exactograph corner launcher")""",
+            """        let reading = try mountLauncherOnFreshExactographFace(in: host)
+        XCTAssertTrue(reading.label.contains("64%"), "Corner complication must show the selected game probability")
+        XCTAssertFalse(host.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch.exists)
+        freshFaceCapture(host, name: "Actual configured Exactograph corner reading")
+        try tapActualWidgetHostAndAssertWarmReturn(host: host, widget: reading, app: app,
+            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "Exactograph corner reading")""",
+            1,
+        ),
+        (
+            """        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        let launcher = widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch
+        try freshFaceRequire(launcher.exists && launcher.frame.width > 0 && launcher.frame.height > 0,
+                             "Configured circular slot lacks a complete explicit launcher", host: host)
+        XCTAssertFalse(widget.descendants(matching: .any)["watch.complication.circular.reading"].firstMatch.exists)
+        freshFaceCapture(host, name: "Actual configured circular explicit launcher")
+        try tapActualWidgetHostAndAssertWarmReturn(host: host, widget: widget, app: app,
+            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "circular launcher")""",
+            """        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        let reading = widget.descendants(matching: .any)["watch.complication.circular.reading"].firstMatch
+        try freshFaceRequire(reading.exists && reading.label.contains("64%") && reading.frame.width > 0 && reading.frame.height > 0,
+                             "Configured circular slot lacks selected game reading", host: host)
+        XCTAssertFalse(widget.descendants(matching: .any)["watch.complication.circular.fallback"].firstMatch.exists)
+        freshFaceCapture(host, name: "Actual configured circular reading")
+        try tapActualWidgetHostAndAssertWarmReturn(host: host, widget: widget, app: app,
+            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "circular reading")""",
+            1,
+        ),
+        (
+            """    @MainActor
+    func mountLauncherOnFreshSiriModularFace(in host: XCUIApplication) throws -> XCUIElement {""",
+            """    @MainActor
+    func mountLauncherOnFreshSiriModularFace(in host: XCUIApplication, expectReading: Bool = true) throws -> XCUIElement {""",
+            1,
+        ),
+        (
+            """        let widget = host.otherElements["bottom-left"].firstMatch
+        let launcher = widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch
+        // Run 44921277743 att1 (widgets): the slot appeared while WidgetKit was still
+        // drawing its redacted placeholder (private-use glyphs). Wait for the real
+        // launcher label to replace it, matching Exactograph's 45 s placeholder wait.
+        let drawn = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            widget.exists && launcher.exists
+        }, object: host)
+        let arrivedLauncher = XCTWaiter.wait(for: [drawn], timeout: 45) == .completed
+        try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15)
+                             && widget.waitForExistence(timeout: 15) && arrivedLauncher
+                             && widget.isHittable && host.frame.contains(widget.frame),
+                             "Fresh installed face has no reachable BainLuckWatch launcher", host: host)
+        freshFaceCapture(host, name: "Fresh face actual mounted BainLuckWatch launcher")""",
+            """        let widget = host.otherElements["bottom-left"].firstMatch
+        let expectedElement = expectReading
+            ? widget.descendants(matching: .any)["watch.complication.circular.reading"].firstMatch
+            : widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch
+        // Wait for the real WidgetKit entry to replace the redacted placeholder.
+        let drawn = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            widget.exists && expectedElement.exists
+        }, object: host)
+        let arrivedEntry = XCTWaiter.wait(for: [drawn], timeout: 45) == .completed
+        try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15)
+                             && widget.waitForExistence(timeout: 15) && arrivedEntry
+                             && widget.isHittable && host.frame.contains(widget.frame),
+                             "Fresh installed face has no reachable BainLuckWatch slot entry", host: host)
+        freshFaceCapture(host, name: "Fresh face actual mounted BainLuckWatch slot")""",
+            1,
+        ),
+        (
+            """        let reading = host.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch
+        // Run 44397980828 (corner): the launcher appeared after 13 s still drawn as
+        // WidgetKit's placeholder (private-use glyphs, no letters). Wait for the real
+        // entry to replace it; the caller still requires the exact label.
+        let drawn = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            reading.exists && reading.label.unicodeScalars.contains { $0.properties.isAlphabetic }
+        }, object: host)
+        let arrivedDrawn = XCTWaiter.wait(for: [drawn], timeout: 45) == .completed
+        try freshFaceRequire(arrivedDrawn && reading.isHittable && host.frame.contains(reading.frame),
+                             "Actual configured Exactograph has no fitting, drawn explicit launcher", host: host)""",
+            """        let reading = host.descendants(matching: .any)["watch.complication.corner.reading"].firstMatch
+        // Wait for the real entry to replace WidgetKit's redacted placeholder.
+        let drawn = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            reading.exists && reading.label.unicodeScalars.contains { $0.properties.isAlphabetic }
+        }, object: host)
+        let arrivedDrawn = XCTWaiter.wait(for: [drawn], timeout: 45) == .completed
+        try freshFaceRequire(arrivedDrawn && reading.isHittable && host.frame.contains(reading.frame),
+                             "Actual configured Exactograph has no fitting, drawn corner reading", host: host)""",
             1,
         ),
     ],

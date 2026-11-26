@@ -1399,28 +1399,23 @@ def _build_presidential(
             return None
         return max(pool, key=lambda c: len(c["entry"]["outcomes"]))
 
-    # Kalshi still establishes the contest when it has one, so the card keeps the
-    # headline it has today; what changes is that Polymarket is now answered from
-    # the SAME race rather than from whichever of its fields happened to be
-    # widest. When Kalshi is absent the poly headline sets the contest, which is
-    # the previous behaviour for that case unchanged.
-    best_kalshi = _largest("kalshi", None)
-    if best_kalshi is not None and best_kalshi["contest"] == "inauguration":
-        # The election call leads when available. Inauguration has its own row.
-        best_poly = next(
-            (c for c in contenders if c["src"] == "polymarket"
-             and c["market"].id == PRESIDENTIAL_ELECTION_CALL_2028_ID),
-            None,
-        )
-        if best_poly is not None:
-            best_kalshi = None
-    elif best_kalshi is not None:
-        # Kalshi sets the contest, so re-filtering the Kalshi side by it would
-        # return `best_kalshi` again by construction. Only the poly side is
-        # actually constrained here.
-        best_poly = _largest("polymarket", best_kalshi["contest"])
+    # The two registered boards answer different events. When both are present,
+    # their roles must survive a wider nomination field and the side-row cap.
+    election_call = next(
+        (c for c in contenders if c["src"] == "polymarket"
+         and c["market"].id == PRESIDENTIAL_ELECTION_CALL_2028_ID),
+        None,
+    )
+    election_pair = election_call is not None and any(
+        c["contest"] == "inauguration" for c in contenders
+    )
+    if election_pair:
+        best_kalshi, best_poly = None, election_call
     else:
-        best_poly = _largest("polymarket", None)
+        best_kalshi = _largest("kalshi", None)
+        best_poly = _largest(
+            "polymarket", best_kalshi["contest"] if best_kalshi is not None else None
+        )
 
     chosen = [c for c in (best_kalshi, best_poly) if c]
     chosen_ids = {id(c) for c in chosen}
@@ -1440,7 +1435,12 @@ def _build_presidential(
         if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
             side_markets.append((row, c["market"]))
 
-    side_markets.sort(key=lambda rm: _by_uncertainty(*rm))
+    side_markets.sort(
+        key=lambda rm: (
+            election_pair and rm[1].id != PRESIDENTIAL_INAUGURATION_2029_ID,
+            _by_uncertainty(*rm),
+        )
+    )
 
     # #7228: the contest is the party evidence for every name in its field. Both
     # chosen headlines settle the same race by construction (`best_poly` is

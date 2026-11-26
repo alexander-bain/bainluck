@@ -126,6 +126,64 @@ class VerifiedSummaryTests(unittest.TestCase):
                 shortfall, 0, suite_name="Selected tests", min_tests=400
             )
 
+    def test_failed_run_records_counts_names_and_min_tests_reason_without_relaxing_verdict(self):
+        failed_log = "\n".join(
+            [
+                "Test Case '-[BainLuckTests.AlphaTests testGreenOne]' passed (0.01 seconds).",
+                "Test Case '-[BainLuckTests.AlphaTests testGreenTwo]' passed (0.01 seconds).",
+                "Test Case '-[BainLuckTests.BetaTests testBroken]' failed (0.12 seconds).",
+                "Test Case '-[BainLuckTests.ThemeCollectionReaderTests testTimeoutCase]' started.",
+                "Test Case '-[BainLuckTests.ThemeCollectionReaderTests testTimeoutCase]' exceeded maximum execution time allowance (180 seconds).",
+                "Failing tests:",
+                "\tBetaTests.testBroken()",
+                "\tThemeCollectionReaderTests.testTimeoutCase()",
+                "\tGammaTests.testCrashWithoutCaseLine()",
+                "** TEST FAILED **",
+            ]
+        )
+        receipt, err = RECEIPT.build_receipt(
+            failed_log, 65, "deadbeef", min_tests=4
+        )
+        self.assertIsNotNone(err)
+        self.assertEqual(receipt["verdict"], "UNPAID")
+        self.assertEqual(receipt["tests"], 5)
+        self.assertEqual(receipt["passed"], 2)
+        self.assertEqual(receipt["failed"], 2)
+        self.assertEqual(receipt["timed_out"], 1)
+        self.assertEqual(
+            receipt["failed_tests"],
+            ["BetaTests.testBroken", "GammaTests.testCrashWithoutCaseLine"],
+        )
+        self.assertEqual(
+            receipt["timed_out_tests"],
+            ["ThemeCollectionReaderTests.testTimeoutCase"],
+        )
+        self.assertFalse(receipt["below_min_tests"])
+        self.assertNotIn("min_tests_reason", receipt)
+
+    def test_failed_early_death_adds_own_min_tests_reason(self):
+        early_log = "\n".join(
+            [f"Test Case '-[BainLuckTests.FastTests testN{i}]' passed (0.01 seconds)." for i in range(499)]
+            + [
+                "Test Case '-[BainLuckTests.CrashTests testAborted]' failed (0.05 seconds).",
+                "** TEST FAILED **",
+            ]
+        )
+        receipt, err = RECEIPT.build_receipt(
+            early_log, 65, "deadbeef", min_tests=7800
+        )
+        self.assertIsNotNone(err)
+        self.assertEqual(receipt["verdict"], "UNPAID")
+        self.assertEqual(receipt["tests"], 500)
+        self.assertEqual(receipt["failed"], 1)
+        self.assertTrue(receipt["below_min_tests"])
+        self.assertEqual(
+            receipt["min_tests_reason"],
+            "Executed 500 tests, below minimum floor of 7800",
+        )
+        self.assertIn(receipt["min_tests_reason"], receipt["reasons"])
+        self.assertIn(receipt["min_tests_reason"], err or "")
+
 
 if __name__ == "__main__":
     unittest.main()

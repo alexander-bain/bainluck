@@ -10,6 +10,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AwardCategoryPairedCard } from "@/components/discover/forms/AwardCategoryPairedCard";
+import { RoundupCard } from "@/components/discover/roundup/RoundupCard";
 import MachinerySectionRenderer, {
   MachineryDiscoverCard,
   resolveDistinctChartSeries,
@@ -317,15 +318,16 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
     const html = renderToStaticMarkup(
       <MachinerySectionRenderer visualBlock={mixedArtBlock} members={[]} />,
     );
-    // Market 901 has 1 real headshot + 1 invisible width-matching spacer; Market 902 has 0 spacers (flush left)
-    const spacerMatches = html.match(/data-testid="machinery-avatar-spacer"/g) ?? [];
-    expect(spacerMatches).toHaveLength(1);
-    // Zero monogram initials anywhere
-    expect(html).not.toContain(">AB<");
+    // Decision 387: A (#13605): Market 901 keeps 1 real headshot + 1 initials circle (`AB`);
+    // Market 902 has zero pictures so renders 0 circles (stays flush left).
+    const initialsMatches = html.match(/data-testid="machinery-avatar-initials"/g) ?? [];
+    expect(initialsMatches).toHaveLength(1);
+    expect(html).toContain(">AB<");
     expect(html).not.toContain(">OA<");
+    expect(html).not.toContain('data-testid="machinery-avatar-spacer"');
     expect(html).not.toContain('data-testid="award-paired-art-fallback"');
 
-    // Discover card with mixed art also reserves spacer for artless sibling row
+    // Discover card with mixed art renders initials in the same circle for artless sibling row
     const mixedCard: MachineryCardContract = {
       slug: "machinery-2028-presidential",
       form_id: "contender_spotlight",
@@ -351,8 +353,9 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
       ],
     };
     const cardHtml = renderToStaticMarkup(<MachineryDiscoverCard card={mixedCard} />);
-    expect(cardHtml).toContain('data-testid="machinery-avatar-spacer"');
-    expect(cardHtml).not.toContain(">UC<");
+    expect(cardHtml).toContain('data-testid="machinery-avatar-initials"');
+    expect(cardHtml).toContain(">UC<");
+    expect(cardHtml).not.toContain('data-testid="machinery-avatar-spacer"');
   });
 
   it("2d: assigns distinct line colours when chart series share duplicate or empty colours", () => {
@@ -612,6 +615,124 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
       expect(bootFeedPath()).not.toContain("machinery=1");
       process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 = "true";
       expect(bootFeedPath()).toContain("machinery=1");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+      } else {
+        process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 = prev;
+      }
+    }
+  });
+
+  it("343: A: renders 3-team contender_spotlight card tiles with team crests and no initials fallback", () => {
+    const spotlightCard: MachineryCardContract = {
+      slug: "machinery-march-madness-2027",
+      form_id: "contender_spotlight",
+      kicker: "SPORTS · COLLEGE BASKETBALL",
+      title: "Houston leads the Dec 7 AP poll #1 team at 54%",
+      subtitle: "Full AP Poll #1 race alongside teams contending for the 2027 Final Four.",
+      footer: "",
+      section_count: 2,
+      destination_href: "/collections/machinery-march-madness-2027",
+      rows: [
+        {
+          outcome_id: 1,
+          name: "Houston",
+          rendered_percent: 54,
+          art: { url: "https://a.espncdn.com/i/teamlogos/ncaa/500/248.png", kind: "team_logo" },
+        },
+        {
+          outcome_id: 2,
+          name: "Duke",
+          rendered_percent: 10,
+          art: { url: "https://a.espncdn.com/i/teamlogos/ncaa/500/150.png", kind: "team_logo" },
+        },
+        {
+          outcome_id: 3,
+          name: "Michigan St.",
+          rendered_percent: 7,
+          art: { url: "https://a.espncdn.com/i/teamlogos/ncaa/500/127.png", kind: "team_logo" },
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(<MachineryDiscoverCard card={spotlightCard} />);
+    const tileMatches = html.match(/data-testid="machinery-spotlight-tile"/g) ?? [];
+    expect(tileMatches).toHaveLength(3);
+    expect(html).toContain("/teamlogos/ncaa/500/248.png");
+    expect(html).toContain("/teamlogos/ncaa/500/150.png");
+    expect(html).toContain("/teamlogos/ncaa/500/127.png");
+    expect(html).toContain("Open all 2 sections");
+    expect(html).not.toContain('data-testid="machinery-avatar-initials"');
+  });
+
+  it("343: A: paired card footer renders set name without repeating card headline", () => {
+    const prev = process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+    process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 = "true";
+    try {
+      const ggHeadline =
+        "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated";
+      const pairedSet: PairedMetricSet = {
+        ...baseOscarsSet,
+        kicker: "GOLDEN GLOBES 2027 · BEST ACTRESS (COMEDY OR MUSICAL)",
+        title: ggHeadline,
+      };
+      const machineryCard: MachineryCardContract = {
+        slug: "machinery-golden-globes-2027",
+        form_id: "paired_stage_bars",
+        kicker: pairedSet.kicker,
+        title: ggHeadline,
+        subtitle: "84th Golden Globes · Nominated % paired beside Wins %.",
+        footer: "",
+        section_count: 2,
+        destination_href: "/collections/machinery-golden-globes-2027",
+        rows: [],
+      };
+      const contract = {
+        kicker: pairedSet.kicker,
+        footer: "",
+        rows: [],
+        paired_metric_set: pairedSet,
+        machinery_card: machineryCard,
+      };
+
+      const cleanHtml = renderToStaticMarkup(
+        <RoundupCard
+          title={ggHeadline}
+          contract={contract}
+          collectionRef={{
+            slug: "machinery-golden-globes-2027",
+            href: "/collections/machinery-golden-globes-2027",
+            name: "Golden Globes 2027",
+            revision: 1,
+            collection_count: 10,
+          }}
+          items={[]}
+          bundleId="roundup:machinery-golden-globes-2027"
+        />,
+      );
+      expect(cleanHtml).toContain('data-testid="paired-card-machinery-link"');
+      expect(cleanHtml).toContain("Golden Globes 2027");
+      expect(cleanHtml).toContain("Open all 2 sections");
+      expect(cleanHtml.split(ggHeadline)).toHaveLength(2);
+
+      const staleDupHtml = renderToStaticMarkup(
+        <RoundupCard
+          title={ggHeadline}
+          contract={contract}
+          collectionRef={{
+            slug: "machinery-golden-globes-2027",
+            href: "/collections/machinery-golden-globes-2027",
+            name: ggHeadline,
+            revision: 1,
+            collection_count: 10,
+          }}
+          items={[]}
+          bundleId="roundup:machinery-golden-globes-2027"
+        />,
+      );
+      expect(staleDupHtml).toContain('data-testid="paired-card-machinery-link"');
+      expect(staleDupHtml).toContain("Open all 2 sections");
+      expect(staleDupHtml.split(ggHeadline)).toHaveLength(2);
     } finally {
       if (prev === undefined) {
         delete process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;

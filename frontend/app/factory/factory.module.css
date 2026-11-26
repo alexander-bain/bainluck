@@ -2402,6 +2402,20 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   color: white;
   background: var(--apron);
 }
+.crewLocation {
+  display: grid;
+  gap: 3px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.crewLocation > p { margin: 0; }
+.crewStationDetail {
+  color: var(--secondary);
+  font-size: .875rem;
+  font-weight: 400;
+}
 .builderCard > :is(.temperament, .crewSpeech, .crewRecordNote) {
   margin: 0;
   font-size: .875rem;

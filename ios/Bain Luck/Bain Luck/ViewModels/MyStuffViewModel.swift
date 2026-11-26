@@ -36,8 +36,12 @@ extension MyStuffFeedProviding {
 final class MyStuffViewModel: ObservableObject {
     @Published private(set) var items: [FeedItem] = []
     @Published private(set) var teamFutures: TeamFuturesResponse?
+    @Published private(set) var teamFuturesFailed = false
+    @Published private(set) var teamFuturesLoading = false
     @Published private(set) var loading = true
     @Published private(set) var error: String?
+    /// True when the most recent refresh failed after cards were already on screen (#13634).
+    @Published private(set) var lastRefreshFailed = false
 
     /// Immutable snapshot of the required-feed generation that FIRST became
     /// renderable this load (L2-217 Item 2 / C88). Stamped once at data-ready and
@@ -189,7 +193,17 @@ final class MyStuffViewModel: ObservableObject {
     /// True while a live-game auto-refresh timer is armed. Observable so a test can
     /// prove refresh is armed right after the required publish, even while the
     /// optional futures request is still hung.
-    private(set) var refreshArmed = false
+    @Published private(set) var refreshArmed = false
+    private var hasPins = false
+
+    func setHasPins(_ value: Bool) {
+        hasPins = value
+    }
+
+    /// True only while live auto-refresh is actively running and healthy (#13634).
+    var liveOddsRefreshRunning: Bool {
+        refreshArmed && error == nil && !lastRefreshFailed
+    }
 
     // MARK: - Owned load rail
 
@@ -232,6 +246,7 @@ final class MyStuffViewModel: ObservableObject {
         loadTask = nil
         optionalTask?.cancel()
         optionalTask = nil
+        teamFuturesLoading = false
         stopRefresh()
     }
 
@@ -248,7 +263,10 @@ final class MyStuffViewModel: ObservableObject {
         stopRefresh()
         items = []
         teamFutures = nil
+        teamFuturesFailed = false
+        teamFuturesLoading = false
         error = nil
+        lastRefreshFailed = false
         firstRenderGeneration = nil
         loading = true
     }
@@ -259,6 +277,7 @@ final class MyStuffViewModel: ObservableObject {
         // Terminate any optional sibling still in flight from a prior load body.
         optionalTask?.cancel()
         optionalTask = nil
+        teamFuturesLoading = false
 
         loadGeneration &+= 1
         let generation = loadGeneration
@@ -307,6 +326,7 @@ final class MyStuffViewModel: ObservableObject {
 
                 items = feed.items
                 error = nil
+                lastRefreshFailed = false
                 // The first card is on screen the moment the REQUIRED data lands —
                 // it is never held behind the optional futures request below.
                 loading = false
@@ -357,6 +377,7 @@ final class MyStuffViewModel: ObservableObject {
                     continue
                 }
                 loading = false
+                lastRefreshFailed = true
                 // Cold load with nothing on screen → the honest error state. A
                 // refresh failure keeps existing cards rather than blanking them.
                 if isInitial { self.error = error.localizedDescription }
@@ -373,6 +394,44 @@ final class MyStuffViewModel: ObservableObject {
         // hold the first team card, the skeleton, or the owned-load rail. The task
         // is tracked so a supersession or a view disappearance cancels it, and it
         // is abandoned at a wall-clock deadline in case it ignores cancellation.
+        startOptionalTeamFuturesFetch(
+            generation: generation,
+            principalAtDispatch: principalAtDispatch,
+            authReadyMs: authReadyMs,
+            loadStart: loadStart
+        )
+    }
+
+    /// Re-fetches only `/api/me/team-futures` after a failure or deadline timeout,
+    /// without clearing already-loaded team games or mimicking zero follows (#13552).
+    func retryTeamFutures() async {
+        guard !isStopped else { return }
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        let loadStart = clock()
+        let principalAtDispatch = await client.currentMyStuffPrincipal()
+        guard generation == loadGeneration else { return }
+        let authReadyMs = elapsedMs(since: loadStart)
+
+        startOptionalTeamFuturesFetch(
+            generation: generation,
+            principalAtDispatch: principalAtDispatch,
+            authReadyMs: authReadyMs,
+            loadStart: loadStart
+        )
+        await optionalTask?.value
+    }
+
+    private func startOptionalTeamFuturesFetch(
+        generation: Int,
+        principalAtDispatch: String,
+        authReadyMs: Double,
+        loadStart: Date
+    ) {
+        optionalTask?.cancel()
+        optionalTask = nil
+        teamFuturesLoading = true
+
         let optionalStart = clock()
         let deadline = optionalDeadline
         // A merge channel + unstructured fetch, NOT a structured `withTaskGroup`: a
@@ -383,6 +442,7 @@ final class MyStuffViewModel: ObservableObject {
         // simply abandoned (a late `deliver` after `close()` is dropped), with the
         // generation + principal guard as the second backstop. `SportsSiblingMerge`
         // is a plain generic mailbox; it is shared rather than duplicated here.
+        let client = self.client
         let merge = SportsSiblingMerge<TeamFuturesResponse?>()
         let fetchTask = Task { [merge] in
             merge.deliver(try? await client.fetchMyTeamFuturesSection(limit: 100))
@@ -431,12 +491,15 @@ final class MyStuffViewModel: ObservableObject {
             currentGeneration: loadGeneration
         ) else { return }
 
+        teamFuturesLoading = false
         if let response {
             teamFutures = response
+            teamFuturesFailed = false
             emit(
                 .optionalMerge, authReadyMs: authReadyMs, netStart: optionalStart,
                 loadStart: loadStart, count: response.items.count, outcome: .networkSuccess)
         } else {
+            teamFuturesFailed = (teamFutures == nil)
             emit(
                 .optionalMerge, authReadyMs: authReadyMs, netStart: optionalStart,
                 loadStart: loadStart, count: teamFutures?.items.count ?? 0,
@@ -468,7 +531,8 @@ final class MyStuffViewModel: ObservableObject {
                 // is not visible from here; report it as unknown rather than guessing.
                 cacheOutcome: "unknown",
                 cacheAgeSeconds: -1,
-                outcomeClass: outcome
+                outcomeClass: outcome,
+                hasPins: hasPins
             )
         )
     }

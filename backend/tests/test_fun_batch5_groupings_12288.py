@@ -61,6 +61,7 @@ def _sample_ncaa_teams() -> list[dict]:
         (106, "Kansas Jayhawks", "KU", "Kansas", "https://a.espncdn.com/i/teamlogos/ncaa/500/2305.png"),
         (107, "Arkansas Razorbacks", "ARK", "Arkansas", "https://a.espncdn.com/i/teamlogos/ncaa/500/8.png"),
         (108, "Arizona Wildcats", "ARIZ", "Arizona", "https://a.espncdn.com/i/teamlogos/ncaa/500/12.png"),
+        (109, "Michigan State Spartans", "MSU", "Michigan St.", "https://a.espncdn.com/i/teamlogos/ncaa/500/127.png"),
         # Ambiguity distractors that exist in D-I teams table
         (201, "Florida State Seminoles", "FSU", "Florida State", "https://a.espncdn.com/i/teamlogos/ncaa/500/52.png"),
         (202, "Florida Atlantic Owls", "FAU", "Florida Atlantic", "https://a.espncdn.com/i/teamlogos/ncaa/500/2226.png"),
@@ -83,8 +84,8 @@ def _sample_ncaa_teams() -> list[dict]:
 
 def _sample_batch5_markets() -> list[dict]:
     rows = [
-        # Set 1: March Madness 2027 (10 rows)
-        {"id": 52755955, "name": "College Basketball (M): #1 Ranked Team on Dec 7 AP Poll", "status": "open", "source": "polymarket", "category": "basketball", "outcomes": [{"id": 5101, "name": "Houston", "probability": 0.54}, {"id": 5102, "name": "Duke", "probability": 0.25}]},
+        # Set 1: March Madness 2027 (AP Poll #1 spotlight + 8 Final Four markets)
+        {"id": 52755955, "name": "College Basketball (M): #1 Ranked Team on Dec 7 AP Poll", "status": "open", "source": "polymarket", "category": "basketball", "outcomes": [{"id": 5101, "name": "Houston", "probability": 0.54}, {"id": 5102, "name": "Duke", "probability": 0.25}, {"id": 5121, "name": "Michigan St.", "probability": 0.14}]},
         {"id": 68954772, "name": "Will Duke reach the 2027 NCAA Men's Basketball Final Four?", "status": "open", "source": "polymarket", "category": "basketball", "outcomes": [{"id": 5103, "name": "Yes", "probability": 0.375}, {"id": 5104, "name": "No", "probability": 0.625}]},
         {"id": 68954773, "name": "Will Florida reach the 2027 NCAA Men's Basketball Final Four?", "status": "open", "source": "polymarket", "category": "basketball", "outcomes": [{"id": 5105, "name": "Yes", "probability": 0.325}, {"id": 5106, "name": "No", "probability": 0.675}]},
         {"id": 68954808, "name": "Will UConn reach the 2027 NCAA Men's Basketball Final Four?", "status": "open", "source": "polymarket", "category": "basketball", "outcomes": [{"id": 5107, "name": "Yes", "probability": 0.235}, {"id": 5108, "name": "No", "probability": 0.765}]},
@@ -147,7 +148,7 @@ def test_batch5_definitions_are_public_non_politics_with_verified_art_and_zero_n
             )
 
     expected_counts = {
-        "machinery-march-madness-2027": 10,
+        "machinery-march-madness-2027": 9,
         "machinery-ai-model-leaderboard-2026": 7,
         "machinery-big-tech-deals-hardware": 8,
         "machinery-nhl-100-point-club": 7,
@@ -174,21 +175,23 @@ def test_batch5_definitions_are_public_non_politics_with_verified_art_and_zero_n
         assert defn["category"] != "politics"
         rule = defn["rule"]
         assert rule.get("suppress_card_photo") is True
-        url = str(rule.get("card_image_url") or "").strip()
-        assert url.startswith("https://thumb.wikimedia.org/")
-        assert url in verified_urls
-        assert str(rule.get("card_image_alt") or "").strip()
-        assert str(rule.get("card_image_credit") or "").strip()
-        assert str(rule.get("card_image_author") or "").strip()
-        lic = str(rule.get("card_image_license") or "").lower()
-        assert "cc0" in lic or "public domain" in lic
-        assert str(rule.get("card_image_source_page") or "").startswith(
-            "https://commons.wikimedia.org/wiki/File:"
-        )
-        sec = rule["sections"][0]
-        assert "trading" not in str(sec.get("note") or "").lower()
-        sub_tag = sec["atom_query"]["fun_sub_tag"]
-        ids = fun_market_ids_for_sub_tag(sub_tag)
+        if slug != "machinery-march-madness-2027":
+            url = str(rule.get("card_image_url") or "").strip()
+            assert url.startswith("https://thumb.wikimedia.org/")
+            assert url in verified_urls
+            assert str(rule.get("card_image_alt") or "").strip()
+            assert str(rule.get("card_image_credit") or "").strip()
+            assert str(rule.get("card_image_author") or "").strip()
+            lic = str(rule.get("card_image_license") or "").lower()
+            assert "cc0" in lic or "public domain" in lic
+            assert str(rule.get("card_image_source_page") or "").startswith(
+                "https://commons.wikimedia.org/wiki/File:"
+            )
+        ids: list[int] = []
+        for sec in rule["sections"]:
+            assert "trading" not in str(sec.get("note") or "").lower()
+            sub_tag = sec["atom_query"]["fun_sub_tag"]
+            ids.extend(fun_market_ids_for_sub_tag(sub_tag))
         assert len(ids) == expected_counts[slug]
         assert set(ids).isdisjoint(prior_ids), f"{slug} overlaps prior batches"
         assert set(ids).isdisjoint(seen_batch5), f"{slug} overlaps sibling Batch 5 set"
@@ -208,10 +211,7 @@ async def test_batch5_four_public_sets_build_with_crests_headshots_wording_and_p
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
 
     expected_titles = {
-        "machinery-march-madness-2027": (
-            "Houston holding the Dec 7 AP #1 spot is at 54%, "
-            "with Duke reaching the 2027 Final Four at 38%"
-        ),
+        "machinery-march-madness-2027": "Houston leads the Dec 7 AP poll #1 team at 54%",
         "machinery-ai-model-leaderboard-2026": (
             "Gemini finishing 2026 as the top AI model is at 83%, "
             "with a new Claude Opus arriving by Dec 31 at 79%"
@@ -231,7 +231,11 @@ async def test_batch5_four_public_sets_build_with_crests_headshots_wording_and_p
         prod = build_container_machinery_producer(defn)
         res = await produce_container_machinery(db, defn, now=NOW)
         assert res.machinery_card["stage"] == "public"
-        assert res.machinery_card["image_url"] == defn["rule"]["card_image_url"]
+        if slug == "machinery-march-madness-2027":
+            assert res.machinery_card["form_id"] == "contender_spotlight"
+            assert res.machinery_card.get("image_url") is None
+        else:
+            assert res.machinery_card["image_url"] == defn["rule"]["card_image_url"]
         assert res.title == expected_title
         assert "? at " not in res.title
         assert ": " not in res.title
@@ -248,12 +252,14 @@ async def test_batch5_four_public_sets_build_with_crests_headshots_wording_and_p
         assert len(card_rows) == 3
 
         if slug == "machinery-march-madness-2027":
-            assert [r["market_id"] for r in card_rows] == [52755955, 68954772, 68954773]
+            assert [r["name"] for r in card_rows] == ["Houston", "Duke", "Michigan St."]
             for r in card_rows:
                 art = r.get("art") or {}
                 assert art.get("kind") == "team_logo"
                 assert "/teamlogos/ncaa/500/" in str(art.get("url") or "")
-            for sec_item in cp["sections"][0]["visual_block"]["items"]:
+            assert cp["sections"][0]["visual_block"]["form_id"] == "contender_spotlight"
+            assert cp["sections"][1]["visual_block"]["form_id"] == "benchmark_strip"
+            for sec_item in cp["sections"][1]["visual_block"]["items"]:
                 art = sec_item["outcomes"][0]["art"]
                 assert art.get("kind") == "team_logo"
                 assert "/teamlogos/ncaa/500/" in str(art.get("url") or "")
@@ -289,9 +295,13 @@ async def test_batch5_every_row_reads_cleanly_in_slot_1_and_slot_2() -> None:
 
     for slug in BATCH5_SLUGS:
         defn = load_machinery_definition(paths_by_slug[slug])
-        sub_tag = defn["rule"]["sections"][0]["atom_query"]["fun_sub_tag"].lower()
-        entries = curated_sets[sub_tag]
+        entries: list[dict] = []
+        for sec in defn["rule"]["sections"]:
+            sub_tag = sec["atom_query"]["fun_sub_tag"].lower()
+            entries.extend(curated_sets[sub_tag])
         ids = [int(e["id"]) for e in entries]
+        if len(ids) < 3:
+            continue
         for idx, mid in enumerate(ids):
             others = [x for x in ids if x != mid]
             a, b = others[0], others[1]
@@ -445,15 +455,15 @@ async def test_march_madness_and_nhl_100_point_build_when_lifetime_volume_is_mis
         "market_histories": {},
     }
 
-    for slug, dropped_id in (
-        ("machinery-march-madness-2027", 68954775),
-        ("machinery-nhl-100-point-club", 63218767),
+    for slug, sec_idx, dropped_id in (
+        ("machinery-march-madness-2027", 1, 68954775),
+        ("machinery-nhl-100-point-club", 0, 63218767),
     ):
         defn = load_machinery_definition(paths_by_slug[slug])
         prod = build_container_machinery_producer(defn)
         res = await produce_container_machinery(db, defn, now=NOW)
         assert hasattr(res, "machinery_card"), (slug, res)
-        mids = {int(it["market_id"]) for it in res.sections[0]["visual_block"]["items"]}
+        mids = {int(it["market_id"]) for it in res.sections[sec_idx]["visual_block"]["items"]}
         assert dropped_id not in mids
         assert len(mids) >= 3
         assert all(isinstance(r.get("rendered_percent"), int) for r in res.machinery_card["rows"])

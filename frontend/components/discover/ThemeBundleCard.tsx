@@ -52,6 +52,8 @@ interface ThemeBundleCardProps {
   imagePresentation?: string | null;
   nowIso?: string;
   timeZone?: string;
+  setId?: string | null;
+  onDismiss?: () => void;
 }
 
 // Members shown in the collapsed mini-ranked-peek come from `bundleSeatCount`,
@@ -85,6 +87,8 @@ export function ThemeBundleCard({
   imagePresentation,
   nowIso,
   timeZone,
+  setId,
+  onDismiss,
 }: ThemeBundleCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [clockNowIso, setClockNowIso] = useState<string | undefined>(nowIso);
@@ -140,7 +144,9 @@ export function ThemeBundleCard({
           title={title}
           sharedQuestion={sharedQuestion}
           storyKey={storyKey}
+          setId={setId ?? bundleId ?? storyKey}
           positionIndex={positionIndex}
+          onDismiss={onDismiss}
         />
       );
     }
@@ -243,7 +249,9 @@ export function ThemeBundleCard({
         title={title}
         sharedQuestion={sharedQuestion}
         storyKey={storyKey}
+        setId={setId ?? bundleId ?? storyKey}
         positionIndex={positionIndex}
+        onDismiss={onDismiss}
       />
     </div>
   );

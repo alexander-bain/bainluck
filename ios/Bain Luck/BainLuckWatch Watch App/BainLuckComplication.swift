@@ -6,6 +6,13 @@ nonisolated struct BainLuckEntry: TimelineEntry {
     let date: Date
     let snapshot: WatchComplicationSnapshot?
     var unavailableStatus: WatchFaceStatusPayload13339? = nil
+
+    /// #12316 / 254: A — promote the followed game in the Apple Watch Smart Stack
+    /// starting 30 minutes before kickoff and while live, then drop back after final.
+    var relevance: TimelineEntryRelevance? {
+        let spec = snapshot?.relevanceSpec254A(now: date) ?? .zero
+        return TimelineEntryRelevance(score: spec.score, duration: spec.duration)
+    }
 }
 
 nonisolated struct BainLuckProvider: TimelineProvider {
@@ -23,12 +30,24 @@ nonisolated struct BainLuckProvider: TimelineProvider {
             dates = matchupDates
         } else {
             dates = WatchRectangularReading.timelineDates(for: current.snapshot, now: current.date)
-            // Direction 217: a Matchup final gives way to the launcher 3 hours on.
+            // Direction 217 & #13430: a final gives way 3 hours on.
             if let step = WatchMatchupReading217.finalStepAside(for: current.snapshot, now: current.date),
                step > current.date, !dates.contains(step) {
-                dates = (dates + [step]).sorted()
+                dates.append(step)
+            } else if let reading = current.snapshot?.validatedRectangularReading(now: current.date),
+                      reading.kind == .finalResult {
+                let step = reading.observedAt.addingTimeInterval(WatchMatchupReading217.finalHoldSeconds)
+                if step > current.date, !dates.contains(step) {
+                    dates.append(step)
+                }
             }
         }
+        // #12316 / 254: A: step Smart Stack relevance up before kickoff, at kickoff, and down after final.
+        if let relevanceSteps = current.snapshot?.relevanceBoundaryDates254A(now: current.date),
+           !relevanceSteps.isEmpty {
+            dates.append(contentsOf: relevanceSteps)
+        }
+        dates = Array(Set(dates)).sorted()
         let entries = dates.map {
             BainLuckEntry(date: $0, snapshot: current.snapshot, unavailableStatus: current.unavailableStatus)
         }
@@ -83,12 +102,9 @@ struct BainLuckComplicationView: View {
                         .accessibilityLabel(accessibilityDescription)
                 }
             } else if family == .accessoryCorner {
-                WatchSavedCornerComplicationContent(snapshot: entry.snapshot)
+                WatchSavedCornerComplicationContent(snapshot: entry.snapshot, now: entry.date)
             } else {
-                ZStack {
-                    AccessoryWidgetBackground()
-                    WatchSavedCircularComplicationContent(snapshot: entry.snapshot)
-                }
+                WatchSavedCircularComplicationContent(snapshot: entry.snapshot, now: entry.date)
             }
         }
         .containerBackground(.fill.tertiary, for: .widget)
@@ -98,6 +114,9 @@ struct BainLuckComplicationView: View {
         if family == .accessoryRectangular,
            let rectangular = entry.snapshot?.validatedRectangularReading(now: entry.date) {
             return rectangular.accessibilityDescription(at: entry.date)
+        }
+        if let small = entry.snapshot?.smallSlotModel(now: entry.date) {
+            return small.accessibilityText
         }
         return "Open your selected game in Bain Luck, or choose a game"
     }

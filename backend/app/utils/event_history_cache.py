@@ -51,14 +51,20 @@ def cache_key(event_id: int, hours: int, chart_range: str) -> tuple:
     return (int(event_id), int(hours), str(chart_range))
 
 
+def finished_cache_key(event_id: int, chart_range: str) -> tuple:
+    """Canonical L1 key for finished events — ``hours`` is ignored on finished builds."""
+    return (int(event_id), "finished", str(chart_range))
+
+
 class BuildMarks:
     """What the build learned about its own body, read by the cache policy."""
 
-    __slots__ = ("finished", "partial")
+    __slots__ = ("finished", "partial", "skip_cache")
 
     def __init__(self) -> None:
         self.finished = False
         self.partial = False
+        self.skip_cache = False
 
 
 _marks: "contextvars.ContextVar[Optional[BuildMarks]]" = contextvars.ContextVar(
@@ -83,6 +89,11 @@ def mark_partial() -> None:
         marks.partial = True
 
 
+def has_active_marks() -> bool:
+    """True when a build marks context is currently installed."""
+    return _marks.get() is not None
+
+
 def build_is_complete() -> bool:
     """True iff a build's marks are installed and it swallowed no read.
 
@@ -100,9 +111,16 @@ def mark_finished(finished) -> None:
         marks.finished = bool(finished)
 
 
+def mark_skip_cache() -> None:
+    """Opt this build out of L1 storage (e.g. cold-miss since_start fallback for range=all)."""
+    marks = _marks.get()
+    if marks is not None:
+        marks.skip_cache = True
+
+
 def lease_for(marks: BuildMarks, payload) -> float:
     """Seconds this body may be served from memory; 0 = do not store."""
-    if not isinstance(payload, dict) or not marks.finished or marks.partial:
+    if not isinstance(payload, dict) or not marks.finished or marks.partial or marks.skip_cache:
         return 0.0
     refill = payload.get("on_demand_backfill")
     if isinstance(refill, dict) and refill.get("enqueue"):
@@ -144,6 +162,15 @@ def _drop(key: tuple) -> None:
     entry = _entries.pop(key, None)
     if entry is not None:
         _total_bytes -= len(entry[2])
+
+
+def invalidate_event(event_id: int) -> int:
+    """Drop every cached L1 entry for ``event_id`` in this process."""
+    eid = int(event_id)
+    victims = [k for k in _entries if k and k[0] == eid]
+    for k in victims:
+        _drop(k)
+    return len(victims)
 
 
 def total_bytes() -> int:

@@ -683,7 +683,7 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
     /// source.
     func testTheMountedChartRunsNoBalanceInkAndNoLiveSplit() throws {
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
-        XCTAssertTrue(chart.contains("letliveSplit=checkpoints==nil?liveEdgeSplit(dataPoints:dataPoints,domain:domain):nil"))
+        XCTAssertTrue(chart.contains("letliveSplit=(checkpoints==nil&&soccerThreeLine==nil)?liveEdgeSplit(dataPoints:dataPoints,domain:domain):nil"))
         XCTAssertFalse(chart.contains("BinaryWinChartBalanceInkLayer("), "the balance ink is drawn again")
         XCTAssertFalse(chart.contains("balancePlan("), "the balance ink is planned again")
         XCTAssertTrue(chart.contains("ifletcheckpoints{PublicationCheckpointLayer4974(plan:checkpoints.plan,"))
@@ -737,7 +737,7 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertTrue(chart.contains("gameFinished:EventState.isFinished(status),checkpoints:checkpoints,"))
         XCTAssertEqual(chart.components(separatedBy: "checkpoints.selection(atChartX:location.x,plotFrame:plotFrame,proxy:proxy)").count - 1, 2,
                        "both the pan and the hold decide over the mount")
-        XCTAssertEqual(chart.components(separatedBy: "if!Self.chartIsDrawable(dataPoints,mount:checkpoints){").count - 1, 2,
+        XCTAssertEqual(chart.components(separatedBy: "ifsoccerThreeLine==nil&&!Self.chartIsDrawable(dataPoints,mount:checkpoints){").count - 1, 2,
                        "both charts ask the mount whether they can draw")
         XCTAssertFalse(chart.contains("if!Self.hasDrawableLine(in:dataPoints){"))
     }
@@ -901,12 +901,6 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertEqual(plotBuilds, before, "releasing rebuilt the data plot")
 
         // Rendered text, read after the count.
-        // Strict known failure on master (#12756 moved `EventAtlasChartHeaderView11666`
-        // into `.overlay(alignment: .topLeading)`, where `EventAtlasSelectedReadingSlot11666`
-        // covers the withheld slot until `selection.checkpoint != .withheld` is gated).
-        // Kept strict so #12745 touches zero production files and XCTest reports the
-        // day the production fix merges.
-        XCTExpectFailure("#12756 follow-up: EventAtlasSelectedReadingSlot11666 overlay covers withheld readout on master")
         selection.hold(date: at(30), checkpoint: .withheld)
         pump(host)
         let gap = try visibleText(host, name: "inline-gap")

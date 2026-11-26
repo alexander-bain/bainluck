@@ -68,6 +68,15 @@ struct GolfTournamentView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                FollowButton295A(
+                    subject: .set(slug: slug, setKind: .golfTournament, name: displayName),
+                    pageContextId: "golf-tournament:\(slug)",
+                    compact: true
+                )
+            }
+        }
         .task {
             await vm.load()
             AnalyticsService.trackScreen(name: "golf_tournament", type: "tournament")
@@ -79,6 +88,9 @@ struct GolfTournamentView: View {
     private func loaded(_ presentation: GolfTournamentPresentation) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                GameAlertsInlinePageSlot295A(contextId: "golf-tournament:\(slug)")
+                    .padding(.top, 4)
+
                 if presentation.field.isEmpty {
                     header(presentation)
                     // The tournament is real and the field is not published yet
@@ -291,5 +303,6 @@ struct GolfTournamentView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .noteReviewPromptTrouble12304()
     }
 }

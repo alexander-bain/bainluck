@@ -51,23 +51,64 @@ final class AForecastFigureIsReadWhole9483Tests: XCTestCase {
                 .background(Color.white)
                 .environment(\.colorScheme, .light),
             at: size)
+        host.overrideUserInterfaceStyle = .light
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        window.overrideUserInterfaceStyle = .light
+        window.backgroundColor = .white
         window.rootViewController = host
         window.isHidden = false
         defer { window.isHidden = true }
         host.view.frame = window.bounds
         settle(host, 0.3)
-        let image = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3.0
+        let image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
             host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("figure-read-whole-\(name).png")
         try XCTUnwrap(image.pngData()).write(to: url)
         print("Figure read whole rendered evidence: \(url.path)")
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        let cgImage = try XCTUnwrap(image.cgImage)
+        var lines: [String] = []
+        var seen = Set<String>()
+
+        func appendScan(_ target: CGImage, offsetY: CGFloat, minHeight: Float?) throws {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US"]
+            request.usesLanguageCorrection = false
+            if let minHeight {
+                request.minimumTextHeight = minHeight
+            }
+            try VNImageRequestHandler(cgImage: target).perform([request])
+            for obs in request.results ?? [] {
+                if let s = obs.topCandidates(1).first?.string {
+                    let absMidY = Int(((1.0 - obs.boundingBox.midY) * CGFloat(target.height) + offsetY) / 10.0)
+                    if seen.insert("\(absMidY)|\(s)").inserted {
+                        lines.append(s)
+                    }
+                }
+            }
+        }
+
+        try appendScan(cgImage, offsetY: 0, minHeight: nil)
+
+        let fittedH = min(CGFloat(cgImage.height),
+                          max(260 * format.scale,
+                              (host.sizeThatFits(in: CGSize(width: width, height: height)).height + 24) * format.scale))
+        let contentHeightPx = Int(fittedH.rounded(.up))
+        let bandPx = Int((280 * format.scale).rounded())
+        let stepPx = Int((200 * format.scale).rounded())
+        var y = 0
+        while y < contentHeightPx {
+            let h = min(bandPx, contentHeightPx - y)
+            if let crop = cgImage.cropping(to: CGRect(x: 0, y: y, width: cgImage.width, height: h)) {
+                try appendScan(crop, offsetY: CGFloat(y), minHeight: 0.0)
+            }
+            if y + h >= contentHeightPx { break }
+            y += stepPx
+        }
+        return lines
     }
 
     private func isCut(_ line: String) -> Bool {

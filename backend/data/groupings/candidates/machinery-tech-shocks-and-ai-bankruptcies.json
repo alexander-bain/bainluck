@@ -1,0 +1,57 @@
+{
+  "slug": "machinery-tech-shocks-and-ai-bankruptcies",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ODD · TECH & AI",
+  "name": "AI & Tech Bankruptcy by Dec 31, 2027",
+  "category": "tech",
+  "tag": "ODD",
+  "section_title": "AI & Tech Bankruptcy Filings",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "economics"
+    ],
+    "card_rows": 3,
+    "card_section_key": "tech_shocks",
+    "hide_row_art": false,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7f/Code_on_computer_monitor_%28Unsplash%29.jpg/960px-Code_on_computer_monitor_%28Unsplash%29.jpg",
+    "card_image_alt": "Close-up of colorful source code displayed on a computer monitor",
+    "card_image_credit": "Markus Spiske (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Markus Spiske",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Code_on_computer_monitor_(Unsplash).jpg",
+    "sections": [
+      {
+        "key": "tech_shocks",
+        "title": "AI & Tech Bankruptcy Filings",
+        "item_noun": "companies",
+        "note": "Odds of bankruptcy filings for leading AI labs, compute providers, and energy firms.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-tech-shocks-ai-bankruptcies",
+          "date_ladder_pick": "nearest_open",
+          "omit_shared_date_suffix_on_rows": true,
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 3,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

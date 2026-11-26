@@ -244,5 +244,6 @@ struct NativeFeedEndCard: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(Color.barTrack.opacity(0.45), lineWidth: 1)
         )
+        .noteReviewPromptTrouble12304(when: phase == .failed)
     }
 }

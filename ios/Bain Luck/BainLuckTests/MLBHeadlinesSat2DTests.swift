@@ -271,10 +271,12 @@ final class MLBHeadlinesSat2DTests: XCTestCase {
                 now: fixedNow
             )
         )
+        // Direction 199 (#12771): compat pregameColumnHeaders retains league shape while `columns` blanks unpopulated headers.
         XCTAssertEqual(
             beforeNoProj.pregameColumnHeaders,
-            EventSportHeadlines12472.PregameColumnHeaders(projected: nil, chance: "Chance")
+            EventSportHeadlines12472.PregameColumnHeaders(projected: "Proj.", chance: "Chance")
         )
+        XCTAssertEqual(beforeNoProj.columns.first(where: { $0.role == .projected })?.header, "")
 
         let during = try mlbDuringFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: during, now: fixedNow), .mlbDuringGame)
@@ -299,18 +301,22 @@ final class MLBHeadlinesSat2DTests: XCTestCase {
         XCTAssertTrue(liveModel.showsRowDivider)
         XCTAssertEqual(
             liveModel.liveColumnHeaders,
-            EventSportHeadlines12472.LiveColumnHeaders(score: "Score", pregame: "Pregame", now: "Now")
+            EventSportHeadlines12472.LiveColumnHeaders(score: "Score", projected: "Proj.", pregame: nil, now: "Now")
         )
         XCTAssertEqual(liveModel.away.shortName, "Padres")
-        XCTAssertEqual(liveModel.away.projectedText, "Proj. 3.8")
+        XCTAssertNil(liveModel.away.projectedText)
+        XCTAssertEqual(liveModel.away.liveProjectedNumberText, "3.8")
         XCTAssertEqual(liveModel.away.liveScore, 3)
-        XCTAssertEqual(liveModel.away.pregameChanceText, "42%")
+        XCTAssertNil(liveModel.away.pregameChanceText)
         XCTAssertEqual(liveModel.away.winChanceText, "28.2%")
         XCTAssertEqual(liveModel.home.shortName, "Dodgers")
-        XCTAssertEqual(liveModel.home.projectedText, "Proj. 5.2")
+        XCTAssertNil(liveModel.home.projectedText)
+        XCTAssertEqual(liveModel.home.liveProjectedNumberText, "5.2")
         XCTAssertEqual(liveModel.home.liveScore, 4)
-        XCTAssertEqual(liveModel.home.pregameChanceText, "58%")
+        XCTAssertNil(liveModel.home.pregameChanceText)
         XCTAssertEqual(liveModel.home.winChanceText, "71.8%")
+        XCTAssertEqual(liveModel.livePregameSummary?.leadWord, "Pregame")
+        XCTAssertEqual(liveModel.livePregameSummary?.bodyText, "Dodgers 58%")
 
         let liveNoProj = try XCTUnwrap(
             EventSportHeadlines12472.resolve(
@@ -323,9 +329,10 @@ final class MLBHeadlinesSat2DTests: XCTestCase {
                 now: fixedNow
             )
         )
-        XCTAssertTrue(liveNoProj.stacksRecordUnderName)
-        XCTAssertEqual(liveNoProj.away.record, "93-69")
-        XCTAssertEqual(liveNoProj.home.record, "98-64")
+        // Ruling 200-B: no team records during a live game.
+        XCTAssertFalse(liveNoProj.stacksRecordUnderName)
+        XCTAssertNil(liveNoProj.away.record)
+        XCTAssertNil(liveNoProj.home.record)
     }
 
     func testMLBBeforeAndDuringFitAt390AndAccessibility2AndExport390pxRenders() async throws {

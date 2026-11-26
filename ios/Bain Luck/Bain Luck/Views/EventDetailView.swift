@@ -16,6 +16,7 @@ private struct SourceRowWidthKey: PreferenceKey {
 
 struct EventDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
     @State private var marketPageVisible = false
     // Only presentation/event identity is retained, never a withdrawn quote.
     @State private var duringDetailEventID: Int?
@@ -285,7 +286,7 @@ struct EventDetailView: View {
             // fit, never a name cut in half ("RMA vs Dubai Bas…").
             ViewThatFits(in: .horizontal) {
                 Text(scorelessTitle).font(.headline).lineLimit(1)
-                Text(scorelessCompactTitle).font(.headline).lineLimit(1)
+                Text(scorelessCompactTitle).font(.headline).lineLimit(1).minimumScaleFactor(0.65)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(dynamicTitle)
@@ -301,6 +302,7 @@ struct EventDetailView: View {
             Text(c.homeScore).layoutPriority(1)
         }
         .font(.headline)
+        .minimumScaleFactor(0.65)
     }
     #endif
 
@@ -369,9 +371,18 @@ struct EventDetailView: View {
                     ToolbarItem(placement: .confirmationAction) {
                         HStack(spacing: 4) {
                             ShareLink(item: shareURL) {
+                                // #11177 — Pin's 44 pt tap target (`#10880` / `5d3931e735`):
+                                // `.plain` escapes the toolbar's 36 pt cap so the control is
+                                // 44×44, and `.primary` keeps Share's toolbar ink instead of
+                                // accent blue.
                                 Image(systemName: "square.and.arrow.up")
                                     .font(.system(size: 14))
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Share")
                             .recordsShareOpened {
                                 ShareInstrumentation.recordShareOpened(
                                     itemType: "event",
@@ -440,6 +451,16 @@ struct EventDetailView: View {
                     showProbabilityDetails = false
                     showUpdateStream = false
                 }
+                .task(id: "\(vm.historyGeneration)-\(vm.event?.status ?? "")-\(chartRange.rawValue)") {
+                    guard let ev = vm.event,
+                          OddsChartView.needsFullHistoryUpgrade(
+                              status: ev.status,
+                              commenceTime: ev.commenceTime?.asDate,
+                              history: vm.history,
+                              selectedRange: chartRange
+                          ) else { return }
+                    await vm.loadFullHistoryIfNeeded()
+                }
                 #if os(iOS)
                 .background(
                     PageDetailsCloser(
@@ -497,6 +518,7 @@ struct EventDetailView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
+                .noteReviewPromptTrouble12304()
             }
         }
         return stackBoundary12278 {
@@ -639,6 +661,9 @@ struct EventDetailView: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 6)
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            AnalyticsService.trackGamePageAction(actionKind: "open", section: "models", sport: event.sport)
+                        })
                     }
                 }
                 .background(usesApprovedHeadlinePresentation9483(event) ? Color.clear : Color.cardBackground)
@@ -1117,8 +1142,29 @@ struct EventDetailView: View {
     /// its own default-and-ladder path and re-derives the #2902 pair contract on
     /// the substituted value, so flooring one side cannot collapse the two onto
     /// one colour. See `TeamTextContrast`.
+    /// Resolved team hex pair for the active `ColorScheme`. Light mode uses
+    /// `cardColorHexes` (>= 3:1 against white cards); dark mode uses
+    /// `darkSurfaceColorHexes` with `darkTextMinimumRatio` (4.5:1 AA text
+    /// against `Color.cardBackground` / `#1C1C1E`), keeping navy, black, and
+    /// dark-green chart side labels, axis percentages, and team ink legible (#13759).
+    static func teamColorHexes(_ event: EventDetail, colorScheme: ColorScheme) -> (away: String, home: String) {
+        TeamTextContrast.surfaceColorHexes(
+            awayHex: event.awayTeamData?.primaryColor,
+            homeHex: event.homeTeamData?.primaryColor,
+            awaySecondaryHex: event.awayTeamData?.secondaryColor,
+            homeSecondaryHex: event.homeTeamData?.secondaryColor,
+            colorScheme: colorScheme,
+            darkMinimumRatio: TeamTextContrast.darkTextMinimumRatio,
+            checkHueFamily: true
+        )
+    }
+
     private func teamColors(_ event: EventDetail) -> (away: Color, home: Color) {
-        TeamTextContrast.cardColors(
+        if colorScheme == .dark {
+            let darkHexes = Self.teamColorHexes(event, colorScheme: .dark)
+            return (Color(hex: darkHexes.away), Color(hex: darkHexes.home))
+        }
+        return TeamTextContrast.cardColors(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor,
             awaySecondaryHex: event.awayTeamData?.secondaryColor,
@@ -1659,6 +1705,27 @@ struct EventDetailView: View {
             event.homeTeamData?.record.map { "\(named.home) \($0)" },
         ].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Resolves `EventSportHeadlines12472.Model` through `PeriodLabel.liveStatusText`
+    /// so arrival previews share the exact shipped headline contract (#4880, #11934).
+    static func resolvedHeadlineModel(for event: EventDetail) -> EventSportHeadlines12472.Model {
+        let hasScore = showsScore(
+            status: event.status,
+            away: event.awayScore,
+            home: event.homeScore
+        ) && event.scoreSourceUnavailable != true
+        return EventSportHeadlines12472.resolve(
+            event: event,
+            awayFullName: event.awayTeam,
+            homeFullName: event.homeTeam,
+            liveStatusText: PeriodLabel.liveStatusText(
+                period: event.espn?.period,
+                gameClock: event.espn?.gameClock
+            ),
+            hasScore: hasScore,
+            numberStreams: false
+        )
     }
 
     private func heroSection(_ event: EventDetail) -> some View {
@@ -3092,9 +3159,15 @@ struct EventDetailView: View {
             VStack(spacing: 0) {
                 Divider()
                 Button {
+                    let willExpand = !showSources
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        showSources.toggle()
+                        showSources = willExpand
                     }
+                    AnalyticsService.trackGamePageAction(
+                        actionKind: willExpand ? "expand" : "collapse",
+                        section: "sources",
+                        sport: event.sport
+                    )
                 } label: {
                     HStack {
                         Spacer()

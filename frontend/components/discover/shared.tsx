@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { Check, ChevronRight, Heart, Share2 } from "lucide-react";
+import { Check, ChevronRight, Heart, Share2, X } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { sentencePreview } from "./utils";
 import { PinButton } from "@/components/PinButton";
@@ -427,7 +427,7 @@ export function SignalBars({
 
 // ── Action Bar ──
 
-export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare, pin, priceObservedAt, priceStatus }: ActionBarProps) {
+export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare, onDismiss, pin, priceObservedAt, priceStatus }: ActionBarProps) {
   const [copied, setCopied] = useState(false);
 
   const trackShare = (method: string) => {
@@ -469,6 +469,21 @@ export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, co
         <Heart size={16} fill={liked ? "currentColor" : "none"} strokeWidth={2} />
         {liked ? "Liked" : "Like"}
       </button>
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss();
+          }}
+          data-testid="action-bar-dismiss"
+          title="Not for me"
+          aria-label="Not for me"
+          className="flex items-center justify-center p-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors"
+        >
+          <X size={15} strokeWidth={2} aria-hidden="true" />
+        </button>
+      )}
       <div className="flex-1" />
       {/* #5752 — HOW OLD THE NUMBER ABOVE THIS BAR IS.
           It sits in the gap the layout already had (`flex-1` either side), so a

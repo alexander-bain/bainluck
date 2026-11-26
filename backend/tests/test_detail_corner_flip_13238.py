@@ -737,8 +737,12 @@ def test_series_ids_coverage_prematch_and_route_wiring_option_a():
         assert cap_db.binds is not None
         assert cap_db.binds["ids"] == [15351534]
 
+    from app.utils import unified_game_read
+
     src_detail = inspect.getsource(get_event)
-    assert "oriented_series_event_ids(odds_event_ids, absorbed)" in src_detail
+    assert "load_unified_game_reads(" in src_detail
+    src_unified = inspect.getsource(unified_game_read.load_unified_game_reads)
+    assert "is_corner_flipped_absorbed(" in src_unified
 
     src_history = inspect.getsource(get_event_odds_history)
     assert "oriented_series_ids = oriented_series_event_ids(series_event_ids, absorbed)" in src_history
@@ -747,9 +751,9 @@ def test_series_ids_coverage_prematch_and_route_wiring_option_a():
     assert "WinProbSnapshot.event_id.in_(oriented_series_ids)" in src_history
 
     src_list = inspect.getsource(list_events)
-    assert "flipped_loser_ids" in src_list
+    assert "load_unified_game_reads(" in src_list
     src_search = inspect.getsource(search_events)
-    assert "flipped_loser_ids" in src_search
+    assert "load_unified_game_reads(" in src_search
 
 
 def test_unflippable_source_on_reversed_absorbed_row_fails_closed():

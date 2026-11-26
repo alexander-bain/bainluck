@@ -46,9 +46,8 @@ from app.utils.roundup_containers import (
 MAX_HEADLINE_LINES_390PX = 5
 DUEL_BAR_MIN_TRAILING_PCT = 20
 HISTORY_CHART_MIN_SWING_PP = 10
-# Card headline (`text-base font-bold`) inside 390px viewport:
-# 390 - 2*16 (Discover feed horizontal padding) - 2*16 (card p-4) - 2 (border) = 324px.
-DEFAULT_CARD_HEADLINE_WIDTH_PX_390 = 324.0
+# Measured inner headline width inside the 390px Discover card PNG sheet (`331.5px` card - padding/border):
+DEFAULT_CARD_HEADLINE_WIDTH_PX_390 = 298.0
 
 BANNED_COPY_WORDS_RE = re.compile(
     r"\b(?:trading|bets?|betting|stale|questions?)\b",
@@ -226,24 +225,30 @@ class PublicAssemblyResult:
 
 def _char_width_px_16_bold(ch: str) -> float:
     if ch == " ":
-        return 4.4
+        return 3.9
     if ch in "iljftI.,:;'!|()[]/\\\"":
-        return 5.0
-    if ch in "-":
-        return 5.8
-    if ch in "—–":
-        return 12.5
+        return 5.1
+    if ch == "r":
+        return 6.6
+    if ch == "-":
+        return 6.0
+    if ch == "–":
+        return 10.0
+    if ch == "—":
+        return 14.5
+    if ch == "%":
+        return 16.3
     if ch in "mw":
-        return 12.6
+        return 13.8
     if ch in "MWOQGD":
-        return 12.8
+        return 14.2
     if ch.isdigit():
-        return 9.2
+        return 10.4
     if ch.isupper():
-        return 10.2
+        return 11.1
     if ch.islower():
-        return 8.1
-    return 9.0
+        return 8.95
+    return 9.8
 
 
 def _token_width_px_16_bold(token: str) -> float:
@@ -512,11 +517,65 @@ def _scan_number_cells_for_ellipsis(obj: Mapping[str, Any], *, prefix: str) -> l
     return out
 
 
+def _norm_card_copy(val: Any) -> str:
+    return " ".join(str(val or "").split()).casefold()
+
+
+def _check_duplicate_card_headline(
+    card: Optional[Mapping[str, Any]],
+    feed_item: Optional[Mapping[str, Any]],
+) -> list[GateViolation]:
+    """Ensure secondary text slots on a Discover card do not repeat its headline."""
+    data = feed_item.get("data") if isinstance(feed_item, Mapping) and isinstance(feed_item.get("data"), Mapping) else {}
+    roundup = data.get("roundup") if isinstance(data.get("roundup"), Mapping) else {}
+    paired = roundup.get("paired_metric_set") if isinstance(roundup.get("paired_metric_set"), Mapping) else None
+    cref = data.get("collection_ref") if isinstance(data.get("collection_ref"), Mapping) else {}
+
+    raw_headline = ""
+    if paired is not None:
+        raw_headline = str(paired.get("title") or "").strip()
+    if not raw_headline and isinstance(card, Mapping):
+        raw_headline = str(card.get("title") or "").strip()
+    if not raw_headline and isinstance(feed_item, Mapping):
+        raw_headline = str(feed_item.get("headline") or "").strip()
+
+    norm_headline = _norm_card_copy(raw_headline)
+    if not norm_headline:
+        return []
+
+    secondary_slots: list[tuple[str, Any]] = []
+    if isinstance(card, Mapping):
+        for field_name in ("kicker", "subtitle", "footer"):
+            secondary_slots.append((f"card.{field_name}", card.get(field_name)))
+        mini_chart = card.get("mini_chart")
+        if isinstance(mini_chart, Mapping):
+            secondary_slots.append(("card.mini_chart.title", mini_chart.get("title")))
+    if paired is not None:
+        for field_name in ("kicker", "subtitle", "footer_note"):
+            secondary_slots.append((f"paired_metric_set.{field_name}", paired.get(field_name)))
+        secondary_slots.append(("collection_ref.name", cref.get("name")))
+
+    violations: list[GateViolation] = []
+    for location, candidate_val in secondary_slots:
+        candidate_text = str(candidate_val or "").strip()
+        if candidate_text and _norm_card_copy(candidate_text) == norm_headline:
+            violations.append(
+                GateViolation(
+                    rule="duplicate_card_headline",
+                    location=location,
+                    detail=f"Secondary card slot {location} repeats the card headline",
+                    text=candidate_text,
+                )
+            )
+    return violations
+
+
 def check_machinery_wording(
     card: Optional[Mapping[str, Any]] = None,
     *,
     container: Optional[Mapping[str, Any]] = None,
     definition: Optional[Mapping[str, Any]] = None,
+    feed_item: Optional[Mapping[str, Any]] = None,
     slug: str = "",
     max_headline_lines_390px: int = MAX_HEADLINE_LINES_390PX,
 ) -> WordingCheckResult:
@@ -783,6 +842,9 @@ def check_machinery_wording(
                                     )
                                 )
 
+    if isinstance(card, Mapping) or isinstance(feed_item, Mapping):
+        errors.extend(_check_duplicate_card_headline(card, feed_item))
+
     # Deduplicate identical violations while preserving order.
     deduped: list[GateViolation] = []
     seen_keys: set[tuple[str, str, str]] = set()
@@ -977,6 +1039,13 @@ def _has_real_tile_picture(art: Any) -> bool:
     )
 
 
+_DUEL_DRAW_OUTCOME_NAMES: frozenset[str] = frozenset({"tie", "draw"})
+
+
+def _duel_row_name(row: Mapping[str, Any]) -> str:
+    return str(row.get("name") or row.get("label") or "").strip().lower()
+
+
 def _side_percent(side: Mapping[str, Any]) -> Optional[float]:
     rp = side.get("rendered_percent")
     if isinstance(rp, (int, float)) and not isinstance(rp, bool):
@@ -1133,17 +1202,22 @@ def check_machinery_form_rules(
         c_rows = [r for r in (card.get("rows") or ()) if isinstance(r, Mapping)]
 
         if c_form == "duel_bar":
-            if len(c_rows) != 2:
+            draw_rows = [r for r in c_rows if _duel_row_name(r) in _DUEL_DRAW_OUTCOME_NAMES]
+            main_rows = [r for r in c_rows if _duel_row_name(r) not in _DUEL_DRAW_OUTCOME_NAMES]
+            valid_shape = (len(c_rows) == 2 and len(main_rows) == 2) or (
+                len(c_rows) == 3 and len(draw_rows) == 1 and len(main_rows) == 2
+            )
+            if not valid_shape:
                 errors.append(
                     GateViolation(
                         rule="form_duel_trailing_under_20",
                         location="card.rows",
-                        detail=f"duel_bar card must compare 2 sides (got {len(c_rows)})",
+                        detail=f"duel_bar card must compare 2 sides or 2 sides plus Tie/Draw (got {len(c_rows)})",
                         text=str(card.get("title") or ""),
                     )
                 )
             else:
-                pcts = [p for r in c_rows if (p := _side_percent(r)) is not None]
+                pcts = [p for r in main_rows if (p := _side_percent(r)) is not None]
                 if len(pcts) != 2 or min(pcts) < DUEL_BAR_MIN_TRAILING_PCT:
                     trailing = min(pcts) if pcts else 0.0
                     errors.append(
@@ -1245,7 +1319,22 @@ def check_machinery_form_rules(
             if s_form == "duel_bar":
                 for iidx, it in enumerate(items):
                     outs = [o for o in (it.get("outcomes") or ()) if isinstance(o, Mapping)]
-                    pcts = [p for o in outs[:2] if (p := _side_percent(o)) is not None]
+                    draw_outs = [o for o in outs if _duel_row_name(o) in _DUEL_DRAW_OUTCOME_NAMES]
+                    main_outs = [o for o in outs if _duel_row_name(o) not in _DUEL_DRAW_OUTCOME_NAMES]
+                    valid_shape = (len(outs) == 2 and len(main_outs) == 2) or (
+                        len(outs) == 3 and len(draw_outs) == 1 and len(main_outs) == 2
+                    )
+                    if not valid_shape:
+                        errors.append(
+                            GateViolation(
+                                rule="form_duel_trailing_under_20",
+                                location=f"container.sections[{sidx}].visual_block.items[{iidx}]",
+                                detail=f"duel_bar section item must compare 2 sides or 2 sides plus Tie/Draw (got {len(outs)})",
+                                text=str(it.get("title") or ""),
+                            )
+                        )
+                        continue
+                    pcts = [p for o in main_outs if (p := _side_percent(o)) is not None]
                     if len(pcts) >= 2 and min(pcts) < DUEL_BAR_MIN_TRAILING_PCT:
                         errors.append(
                             GateViolation(
@@ -1460,6 +1549,7 @@ async def audit_public_assembly_for_definition(
         card=card,
         container=container_payload,
         definition=definition,
+        feed_item=feed_item,
         slug=slug,
     )
     picture_res = audit_picture_policy_for_definition(definition, card=card)

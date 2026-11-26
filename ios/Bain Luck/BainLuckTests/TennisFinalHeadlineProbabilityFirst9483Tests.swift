@@ -221,18 +221,19 @@ final class TennisFinalHeadlineProbabilityFirst9483Tests: XCTestCase {
         return String(text[lo.upperBound..<hi.lowerBound])
     }
 
-    /// The hero tries the point-sport pair first, then the tennis final, then
-    /// today's hero — whose finished caption (#8622) stays for every other sport.
+    /// Direction 199 unified hero routing: `EventDetailView.heroSection` routes
+    /// through `EventSportHeadlines12472` + `EventSportHeadlineCard12472`, which
+    /// covers `.tennisAfterGame` while preserving `tennisFinalHeadline` helpers.
     func testTheHeroMountsTheTennisFinalBetweenThePairAndTheLegacyHero() throws {
-        let hero = try span(pageCode(), from: "private func heroSection(", to: "static func heroBackdrop(")
-        let paired = try XCTUnwrap(hero.range(of: "if let paired = nflPairedHeadline(event, hasScore: hasScore) {"))
-        let tennis = try XCTUnwrap(hero.range(of: "} else if let tennis = tennisFinalHeadline(event, hasScore: hasScore) {"))
-        let view = try XCTUnwrap(hero.range(of: "tennisFinalHeadlineView(tennis, colors: colors)"))
-        let legacy = try XCTUnwrap(hero.range(of: "heroLayout {"))
-        XCTAssertLessThan(paired.lowerBound, tennis.lowerBound)
-        XCTAssertLessThan(tennis.lowerBound, view.lowerBound)
-        XCTAssertLessThan(view.lowerBound, legacy.lowerBound)
-        XCTAssertTrue(hero.contains("// Pre-game odds as secondary context"), "control: the legacy caption remains")
+        let page = try pageCode()
+        let hero = try span(page, from: "private func heroSection(", to: "static func finalForecast11296(")
+        XCTAssertTrue(hero.contains("EventSportHeadlines12472.resolve("))
+        XCTAssertTrue(hero.contains("EventSportHeadlineCard12472("))
+        let headlines = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Utilities/EventSportHeadlines12472.swift"), encoding: .utf8)
+        XCTAssertTrue(headlines.contains("case .after: return .tennisAfterGame"))
+        XCTAssertTrue(page.contains("private func tennisFinalHeadline("))
     }
 
     /// The headline reads the hero's own inputs — the canonical reading, the

@@ -478,3 +478,55 @@ export function renderedLeaderPercent(
 export function renderedComplementPercents(home: number): Array<number | null> {
   return renderedDuelPercents((1000 - home * 1000) / 1000, home);
 }
+
+/**
+ * #13131 / #13597 — mirror `draw_priced_winner.py::rendered_three_way_percents`
+ * so a 3-way game card always prints three whole percents summing to 100 even
+ * when server `*_rendered_percent` fields are absent.
+ */
+export function renderedThreeWayPercents(
+  home: number,
+  draw: number,
+  away: number,
+): [number, number, number] {
+  const drawPct = Math.max(0, Math.min(100, Math.floor(draw * 100.0 + 0.5)));
+  const remaining = 100 - drawPct;
+  const hRaw = home * 100.0;
+  const aRaw = away * 100.0;
+  let hFloor = Math.max(0, Math.floor(hRaw));
+  let aFloor = Math.max(0, Math.floor(aRaw));
+
+  const total = hFloor + aFloor;
+  if (total === remaining) {
+    return [hFloor, drawPct, aFloor];
+  }
+  const hFrac = hRaw - hFloor;
+  const aFrac = aRaw - aFloor;
+  if (total < remaining) {
+    const diff = remaining - total;
+    if (diff === 1) {
+      if (hFrac >= aFrac) hFloor += 1;
+      else aFloor += 1;
+    } else {
+      const addH =
+        hRaw + aRaw > 0
+          ? Math.floor(diff * (hRaw / (hRaw + aRaw)) + 0.5)
+          : Math.floor(diff / 2);
+      hFloor += addH;
+      aFloor += diff - addH;
+    }
+    return [hFloor, drawPct, aFloor];
+  }
+
+  const excess = total - remaining;
+  if (excess === 1) {
+    if (hFrac <= aFrac && hFloor > 0) hFloor -= 1;
+    else if (aFloor > 0) aFloor -= 1;
+    else hFloor -= 1;
+  } else {
+    const subH = Math.min(hFloor, Math.floor(excess / 2));
+    hFloor -= subH;
+    aFloor -= excess - subH;
+  }
+  return [hFloor, drawPct, aFloor];
+}

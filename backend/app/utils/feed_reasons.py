@@ -6,6 +6,7 @@ Returns empty string when the card UI already tells the story — avoids
 repeating scores, odds, or team names visible on the card.
 """
 
+import math
 import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -601,9 +602,10 @@ def humanize_outcome_names_for_feed(
     ]
 
 
-def _point_change(value: float) -> float:
-    """Convert a probability delta to percentage points for display."""
-    return round(abs(value) * 100, 1)
+def _point_change(value: float) -> int:
+    """Convert a probability delta to whole percentage points, half-up (#13602)."""
+    scaled = round(abs(float(value)) * 100, 6)  # 8.499999999999998 -> 8.5
+    return int(math.floor(scaled + 0.5))  # 8.5 -> 9, 4.49 -> 4, 0.49 -> 0
 
 
 def _is_printable_move(value: Optional[float]) -> bool:
@@ -1062,10 +1064,8 @@ def binary_affirmative_probability(outcomes: list[dict]) -> Optional[float]:
 
 
 def _points(value: float) -> str:
-    """ "37.5 points" / "1 point" — never "1.0 points"."""
+    """ "38 points" / "1 point" — whole points only, never tenths or "1 points" (#13602)."""
     magnitude = _point_change(value)
-    if magnitude == int(magnitude):
-        magnitude = int(magnitude)
     return f"{magnitude} point{'' if magnitude == 1 else 's'}"
 
 
@@ -1107,7 +1107,7 @@ def compose_binary_card_copy(
 
     moved_today = (
         "major_movement_24h" in reasons or "moderate_movement_24h" in reasons
-    ) and top_mover_change is not None
+    ) and _is_printable_move(top_mover_change)
     if moved_today:
         direction = "Up" if top_mover_change > 0 else "Down"
         return composed(
@@ -2239,6 +2239,45 @@ def movement_subject_is_printable(
     return bool(subject_is_printed)
 
 
+_OPPOSING_BINARY_LABEL_PAIRS: frozenset[frozenset[str]] = frozenset(
+    {
+        frozenset({"yes", "no"}),
+        frozenset({"up", "down"}),
+        frozenset({"over", "under"}),
+        frozenset({"higher", "lower"}),
+        frozenset({"above", "below"}),
+        frozenset({"more", "less"}),
+        frozenset({"true", "false"}),
+        frozenset({"rise", "fall"}),
+        frozenset({"gain", "loss"}),
+        frozenset({"increase", "decrease"}),
+    }
+)
+
+
+def is_opposing_binary_pair(names: Sequence[str]) -> bool:
+    """True when ``names`` is an opposing two-way side pair like Down/Up (#13645)."""
+    cleaned = [n.strip().lower() for n in names if isinstance(n, str) and n.strip()]
+    return len(cleaned) == 2 and frozenset(cleaned) in _OPPOSING_BINARY_LABEL_PAIRS
+
+
+def _is_even_two_way_tie(
+    *,
+    even_two_way_tie: bool,
+    lead_visible: bool,
+    tied_leader_names: Optional[Sequence[str]],
+    rendered_leader_percent: Optional[int],
+    rendered_runner_up_percent: Optional[int],
+    card_field_is_a_race: Optional[bool],
+) -> bool:
+    """True when a tied board is a vacuous opposing-pair split like Down and Up at 50% (#13645)."""
+    if even_two_way_tie:
+        return True
+    if lead_visible or not tied_leader_names or len(tied_leader_names) != 2:
+        return False
+    return is_opposing_binary_pair(tied_leader_names)
+
+
 def format_tied_leaders(names: Sequence[str]) -> str:
     """Format one or more tied leader names ('A', 'A and B', 'A, B and C') (#11941)."""
     cleaned = [n.strip() for n in names if isinstance(n, str) and n.strip()]
@@ -2343,6 +2382,7 @@ def generate_futures_reason(
     top_surprise_opened_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
     tied_leader_names: Optional[Sequence[str]] = None,
+    even_two_way_tie: bool = False,
 ) -> str:
     """
     Generate a one-line explanation for why a futures market is interesting.
@@ -2379,6 +2419,17 @@ def generate_futures_reason(
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
     ) and (card_field_is_a_race is not False)
+    _even_two_way = _is_even_two_way_tie(
+        even_two_way_tie=even_two_way_tie,
+        lead_visible=_lead_visible,
+        tied_leader_names=tied_leader_names,
+        rendered_leader_percent=rendered_leader_percent,
+        rendered_runner_up_percent=rendered_runner_up_percent,
+        card_field_is_a_race=card_field_is_a_race,
+    )
+    if _even_two_way:
+        _no_leader_subject = True
+        _deadline = ""
     # #6219: and likewise — may a movement template name its subject at all?
     # Resolved from the names AS RECEIVED, above the `_answering_side_label`
     # rewrite below, because the caller decided printedness against the raw
@@ -2412,7 +2463,7 @@ def generate_futures_reason(
     # every outcome-label input rather than to the nine f-strings below, so a
     # tenth template cannot reintroduce the defect.
     leader_name = _answering_side_label(leader_name, market_name)
-    if not _lead_visible and tied_leader_names and not _no_leader_subject:
+    if not _lead_visible and tied_leader_names and not _no_leader_subject and not _even_two_way:
         leader_name = (
             format_tied_leaders(
                 [_answering_side_label(n, market_name) or "" for n in tied_leader_names]
@@ -2448,8 +2499,10 @@ def generate_futures_reason(
     # divergence alone falls to the leader sentence below and says what it knows.)
 
     # Major movement
-    if "major_movement_24h" in reasons:
-        if top_mover_name and top_mover_change is not None and _mover_sayable:
+    if "major_movement_24h" in reasons and (
+        top_mover_change is None or _is_printable_move(top_mover_change)
+    ):
+        if top_mover_name and _is_printable_move(top_mover_change) and _mover_sayable:
             # #6903's residual: a bare date IS nameable on a board of bare
             # dates, and naming it is the only way this sentence can carry the
             # number without hanging it on a board that has no probability.
@@ -2467,8 +2520,10 @@ def generate_futures_reason(
     # the card falls through to a movement or leader sentence it can support.)
 
     # Moderate movement
-    if "moderate_movement_24h" in reasons:
-        if top_mover_name and top_mover_change is not None and _mover_sayable:
+    if "moderate_movement_24h" in reasons and (
+        top_mover_change is None or _is_printable_move(top_mover_change)
+    ):
+        if top_mover_name and _is_printable_move(top_mover_change) and _mover_sayable:
             # Same resolver as the major rung above — see `movement_subject`.
             if movement_subject(top_mover_name, leader_name) != MOVEMENT_SUBJECT_NAMED:
                 return f"Odds shifting in {market_name}"
@@ -2634,6 +2689,7 @@ def generate_futures_headline(
     top_surprise_opened_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
     tied_leader_names: Optional[Sequence[str]] = None,
+    even_two_way_tie: bool = False,
 ) -> str:
     """Generate compact, specific card text for futures Discover cards."""
     reasons = set(highlight_reasons)
@@ -2657,6 +2713,17 @@ def generate_futures_headline(
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
     ) and (card_field_is_a_race is not False)
+    _even_two_way = _is_even_two_way_tie(
+        even_two_way_tie=even_two_way_tie,
+        lead_visible=_lead_visible,
+        tied_leader_names=tied_leader_names,
+        rendered_leader_percent=rendered_leader_percent,
+        rendered_runner_up_percent=rendered_runner_up_percent,
+        card_field_is_a_race=card_field_is_a_race,
+    )
+    if _even_two_way:
+        _no_leader_subject = True
+        _deadline = ""
     # #6219: likewise — see `generate_futures_reason`.
     _surprise_sayable = movement_subject_is_printable(
         top_surprise_name, top_surprise_is_printed
@@ -2684,7 +2751,7 @@ def generate_futures_headline(
     # here, and `_answering_side_label` is a no-op without it — a headline with
     # no question to negate is left exactly as it renders today.
     leader_name = _answering_side_label(leader_name, market_name)
-    if not _lead_visible and tied_leader_names and not _no_leader_subject:
+    if not _lead_visible and tied_leader_names and not _no_leader_subject and not _even_two_way:
         leader_name = (
             format_tied_leaders(
                 [_answering_side_label(n, market_name) or "" for n in tied_leader_names]
@@ -2715,7 +2782,7 @@ def generate_futures_headline(
     if (
         "major_movement_24h" in reasons
         and top_mover_name
-        and top_mover_change is not None
+        and _is_printable_move(top_mover_change)
         and _mover_sayable
     ):
         direction = "up" if top_mover_change > 0 else "down"
@@ -2736,7 +2803,7 @@ def generate_futures_headline(
     if (
         "moderate_movement_24h" in reasons
         and top_mover_name
-        and top_mover_change is not None
+        and _is_printable_move(top_mover_change)
         and _mover_sayable
     ):
         direction = "up" if top_mover_change > 0 else "down"
@@ -2909,6 +2976,7 @@ def generate_futures_context_summary(
     top_surprise_opened_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
     tied_leader_names: Optional[Sequence[str]] = None,
+    even_two_way_tie: bool = False,
 ) -> str:
     """Generate short visible context copy for Discover cards.
 
@@ -2924,6 +2992,14 @@ def generate_futures_context_summary(
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
     ) and (card_field_is_a_race is not False)
+    _even_two_way = _is_even_two_way_tie(
+        even_two_way_tie=even_two_way_tie,
+        lead_visible=_lead_visible,
+        tied_leader_names=tied_leader_names,
+        rendered_leader_percent=rendered_leader_percent,
+        rendered_runner_up_percent=rendered_runner_up_percent,
+        card_field_is_a_race=card_field_is_a_race,
+    )
 
     # This is the string the web card prints under its title, so it is where the
     # binary-as-race defect was actually READ ("China invade Taiwan by end of
@@ -2951,6 +3027,7 @@ def generate_futures_context_summary(
     leader_name = _answering_side_label(leader_name, market_name)
     if (
         not _lead_visible
+        and not _even_two_way
         and tied_leader_names
         and not _leader_is_unnameable(leader_name, leader_is_ladder_rung)
     ):
@@ -2966,6 +3043,8 @@ def generate_futures_context_summary(
         return ""
 
     def leader_clause() -> str:
+        if _even_two_way:
+            return ""
         if _copy_repeats_market_name(leader_name, market_name):
             return ""
         # #4640 — the single gate for this generator: every leader sentence it

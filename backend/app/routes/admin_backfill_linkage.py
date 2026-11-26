@@ -134,6 +134,9 @@ async def run_linkage_backfill(
                     UPDATE events SET status = 'merged' WHERE id = :orphan_id
                 """), {"orphan_id": orphan.id})
 
+                from app.services.finished_event_history import invalidate_finished_event_history
+                await invalidate_finished_event_history(db, [orphan.id, best_match.id])
+
                 linked += 1
 
     if not dry_run and linked > 0:

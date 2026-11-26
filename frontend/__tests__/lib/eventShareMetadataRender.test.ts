@@ -69,11 +69,13 @@ it("opens the resolved game's canonical URL from the Safari banner", async () =>
   stubFetch(SCHEDULED_PAYLOAD);
   const meta = await generateMetadata({ params: Promise.resolve({ id: "0001" }) });
 
-  expect(meta.itunes).toEqual({
-    appId: APP_STORE_APP_ID,
-    appArgument: buildShareUrl("/events/1"),
-  });
-  expect(meta.itunes?.appArgument).toBe(meta.alternates?.canonical);
+  // #12311: the tag is written through `other` so it can carry campaign tags;
+  // an `itunes` field beside it would print a second banner tag.
+  expect(meta.itunes).toBeUndefined();
+  const parts = String(meta.other?.["apple-itunes-app"] ?? "").split(", ");
+  expect(parts[0]).toBe(`app-id=${APP_STORE_APP_ID}`);
+  expect(parts[parts.length - 1]).toBe(`app-argument=${buildShareUrl("/events/1")}`);
+  expect(meta.alternates?.canonical).toBe(buildShareUrl("/events/1"));
 });
 
 describe("generateMetadata on a settled event", () => {

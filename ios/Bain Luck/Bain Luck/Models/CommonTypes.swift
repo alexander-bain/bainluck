@@ -73,6 +73,8 @@ nonisolated struct TeamData: Decodable, Sendable {
     let record: String?
     let standings: StandingsData?
     let abbreviation: String?
+    var teamId: Int? = nil
+    var slug: String? = nil
 }
 
 /// League standings snapshot for a team, including record and rank context.
@@ -331,6 +333,8 @@ nonisolated struct ESPNData: Decodable, Sendable {
     let probabilitySources: [String: WinProbValue]?
     let seriesHomeWins: Int?
     let seriesAwayWins: Int?
+    var seriesBestOf: Int? = nil
+    var seriesWinsIncludeCurrentGame: Bool? = nil
 }
 
 // MARK: - Win Probability Sources

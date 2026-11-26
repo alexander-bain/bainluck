@@ -87,7 +87,10 @@ struct GameActivityRecord {
     convenience init() {
         self.init(service: SystemGameActivityService(),
                   isForeground: { UIApplication.shared.applicationState == .active },
-                  hasPushUpdates: { GameActivityRegistrationCoordinator.shared.canRequestPushToken })
+                  hasPushUpdates: {
+                      GameActivityRegistrationCoordinator.shared.canRequestPushToken
+                          || LiveActivityPushStartCoordinator254A.shared.hasAnyDeviceRegisteredActivity
+                  })
     }
     init(service: any GameActivityServing, isForeground: @escaping () -> Bool,
          hasPushUpdates: @escaping () -> Bool = { false },
@@ -174,8 +177,18 @@ struct GameActivityRecord {
             beginViewing(eventID: snapshot.eventID)
             // #12827: success needs no sentence; the button now reads "Stop Live Activity".
             feedback = nil
+            AnalyticsService.trackLiveActivityAction(
+                action: "start",
+                eventId: snapshot.eventID,
+                outcome: "started"
+            )
         } catch {
             setStatus("Couldn't start the Live Activity. Try again.", for: snapshot.eventID)
+            AnalyticsService.trackLiveActivityAction(
+                action: "start",
+                eventId: snapshot.eventID,
+                outcome: "failed"
+            )
         }
         reconcile()
     }
@@ -207,6 +220,8 @@ struct GameActivityRecord {
             if snapshot.isTerminal {
                 await service.end(id: record.id, final: snapshot)
                 setStatus("Game finished. The Live Activity has ended.", for: snapshot.eventID, completion: true)
+                // #12304 — following a game to its final is a good moment.
+                if snapshot.isFinal { ReviewPromptSignals12304.shared.recordGoodMoment() }
             } else {
                 await service.update(id: record.id, snapshot: snapshot, staleDate: staleDate(for: snapshot))
             }
@@ -218,8 +233,17 @@ struct GameActivityRecord {
         if pendingSnapshot?.snapshot.eventID == eventID { pendingSnapshot = nil }
         if isBusy { pendingStops.insert(eventID); return }
         isBusy = true
+        var stoppedAny = false
         for record in service.records where record.eventID == eventID {
             await service.end(id: record.id, final: nil)
+            stoppedAny = true
+        }
+        if stoppedAny {
+            AnalyticsService.trackLiveActivityAction(
+                action: "stop",
+                eventId: eventID,
+                outcome: "stopped"
+            )
         }
         setStatus("Live Activity stopped.", for: eventID, completion: true)
         await finishOperation()

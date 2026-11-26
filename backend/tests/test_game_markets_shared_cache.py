@@ -538,10 +538,8 @@ async def test_a_dead_redis_costs_a_build_and_never_a_500():
 
 @pytest.mark.asyncio
 async def test_the_memo_eviction_bound_is_unchanged():
-    """30 entries, oldest-first. Not fixed here — named in the module docstring
-    as one of the three reasons the dict never hit, and left alone because the
-    shared slot is what removes its importance."""
-    assert events_route._GAME_MARKETS_MAX_SIZE == 30
+    """10 entries, oldest-first (lowered from 30 for #13532 web dyno RSS cap)."""
+    assert events_route._GAME_MARKETS_MAX_SIZE == 10
     for i in range(events_route._GAME_MARKETS_MAX_SIZE + 5):
         events_route._write_game_markets_memo(i, "live", {"event_id": i})
     assert len(events_route._game_markets_cache) <= events_route._GAME_MARKETS_MAX_SIZE

@@ -1,0 +1,22 @@
+{
+  "retired_sets": [
+    {
+      "slug": "finale-week",
+      "name": "Finale Week",
+      "reason": "Alex Deck 2 grade Drop (2026-11-24): split set (2 The Voice Season 30 vs 2 unrelated TV/awards) plus non-finale member.",
+      "retired_at": "2026-11-24T17:19:00+00:00"
+    },
+    {
+      "slug": "what-things-cost-2026",
+      "name": "What Stuff Costs Now",
+      "reason": "Alex Deck 2 grade Drop (2026-11-24): bare consumer price-threshold rows lack per-row context explaining what the number means.",
+      "retired_at": "2026-11-24T17:19:00+00:00"
+    },
+    {
+      "slug": "what-things-cost",
+      "name": "What Things Cost",
+      "reason": "Alex Deck 2 grade Fix / #13544 Ask 4 hold (2026-11-24): price sets stay off Discover until each row carries a context line explaining what the price threshold means.",
+      "retired_at": "2026-11-24T17:19:00+00:00"
+    }
+  ]
+}

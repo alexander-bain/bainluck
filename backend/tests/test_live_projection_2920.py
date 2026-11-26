@@ -451,13 +451,17 @@ def test_attach_never_overwrites_and_never_writes_an_absent_object():
 
 def test_detail_and_search_ask_with_the_status_they_serve_and_the_rows_they_read():
     from app.routes import events
+    from app.utils import unified_game_read
 
     detail = inspect.getsource(events.get_event)
+    assert "load_unified_game_reads(" in detail
     assert (
         "event_live_projection(\n                        own_event_rows(_latest_rows, event.id),"
         in detail
     )
-    assert "latest_snapshot_for_each_bookmaker(_latest_rows, event_id)" in detail
+    assert "latest_snapshot_for_each_bookmaker(" in inspect.getsource(
+        unified_game_read.load_unified_game_reads
+    )
     assert "event_live_projection(\n                        all_latest_snapshots," not in detail
     assert 'served_status=response.get("status")' in detail
 

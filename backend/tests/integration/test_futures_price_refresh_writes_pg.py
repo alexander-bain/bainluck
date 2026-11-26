@@ -2107,6 +2107,48 @@ async def test_kalshi_population_is_shown_minus_both_socket_arms(poll_db):
     assert "KXGAME-WIN-H" not in polled_arm_off and "KXGAME-LIVE-H" not in polled_arm_off
 
 
+async def test_population_excludes_old_suspended_props_and_retires_settled_single_winner_markets_413a(poll_db, monkeypatch):
+    """#13673 / 413:A: old suspended props excluded, recent suspended & live props polled,
+    settled expected_winners=1 market excluded even when winner is api_settlement, and
+    multi-winner (expected_winners=2) keeps unsettled siblings."""
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
+    db = poll_db
+    old_susp = await _vp_event(db, status="suspended", starts_in=timedelta(hours=-48))
+    rec_susp = await _vp_event(db, status="suspended", starts_in=timedelta(hours=-4))
+    live_ev = await _vp_event(db, status="live", starts_in=timedelta(hours=-1))
+
+    prop_cu = {"v": 1, "semantic_type": "player_prop", "venue_type": "prop"}
+    moneyline_cu = {"v": 1, "semantic_type": "winner", "venue_type": "moneyline"}
+
+    await _vp_market(db, source="polymarket", ext="PM-OLD-SUSP", event_id=old_susp, tier=5,
+                     legs=[("0x-old-susp", False, None)],
+                     metadata={"polymarket_event_id": "old", "content_understanding_v1": prop_cu})
+    await _vp_market(db, source="polymarket", ext="PM-REC-SUSP", event_id=rec_susp, tier=5,
+                     legs=[("0x-rec-susp", False, None)],
+                     metadata={"polymarket_event_id": "rec", "content_understanding_v1": prop_cu})
+    await _vp_market(db, source="polymarket", ext="PM-LIVE-PROP", event_id=live_ev, tier=5,
+                     legs=[("0x-live-prop", False, None)],
+                     metadata={"polymarket_event_id": "live", "content_understanding_v1": prop_cu})
+    await _vp_market(db, source="polymarket", ext="PM-LIVE-ML", event_id=live_ev, tier=5,
+                     legs=[("0x-live-ml", False, None)],
+                     metadata={"polymarket_event_id": "ml", "content_understanding_v1": moneyline_cu})
+    await _vp_market(db, source="polymarket", ext="PM-ONE-WIN",
+                     legs=[("0x-one-win-y", True, "api_settlement"), ("0x-one-win-n", False, None)],
+                     metadata={"polymarket_event_id": "onewin", "shape": {"expected_winners": "1"}})
+    await _vp_market(db, source="polymarket", ext="PM-TWO-WIN",
+                     legs=[("0x-two-win-y", True, None), ("0x-two-win-n", False, None)],
+                     metadata={"polymarket_event_id": "twowin", "shape": {"expected_winners": "2"}})
+    await db.commit()
+
+    polled = await _vp_population(db, "polymarket", open_arm=False)
+    assert "0x-rec-susp" in polled
+    assert "0x-live-prop" in polled
+    assert "0x-two-win-n" in polled
+    assert "0x-old-susp" not in polled
+    assert "0x-live-ml" not in polled
+    assert "0x-one-win-n" not in polled
+
+
 async def test_polymarket_population_drops_tokened_markets_only_while_the_open_arm_is_on(poll_db):
     db = poll_db
     await _vp_market(db, source="polymarket", ext="9001", legs=[("0xaaa", False, None)],

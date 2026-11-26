@@ -18,6 +18,11 @@ type MarketQuote = Omit<FeedFuturesData, 'top_outcomes'> & {
 };
 interface MarketFence { clocks: Record<string, string | null>; withdrawn: string[] }
 export type PriceBook = Map<string, { item: FeedItem; builtAt: number; marketFence?: MarketFence }>;
+const heldCoverageNotice = Symbol('heldCoverageNotice');
+
+export function isHeldFieldCoverageNotice(item: FeedItem): boolean {
+  return (item as FeedItem & { [heldCoverageNotice]?: boolean })[heldCoverageNotice] === true;
+}
 
 export function priceKey(item: FeedItem): string | null {
   return item.type === 'event' || item.type === 'futures' ? `${item.type}-${(item.data as { id: number }).id}` : null;
@@ -129,7 +134,10 @@ export function canAdoptPrice(incoming: FeedItem, held: FeedItem, withheld = fal
     if (!withdrawal && (rows.length !== incomingRows.length || rows.some((row, i) => row.id !== incomingRows[i].id || row.probability !== incomingRows[i].probability))) return false;
   }
   const prior = clock(old.price_observed_at);
-  return Object.keys(priorClocks).length > 0 || !prior || orderClock(clock(next.price_observed_at), prior) >= 0;
+  const coverageWithdrawal = options.authoritative &&
+    next.field_price_coverage_incomplete === true && next.top_outcomes.length === 0;
+  return Object.keys(priorClocks).length > 0 || coverageWithdrawal ||
+    !prior || orderClock(clock(next.price_observed_at), prior) >= 0;
 }
 
 export function strictlyNewerPrice(incoming: FeedItem, held: FeedItem, fence?: MarketFence): boolean {
@@ -168,20 +176,32 @@ function retainedMarketFence(incoming: FeedItem, held: FeedItem, previous?: Mark
 // price and score, so it travels with them; holding it beside a newer chance
 // paints "91%" next to a "90%" claim (#5439). The percent it states travels
 // with it too (#12279), so the preview overlay judges the sentence it is shown.
-const EVENT_LEAF_COPY = ['headline', 'reason', 'context_summary', 'live_claim_percent'] as const;
+const PRICE_LEAF_COPY = ['headline', 'reason', 'context_summary', 'live_claim_percent'] as const;
 
-function withPriceBody(held: FeedItem, fresh: FeedItem): FeedItem {
+function withPriceBody(held: FeedItem, fresh: FeedItem, withdrawn = isHeldFieldCoverageNotice(fresh)): FeedItem {
   // Keep editorial identity/copy and image treatment while replacing the whole
   // normalized source/price body. Never manufacture a standalone group price.
   const data = { ...fresh.data } as unknown as Record<string, unknown>;
   const old = held.data as unknown as Record<string, unknown>;
-  for (const key of ['name', 'hook_description', 'image_url', 'image_width', 'image_height']) {
+  // A field coverage withdrawal or recovery invalidates its held leader copy.
+  const fieldCopyIsPriceBound = fresh.type === 'futures' &&
+    (typeof data.field_price_coverage_incomplete === 'boolean' ||
+     typeof old.field_price_coverage_incomplete === 'boolean');
+  for (const key of ['name', 'image_url', 'image_width', 'image_height']) {
     if (key in old) data[key] = old[key];
   }
-  const item = { ...held, data: data as unknown as FeedItem['data'] } as unknown as Record<string, unknown>;
-  if (fresh.type === 'event') {
+  if (!fieldCopyIsPriceBound && 'hook_description' in old) data.hook_description = old.hook_description;
+  const item = {
+    ...held,
+    data: data as unknown as FeedItem['data'],
+    // Only an accepted refresh can keep an empty field in its existing seat.
+    [heldCoverageNotice]: withdrawn && fresh.type === 'futures' &&
+      data.status === 'open' && data.field_price_coverage_incomplete === true &&
+      Array.isArray(data.top_outcomes) && data.top_outcomes.length === 0,
+  } as unknown as Record<string, unknown>;
+  if (fresh.type === 'event' || fieldCopyIsPriceBound) {
     // Null or absent clears the held text: no fallback to the older claim.
-    for (const key of EVENT_LEAF_COPY) {
+    for (const key of PRICE_LEAF_COPY) {
       if (key in fresh) item[key] = fresh[key];
       else delete item[key];
     }
@@ -225,7 +245,7 @@ export function adoptPriceCards(book: PriceBook, painted: FeedItem[], response: 
         response.built_at < (book.get(key)?.builtAt ?? -Infinity) || !canAdoptPrice(item, old, disposition === 'withheld',
           { authoritative: true, fence: book.get(key)?.marketFence })) continue;
     if (next === book) next = new Map(book);
-    next.set(key, { item: withPriceBody(old, item), builtAt: response.built_at,
+    next.set(key, { item: withPriceBody(old, item, disposition === 'withheld'), builtAt: response.built_at,
       marketFence: retainedMarketFence(item, old, book.get(key)?.marketFence) });
   }
   return next;

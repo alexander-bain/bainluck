@@ -235,10 +235,39 @@ it("keeps each named figure at one supported station or on a rest bench", () => 
   const roster = placeCrew({ ...snapshot, changes: open, transitions: [] }, now, open);
   expect(roster).toHaveLength(8);
   expect(roster.filter(person => person.identity === "B")).toEqual([
-    { identity: "B", pose: "waiting", position: { line: "Server", station: "Test" } },
+    { identity: "B", pose: "waiting", change: open[0], position: { line: "Server", station: "Test" } },
   ]);
-  expect(roster).toContainEqual({ identity: "E", pose: "asleep", position: { line: "Website", station: "Write" } });
+  expect(roster).toContainEqual({ identity: "E", pose: "asleep", change: open[2], position: { line: "Website", station: "Write" } });
   expect(roster).toContainEqual({ identity: "W", pose: "asleep" });
+});
+
+it("puts the figure’s station and matching crate before the lane check-in", async () => {
+  watchMotion();
+  const data: FactoryData = {
+    ...snapshot,
+    transitions: [],
+    changes: [
+      { ...base, checks_running: true },
+      { ...base, number: 13007, station: "Review", last_activity: now },
+    ],
+    crew_posts: { B: { at: now } },
+  };
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />));
+    expect(container.querySelector('[data-crew-station="Test"] [data-floor-figure][data-identity="B"]')).not.toBeNull();
+    const card = container.querySelector('[data-crew="B"]');
+    const station = card?.querySelector('[data-card-station="Test"]');
+    expect(station?.textContent).toBe("At Checks · #12998");
+    expect(station?.nextElementSibling?.textContent).toBe("Tests are running.");
+    const checkIn = card?.querySelector('[data-source="check-in"]');
+    expect(checkIn?.textContent).toBe("Posted on NOW at 10:00 AM PT");
+    expect(station?.compareDocumentPosition(checkIn!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(container.querySelector('[data-crew="W"] [data-card-station="rest"]')?.textContent).toBe("At the rest bench");
+  } finally {
+    await act(async () => root.unmount());
+  }
 });
 
 it("shows a signed lane as active without a crate and displays only its recorded wait number", async () => {

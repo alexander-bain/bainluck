@@ -94,7 +94,7 @@ def _event(event_id, *, sport_key, opening_home, opening_away, home_score=0, awa
     return e
 
 
-def _mock_db(events):
+def _mock_db(events, *, live_books=None):
     db = AsyncMock()
 
     def make_result(rows):
@@ -103,8 +103,25 @@ def _mock_db(events):
         r.all.return_value = []
         return r
 
+    snap_rows = []
+    for eid, pair in (live_books or {}).items():
+        if pair is None:
+            continue
+        snap = MagicMock()
+        snap.event_id = eid
+        snap.bookmaker = "draftkings"
+        snap.home_win_probability = pair[0]
+        snap.away_win_probability = pair[1]
+        snap.home_spread = None
+        snap.over_under = None
+        snap.captured_at = NOW - timedelta(seconds=10)
+        snap.valid_until = None
+        snap_rows.append(snap)
+
     async def execute(stmt, *a, **k):
         s = str(stmt).lower()
+        if "odds_snapshots" in s:
+            return make_result(snap_rows)
         if "win_prob_snapshots" in s:
             return make_result([])
         if "events" in s:
@@ -121,17 +138,17 @@ async def _card(event, blend, *, live_books=None):
     `my_teams_only=True` only lowers the admission bar to 0 (see the 5324 test);
     the claim and the serializer are the same code on every rail.
     """
-    books_map = live_books if live_books is not None else {}
     with patch(
         "app.routes.feed._get_championship_probabilities",
         new=AsyncMock(return_value={}),
-    ), patch("app.routes.feed._compute_aggregate_probability", return_value=blend), patch(
-        "app.utils.draw_priced_winner.read_live_three_way_books",
-        new=AsyncMock(return_value=books_map),
-    ):
+    ), patch("app.routes.feed._compute_aggregate_probability", return_value=blend):
         items = await _score_events(
-            _mock_db([event]), now=NOW, sport_filter=None, ctx=PersonalizationContext(),
-            my_teams_only=True, my_team_names=[HOME],
+            _mock_db([event], live_books=live_books),
+            now=NOW,
+            sport_filter=None,
+            ctx=PersonalizationContext(),
+            my_teams_only=True,
+            my_team_names=[HOME],
         )
     cards = [i for i in items if i["type"] == "event" and i["data"]["id"] == event.id]
     assert cards, "no card was built at all — the test proves nothing as written"

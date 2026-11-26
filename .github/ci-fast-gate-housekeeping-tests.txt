@@ -1,0 +1,25 @@
+# Canonical manifest of housekeeping & test-rig guard suites moved into `fast-gate` (412: D).
+# backend/scripts/ci_shard.py excludes these from the 16 `backend-tests` shards and verifies
+# in `--verify` that union(shards) | housekeeping == pytest_collected and union & housekeeping == empty.
+tests/test_mutation_guard.py
+tests/test_wall_clock_dated_fixtures_12252.py
+tests/test_tasks_wiring.py
+tests/test_pre_offer_gate.py
+tests/test_ci_cross_tier_manifest.py
+tests/test_claude_md_size.py
+tests/test_pg_gated_tests_are_named_in_ci.py
+tests/test_pg_gate_seed_completeness.py
+tests/test_shard_hints_refresh_3497.py
+tests/test_ci_shard.py
+tests/test_ci_triggers_12252.py
+tests/test_ci_matrix_required_contexts.py
+tests/test_ci_postgres_groups.py
+tests/test_ci_supersede_concurrency.py
+tests/test_eval_candidate_workflow_12235.py
+tests/test_golden_floor_ci_wiring_3761.py
+tests/test_release_live_path.py
+tests/test_watch_mvp_scope_13027.py
+tests/test_workflow_supersede_concurrency_13027.py
+tests/test_import_convention_guard.py
+tests/test_untyped_bind_in_is_null_guard.py
+tests/test_ci_housekeeping_draft_watch_412d.py

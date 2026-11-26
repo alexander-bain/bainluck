@@ -184,15 +184,12 @@ export function buildRoundupCardModel(
 
   const rows: RoundupRowModel[] = readable.map(({ row, rowId, kind, cadence, label }, i) => {
     const parts = probabilityParts(row.probability, {
-      rendered: typeof row.rendered_percent === "number" ? row.rendered_percent : undefined,
+      rendered: row.unfloored_percent ?? row.rendered_percent,
     });
     let secondary: RoundupSecondaryBarModel | null = null;
     if (typeof row.secondary_probability === "number") {
       const secParts = probabilityParts(row.secondary_probability, {
-        rendered:
-          typeof row.secondary_rendered_percent === "number"
-            ? row.secondary_rendered_percent
-            : undefined,
+        rendered: row.secondary_unfloored_percent ?? row.secondary_rendered_percent,
       });
       secondary = {
         marker: secParts.marker,

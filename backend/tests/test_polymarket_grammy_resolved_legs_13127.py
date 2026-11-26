@@ -1,5 +1,6 @@
 """An authoritative No on an open winner field cannot reappear as an old trade."""
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -68,56 +69,32 @@ async def test_discovery_and_id_refresh_keep_the_nominee_and_skip_the_graded_los
     assert "eliminated" not in unpriced[event.id]
 
 
-@pytest.mark.parametrize(
-    ("source", "external_id", "grammy"),
-    [
-        ("polymarket", "805158", True),
-        ("polymarket", "another_board", False),
-        ("kalshi", "KXGRAMMY-SOTY69", True),
-        ("kalshi", "KXGRAMMY-ROTY69", True),
-        ("kalshi", "KXGRAMAOTY-69", True),
-        ("kalshi", "KXGRAMBNA-69", True),
-        ("kalshi", "KXOTHER-FIELD", False),
-    ],
-)
-def test_detail_puts_the_graded_grammy_loss_after_contenders(
-    source, external_id, grammy, monkeypatch
-):
-    from datetime import datetime, timezone
+def _outcome(oid, name, value, observed, authority=None):
+    return SimpleNamespace(
+        id=oid,
+        name=name,
+        external_id=f"condition-{oid}",
+        current_probability=value,
+        current_american_odds=500,
+        current_yes_bid=None,
+        current_yes_ask=None,
+        rank=oid,
+        rank_change_24h=1,
+        probability_change_24h=0.001,
+        opening_probability=0.01,
+        opening_american_odds=9990,
+        is_winner=False,
+        resolution_source=authority,
+        last_updated=observed,
+        price_changed_at=observed,
+        team=None,
+        team_id=None,
+    )
 
-    from app.routes import futures
 
-    observed = datetime(2026, 11, 20, 22, 12, tzinfo=timezone.utc)
-
-    class FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return observed.astimezone(tz) if tz else observed.replace(tzinfo=None)
-
-    monkeypatch.setattr(futures, "datetime", FrozenDatetime)
-
-    def outcome(oid, name, value, authority=None):
-        return SimpleNamespace(
-            id=oid,
-            name=name,
-            external_id=f"condition-{oid}",
-            current_probability=value,
-            current_american_odds=500,
-            current_yes_bid=None,
-            current_yes_ask=None,
-            rank=oid,
-            rank_change_24h=1,
-            probability_change_24h=0.001,
-            opening_probability=0.01,
-            opening_american_odds=9990,
-            is_winner=False,
-            resolution_source=authority,
-            last_updated=observed,
-            price_changed_at=observed,
-        )
-
-    market = SimpleNamespace(
-        id=58492243,
+def _market(market_id, source, external_id, outcomes, observed):
+    return SimpleNamespace(
+        id=market_id,
         name="Grammys 2027: Song of the Year Winner",
         description=None,
         category="award",
@@ -141,15 +118,48 @@ def test_detail_puts_the_graded_grammy_loss_after_contenders(
         image_url=None,
         category_tags=[],
         market_metadata={},
-        outcomes=[
-            outcome(1, "the cure", 0.2405),
-            outcome(2, "I Just Might", 0.01, "api_settlement"),
-            outcome(3, "Man I Need", 0.1165),
-            outcome(4, "A live long shot", 0.004),
-            outcome(5, "Tie", 0.2),
-            outcome(6, "Unknown result", 0.0, "ungradeable_result"),
-        ],
+        outcomes=outcomes,
     )
+
+
+@pytest.mark.parametrize(
+    ("source", "external_id", "grammy"),
+    [
+        ("polymarket", "805158", True),
+        ("polymarket", "another_board", False),
+        ("kalshi", "KXGRAMMY-SOTY69", True),
+        ("kalshi", "KXGRAMMY-ROTY69", True),
+        ("kalshi", "KXGRAMAOTY-69", True),
+        ("kalshi", "KXGRAMBNA-69", True),
+        ("kalshi", "KXOTHER-FIELD", False),
+    ],
+)
+def test_detail_puts_the_graded_grammy_loss_after_contenders(
+    source, external_id, grammy, monkeypatch
+):
+    from app.routes import futures
+
+    observed = datetime(2026, 11, 20, 22, 12, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return observed.astimezone(tz) if tz else observed.replace(tzinfo=None)
+
+    monkeypatch.setattr(futures, "datetime", FrozenDatetime)
+
+    def outcome(oid, name, value, authority=None):
+        return _outcome(oid, name, value, observed, authority)
+
+    market = _market(58492243, source, external_id, [
+        outcome(1, "the cure", 0.2405),
+        outcome(2, "I Just Might", 0.01, "api_settlement"),
+        outcome(3, "Man I Need", 0.1165),
+        outcome(4, "Risk It All", 0.004),
+        outcome(5, "Tie", 0.2),
+        outcome(6, "Berghain", 0.0, "ungradeable_result"),
+        outcome(7, "The Fate of Ophelia - Taylor Swift", 0.05),
+    ], observed)
     response = futures._format_market_detail(market, normalize_numbers=False)
     rows = {row["id"]: row for row in response["outcomes"]}
     assert rows[1]["probability"] == 0.2405
@@ -157,6 +167,10 @@ def test_detail_puts_the_graded_grammy_loss_after_contenders(
     assert rows[4]["probability"] == 0.004
     assert not rows[4].get("is_out")
     assert not rows[6].get("is_out")
+    if external_id in ("805158", "KXGRAMMY-SOTY69"):
+        assert 7 not in rows
+    else:
+        assert rows[7]["probability"] == 0.05
     if grammy and source == "kalshi":
         assert response["outcomes"][-2]["id"] == 5
         assert rows[5]["name"] == "Tie (co-winners)"
@@ -295,3 +309,84 @@ async def test_grammy_chart_reads_the_nominee_field_at_either_address(
     assert result["market_name"] == field.name
     screen.assert_awaited_once_with(db, field)
     blend.assert_not_awaited()
+
+
+async def test_stored_song_nominee_field_serves_all_nine_at_the_old_address(monkeypatch):
+    from app.routes import futures
+    from app.utils.kalshi_archive_reader import ArchiveHistory
+
+    # November 24, 7:14 AM PT public read in Fable's #13612 verdict.
+    stored = {
+        "Choosin' Texas": 0.49,
+        "the cure": 0.27,
+        "Man I Need": 0.07,
+        "WHERE IS MY HUSBAND!": 0.05,
+        "Berghain": 0.05,
+        "Risk it All": 0.04,
+        "hate that i made you love me": 0.01,
+        "I Knew It, I Knew You (from Toy Story 5)": 0.01,
+        "Tie (co-winners)": 0.01,
+    }
+    observed = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    legacy = _market(58492243, "polymarket", "805158", [], observed)
+    nominees = [
+        _outcome(oid, name, probability, observed)
+        for oid, (name, probability) in enumerate(stored.items(), start=1)
+    ]
+    field = _market(100, "kalshi", "KXGRAMMY-SOTY69", nominees, observed)
+    market_row = Mock()
+    market_row.scalar_one_or_none.return_value = legacy
+    replacement = Mock()
+    replacement.scalars.return_value = iter([field])
+
+    for name, value in (
+        ("_load_market_sources", (["kalshi"], [])),
+        ("_withheld_price_outcome_ids", set()),
+        ("_fleet_newest_observation", None),
+        ("_game_container_leg_sides", {}),
+        ("_game_container_lead_leg", None),
+        ("_game_container_of_event_id", None),
+        ("out_legs_by_market", {}),
+        ("_load_generic_venue_history", futures._GenericVenueHistory()),
+        ("load_archive_history", ArchiveHistory()),
+        ("add_timeline_steps", None),
+        ("add_history_steps", None),
+    ):
+        monkeypatch.setattr(futures, name, AsyncMock(return_value=value))
+
+    db = SimpleNamespace(execute=AsyncMock(side_effect=[market_row, replacement]))
+    detail = await futures.get_futures_market(
+        legacy.id, db, representation=futures.REPRESENTATION_SOURCE,
+    )
+    assert detail["id"] == legacy.id and detail["source"] == "kalshi"
+    assert {row["name"]: row["probability"] for row in detail["outcomes"]} == stored
+
+    snapshots = Mock()
+    snapshots.scalars.return_value.all.return_value = [
+        SimpleNamespace(
+            outcome_id=outcome.id,
+            captured_at=observed - timedelta(hours=hours_ago),
+            probability=outcome.current_probability,
+            bookmaker="kalshi",
+            last_price=outcome.current_probability,
+        )
+        for hours_ago in (3, 2, 1)
+        for outcome in nominees
+    ]
+
+    replacement.scalars.return_value = iter([field])
+    db.execute.side_effect = [market_row, replacement, snapshots]
+    timeline = await futures.get_probability_timeline(
+        legacy.id, top=10, hours=168, db=db, representation=futures.REPRESENTATION_SOURCE,
+    )
+    assert timeline["market_id"] == legacy.id
+    assert {row["name"]: row["current_probability"] for row in timeline["outcomes"]} == stored
+    assert set(timeline["timeline"][0]["outcomes"]) == set(stored)
+
+    replacement.scalars.return_value = iter([field])
+    db.execute.side_effect = [market_row, replacement, snapshots]
+    history = await futures.get_futures_history(
+        legacy.id, outcome_id=None, hours=168, top_n=10, champion=None, db=db,
+    )
+    assert history["market_id"] == legacy.id
+    assert {row["outcome_id"] for row in history["outcomes"]} == {outcome.id for outcome in nominees}
