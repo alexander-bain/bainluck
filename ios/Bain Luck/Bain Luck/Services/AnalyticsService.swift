@@ -4,6 +4,10 @@ import Foundation
 
 /// Thin wrapper around Firebase Analytics matching the web GA4 taxonomy.
 enum AnalyticsService {
+    /// Test-only hook invoked strictly AFTER both `TelemetryConsent` and
+    /// `AnalyticsPrivacy.sanitize` succeed.
+    nonisolated(unsafe) static var eventEmitterForTests: ((String, [String: Any]?) -> Void)?
+
     // MARK: - Emission Boundary
 
     /// The ONE place this app hands an EVENT to Firebase (L2-219 Item 2 /
@@ -33,10 +37,18 @@ enum AnalyticsService {
         }
         if let authorizationEpoch {
             TelemetryConsent.shared.withAnalyticsAuthorization(epoch: authorizationEpoch) {
-                Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+                if let emitter = eventEmitterForTests {
+                    emitter(name, sanitized)
+                } else {
+                    Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+                }
             }
         } else {
-            Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+            if let emitter = eventEmitterForTests {
+                emitter(name, sanitized)
+            } else {
+                Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+            }
         }
     }
 
@@ -110,6 +122,31 @@ enum AnalyticsService {
 
     nonisolated static func trackLogout() {
         log("logout")
+    }
+
+    /// Field sign-in failure measurement (#13516) — emits strictly behind consent,
+    /// carrying only bounded non-PII method/stage/domain/code fields (never descriptions
+    /// or cancellations).
+    nonisolated static func trackAuthSignInFailed(
+        method: String,
+        stage: String,
+        errorDomain: String,
+        errorCode: Int,
+        underlyingDomain: String? = nil,
+        underlyingCode: Int? = nil
+    ) {
+        let safeMethod = (method == "apple" || method == "google") ? method : "other"
+        var params: [String: Any] = [
+            "method": safeMethod,
+            "stage": stage,
+            "error_domain": AnalyticsPrivacy.sanitizeErrorDomain(errorDomain),
+            "error_code": errorCode,
+        ]
+        if let underlyingDomain, let underlyingCode {
+            params["underlying_domain"] = AnalyticsPrivacy.sanitizeErrorDomain(underlyingDomain)
+            params["underlying_code"] = underlyingCode
+        }
+        log("auth_sign_in_failed", params)
     }
 
     // MARK: - Onboarding
@@ -434,6 +471,8 @@ enum AnalyticsService {
             "app_build": appBuild(),
             "surface": "my_stuff",
             "outcome_class": stage.outcomeClass.rawValue,
+            "has_pins": stage.hasPins,
+            "state": stage.state,
         ])
     }
 
@@ -468,10 +507,55 @@ enum AnalyticsService {
     /// this open to the server-side `push_sent` — without it the funnel has two
     /// unrelated counts instead of a rate. Carries no user, device, or market
     /// content.
-    nonisolated static func trackPushOpened(payloadId: String, surface: String = "digest") {
-        log("push_opened", [
-            "payload_id": payloadId,
+    nonisolated static func trackPushOpened(
+        payloadId: String? = nil,
+        surface: String = "digest",
+        destinationType: String = "other"
+    ) {
+        var params: [String: Any] = [
             "surface": surface,
+            "destination_type": destinationType,
+        ]
+        if let payloadId {
+            params["payload_id"] = payloadId
+        }
+        log("push_opened", params)
+    }
+
+    // MARK: - Notifications, Live Activities & Widgets (#13261 Rows 11–13)
+
+    nonisolated static func trackPushPermissionResult(
+        granted: Bool,
+        surface: String = "system_prompt"
+    ) {
+        log("push_permission_result", [
+            "outcome": granted ? "granted" : "denied",
+            "surface": surface,
+        ])
+    }
+
+    nonisolated static func trackLiveActivityAction(
+        action: String,
+        eventId: Int,
+        outcome: String,
+        surface: String = "event_detail"
+    ) {
+        log("live_activity_action", [
+            "action": action,
+            "event_id": eventId,
+            "outcome": outcome,
+            "surface": surface,
+        ])
+    }
+
+    nonisolated static func trackWidgetOpen(
+        widgetKind: String,
+        destinationType: String
+    ) {
+        log("widget_open", [
+            "widget_kind": WidgetAndAlertTelemetry13261.normalizedWidgetKind(widgetKind),
+            "destination_type": destinationType,
+            "surface": "widget",
         ])
     }
 
@@ -517,12 +601,11 @@ enum AnalyticsService {
 
     /// As with `trackSearch`, the raw `query` is reduced to bounded metadata at
     /// the boundary — the shared `query_hash` is what joins this click back to
-    /// the search that produced it.
-    nonisolated static func trackSearchResultClick(query: String, resultType: String, resultId: String, position: Int) {
+    /// the search that produced it without revealing which result was tapped.
+    nonisolated static func trackSearchResultClick(query: String, resultType: String, position: Int) {
         log("search_result_click", [
             "query": query,
             "result_type": resultType,
-            "result_id": resultId,
             "position": position,
         ])
     }
@@ -543,6 +626,109 @@ enum AnalyticsService {
         log("return_visit", [
             "days_since_last": daysSinceLast,
             "session_number": sessionNumber,
+        ])
+    }
+
+    // MARK: - First-Week Measurement (#13261 Rows 6 & 7)
+
+    nonisolated static func trackPinItem(
+        action: String,
+        itemType: String,
+        itemId: Int,
+        surface: String = "iphone"
+    ) {
+        log("pin_item", [
+            "action": action,
+            "item_type": itemType,
+            "item_id": String(itemId),
+            "surface": surface,
+        ])
+    }
+
+    nonisolated static func trackFollowTeam(
+        action: String,
+        sport: String?,
+        relationType: String,
+        surface: String
+    ) {
+        log("follow_team", [
+            "action": action,
+            "sport": (sport?.isEmpty == false) ? sport! : "unknown",
+            "relation_type": FirstWeekTelemetry13261.normalizedRelationType(relationType),
+            "surface": surface,
+        ])
+    }
+
+    nonisolated static func trackSessionOpen(
+        isFirstSession: Bool,
+        sessionNumber: Int,
+        entryType: String,
+        firstScreen: String
+    ) {
+        log("session_open", [
+            "is_first_session": isFirstSession,
+            "session_number": sessionNumber,
+            "entry_type": entryType,
+            "first_screen": firstScreen,
+        ])
+    }
+
+    nonisolated static func trackSharedLinkOpen(
+        entryType: String,
+        destinationType: String,
+        source: String,
+        medium: String
+    ) {
+        log("shared_link_open", [
+            "entry_type": entryType,
+            "destination_type": destinationType,
+            "source": source,
+            "medium": medium,
+        ])
+    }
+
+    // MARK: - Set Hubs & Game Page Interactions (#13261 rows 9 & 10)
+
+    private nonisolated static let allowedCollectionActions: Set<String> = [
+        "open_event", "open_market", "open_more_on_game", "open_child_collection", "refresh",
+    ]
+    private nonisolated static let allowedGamePageActions: Set<String> = [
+        "expand", "collapse", "filter", "open", "tap",
+    ]
+    private nonisolated static let allowedGamePageSections: Set<String> = [
+        "sources", "models", "props", "story", "chart",
+    ]
+
+    nonisolated static func sanitizeSlugToken(_ raw: String) -> String {
+        let base = raw.split(whereSeparator: { $0 == "?" || $0 == "#" || $0 == "/" }).first.map(String.init) ?? ""
+        let lower = base.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filtered = String(lower.unicodeScalars.filter {
+            ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-" || $0 == "_"
+        }.prefix(64))
+        return filtered.isEmpty ? "unknown" : filtered
+    }
+
+    nonisolated static func trackCollectionHubAction(slug: String, actionKind: String, itemType: String? = nil) {
+        let safeAction = allowedCollectionActions.contains(actionKind) ? actionKind : "other"
+        var params: [String: Any] = [
+            "slug": sanitizeSlugToken(slug),
+            "action_kind": safeAction,
+            "surface": "collection_hub",
+        ]
+        if let itemType, ["event", "market", "collection"].contains(itemType) {
+            params["item_type"] = itemType
+        }
+        log("collection_hub_action", params)
+    }
+
+    nonisolated static func trackGamePageAction(actionKind: String, section: String, sport: String? = nil) {
+        let safeAction = allowedGamePageActions.contains(actionKind) ? actionKind : "tap"
+        let safeSection = allowedGamePageSections.contains(section) ? section : "other"
+        log("game_page_action", [
+            "action_kind": safeAction,
+            "section": safeSection,
+            "sport": sport ?? "unknown",
+            "surface": "event_detail",
         ])
     }
 

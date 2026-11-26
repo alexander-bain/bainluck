@@ -423,6 +423,7 @@ struct FirstRunChecklistRootView364A: View {
         prefs.boostedCategories = Array(cats).sorted()
         prefs.boostedTerms = Array(terms).sorted()
         prefs.boostedMarketIds = Array(ids).sorted()
+        prefs.savedAtEpoch = Date().timeIntervalSince1970
         prefs.save()
     }
 

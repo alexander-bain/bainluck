@@ -1961,6 +1961,8 @@ export interface FeedFuturesData {
    * null for an undatable stamp rather than inventing "just now".
    */
   price_observed_at?: string | null;
+  /** The full screened field lacks enough price coverage to name a leader. */
+  field_price_coverage_incomplete?: boolean;
   top_outcomes: FeedFuturesOutcome[];
   /** #11995: whole percentages were allocated over the complete one-winner field. */
   full_field_rendered?: boolean;

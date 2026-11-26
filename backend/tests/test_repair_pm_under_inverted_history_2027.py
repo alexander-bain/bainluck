@@ -302,6 +302,10 @@ def test_only_the_history_rails_write_snapshot_batches():
         ("kalshi.py", "_backfill_kalshi_price_history"),
         ("kalshi.py", "_backfill_from_settled_events"),
         ("kalshi_cliff.py", "_drain_one"),
+        # #13673 / #13717: multi-row snapshot batching for live poll writers; both
+        # always stamp american_odds, quote book fields, and sub-second captured_at.
+        ("futures_price_refresh.py", "_write_prices"),
+        ("venue_poll_30s.py", "write_market"),
     }
 
 

@@ -74,14 +74,29 @@ struct PairedArtThumbnailView: View {
         size.dimensions(for: kind)
     }
 
+    private var subjectKindForInitials: String? {
+        switch kind {
+        case .espnTeamLogo:
+            return "team"
+        case .tmdbHeadshot:
+            return "person"
+        case .tmdbPoster:
+            return nil
+        }
+    }
+
     @ViewBuilder
     var body: some View {
         let safeURL = PairedMetricPresentation.resolveKidSafeVisualArt(entry)
         if safeURL == nil && !showsPlaceholderMonogram {
             if reservesSlotWidthWhenMissing {
-                Color.clear
-                    .frame(width: spec.width, height: 1)
-                    .accessibilityHidden(true)
+                // Ruling 387: A — Where a sibling row has a picture, draw initials
+                // inside a matching circle instead of leaving an empty slot.
+                KitInitialsCircle366B(
+                    name: entry.subject,
+                    subjectKind: subjectKindForInitials,
+                    box: CGSize(width: spec.width, height: spec.height)
+                )
             } else {
                 EmptyView()
             }
@@ -98,7 +113,11 @@ struct PairedArtThumbnailView: View {
                             if showsPlaceholderMonogram {
                                 monogramTile
                             } else {
-                                emptyLoadingFrame
+                                KitInitialsCircle366B(
+                                    name: entry.subject,
+                                    subjectKind: subjectKindForInitials,
+                                    box: CGSize(width: spec.width, height: spec.height)
+                                )
                             }
                         }
                     }

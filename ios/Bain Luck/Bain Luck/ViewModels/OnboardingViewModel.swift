@@ -296,6 +296,18 @@ final class OnboardingViewModel: ObservableObject {
             logger.info("Onboarding submitted: \(response.status)")
             let teamsCount = submission.followTeams.count + submission.localTeams.count + submission.almaMaterTeams.count
             AnalyticsService.trackOnboardingComplete(teamsCount: teamsCount)
+            for team in locationTeams where team.selected {
+                AnalyticsService.trackFollowTeam(action: "follow", sport: team.sportKey, relationType: "local", surface: "onboarding")
+            }
+            for team in followTeams {
+                AnalyticsService.trackFollowTeam(action: "follow", sport: team.sportKey, relationType: "follow", surface: "onboarding")
+            }
+            for team in schoolTeams {
+                AnalyticsService.trackFollowTeam(action: "follow", sport: team.sportKey, relationType: "alma_mater", surface: "onboarding")
+            }
+            for team in rivalTeams {
+                AnalyticsService.trackFollowTeam(action: "follow", sport: team.sportKey, relationType: "rival", surface: "onboarding")
+            }
             AnalyticsService.setUserProperty("true", forName: "onboarding_completed")
             return response.onboardingCompleted
         } catch {

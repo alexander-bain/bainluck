@@ -432,4 +432,5 @@ tests/test_discover_game_reason_190.py  the game cards are a fixed fixture and e
 tests/test_no_blank_market_titles_13387.py  Pure string title-rewrite unit tests; November dates are static title strings never read by a clock
 tests/test_blind_decks_363a.py  Static Nov 23 blind-deck fixture manifests and URL slugs; no clock is ever read
 tests/test_blind_deck_v2_13553a.py  Static Nov 23-24 blind-deck v2 fixture filenames and snapshot dates; no clock is ever read
+tests/test_date_ladder_bundle_naming_13722.py  Pure string date-ladder bundle title unit tests; November dates are static fixture text never read by a clock
 tests/test_intraday_up_down_discover_13645.py  Pure regex/string unit tests on historical intraday title fixtures; no clock is ever read

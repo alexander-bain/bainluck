@@ -138,10 +138,14 @@ async def test_cast_delayed_cancelled_never_shows_cumberbatch_on_hugh_jackman_ro
     assert jackman_art["initials"] == "HJ"
     assert "Cumberbatch" not in str(jackman_art.get("detail") or "")
 
-    card_row0_art = res.machinery_card["rows"][0]["art"]
-    assert card_row0_art["url"] is None
-    assert card_row0_art["kind"] == "monogram"
-    assert "Cumberbatch" not in str(card_row0_art.get("detail") or "")
+    jackman_card_row = next(
+        r for r in res.machinery_card["rows"] if int(r["market_id"]) == 109214
+    )
+    jackman_card_art = jackman_card_row["art"]
+    assert jackman_card_art["url"] is None
+    assert jackman_card_art["kind"] == "monogram"
+    assert jackman_card_art["initials"] == "HJ"
+    assert "Cumberbatch" not in str(jackman_card_art.get("detail") or "")
 
 
 @pytest.mark.asyncio

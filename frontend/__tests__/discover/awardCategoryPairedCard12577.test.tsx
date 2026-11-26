@@ -99,8 +99,11 @@ describe("#12577 — AwardCategoryPairedCard on Discover, Collection, and Catego
     expect(html).toContain('href="/futures/6173044"');
     expect(html).toContain('href="/futures/5165726"');
     expect(html).toContain('href="/collections/oscars-2027"');
-    expect(html).toContain('data-testid="tmdb-official-logo"');
+    // #13644 — TMDB logo and attribution live on /about and /picture-credits, not on cards
+    expect(html).not.toContain('data-testid="tmdb-official-logo"');
+    expect(html).not.toContain("tmdb-blue-short.svg");
     expect(html).toContain('data-testid="bundle-action-bar"');
+    expect(html).toContain('data-testid="action-bar-dismiss"');
     // Card face must never leak internal #marketId strings
     expect(html).not.toContain("#5165726");
     expect(html).not.toContain("#6173044");

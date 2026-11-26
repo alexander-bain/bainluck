@@ -1015,6 +1015,7 @@ extension FeedEventData {
 /// Futures-market payload embedded inside a futures-type feed card.
 nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     var fullFieldRendered: Bool? = nil
+    var fieldPriceCoverageIncomplete: Bool? = nil
     let id: Int
     /// Fresh leaf identity; older cached feed bodies may omit it.
     var externalId: String? = nil

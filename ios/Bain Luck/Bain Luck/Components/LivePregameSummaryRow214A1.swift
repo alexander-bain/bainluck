@@ -126,6 +126,37 @@ enum LivePregameCardSummary213A {
             shortNames: shortNames
         )
     }
+
+    /// #13667 (183-A / 200-B): team-coloured pregame projection line on finished
+    /// compact `EventCardView` cards so finished league/Sports cards match live
+    /// cards instead of printing bare grey `"Pregame projection 106–119"`.
+    nonisolated static func resolveFinished(
+        comparison: FinalForecastComparison11296.Comparison,
+        event: FeedEventData
+    ) -> EventSportHeadlines12472.LivePregameSummary {
+        let leadWord = comparison.label == FinalForecastComparison11296.label90Min
+            ? "Pregame projection (90 min)"
+            : "Pregame projection"
+        let shortNames = TeamShortName.shortPair(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            sportKey: event.sport
+        )
+        let awayText = "\(shortNames.away) \(comparison.away)"
+        let homeText = "\(shortNames.home) \(comparison.home)"
+        let bodyText = "\(awayText) \u{00B7} \(homeText)"
+        return EventSportHeadlines12472.LivePregameSummary(
+            leadWord: leadWord,
+            bodyText: bodyText,
+            segments: [
+                .init(text: leadWord, ink: .quietLead),
+                .init(text: "  ", ink: .quiet),
+                .init(text: awayText, ink: .awayTeam),
+                .init(text: " \u{00B7} ", ink: .quiet),
+                .init(text: homeText, ink: .homeTeam),
+            ]
+        )
+    }
 }
 
 /// Rulings 213-A + 214-A1 — shared single-line live pregame summary view mounted
@@ -142,6 +173,8 @@ struct LivePregameSummaryRow214A1: View {
     let colors: (away: Color, home: Color)
     var scaledSize: CGFloat? = nil
     var minScale: CGFloat = 0.78
+    var spokenText: String? = nil
+    var allowsAccessibilityWrapping: Bool = true
     var accessibilityIdentifier: String = "live-pregame-summary-214a1"
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -173,13 +206,13 @@ struct LivePregameSummaryRow214A1: View {
     var body: some View {
         composedText
             .font(HeadlineStyleTable199.quietText(surface, monospacedDigits: true, scaledSize: scaledSize))
-            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+            .lineLimit(allowsAccessibilityWrapping && dynamicTypeSize.isAccessibilitySize ? nil : 1)
             .minimumScaleFactor(minScale)
             .allowsTightening(true)
             .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityLabel("\(summary.leadWord), \(summary.bodyText)")
+            .accessibilityLabel(spokenText ?? "\(summary.leadWord), \(summary.bodyText)")
             .accessibilityIdentifier(accessibilityIdentifier)
     }
 
