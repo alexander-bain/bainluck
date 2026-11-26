@@ -57,6 +57,215 @@ enum DiscoverGroupRows {
         return heatMapBetterThanEvenRung(priced)
     }
 
+    private struct HeatmapLadderRow {
+        let key: String
+        let label: String
+        let probability: Double?
+        let movement: Double?
+        let sortValue: Double
+        let source: String?
+        let dateIso: String?
+    }
+
+    private static let utcCalendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        return cal
+    }()
+
+    private static func utcDayString(_ date: Date) -> String {
+        let comps = utcCalendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", comps.year ?? 0, comps.month ?? 1, comps.day ?? 1)
+    }
+
+    private static func isIsoDateString(_ raw: String?) -> Bool {
+        guard let raw else { return false }
+        let bytes = Array(raw.utf8)
+        guard bytes.count == 10, bytes[4] == 45, bytes[7] == 45 else { return false }
+        for (idx, b) in bytes.enumerated() where idx != 4 && idx != 7 {
+            if b < 48 || b > 57 { return false }
+        }
+        return true
+    }
+
+    private static func startsWithBeforeWord(_ label: String) -> Bool {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard trimmed.hasPrefix("before") else { return false }
+        if trimmed.count == 6 { return true }
+        let next = trimmed[trimmed.index(trimmed.startIndex, offsetBy: 6)]
+        return !(next.isLetter || next.isNumber || next == "_")
+    }
+
+    private static func isAtLeastRungLabel(_ label: String) -> Bool {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return trimmed.range(
+            of: #"^(?:above|over|at least|more than|≥|>)\s*\S|\+$|\bor (?:more|higher|above)$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    private static func isAtLeastLadder(_ rows: [HeatmapLadderRow]) -> Bool {
+        rows.count >= 2 && rows.allSatisfy { $0.source != "date_bucket" && isAtLeastRungLabel($0.label) }
+    }
+
+    private static func isDateLadder(_ rows: [HeatmapLadderRow]) -> Bool {
+        !rows.isEmpty && rows.allSatisfy { $0.source == "date_bucket" }
+    }
+
+    static func resolveRungDateIso(
+        point: FeedDiscoverThresholdPoint,
+        distDateIso: String?,
+        now: Date = Date()
+    ) -> String? {
+        if isIsoDateString(distDateIso) {
+            return distDateIso
+        }
+        guard point.source == "date_bucket" || point.unit == "date" else { return nil }
+        guard let rawValue = point.value,
+              rawValue.isFinite,
+              rawValue.rounded() == rawValue else { return nil }
+        let v = Int(rawValue)
+        let year = v / 10_000
+        let month = (v / 100) % 100
+        let day = v % 100
+        if (2001...2999).contains(year) {
+            if month == 0 {
+                return startsWithBeforeWord(point.label) ? "\(year)-01-01" : "\(year)-12-31"
+            }
+            guard (1...12).contains(month) else { return nil }
+            let resolvedDay: Int?
+            if day == 0 {
+                if let monthStart = utcCalendar.date(from: DateComponents(year: year, month: month, day: 1)),
+                   let range = utcCalendar.range(of: .day, in: .month, for: monthStart) {
+                    resolvedDay = range.count
+                } else {
+                    resolvedDay = nil
+                }
+            } else if (1...31).contains(day) {
+                resolvedDay = day
+            } else {
+                resolvedDay = nil
+            }
+            guard let resolvedDay else { return nil }
+            return String(format: "%04d-%02d-%02d", year, month, resolvedDay)
+        }
+        // Yearless `2000MMDD` sentinel used when date-bucket rungs carry month/day without a year.
+        if year == 2000 && (1...12).contains(month) && (1...31).contains(day) {
+            let nowYear = utcCalendar.component(.year, from: now)
+            var bestYear = nowYear
+            var bestDiff = TimeInterval.greatestFiniteMagnitude
+            for y in [nowYear - 1, nowYear, nowYear + 1] {
+                if let d = utcCalendar.date(from: DateComponents(year: y, month: month, day: day)) {
+                    let diff = abs(d.timeIntervalSince(now))
+                    if diff < bestDiff {
+                        bestDiff = diff
+                        bestYear = y
+                    }
+                }
+            }
+            return String(format: "%04d-%02d-%02d", bestYear, month, day)
+        }
+        return nil
+    }
+
+    private static func buildHeatmapRows(for data: FeedFuturesData, now: Date) -> [HeatmapLadderRow] {
+        var outcomesByName: [String: FeedFuturesOutcome] = [:]
+        for outcome in data.topOutcomes ?? [] {
+            let key = outcome.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if outcomesByName[key] == nil {
+                outcomesByName[key] = outcome
+            }
+        }
+        var distDatesByLabel: [String: String] = [:]
+        for dist in data.discoverCard?.distributionOutcomes ?? [] {
+            let key = dist.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !key.isEmpty, distDatesByLabel[key] == nil, isIsoDateString(dist.date) {
+                distDatesByLabel[key] = dist.date
+            }
+        }
+
+        var byLabel: [String: HeatmapLadderRow] = [:]
+        for point in data.discoverCard?.thresholdPoints ?? [] {
+            let label = point.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !label.isEmpty else { continue }
+            let key = label.lowercased()
+            let matchedOutcome = outcomesByName[key]
+            let existing = byLabel[key]
+            let probability = point.probability ?? matchedOutcome?.probability
+            let movement = matchedOutcome?.movement ?? point.movement
+            let pointValue = point.value ?? 0
+            let sortValue = existing.map { min($0.sortValue, pointValue) } ?? pointValue
+            let dateIso = existing?.dateIso ?? resolveRungDateIso(point: point, distDateIso: distDatesByLabel[key], now: now)
+
+            byLabel[key] = HeatmapLadderRow(
+                key: key,
+                label: label,
+                probability: existing?.probability ?? probability,
+                movement: existing?.movement ?? movement,
+                sortValue: sortValue,
+                source: existing?.source ?? point.source,
+                dateIso: dateIso
+            )
+        }
+
+        return byLabel.values.sorted { $0.sortValue < $1.sortValue }
+    }
+
+    private static func heatmapShownCells(for data: FeedFuturesData, now: Date) -> [HeatmapLadderRow]? {
+        let allRows = buildHeatmapRows(for: data, now: now)
+        let pricedRows = allRows.filter { $0.probability != nil }
+        let minRows = (allRows.count >= 2 && pricedRows.count < 2) ? 1 : 2
+        guard data.discoverCard?.suggestedFormat == "threshold_heatmap",
+              pricedRows.count >= minRows else {
+            return nil
+        }
+        return Array(pricedRows.prefix(8))
+    }
+
+    private static func ruleRung(in shownCells: [HeatmapLadderRow]) -> HeatmapLadderRow? {
+        let above50 = shownCells.filter { ($0.probability ?? 0) >= 0.5 }
+        guard !above50.isEmpty else { return nil }
+        if isDateLadder(shownCells) {
+            return above50.first
+        }
+        if isAtLeastLadder(shownCells) {
+            return above50.last
+        }
+        return nil
+    }
+
+    private static func compactLadderHeadlineRung(
+        shownCells: [HeatmapLadderRow],
+        heroName: String?,
+        now: Date
+    ) -> HeatmapLadderRow? {
+        guard isDateLadder(shownCells) else {
+            return ruleRung(in: shownCells)
+        }
+        let todayIso = utcDayString(now)
+        let upcoming = shownCells.filter { $0.dateIso == nil || $0.dateIso! >= todayIso }
+        if upcoming.isEmpty {
+            return ruleRung(in: shownCells)
+        }
+        if let firstAbove50 = upcoming.first(where: { ($0.probability ?? 0) >= 0.5 }) {
+            return firstAbove50
+        }
+        let heroKey = (heroName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let pastControlsHeadline = shownCells.contains { row in
+            guard let dateIso = row.dateIso, dateIso < todayIso else { return false }
+            return (row.probability ?? 0) >= 0.5 || (!heroKey.isEmpty && row.key == heroKey)
+        }
+        if pastControlsHeadline {
+            return upcoming.reduce<HeatmapLadderRow?>(nil) { best, row in
+                guard let prob = row.probability else { return best }
+                guard let bestProb = best?.probability else { return row }
+                return prob > bestProb ? row : best
+            }
+        }
+        return nil
+    }
+
     struct CompactSummary: Equatable {
         let label: String?
         let probability: Double?
@@ -78,18 +287,20 @@ enum DiscoverGroupRows {
         return .futures
     }
 
-    static func compactSummary(for data: FeedFuturesData) -> CompactSummary {
-        let points = (data.discoverCard?.thresholdPoints ?? []).filter { $0.probability != nil }
-        if fullCardStyle(for: data) == .heatmap,
-           let rung = markedRung(in: points) {
+    static func compactSummary(for data: FeedFuturesData, now: Date = Date()) -> CompactSummary {
+        if let shownCells = heatmapShownCells(for: data, now: now),
+           let rung = compactLadderHeadlineRung(
+               shownCells: shownCells,
+               heroName: data.topOutcomes?.first?.name,
+               now: now
+           ) {
             let matching = data.topOutcomes?.first {
-                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                    == rung.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == rung.key
             }
             return CompactSummary(
                 label: rung.label,
                 probability: rung.probability,
-                movement: matching?.movement,
+                movement: matching?.movement ?? rung.movement,
                 sourceMark: data.resolvedSourceMark(for: matching),
                 renderedPercent: matching?.renderedPercent
             )
