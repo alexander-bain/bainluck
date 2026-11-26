@@ -68,7 +68,7 @@ function makeLadderMarket(
 
 function drawnRungLabels(html: string): string[] {
   return Array.from(
-    html.matchAll(/<div class="[^"]*px-2 py-0\.5[^"]*" aria-label="([^"]*): [^"]*">/g),
+    html.matchAll(/<div [^>]*aria-label="([^"]*): \d+%"/g),
     (m) => m[1],
   );
 }
