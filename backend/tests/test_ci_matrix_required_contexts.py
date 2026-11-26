@@ -42,11 +42,15 @@ SCOPE_RUNS = (
 )
 REUSE = "needs.change-scope.outputs.reuse != 'true'"
 LIVE = "needs.change-scope.outputs.live != 'true'"
+# #412: D — heavy CI jobs skip draft PRs at job level; drafts cannot merge and
+# required per-leg matrix contexts do not exist until ready_for_review expands them
+# (fail-closed: a race to un-draft without ready_for_review stays BLOCKED).
+NOT_DRAFT = "!(github.event_name == 'pull_request' && github.event.pull_request.draft)"
 # 75-A: only explicitly labelled never-merge study inputs skip this runner.
 SEARCH_RECALL = (
     "${{ !cancelled() && "
     "!contains(github.event.pull_request.labels.*.name, 'eval-candidate') && "
-    f"{SCOPE_RUNS} && {LIVE} && "
+    f"{SCOPE_RUNS} && {LIVE} && {NOT_DRAFT} && "
     "!(github.event_name == 'push' && github.ref == 'refs/heads/master' && "
     "(needs.backend-tests.result == 'cancelled' || needs.database-integration.result == 'cancelled')) }}"
 )
@@ -61,7 +65,7 @@ LIVE_ONLY = "needs.change-scope.outputs.live == 'true'"
 MARKER = "needs.change-scope.outputs.scope == 'frontend' || needs.change-scope.outputs.live == 'true'"
 NATIVE = "needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'"
 NATIVE_STEP = "Native candidate — the full shard is replaced by native-backend-readers"
-JOB_IF = "${{ !cancelled() && needs.fast-gate.result == 'success' }}"
+JOB_IF = f"${{{{ !cancelled() && needs.fast-gate.result == 'success' && {NOT_DRAFT} }}}}"
 
 
 def _jobs() -> dict:
@@ -217,7 +221,7 @@ def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
             "matrix"
         ), f"{name} became a matrix job; a job-level skip would then drop its required contexts"
         expected = (
-            SEARCH_RECALL if name == "search-recall" else f"{SCOPE_RUNS} && {LIVE}"
+            SEARCH_RECALL if name == "search-recall" else f"{SCOPE_RUNS} && {LIVE} && {NOT_DRAFT}"
         )
         assert job.get("if") == expected, (name, job.get("if"))
 
@@ -239,7 +243,7 @@ def test_reuse_never_removes_matrix_contexts_and_missing_decision_runs_tests(reu
             reuse != "true"
         )
         assert bool(any(s.get("if") == REUSED for s in ran)) == (reuse == "true")
-    assert jobs["frontend-build"]["if"] == f"{LIVE} && needs.change-scope.outputs.scope != 'native'"
+    assert jobs["frontend-build"]["if"] == f"{LIVE} && needs.change-scope.outputs.scope != 'native' && {NOT_DRAFT}"
     assert jobs["frontend-build"]["needs"] == ["change-scope", "fast-gate"]
     assert len(jobs["database-integration"]["strategy"]["matrix"]["group"]) == 7  # + shared-middle-2 (332: A)
 

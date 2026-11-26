@@ -47,7 +47,9 @@ from app.utils.discover_fun_scout import (
     build_scout_openai_client,
     build_scout_rule_file_definition,
     is_fun_scout_enabled,
+    load_reader_dismissed_sets,
     load_retired_scout_sets,
+    normalize_retired_scout_sets,
     run_nightly_fun_scout,
 )
 
@@ -199,29 +201,42 @@ def save_licence_state_durable(state: ScoutLicenceState) -> tuple[bool, Optional
 
 def _load_retired_sets_durable(
     path: Path = SCOUT_RETIRED_SETS_PATH,
-) -> set[str]:
-    """Load retired set slugs from checked-in file UNION durable Redis.
+) -> list[dict[str, Any]]:
+    """Load retired sets from checked-in file UNION durable Redis as normalized dicts.
 
     Fails closed (raises) if Redis is unreadable so a retired set can never be
     silently re-proposed after a dyno restart.
     """
-    retired = set(load_retired_scout_sets(path))
+    file_entries: list[dict[str, Any]] = load_retired_scout_sets(path)
     from app.tasks.redis_state import get_redis_client
 
     raw = get_redis_client().get(_RETIRED_SETS_REDIS_KEY)
+    redis_entries: list[Any] = []
     if raw is not None:
         parsed = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
         if isinstance(parsed, list):
-            for slug in parsed:
-                cleaned = str(slug or "").strip().lower()
-                if cleaned:
-                    retired.add(cleaned)
+            for item in parsed:
+                if isinstance(item, dict):
+                    redis_entries.append(item)
+                else:
+                    cleaned = str(item or "").strip().lower()
+                    if cleaned:
+                        redis_entries.append(
+                            {"slug": cleaned, "name": cleaned, "reason": "retired"}
+                        )
         elif isinstance(parsed, dict):
+            for item in parsed.get("retired_sets") or []:
+                if isinstance(item, dict):
+                    redis_entries.append(item)
             for slug in parsed.get("retired_slugs") or []:
                 cleaned = str(slug or "").strip().lower()
                 if cleaned:
-                    retired.add(cleaned)
-    return retired
+                    redis_entries.append(
+                        {"slug": cleaned, "name": cleaned, "reason": "retired"}
+                    )
+    normalized = normalize_retired_scout_sets([*file_entries, *redis_entries])
+    normalized.sort(key=lambda r: (str(r.get("slug") or ""), str(r.get("name") or "")))
+    return normalized
 
 
 def retire_scout_set_durable(slug: str) -> tuple[bool, Optional[str]]:
@@ -276,6 +291,7 @@ def build_scout_nightly_artifact(
             created_at=run_now,
             licence_state=licence_status,
         )
+        scout_meta = rule_def.get("scout") or {}
         staged_sets.append(
             {
                 "slug": vset.slug,
@@ -294,6 +310,8 @@ def build_scout_nightly_artifact(
                     }
                     for m in vset.members
                 ],
+                "trimmed_members": list(scout_meta.get("trimmed_members") or []),
+                "added_members": list(scout_meta.get("added_members") or []),
                 "rule_definition": rule_def,
             }
         )
@@ -422,6 +440,32 @@ def format_scout_nightly_comment_markdown(
                 f"({_md_code_span(m.get('source'))}, vol `{vol}`): "
                 f"{_md_code_span(m.get('title'))}"
             )
+        trimmed_rows = (
+            s.get("trimmed_members")
+            or ((s.get("rule_definition") or {}).get("scout") or {}).get("trimmed_members")
+            or []
+        )
+        if trimmed_rows:
+            sets_lines.append("- **Split-set gate trimmed:**")
+            for tm in trimmed_rows:
+                sets_lines.append(
+                    f"  - {_md_code_span(tm.get('market_id'))} "
+                    f"({_md_code_span(tm.get('reason'))}): "
+                    f"{_md_code_span(tm.get('title'))}"
+                )
+        added_rows = (
+            s.get("added_members")
+            or ((s.get("rule_definition") or {}).get("scout") or {}).get("added_members")
+            or []
+        )
+        if added_rows:
+            sets_lines.append("- **Missing-member fill added:**")
+            for am in added_rows:
+                sets_lines.append(
+                    f"  - {_md_code_span(am.get('market_id'))} "
+                    f"({_md_code_span(am.get('reason'))}): "
+                    f"{_md_code_span(am.get('title'))}"
+                )
         sets_lines.append("<details><summary>Rule definition JSON</summary>\n")
         rule_json = json.dumps(s.get("rule_definition") or {}, indent=2)
         sets_lines.extend(_md_code_fence(rule_json, "json"))
@@ -598,6 +642,16 @@ async def fetch_open_non_sports_markets_for_scout(
     ]
 
 
+async def fetch_reader_dismissed_sets_for_scout(
+    *, lookback_days: int = 30, now: Optional[datetime] = None
+) -> dict[str, int]:
+    """Read grouped-card ('not for me') dismissals by set for the Fun Scout (#13644)."""
+    async with async_session_maker() as db:
+        return await load_reader_dismissed_sets(
+            db, lookback_days=lookback_days, now=now
+        )
+
+
 async def _run_discover_fun_scout(
     *,
     force: bool = False,
@@ -627,6 +681,15 @@ async def _run_discover_fun_scout(
         }
 
     markets = await fetch_open_non_sports_markets_for_scout()
+    try:
+        reader_dismissed = await fetch_reader_dismissed_sets_for_scout(now=run_now)
+    except Exception as exc:
+        logger.warning(
+            "Fun scout continuing without reader dismissed sets (%s: %s)",
+            type(exc).__name__,
+            exc,
+        )
+        reader_dismissed = {}
     licence = _load_licence_state(SCOUT_LICENCE_STATE_PATH)
 
     openai_client = build_scout_openai_client()
@@ -639,6 +702,7 @@ async def _run_discover_fun_scout(
         anthropic_client=anthropic_client,
         output_dir=output_dir,
         retired_sets=retired,
+        reader_dismissed_sets=reader_dismissed,
         licence_state=licence,
         prior_monthly_spend_usd=prior_spend,
         max_new_per_day=SCOUT_MAX_NEW_SETS_PER_DAY,

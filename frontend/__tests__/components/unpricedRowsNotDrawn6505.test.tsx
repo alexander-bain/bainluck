@@ -34,6 +34,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import type { FeedFuturesData, FeedItem } from "@/lib/types";
 import type { DiscoverGroupedItem } from "@/components/discover/types";
+import { adoptPriceCards, priceKey, projectPriceGroups } from "@/lib/discover/priceRefresh";
 
 jest.mock("next/navigation", () => ({
   __esModule: true,
@@ -70,6 +71,26 @@ function render(s: Specimen): string {
     <DiscoverCard groupedItem={{ type: "item", item } as unknown as DiscoverGroupedItem} />
   );
 }
+
+it("keeps the coverage notice only on a card whose displayed price was withdrawn", () => {
+  const source = specimen("premier_lacrosse_distribution");
+  const old = { ...source.item, data: { ...source.data, resolution_date: null } } as unknown as FeedItem;
+  const key = priceKey(old)!;
+  const withheld = {
+    ...old, headline: null, reason: "Limited price coverage", context_summary: "Limited price coverage",
+    data: { ...old.data, status: "open", top_outcomes: [], discover_card: undefined,
+      hook_description: null, price_observed_at: null, field_price_coverage_incomplete: true },
+  } as unknown as FeedItem;
+  expect(renderToStaticMarkup(<DiscoverCard groupedItem={{ type: "single", item: withheld }} />)).toBe("");
+
+  const book = adoptPriceCards(new Map(), [old], {
+    items: [withheld], dispositions: { [key]: "withheld" }, built_at: 1,
+  }, new Set([key]));
+  const [group] = projectPriceGroups([{ type: "single", item: old }], book);
+  const markup = renderToStaticMarkup(<DiscoverCard groupedItem={group} />);
+  expect(markup).toContain("Limited price coverage");
+  expect(markup).not.toContain("Philadelphia Waterdogs");
+});
 
 /**
  * The card's value cells, in render order.

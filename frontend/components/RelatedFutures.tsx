@@ -3107,7 +3107,7 @@ export default function RelatedFutures({
 
       {/* === Two-Column Team Cards === */}
       {drawsTeamCards && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className={compact ? "grid grid-cols-1 gap-4" : "grid grid-cols-1 md:grid-cols-2 gap-4"}>
           {/* Home Team Card */}
           {homeCardDraws && (!compact || homeAwards.length > 0 || !!homeStandings) && (() => {
             const standings = homeStandings;

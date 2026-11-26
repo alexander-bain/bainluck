@@ -160,6 +160,9 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.recover_datagolf_participation",
         "app.tasks.refresh_event_concept",
         "app.tasks.refresh_hub",
+        # #13584: dispatched by `POST /api/containers/preview/kit-v1-real-sets/refresh`
+        # so admin/preview refreshes return a task_id whose status remains pollable.
+        "app.tasks.refresh_kit_v1_real_sets_preview",
         "app.tasks.refresh_league",
         # LAT-P138: dispatched by `routes/prop_families.py` after it serves the
         # 24h mirror, the same shape as the three above.

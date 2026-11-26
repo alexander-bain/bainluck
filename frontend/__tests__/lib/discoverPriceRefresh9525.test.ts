@@ -98,6 +98,43 @@ test('an explicit null remains withdrawn when a different raw outcome advances',
   (unknown.data as FeedFuturesData).top_outcomes[0].probability = null;
   expect(canAdoptPrice(market(1, .6, { '10': null, '20': T2 }), unknown)).toBe(false);
 });
+test('field coverage withdrawal clears every held leader claim and recovery uses fresh copy', () => {
+  const old = market();
+  Object.assign(old, { context_summary: 'Brooklyn Nets lead at 5%' });
+  Object.assign(old.data, {
+    hook_description: 'Brooklyn Nets lead',
+    price_observed_at: T1,
+    outcome_observed_at: undefined,
+    top_outcomes: [{ id: 10, name: 'Brooklyn Nets', probability: .0525 }],
+  });
+  const withheld = market();
+  Object.assign(withheld, {
+    headline: null, reason: 'Limited price coverage', context_summary: 'Limited price coverage',
+  });
+  Object.assign(withheld.data, {
+    field_price_coverage_incomplete: true, top_outcomes: [], price_observed_at: null,
+  });
+  const allowed = new Set(['futures-1']);
+  const withdrawal = adoptPriceCards(new Map(), [old], {
+    items: [withheld], dispositions: { 'futures-1': 'withheld' }, built_at: 100,
+  }, allowed);
+  const shown = projectPriceGroups(singles(old), withdrawal)[0].item!;
+  expect(shown.headline).toBeNull();
+  expect(shown.context_summary).toBe('Limited price coverage');
+  expect((shown.data as FeedFuturesData).top_outcomes).toEqual([]);
+  expect((shown.data as FeedFuturesData).hook_description).toBeUndefined();
+
+  const recovered = market(1, .76, { '10': T2, '20': T2 });
+  Object.assign(recovered, {
+    headline: 'Boston Celtics lead', context_summary: 'Boston Celtics lead at 76%',
+  });
+  Object.assign(recovered.data, { field_price_coverage_incomplete: false });
+  const next = adoptPriceCards(withdrawal, [shown], {
+    items: [recovered], dispositions: { 'futures-1': 'updated' }, built_at: 101,
+  }, allowed);
+  expect(projectPriceGroups(singles(old), next)[0].item!.context_summary)
+    .toBe('Boston Celtics lead at 76%');
+});
 test('fresh leaves update whole nested groups without editing membership, order or editorial copy', () => {
   const old = market(), sibling = market(2);
   const bundle = { type: 'bundle', headline: 'Held bundle', data: { id: 'bundle', title: 'Held title', items: [old, sibling], member_ids: [1, 2] } } as unknown as FeedItem;

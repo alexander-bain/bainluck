@@ -1420,6 +1420,56 @@ _TICKERED_DAILY_DIRECTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# #13645 follow-up: intraday asset price direction contracts on any asset
+# (e.g. "WTI Crude Oil Up or Down - November 25, 1:15AM-1:30AM ET", BTC/ETH 15m,
+# hourly asset Up or Down) — requires BOTH an "up or down" phrase and an intraday
+# clock stamp/window or minute/hour window so election turnout / population / macro
+# markets are untouched.
+_INTRADAY_CLOCK_WINDOW_RE = re.compile(
+    r"(?:"
+    r"\b\d{1,2}:\d{2}\s*(?:AM|PM)?\s*(?:[-–—]\s*\d{1,2}:\d{2}\s*(?:AM|PM)?\s*)?"
+    r"(?:ET|EST|EDT|PT|PST|PDT|CT|CST|CDT|MT|MST|MDT|UTC|GMT)?\b"
+    r"|\b\d{1,2}\s*(?:AM|PM)\s*[-–—]\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)\b"
+    r"|\b\d{1,2}\s*(?:AM|PM)\s*(?:ET|EST|EDT|PT|PST|PDT|CT|CST|CDT|MT|MST|MDT|UTC|GMT)\b"
+    r"|\b(?:5|10|15|30|45|60)\s*(?:m|min|mins|minute|minutes)\b"
+    r"|\b(?:1|2|4)\s*(?:h|hr|hrs|hour|hours)\b"
+    r"|\b(?:fifteen|thirty)[-\s]+minute\b"
+    r")",
+    re.IGNORECASE,
+)
+_UP_OR_DOWN_PHRASE_RE = re.compile(r"\bup\s+or\s+down\b", re.IGNORECASE)
+_DATED_DIRECTION_TAIL_RE = re.compile(
+    rf"\b(?:today|tomorrow|on|{_MONTH_RE}|\d{{1,2}}/\d{{1,2}})\b",
+    re.IGNORECASE,
+)
+_PARENTHESIZED_TICKER_RE = re.compile(r"\([A-Z0-9][A-Z0-9./&^-]{0,9}\)")
+_INTRADAY_EXTRA_ASSET_RE = re.compile(
+    r"\b("
+    r"natural gas|gasoline|"
+    r"bnb|binance coin|hyperliquid|hype|litecoin|ltc|sui|toncoin|ton|"
+    r"avalanche|avax|chainlink|link|polkadot|dot|uniswap|uni|"
+    r"usd/jpy|eur/usd|gbp/usd|usd/brl|usd/cad|aud/usd|usd/chf|"
+    r"dax|ftse|nikkei|hang seng|palladium|platinum|aluminum"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def is_intraday_asset_direction(name: "str | None") -> bool:
+    """True if ``name`` is an intraday up-or-down price contract on an asset (#13645)."""
+    if not name or _MACRO_EVENT_RE.search(name):
+        return False
+    if not (
+        _UP_OR_DOWN_PHRASE_RE.search(name)
+        and _INTRADAY_CLOCK_WINDOW_RE.search(name)
+    ):
+        return False
+    return bool(
+        _ASSET_CONTEXT_RE.search(name)
+        or _INTRADAY_EXTRA_ASSET_RE.search(name)
+        or _PARENTHESIZED_TICKER_RE.search(name)
+    )
+
 
 def is_daily_direction_filler(name: "str | None") -> bool:
     """True if ``name`` is a dated daily price-direction market (#1579).
@@ -1429,9 +1479,16 @@ def is_daily_direction_filler(name: "str | None") -> bool:
     """
     if not name:
         return False
-    return bool(
+    if (
         _DAILY_EQUITY_DIRECTION_RE.search(name)
         or _TICKERED_DAILY_DIRECTION_RE.search(name)
+    ):
+        return True
+    return bool(
+        not _MACRO_EVENT_RE.search(name)
+        and _ASSET_CONTEXT_RE.search(name)
+        and _UP_OR_DOWN_PHRASE_RE.search(name)
+        and _DATED_DIRECTION_TAIL_RE.search(name)
     )
 
 
@@ -3248,6 +3305,9 @@ def _story_key(name: str, category: str) -> str | None:
     if _MACRO_PRICE_RATE_RE.search(lower) and not _NON_US_JURISDICTION_RE.search(lower):
         return "story:macro_rates"
 
+    if is_intraday_asset_direction(name):
+        return "story:daily_equity_direction"
+
     if _STORY_EARNINGS_1_RE.search(lower) or _STORY_EARNINGS_2_RE.search(lower):
         return "story:single_stock_earnings"
 
@@ -3421,7 +3481,10 @@ def classify_market_quality(
         or asset_price_level
     )
     weather_bucket = bool(_WEATHER_BUCKET_RE.search(name))
-    daily_equity_direction = is_daily_direction_filler(name)
+    intraday_asset_direction = is_intraday_asset_direction(name)
+    if intraday_asset_direction:
+        asset_price_level = True
+    daily_equity_direction = is_daily_direction_filler(name) or intraday_asset_direction
     social_filler = bool(_SOCIAL_FILLER_RE.search(name))
     entertainment_metric = bool(_ENTERTAINMENT_METRIC_RE.search(name))
     obscure = bool(_OBSCURE_PROCEDURAL_RE.search(name))
@@ -3536,6 +3599,8 @@ def classify_market_quality(
         reasons.append("narrow_range")
     if social_filler:
         reasons.append("social_filler")
+    if intraday_asset_direction:
+        reasons.append("intraday_asset_direction")
     if daily_equity_direction:
         reasons.append("daily_equity_direction")
     if entertainment_metric:
@@ -3614,6 +3679,10 @@ def classify_market_quality(
     elif payrolls_excluded:
         # Lane 2 L2-4 (Alex 2026-06-24): nonfarm-payrolls jobs ladder,
         # hard-excluded. GDP / Fed / CPI stay eligible (not matched here).
+        quality = "suppress"
+    elif intraday_asset_direction:
+        # #13645 follow-up: 15-minute / intraday up-or-down price contracts on
+        # any asset stay off Discover entirely.
         quality = "suppress"
     elif ticker_suppress:
         quality = "low_quality"

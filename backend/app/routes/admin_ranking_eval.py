@@ -526,6 +526,8 @@ def latest_grades(rows) -> list[dict]:
             if r.surface == SURFACE_GROUPING
             else _DB_TO_PAIR_PICK.get(raw_grade, raw_grade)
             if r.surface == "pair"
+            else _DB_TO_GAME_NUGGET_GRADE.get(raw_grade, raw_grade)
+            if r.surface == SURFACE_GAME_NUGGETS
             else raw_grade
         )
         latest[(r.slate_id, r.grader, r.item_key)] = {
@@ -577,7 +579,10 @@ async def get_grades(
     if slate_id:
         stmt = stmt.where(RankingGrade.slate_id == slate_id)
     else:
-        stmt = stmt.where(RankingGrade.surface != SURFACE_GROUPING)
+        stmt = stmt.where(
+            RankingGrade.surface != SURFACE_GROUPING,
+            RankingGrade.surface != SURFACE_GAME_NUGGETS,
+        )
     grades = latest_grades((await db.execute(stmt)).scalars().all())
     return {"grades": grades, "tally": family_tally(grades, now)}
 
@@ -1901,6 +1906,19 @@ async def get_screen_grades(
 
 SURFACE_GAME_NUGGETS = "game_nuggets"
 _GAME_NUGGET_GRADES = ("yes", "no")
+# Lossless 1-to-1 bijection scoped to RankingGrade.surface == "game_nuggets" so
+# writes satisfy Postgres ck_ranking_grades_grade ("grade IN ('shareable',
+# 'interesting', 'neither')") from ranking_slates_12095.py without a schema migration.
+_GAME_NUGGET_TO_DB_GRADE: dict[str, str] = {
+    "yes": "shareable",
+    "no": "neither",
+}
+_DB_TO_GAME_NUGGET_GRADE: dict[str, str] = {
+    "shareable": "yes",
+    "neither": "no",
+    "yes": "yes",
+    "no": "no",
+}
 
 
 class GameNuggetGradeIn(BaseModel):
@@ -2085,7 +2103,8 @@ def _summarize_game_nugget_grades(rows: list[RankingGrade]) -> dict[str, Any]:
     by_grader: dict[str, dict[str, int]] = {}
     grades_out: list[dict[str, Any]] = []
     for (_, item_key), r in latest_by_pair.items():
-        gval = str(r.grade or "").lower()
+        raw_gval = str(r.grade or "").lower()
+        gval = _DB_TO_GAME_NUGGET_GRADE.get(raw_gval, raw_gval)
         if gval == "yes":
             yes_count += 1
         elif gval == "no":
@@ -2538,7 +2557,7 @@ async def post_game_nugget_grade(
             expert=True,
             position=body.position,
             item_key=item_key,
-            grade=grade_val,
+            grade=_GAME_NUGGET_TO_DB_GRADE[grade_val],
             note=(body.note or "").strip() or None,
         )
     )
@@ -2571,4 +2590,21 @@ async def get_game_nugget_grades(
         "surface": SURFACE_GAME_NUGGETS,
         **summary,
     }
+
+
+@router.get("/scout-deck")
+async def get_scout_morning_deck(
+    request: Request,
+    date: str | None = Query(None, max_length=10),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Return the blind equal-mix morning scout deck (sealed key kept in Redis only, #13102)."""
+    from app.utils.scout_morning_deck import DATE_PARAM_RE, build_scout_morning_deck
+
+    _check_admin_secret(secret, request=request)
+    if date is not None and not DATE_PARAM_RE.match(date.strip()):
+        raise HTTPException(status_code=422, detail="date must match YYYY-MM-DD")
+    clean_date = date.strip() if date is not None else None
+    return await build_scout_morning_deck(db, deck_date=clean_date)
 

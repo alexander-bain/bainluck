@@ -12,7 +12,8 @@ class WorkflowTests(unittest.TestCase):
     def test_fast_gate_must_finish_before_any_required_backend_context(self):
         jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
         self.assertIn('fast-gate', jobs, 'bounded fast gate is missing')
-        self.assertEqual(jobs['fast-gate']['timeout-minutes'], 2)
+        # #412: D runs housekeeping guard tests in fast-gate (needs >2m on cold pip cache).
+        self.assertEqual(jobs['fast-gate']['timeout-minutes'], 5)
         self.assertEqual(jobs['e2e-contract']['timeout-minutes'], 5)
         self.assertIn('fast-gate', jobs['backend-tests']['needs'])
         self.assertEqual(jobs['backend-tests']['strategy']['matrix']['shard'], list(range(1, 17)))
