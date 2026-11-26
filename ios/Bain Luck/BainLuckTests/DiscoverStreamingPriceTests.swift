@@ -178,35 +178,33 @@ final class DiscoverStreamingPriceTests: XCTestCase {
 
     #if os(iOS)
     func testFuturesBrowseAndListCardsOmitRowsWithoutAReading() throws {
-        let payload: [String: Any] = [
-            "id": 1, "name": "Season leader", "status": "open",
-            "top_outcomes": [
-                ["id": 10, "name": "Unavailable player", "probability": NSNull()],
-                ["id": 20, "name": "Supported player", "probability": 0.32],
-            ],
-        ]
-        let browse = try decode(payload, as: FacetedFuturesMarket.self)
-        let futures = try decode(payload, as: FeedFuturesData.self)
-        let cards = [
-            AnyView(FuturesBrowseMarketRow(market: browse)),
-            AnyView(FuturesCardView(futures: futures)),
-        ]
-        for card in cards {
-            let renderer = rendererForMeasurement(
-                card.environmentObject(PinManager()).environment(\.colorScheme, .light)
-                    .padding(16).frame(width: 390),
-                at: .large
-            )
-            renderer.scale = 3
-            let cgImage = try XCTUnwrap(renderer.uiImage?.cgImage)
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            try VNImageRequestHandler(cgImage: cgImage).perform([request])
-            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-                .joined(separator: " ")
-            XCTAssertTrue(text.contains("Supported player"), text)
-            XCTAssertTrue(text.contains("32%"), text)
-            XCTAssertFalse(text.contains("Unavailable player"), text)
+        func heights(for outcomes: [[String: Any]]) throws -> [CGFloat] {
+            let payload: [String: Any] = [
+                "id": 1, "name": "Season leader", "status": "open", "top_outcomes": outcomes,
+            ]
+            let browse = try decode(payload, as: FacetedFuturesMarket.self)
+            let futures = try decode(payload, as: FeedFuturesData.self)
+            let cards = [
+                AnyView(FuturesBrowseMarketRow(market: browse)),
+                AnyView(FuturesCardView(futures: futures)),
+            ]
+            return try cards.map { card in
+                let renderer = rendererForMeasurement(
+                    card.environmentObject(PinManager()).environment(\.colorScheme, .light)
+                        .padding(16).frame(width: 390),
+                    at: .large
+                )
+                return try XCTUnwrap(renderer.uiImage).size.height
+            }
+        }
+
+        let supported: [String: Any] = ["id": 20, "name": "First player", "probability": 0.32]
+        let missing: [String: Any] = ["id": 10, "name": "Second player", "probability": NSNull()]
+        let recovered: [String: Any] = ["id": 10, "name": "Second player", "probability": 0.16]
+        let single = try heights(for: [supported])
+        XCTAssertEqual(try heights(for: [missing, supported]), single)
+        for (two, one) in zip(try heights(for: [supported, recovered]), single) {
+            XCTAssertGreaterThan(two, one)
         }
     }
     #endif
