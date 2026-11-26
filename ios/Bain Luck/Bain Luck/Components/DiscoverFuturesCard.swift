@@ -123,6 +123,7 @@ struct NativeFuturesDiscoverCard: View {
     /// column ends up narrower than the string inside it.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     private var categoryLabel: String {
         sportCategoryDisplayName(data.sportName ?? data.llmSportCategory).uppercased()
@@ -437,59 +438,19 @@ struct NativeFuturesDiscoverCard: View {
                     sourceMarkLabel(mark, onOwnLine: true)
                 }
 
-                HStack(spacing: 8) {
-                    if !markOnOwnLine, let mark = sourceMark {
-                        sourceMarkLabel(mark, onOwnLine: false)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        footerMarksRow(sourceMark: sourceMark, markOnOwnLine: markOnOwnLine)
+                        Spacer(minLength: 6)
+                        footerActionControls
                     }
 
-                    // #6343 — beside the source mark, which is where D91 and
-                    // notice 34 put sourcing: the number, the small mark, at most
-                    // one short caption.
-                    //
-                    // The rule — settled suppression and the six-hour futures
-                    // cadence — is `discoverPriceAgeMark`, in `PriceAgeMarkView`,
-                    // so a guard can pin it. Spelled inline here it would be a
-                    // rule no test can reach (see that function's header).
-                    if let mark = data.discoverPriceAgeMark(
-                        onReveal: { revealedPriceAge = revealedPriceAge == $0 ? nil : $0 }
-                    ) {
-                        mark
-                    }
-
-                    Spacer()
-
-                    // #490 / L2-184: confidence signal (1-3 bars) — renders nothing
-                    // when absent. Same tier map + placement as the native
-                    // multi-candidate kernels (Comparison/Distribution/HeatMap).
-                    SignalBarsView(tier: data.confidenceTier)
-
-                    PinButton(type: "future", id: data.id)
-
-                    ShareLink(
-                        item: shareURL,
-                        subject: Text(data.name),
-                        message: Text(shareMessage)
-                    ) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(DS.textSecondaryReadable)
-                            .padding(8)
-                            .background(Color.secondary.opacity(0.10), in: Circle())
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .recordsShareOpened { onShare?() }
-                    .contextMenu {
-                        Button(action: copyShareImage) {
-                            Label("Copy Image", systemImage: "doc.on.doc")
+                    VStack(alignment: .leading, spacing: 8) {
+                        footerMarksRow(sourceMark: sourceMark, markOnOwnLine: markOnOwnLine)
+                        HStack(spacing: 4) {
+                            Spacer(minLength: 0)
+                            footerActionControls
                         }
-
-                        #if os(iOS)
-                        Button(action: saveShareImage) {
-                            Label("Save Image", systemImage: "square.and.arrow.down")
-                        }
-                        #endif
                     }
                 }
 
@@ -512,6 +473,68 @@ struct NativeFuturesDiscoverCard: View {
             navigationPath.append(Route.futuresDetail(id: data.id))
             onOpen?()
         }
+    }
+
+    @ViewBuilder
+    private func footerMarksRow(sourceMark: String?, markOnOwnLine: Bool) -> some View {
+        HStack(spacing: 8) {
+            if !markOnOwnLine, let mark = sourceMark {
+                sourceMarkLabel(mark, onOwnLine: false)
+            }
+
+            // #6343 — beside the source mark, which is where D91 and
+            // notice 34 put sourcing: the number, the small mark, at most
+            // one short caption.
+            if let mark = data.discoverPriceAgeMark(
+                onReveal: { revealedPriceAge = revealedPriceAge == $0 ? nil : $0 }
+            ) {
+                mark
+            }
+        }
+    }
+
+    private var footerActionControls: some View {
+        HStack(spacing: 4) {
+            // #490 / L2-184: confidence signal (1-3 bars) — renders nothing
+            // when absent. Same tier map + placement as the native
+            // multi-candidate kernels (Comparison/Distribution/HeatMap).
+            SignalBarsView(tier: data.confidenceTier)
+
+            if let likeAction {
+                DiscoverLikeButton420D(isLiked: likeAction.isLiked, action: likeAction.onToggle)
+            }
+
+            PinButton(type: "future", id: data.id)
+                .fixedSize(horizontal: true, vertical: false)
+
+            ShareLink(
+                item: shareURL,
+                subject: Text(data.name),
+                message: Text(shareMessage)
+            ) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.10), in: Circle())
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .recordsShareOpened { onShare?() }
+            .contextMenu {
+                Button(action: copyShareImage) {
+                    Label("Copy Image", systemImage: "doc.on.doc")
+                }
+
+                #if os(iOS)
+                Button(action: saveShareImage) {
+                    Label("Save Image", systemImage: "square.and.arrow.down")
+                }
+                #endif
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     /// #4111 — the card's art. `image_url` rides in on the same payload the web

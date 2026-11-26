@@ -11,6 +11,7 @@ struct KitCardView366B: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     static func supportsLayout(_ layout: KitV1Layout) -> Bool {
         switch layout {
@@ -33,6 +34,9 @@ struct KitCardView366B: View {
             cardHeader
             bodyContent
             cardFooter
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 0, verticalPadding: 4)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

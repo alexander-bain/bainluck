@@ -310,6 +310,7 @@ struct DiscoverPairedMetricCardView: View {
     @State private var expanded: Bool
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     @ScaledMetric(relativeTo: .caption2) private var badgeSize: CGFloat = 10
     @ScaledMetric(relativeTo: .caption2) private var kickerSize: CGFloat = 11
@@ -431,6 +432,15 @@ struct DiscoverPairedMetricCardView: View {
             }
 
             footerBlock
+
+            if let likeAction {
+                DiscoverCardActionBar420D(
+                    actions: likeAction,
+                    topDivider: true,
+                    horizontalPadding: 0,
+                    verticalPadding: 8
+                )
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

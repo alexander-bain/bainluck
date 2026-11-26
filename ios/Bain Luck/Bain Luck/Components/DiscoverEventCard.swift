@@ -69,6 +69,7 @@ struct NativeEventDiscoverCard: View {
     /// decision rather than decoration. See `GameCardStatusColumn`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
     @ObservedObject var clock = MinuteClock.shared
     @State private var heroContentWidth: Double = 0
 
@@ -411,9 +412,19 @@ struct NativeEventDiscoverCard: View {
                         footerMarks
                     }
                 } else {
-                    HStack(alignment: .center, spacing: 8) {
-                        contextCaption(contextText)
-                        footerMarks
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .center, spacing: 8) {
+                            contextCaption(contextText)
+                            Spacer(minLength: 4)
+                            footerMarks
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            contextCaption(contextText)
+                            HStack {
+                                Spacer()
+                                footerMarks
+                            }
+                        }
                     }
                 }
             } else {
@@ -622,10 +633,15 @@ struct NativeEventDiscoverCard: View {
     }
 
     /// Ruling 182-A — game cards remove signal bars; `footerMarks` holds the
-    /// bookmark pin and share buttons and still rides the caption's row (#10373).
+    /// Like heart (#13769), bookmark pin and share buttons and still rides the caption's row (#10373).
     private var footerMarks: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 4) {
+            if let likeAction {
+                DiscoverLikeButton420D(isLiked: likeAction.isLiked, action: likeAction.onToggle)
+            }
+
             PinButton(type: "event", id: event.id)
+                .fixedSize(horizontal: true, vertical: false)
 
             ShareLink(
                 item: shareURL,
@@ -654,6 +670,7 @@ struct NativeEventDiscoverCard: View {
                 #endif
             }
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     /// #3430 — the card draws BOTH competitors side by side, so their labels
