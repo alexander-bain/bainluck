@@ -9,6 +9,7 @@ struct HeatMapCardView: View {
     let data: FeedFuturesData
     @Binding var navigationPath: NavigationPath
     var onOpen: (() -> Void)? = nil
+    var now: Date = Date()
 
     /// #6343 — the price-age reveal, open or closed. See `PriceAgeMarkView`.
     @State private var revealedPriceAge: String?
@@ -27,15 +28,21 @@ struct HeatMapCardView: View {
     // MARK: - Derived data
 
     private var sortedPoints: [FeedDiscoverThresholdPoint] {
-        (data.discoverCard?.thresholdPoints ?? [])
+        let priced = (data.discoverCard?.thresholdPoints ?? [])
             .filter { $0.probability != nil }
-            .sorted { ($0.value ?? 0) < ($1.value ?? 0) }
+        let distOutcomes = data.discoverCard?.distributionOutcomes
+        return heatMapSortedPoints(priced, distributionOutcomes: distOutcomes, now: now)
     }
 
     /// #8713 — the rungs the cells draw: a window around the rung the caption
     /// names, not the first five. See `heatMapDrawnRungs`.
     private var cells: [HeatMapCell] {
-        heatMapDrawnRungs(sortedPoints, maxCells: maxCells).map { point in
+        heatMapDrawnRungs(
+            sortedPoints,
+            maxCells: maxCells,
+            distributionOutcomes: data.discoverCard?.distributionOutcomes,
+            now: now
+        ).map { point in
             HeatMapCell(
                 label: compactThresholdLabel(point.label),
                 probability: point.probability ?? 0
@@ -67,10 +74,14 @@ struct HeatMapCardView: View {
         return "Resolves \(text)"
     }
 
-    private var lastAbove50Label: String? {
+    var lastAbove50Label: String? {
         // Derive from ALL thresholds (not the capped cells) so the crossover
         // summary stays correct even when cells overflow past maxCells.
-        guard let rung = heatMapBetterThanEvenRung(sortedPoints) else { return nil }
+        guard let rung = heatMapBetterThanEvenRung(
+            sortedPoints,
+            distributionOutcomes: data.discoverCard?.distributionOutcomes,
+            now: now
+        ) else { return nil }
         return compactThresholdLabel(rung.label)
     }
 
@@ -303,6 +314,118 @@ struct HeatMapCardView: View {
     }
 }
 
+// MARK: - Date-ladder rung resolution & sorting
+
+private let heatMapUtcCalendar: Calendar = {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "UTC")!
+    return cal
+}()
+
+private func heatMapUtcDayString(_ date: Date) -> String {
+    let comps = heatMapUtcCalendar.dateComponents([.year, .month, .day], from: date)
+    return String(format: "%04d-%02d-%02d", comps.year ?? 0, comps.month ?? 1, comps.day ?? 1)
+}
+
+private func heatMapIsIsoDateString(_ raw: String?) -> Bool {
+    guard let raw else { return false }
+    let bytes = Array(raw.utf8)
+    guard bytes.count == 10, bytes[4] == 45, bytes[7] == 45 else { return false }
+    for (idx, b) in bytes.enumerated() where idx != 4 && idx != 7 {
+        if b < 48 || b > 57 { return false }
+    }
+    return true
+}
+
+private func heatMapStartsWithBefore(_ label: String) -> Bool {
+    let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard trimmed.hasPrefix("before") else { return false }
+    if trimmed.count == 6 { return true }
+    let next = trimmed[trimmed.index(trimmed.startIndex, offsetBy: 6)]
+    return !(next.isLetter || next.isNumber || next == "_")
+}
+
+private func heatMapDistributionDatesByLabel(_ outcomes: [FeedDiscoverDistributionOutcome]?) -> [String: String] {
+    var map: [String: String] = [:]
+    for outcome in outcomes ?? [] {
+        let key = outcome.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !key.isEmpty, map[key] == nil, heatMapIsIsoDateString(outcome.date) {
+            map[key] = outcome.date
+        }
+    }
+    return map
+}
+
+private func heatMapPointDateIso(
+    _ point: FeedDiscoverThresholdPoint,
+    distDatesByLabel: [String: String],
+    now: Date
+) -> String? {
+    let key = point.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if let iso = distDatesByLabel[key] {
+        return iso
+    }
+    guard point.source == "date_bucket" || point.unit == "date" else { return nil }
+    guard let rawValue = point.value, rawValue.isFinite, rawValue.rounded() == rawValue else { return nil }
+    let v = Int(rawValue)
+    let year = v / 10_000
+    let month = (v / 100) % 100
+    let day = v % 100
+    if (2001...2999).contains(year) {
+        if month == 0 {
+            return heatMapStartsWithBefore(point.label) ? "\(year)-01-01" : "\(year)-12-31"
+        }
+        guard (1...12).contains(month) else { return nil }
+        let resolvedDay: Int?
+        if day == 0 {
+            if let monthStart = heatMapUtcCalendar.date(from: DateComponents(year: year, month: month, day: 1)),
+               let range = heatMapUtcCalendar.range(of: .day, in: .month, for: monthStart) {
+                resolvedDay = range.count
+            } else {
+                resolvedDay = nil
+            }
+        } else if (1...31).contains(day) {
+            resolvedDay = day
+        } else {
+            resolvedDay = nil
+        }
+        guard let resolvedDay else { return nil }
+        return String(format: "%04d-%02d-%02d", year, month, resolvedDay)
+    }
+    if year == 2000 && (1...12).contains(month) && (1...31).contains(day) {
+        let nowYear = heatMapUtcCalendar.component(.year, from: now)
+        var bestYear = nowYear
+        var bestDiff = TimeInterval.greatestFiniteMagnitude
+        for y in [nowYear - 1, nowYear, nowYear + 1] {
+            if let d = heatMapUtcCalendar.date(from: DateComponents(year: y, month: month, day: day)) {
+                let diff = abs(d.timeIntervalSince(now))
+                if diff < bestDiff {
+                    bestDiff = diff
+                    bestYear = y
+                }
+            }
+        }
+        return String(format: "%04d-%02d-%02d", bestYear, month, day)
+    }
+    return nil
+}
+
+func heatMapSortedPoints(
+    _ points: [FeedDiscoverThresholdPoint],
+    distributionOutcomes: [FeedDiscoverDistributionOutcome]? = nil,
+    now: Date = Date()
+) -> [FeedDiscoverThresholdPoint] {
+    let distDates = heatMapDistributionDatesByLabel(distributionOutcomes)
+    return points.sorted { lhs, rhs in
+        if let lDate = heatMapPointDateIso(lhs, distDatesByLabel: distDates, now: now),
+           let rDate = heatMapPointDateIso(rhs, distDatesByLabel: distDates, now: now),
+           lDate != rDate {
+            return lDate < rDate
+        }
+        return (lhs.value ?? 0) < (rhs.value ?? 0)
+    }
+}
+
 // MARK: - The rung the caption names
 
 /// #8647 — the rung "More likely than not:" names: the MOST SPECIFIC rung the
@@ -313,44 +436,70 @@ struct HeatMapCardView: View {
 /// cumulative "before this date" question and chances RISE, so the last one is
 /// the loosest: the phone captioned the Anthropic-IPO ladder (futures 8430022,
 /// 6% by Nov 1, 56% by Dec 1 … 90% by Apr 1) "Before Apr 1, 2027". The earliest
-/// rung over even is the answer. An exclusive date ladder ("Before 2027 / 2027 /
-/// 2029 or later") has at most one rung over even, so it reads the same. Web
-/// applies the same rule (FuturesCard.tsx, PR #8650): one card family, notice 35.
+/// not-yet-passed rung over even is the answer.
+func heatMapBetterThanEvenRung(
+    _ points: [FeedDiscoverThresholdPoint],
+    distributionOutcomes: [FeedDiscoverDistributionOutcome]? = nil,
+    now: Date = Date()
+) -> FeedDiscoverThresholdPoint? {
+    heatMapBetterThanEvenIndex(points, distributionOutcomes: distributionOutcomes, now: now).map { points[$0] }
+}
+
 func heatMapBetterThanEvenRung(_ points: [FeedDiscoverThresholdPoint]) -> FeedDiscoverThresholdPoint? {
-    heatMapBetterThanEvenIndex(points).map { points[$0] }
+    heatMapBetterThanEvenRung(points, distributionOutcomes: nil, now: Date())
 }
 
 /// The position of `heatMapBetterThanEvenRung` in `points`.
-func heatMapBetterThanEvenIndex(_ points: [FeedDiscoverThresholdPoint]) -> Int? {
+func heatMapBetterThanEvenIndex(
+    _ points: [FeedDiscoverThresholdPoint],
+    distributionOutcomes: [FeedDiscoverDistributionOutcome]? = nil,
+    now: Date = Date()
+) -> Int? {
     let isOverEven: (FeedDiscoverThresholdPoint) -> Bool = { ($0.probability ?? 0) >= 0.50 }
     let isDateLadder = !points.isEmpty && points.allSatisfy { $0.source == "date_bucket" }
-    return isDateLadder ? points.firstIndex(where: isOverEven) : points.lastIndex(where: isOverEven)
+    guard isDateLadder else {
+        return points.lastIndex(where: isOverEven)
+    }
+    let todayIso = heatMapUtcDayString(now)
+    let distDates = heatMapDistributionDatesByLabel(distributionOutcomes)
+    let upcomingIndices = points.indices.filter { idx in
+        guard let dateIso = heatMapPointDateIso(points[idx], distDatesByLabel: distDates, now: now) else {
+            return true
+        }
+        return dateIso >= todayIso
+    }
+    if upcomingIndices.isEmpty {
+        return points.firstIndex(where: isOverEven)
+    }
+    return upcomingIndices.first(where: { isOverEven(points[$0]) })
+}
+
+func heatMapBetterThanEvenIndex(_ points: [FeedDiscoverThresholdPoint]) -> Int? {
+    heatMapBetterThanEvenIndex(points, distributionOutcomes: nil, now: Date())
 }
 
 // MARK: - The rungs the cells draw
 
 /// #8713 — which `maxCells` rungs the card draws when the ladder has more.
-///
-/// The cells were the first five rungs in ladder order. On a long date ladder
-/// those are the near-term, near-zero ones: the Anthropic-IPO card (futures
-/// 8430022, ten rungs) drew 1% 1% 1% 2% 6% over the caption "More likely than
-/// not: Before Dec 1, 2026", and the rungs that carry the story (56% … 90%) sat
-/// behind "+5 more". The card said two things.
-///
-/// The cells are now a contiguous window centred on the rung the caption names,
-/// clamped to the ladder's ends, so the reader sees the crossover with a rung or
-/// two either side of it. A ladder with no rung over even ("All below 50%") keeps
-/// the first rungs, as before. A ladder that fits draws every rung.
 func heatMapDrawnRungs(
     _ points: [FeedDiscoverThresholdPoint],
-    maxCells: Int
+    maxCells: Int,
+    distributionOutcomes: [FeedDiscoverDistributionOutcome]? = nil,
+    now: Date = Date()
 ) -> [FeedDiscoverThresholdPoint] {
     guard maxCells > 0, points.count > maxCells,
-          let anchor = heatMapBetterThanEvenIndex(points) else {
+          let anchor = heatMapBetterThanEvenIndex(points, distributionOutcomes: distributionOutcomes, now: now) else {
         return Array(points.prefix(max(0, maxCells)))
     }
     let start = min(max(0, anchor - maxCells / 2), points.count - maxCells)
     return Array(points[start..<(start + maxCells)])
+}
+
+func heatMapDrawnRungs(
+    _ points: [FeedDiscoverThresholdPoint],
+    maxCells: Int
+) -> [FeedDiscoverThresholdPoint] {
+    heatMapDrawnRungs(points, maxCells: maxCells, distributionOutcomes: nil, now: Date())
 }
 
 // MARK: - The date the header may print
