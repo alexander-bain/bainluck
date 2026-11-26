@@ -77,7 +77,7 @@ it("keeps the coverage notice only on a card whose displayed price was withdrawn
   const old = { ...source.item, data: { ...source.data, resolution_date: null } } as unknown as FeedItem;
   const key = priceKey(old)!;
   const withheld = {
-    ...old, headline: null, reason: "Limited price coverage", context_summary: "Limited price coverage",
+    ...old, headline: null, reason: "Limited probability coverage", context_summary: "Limited probability coverage",
     data: { ...old.data, status: "open", top_outcomes: [], discover_card: undefined,
       hook_description: null, price_observed_at: null, field_price_coverage_incomplete: true },
   } as unknown as FeedItem;
@@ -88,7 +88,7 @@ it("keeps the coverage notice only on a card whose displayed price was withdrawn
   }, new Set([key]));
   const [group] = projectPriceGroups([{ type: "single", item: old }], book);
   const markup = renderToStaticMarkup(<DiscoverCard groupedItem={group} />);
-  expect(markup).toContain("Limited price coverage");
+  expect(markup).toContain("Limited probability coverage");
   expect(markup).not.toContain("Philadelphia Waterdogs");
 });
 

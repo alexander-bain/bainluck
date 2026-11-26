@@ -204,6 +204,17 @@ describe("UX-P165 — the category browser stops describing markets by an unrank
     expect(text).not.toContain("Collin Morikawa");
   });
 
+  it("skips an outcome with no current reading and preserves a supported 0%", () => {
+    const market = asBrowseItem(FEDEX, "after");
+    market.top_outcomes = [
+      { id: 1, name: "Unavailable golfer", probability: null, movement: null },
+      { id: 2, name: "Supported golfer", probability: 0, movement: null },
+    ];
+    const text = visibleText(renderToStaticMarkup(<CompactMarketCard market={market} />));
+    expect(text).not.toContain("Unavailable golfer");
+    expect(text).toContain("Supported golfer 0%");
+  });
+
   it("writes the capture artifact when asked", () => {
     const dir = process.env.UX_CAPTURE_DIR;
     if (!dir) return;

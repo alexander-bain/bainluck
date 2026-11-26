@@ -109,7 +109,7 @@ test('field coverage withdrawal clears every held leader claim and recovery uses
   });
   const withheld = market();
   Object.assign(withheld, {
-    headline: null, reason: 'Limited price coverage', context_summary: 'Limited price coverage',
+    headline: null, reason: 'Limited probability coverage', context_summary: 'Limited probability coverage',
   });
   Object.assign(withheld.data, {
     field_price_coverage_incomplete: true, top_outcomes: [], price_observed_at: null,
@@ -120,7 +120,7 @@ test('field coverage withdrawal clears every held leader claim and recovery uses
   }, allowed);
   const shown = projectPriceGroups(singles(old), withdrawal)[0].item!;
   expect(shown.headline).toBeNull();
-  expect(shown.context_summary).toBe('Limited price coverage');
+  expect(shown.context_summary).toBe('Limited probability coverage');
   expect((shown.data as FeedFuturesData).top_outcomes).toEqual([]);
   expect((shown.data as FeedFuturesData).hook_description).toBeUndefined();
 

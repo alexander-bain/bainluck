@@ -113,8 +113,8 @@ final class DiscoverStreamingPriceTests: XCTestCase {
                      "top_outcomes": [["id": 10, "name": "Brooklyn Nets", "probability": 0.0525]]],
         ], as: FeedItem.self)
         let fresh = try decode([
-            "type": "futures", "reason": "Limited price coverage",
-            "context_summary": "Limited price coverage",
+            "type": "futures", "reason": "Limited probability coverage",
+            "context_summary": "Limited probability coverage",
             "data": ["id": 1, "name": "NBA Cup finalists", "source": "polymarket",
                      "status": "open", "field_price_coverage_incomplete": true,
                      "top_outcomes": [] as [[String: Any]]],
@@ -125,7 +125,7 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         XCTAssertEqual(shown.id, held.id)
         XCTAssertEqual(shown.futures?.topOutcomes?.count, 0)
         XCTAssertNil(shown.headline)
-        XCTAssertEqual(shown.contextSummary, "Limited price coverage")
+        XCTAssertEqual(shown.contextSummary, "Limited probability coverage")
 
         #if os(iOS)
         let data = try XCTUnwrap(shown.futures)
@@ -160,7 +160,7 @@ final class DiscoverStreamingPriceTests: XCTestCase {
             .compactMap { $0.topCandidates(1).first?.string }
             .joined(separator: " ")
         XCTAssertTrue(text.contains("NBA Cup finalists"), text)
-        XCTAssertTrue(text.contains("Limited price coverage"), text)
+        XCTAssertTrue(text.contains("Limited probability coverage"), text)
         XCTAssertFalse(text.contains("Brooklyn Nets"), text)
         XCTAssertFalse(text.contains("%"), text)
         #endif
@@ -175,6 +175,41 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         let result = DiscoverPriceRefresh.retainingPrices([t2], accepted: &accepted)
         XCTAssertEqual(result[0].futures?.topOutcomes?.first?.probability, 0.8)
     }
+
+    #if os(iOS)
+    func testFuturesBrowseAndListCardsOmitRowsWithoutAReading() throws {
+        let payload: [String: Any] = [
+            "id": 1, "name": "Season leader", "status": "open",
+            "top_outcomes": [
+                ["id": 10, "name": "Unavailable player", "probability": NSNull()],
+                ["id": 20, "name": "Supported player", "probability": 0.32],
+            ],
+        ]
+        let browse = try decode(payload, as: FacetedFuturesMarket.self)
+        let futures = try decode(payload, as: FeedFuturesData.self)
+        let cards = [
+            AnyView(FuturesBrowseMarketRow(market: browse)),
+            AnyView(FuturesCardView(futures: futures)),
+        ]
+        for card in cards {
+            let renderer = rendererForMeasurement(
+                card.environmentObject(PinManager()).environment(\.colorScheme, .light)
+                    .padding(16).frame(width: 390),
+                at: .large
+            )
+            renderer.scale = 3
+            let cgImage = try XCTUnwrap(renderer.uiImage?.cgImage)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            try VNImageRequestHandler(cgImage: cgImage).perform([request])
+            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                .joined(separator: " ")
+            XCTAssertTrue(text.contains("Supported player"), text)
+            XCTAssertTrue(text.contains("32%"), text)
+            XCTAssertFalse(text.contains("Unavailable player"), text)
+        }
+    }
+    #endif
 
     func testExpiredPriceCanBeWithheldWithoutCachedFeedResurrectingIt() throws {
         let old = try event(rev: 3, clock: "2026-09-29T00:01:00Z")

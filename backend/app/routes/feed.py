@@ -357,6 +357,7 @@ from app.utils.outcome_display import (
     drop_dominant_field_outcomes,
     drop_incoherent_ladder_outcomes,
     ladder_treatment_collapsed,
+    mark_kalshi_ask_ceilings,
     open_kalshi_yes_bid,
 )
 from app.utils.not_trading import market_not_trading
@@ -9382,7 +9383,7 @@ def _withhold_unsupported_field_leader(
     if not incomplete:
         return
 
-    notice = "Limited price coverage"
+    notice = "Limited probability coverage"
     item.update(headline=None, reason=notice, context_summary=notice)
     data.update(
         top_outcomes=[],
@@ -9595,8 +9596,6 @@ def _market_exclusivity(market) -> bool | None:
 
 
 def _feed_display_rows(outcomes: list, market=None) -> list[dict]:
-    from app.utils.outcome_display import mark_kalshi_ask_ceilings
-
     rows = [
         {"id": getattr(o, "id", None), "name": getattr(o, "name", ""),
          "probability": o.current_probability, "is_winner": getattr(o, "is_winner", None),
