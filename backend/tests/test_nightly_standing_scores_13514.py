@@ -13,9 +13,11 @@ import yaml
 
 from scripts.nightly_standing_scores import (
     MIN_LIVE_PACE_SECONDS,
+    compare_card_against_detail,
     compute_stale_sportsbook_census,
     effective_pace_seconds,
     extract_copy_age,
+    extract_headline_percent,
     format_copy_age,
     main as cli_main,
     render_markdown_report,
@@ -617,3 +619,215 @@ def test_disagreements_include_list_and_page_copy_age_in_json_and_markdown():
     assert "| Event | Sport | Matchup | Surface | Field | Surface Val | Detail Val | List Copy Age | Page Copy Age |" in md
     assert "`copy 4.0m (hit), read 30.0m`" in md
     assert "`copy 0s (fresh), read 3.0m (gap 0s)`" in md
+
+
+@pytest.mark.parametrize(
+    ("home_prob", "away_prob", "expected_pct"),
+    [
+        (0.765, 0.235, 77),
+        (0.395, 0.605, 39),
+        (0.605, 0.395, 61),
+    ],
+)
+def test_extract_headline_percent_matches_rendered_duel_percents_on_half_boundaries(
+    home_prob: float,
+    away_prob: float,
+    expected_pct: int,
+):
+    league_card = {
+        "id": 950,
+        "sport": "basketball_other",
+        "home_team": "Qatar",
+        "away_team": "South Korea",
+        "home_win_probability": home_prob,
+        "current_odds": {
+            "home_probability": home_prob,
+            "away_probability": away_prob,
+            "home_rendered_percent": expected_pct,
+            "bookmaker_count": 0,
+        },
+        "source_mark": {
+            "state": "single",
+            "sources": [{"key": "polymarket", "name": "Polymarket", "probability": home_prob}],
+        },
+    }
+    list_events_card = {
+        "id": 950,
+        "sport": "basketball_other",
+        "home_team": "Qatar",
+        "away_team": "South Korea",
+        "hero_probability": home_prob,
+        "current_odds": {
+            "home_probability": home_prob,
+            "away_probability": away_prob,
+            "bookmaker_count": 0,
+        },
+        "source_mark": {
+            "state": "single",
+            "sources": [{"key": "polymarket", "name": "Polymarket", "probability": home_prob}],
+        },
+    }
+    detail = {
+        "id": 950,
+        "sport": "basketball_other",
+        "home_team": "Qatar",
+        "away_team": "South Korea",
+        "hero_probability": home_prob,
+        "current_odds": {
+            "home_probability": home_prob,
+            "away_probability": away_prob,
+            "home_rendered_percent": expected_pct,
+            "bookmaker_count": 0,
+        },
+        "source_mark": {
+            "state": "single",
+            "sources": [{"key": "polymarket", "name": "Polymarket", "probability": home_prob}],
+        },
+    }
+    assert extract_headline_percent(league_card) == expected_pct
+    assert extract_headline_percent(list_events_card) == expected_pct
+    assert extract_headline_percent(detail) == expected_pct
+    assert (
+        compare_card_against_detail(
+            surface="GET /api/leagues/basketball_other",
+            card=league_card,
+            detail=detail,
+        )
+        == []
+    )
+    assert (
+        compare_card_against_detail(
+            surface="GET /api/events?status=scheduled",
+            card=list_events_card,
+            detail=detail,
+        )
+        == []
+    )
+
+
+def test_live_source_keys_transition_reverified_equal_is_not_flagged():
+    ev_both = _event_payload(
+        951,
+        sport="esports",
+        home="Any Questions Gaming",
+        away="Unsettled Resentment",
+        status="live",
+        hours_from_now=-1.0,
+        hero=0.0075,
+        books=0,
+        betting_age_hours=None,
+        extra_sources=[
+            {"key": "kalshi", "name": "Kalshi", "probability": 0.01},
+            {"key": "polymarket", "name": "Polymarket", "probability": 0.004},
+        ],
+    )
+    ev_both["source_mark"]["sources"] = [
+        {"key": "kalshi", "name": "Kalshi", "probability": 0.01},
+        {"key": "polymarket", "name": "Polymarket", "probability": 0.004},
+    ]
+    ev_both["win_probability_sources"] = {
+        "kalshi": {"value": 0.01, "updated_at": NOW.isoformat()},
+        "polymarket": {"value": 0.004, "updated_at": NOW.isoformat()},
+    }
+    ev_poly_only = _event_payload(
+        951,
+        sport="esports",
+        home="Any Questions Gaming",
+        away="Unsettled Resentment",
+        status="live",
+        hours_from_now=-1.0,
+        hero=0.004,
+        books=0,
+        betting_age_hours=None,
+        extra_sources=[
+            {"key": "polymarket", "name": "Polymarket", "probability": 0.004},
+        ],
+    )
+    ev_poly_only["source_mark"]["sources"] = [
+        {"key": "polymarket", "name": "Polymarket", "probability": 0.004},
+    ]
+    ev_poly_only["win_probability_sources"] = {
+        "polymarket": {"value": 0.004, "updated_at": NOW.isoformat()},
+    }
+    calls: dict[str, int] = {"live": 0}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/health":
+            return httpx.Response(200, json={"status": "ok", "commit": "e1364d7d"})
+        if path == "/api/events":
+            qs = parse_qs(
+                request.url.query.decode()
+                if isinstance(request.url.query, bytes)
+                else str(request.url.query)
+            )
+            req_status = (qs.get("status") or [None])[0]
+            assert req_status in {"live", "scheduled"}
+            if req_status == "scheduled":
+                return httpx.Response(200, json={"events": []})
+            calls["live"] += 1
+            return httpx.Response(200, json={"events": [ev_both if calls["live"] == 1 else ev_poly_only]})
+        if path == "/api/feed":
+            return httpx.Response(200, json={"items": []})
+        if path.startswith("/api/leagues/"):
+            return httpx.Response(200, json={"upcoming_games": []})
+        if path == "/api/events/search":
+            return httpx.Response(200, json={"results": []})
+        if path == "/api/events/951":
+            return httpx.Response(200, json=ev_poly_only)
+        return httpx.Response(404)
+
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-26",
+        transport=httpx.MockTransport(_handler),
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert calls["live"] == 2
+    assert result["overall_status"] == "PASS"
+    assert result["list_vs_page"]["disagreements_count"] == 0
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 1
+
+
+def test_persistent_source_keys_mismatch_still_fails_after_reread():
+    card_list = _event_payload(
+        952,
+        sport="soccer_epl",
+        home="Arsenal",
+        away="Chelsea",
+        hero=0.60,
+        books=7,
+        extra_sources=[{"key": "polymarket", "name": "Polymarket", "probability": 0.60}],
+    )
+    detail_missing_books = _event_payload(
+        952,
+        sport="soccer_epl",
+        home="Arsenal",
+        away="Chelsea",
+        hero=0.60,
+        books=0,
+        betting_age_hours=None,
+        extra_sources=[{"key": "polymarket", "name": "Polymarket", "probability": 0.60}],
+    )
+    detail_missing_books["source_mark"]["sources"] = [
+        {"key": "polymarket", "name": "Polymarket", "probability": 0.60},
+    ]
+    transport = _mock_transport(
+        list_events=[card_list],
+        details_by_id={952: detail_missing_books},
+    )
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-26",
+        transport=transport,
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "FAIL"
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 0
+    fields = {d["field"] for d in result["list_vs_page"]["disagreements"]}
+    assert "source_keys" in fields
+    assert "bookmaker_count" in fields
