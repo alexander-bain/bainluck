@@ -19,6 +19,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -33,6 +34,7 @@ if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
 from app.utils.agent_origin import ORIGIN_HEADER, tagged  # noqa: E402
+from app.utils.graded_card import rendered_duel_percents, rendered_percent  # noqa: E402
 
 DEFAULT_BASE_URL = "https://api.bainluck.com"
 MIN_LIVE_PACE_SECONDS = 3.5
@@ -255,29 +257,51 @@ def _as_percent(val: Any) -> int | None:
     if isinstance(val, bool) or not isinstance(val, (int, float)):
         return None
     f = float(val)
+    if not math.isfinite(f):
+        return None
     if 0.0 <= f <= 1.0:
-        return int(round(f * 100.0))
-    return int(round(f))
+        return rendered_percent(f)
+    return int(math.floor(f + 0.5))
+
+
+def _first_finite_number(*vals: Any) -> float | None:
+    for v in vals:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        f = float(v)
+        if math.isfinite(f):
+            return f
+    return None
 
 
 def extract_headline_percent(card: dict[str, Any]) -> int | None:
-    """Return rounded integer headline probability [0..100] from any event payload."""
-    hero = card.get("hero_probability")
-    if isinstance(hero, (int, float)) and not isinstance(hero, bool):
-        return _as_percent(hero)
+    """Return rendered integer headline probability [0..100] from any event payload."""
     co = card.get("current_odds")
     if isinstance(co, dict):
         hrp = co.get("home_rendered_percent")
         if isinstance(hrp, int) and not isinstance(hrp, bool):
             return hrp
-    hwp = card.get("home_win_probability")
-    if isinstance(hwp, (int, float)) and not isinstance(hwp, bool):
-        return _as_percent(hwp)
-    if isinstance(co, dict):
-        hp = co.get("home_probability")
-        if isinstance(hp, (int, float)) and not isinstance(hp, bool):
-            return _as_percent(hp)
-    return None
+    home_prob = _first_finite_number(
+        card.get("hero_probability"),
+        card.get("home_win_probability"),
+        co.get("home_probability") if isinstance(co, dict) else None,
+    )
+    if home_prob is None:
+        return None
+    away_prob = _first_finite_number(
+        card.get("hero_probability_away"),
+        card.get("away_win_probability"),
+        co.get("away_probability") if isinstance(co, dict) else None,
+    )
+    if (
+        away_prob is not None
+        and 0.0 <= home_prob <= 1.0
+        and 0.0 <= away_prob <= 1.0
+    ):
+        _, home_pct = rendered_duel_percents(away_prob, home_prob)
+        if home_pct is not None:
+            return home_pct
+    return _as_percent(home_prob)
 
 
 def extract_source_percents(card: dict[str, Any]) -> dict[str, int]:
@@ -946,75 +970,71 @@ def run_standing_scores(
                 )
                 if not card_diffs:
                     continue
-                prob_only = all(
-                    d["field"] == "headline_percent" or str(d["field"]).startswith("source.")
-                    for d in card_diffs
+                # Back-to-back re-read on ALL diffs (headline, sources, source_keys,
+                # bookmaker_count; scheduled and live) so ordinary state/line changes
+                # across the multi-minute Step-1-to-Step-8 fetch window are not filed
+                # as persistent disagreements. If either re-read fails, record it as
+                # unconfirmed (-> INCOMPLETE) rather than a confirmed diff.
+                refetched = _refetch_surface_card(eid, surface, detail_sport or str(card.get("sport") or ""))
+                if refetched is None:
+                    unconfirmed_disagreements.append(
+                        {
+                            "event_id": eid,
+                            "sport_key": detail_sport,
+                            "matchup": _matchup_label(detail),
+                            "surface": surface,
+                            "is_live": is_live_detail,
+                            "reason": "list_reread_failed",
+                            "surface_copy_age": card_age,
+                            "detail_copy_age": detail_age,
+                            "initial_diffs": card_diffs,
+                        }
+                    )
+                    continue
+                re_card, re_card_meta = refetched
+                re_card_age = extract_copy_age(re_card, response_meta=re_card_meta, fallback_now=clock_now)
+                _, re_detail, re_err, re_detail_meta = paced.get_json_with_meta(path)
+                if re_err or not isinstance(re_detail, dict):
+                    unconfirmed_disagreements.append(
+                        {
+                            "event_id": eid,
+                            "sport_key": detail_sport,
+                            "matchup": _matchup_label(detail),
+                            "surface": surface,
+                            "is_live": is_live_detail,
+                            "reason": f"detail_reread_failed:{re_err or 'non-dict payload'}",
+                            "surface_copy_age": re_card_age,
+                            "detail_copy_age": detail_age,
+                            "initial_diffs": card_diffs,
+                        }
+                    )
+                    continue
+                re_detail_age = extract_copy_age(
+                    re_detail, response_meta=re_detail_meta, fallback_now=clock_now
                 )
-                if prob_only:
-                    # Back-to-back re-read on ALL games (scheduled and live) so
-                    # ordinary line movement between list read and page read is not
-                    # filed as a disagreement. If either re-read fails, record it
-                    # as unconfirmed (-> INCOMPLETE) rather than a confirmed diff.
-                    refetched = _refetch_surface_card(eid, surface, detail_sport or str(card.get("sport") or ""))
-                    if refetched is None:
-                        unconfirmed_disagreements.append(
-                            {
-                                "event_id": eid,
-                                "sport_key": detail_sport,
-                                "matchup": _matchup_label(detail),
-                                "surface": surface,
-                                "is_live": is_live_detail,
-                                "reason": "list_reread_failed",
-                                "surface_copy_age": card_age,
-                                "detail_copy_age": detail_age,
-                                "initial_diffs": card_diffs,
-                            }
-                        )
-                        continue
-                    re_card, re_card_meta = refetched
-                    re_card_age = extract_copy_age(re_card, response_meta=re_card_meta, fallback_now=clock_now)
-                    _, re_detail, re_err, re_detail_meta = paced.get_json_with_meta(path)
-                    if re_err or not isinstance(re_detail, dict):
-                        unconfirmed_disagreements.append(
-                            {
-                                "event_id": eid,
-                                "sport_key": detail_sport,
-                                "matchup": _matchup_label(detail),
-                                "surface": surface,
-                                "is_live": is_live_detail,
-                                "reason": f"detail_reread_failed:{re_err or 'non-dict payload'}",
-                                "surface_copy_age": re_card_age,
-                                "detail_copy_age": detail_age,
-                                "initial_diffs": card_diffs,
-                            }
-                        )
-                        continue
-                    re_detail_age = extract_copy_age(
-                        re_detail, response_meta=re_detail_meta, fallback_now=clock_now
+                re_diffs = compare_card_against_detail(
+                    surface=surface,
+                    card=re_card,
+                    detail=re_detail,
+                    card_age=re_card_age,
+                    detail_age=re_detail_age,
+                )
+                if not re_diffs:
+                    live_tick_drifts.append(
+                        {
+                            "event_id": eid,
+                            "sport_key": detail_sport,
+                            "matchup": _matchup_label(detail),
+                            "surface": surface,
+                            "is_live": is_live_detail,
+                            "surface_copy_age": re_card_age,
+                            "detail_copy_age": re_detail_age,
+                            "fetch_gap_seconds": _fetch_gap_seconds(re_card_age, re_detail_age),
+                            "initial_diffs": card_diffs,
+                        }
                     )
-                    re_diffs = compare_card_against_detail(
-                        surface=surface,
-                        card=re_card,
-                        detail=re_detail,
-                        card_age=re_card_age,
-                        detail_age=re_detail_age,
-                    )
-                    if not re_diffs:
-                        live_tick_drifts.append(
-                            {
-                                "event_id": eid,
-                                "sport_key": detail_sport,
-                                "matchup": _matchup_label(detail),
-                                "surface": surface,
-                                "is_live": is_live_detail,
-                                "surface_copy_age": re_card_age,
-                                "detail_copy_age": re_detail_age,
-                                "fetch_gap_seconds": _fetch_gap_seconds(re_card_age, re_detail_age),
-                                "initial_diffs": card_diffs,
-                            }
-                        )
-                        continue
-                    card_diffs = re_diffs
+                    continue
+                card_diffs = re_diffs
                 disagreements.extend(card_diffs)
 
     has_real_findings = bool(disagreements) or census["stale_over_threshold_count"] > 0
