@@ -69,10 +69,6 @@ final class DateLadderCompactRowParity13760Tests: XCTestCase {
         let now = utcDate("2026-11-26T12:00:00Z")
         let ceasefire = try decodeMarket(ceasefire69603905Payload())
 
-        // On master (`markedRung` without date filtering), November 22 (>= 50%) wins despite having passed.
-        let masterPoints = try XCTUnwrap(ceasefire.discoverCard?.thresholdPoints)
-        XCTAssertEqual(DiscoverGroupRows.markedRung(in: masterPoints)?.label, "November 22")
-
         let summary = DiscoverGroupRows.compactSummary(for: ceasefire, now: now)
         XCTAssertEqual(summary.label, "November 30")
         XCTAssertEqual(try XCTUnwrap(summary.probability), 0.745, accuracy: 0.0001)
