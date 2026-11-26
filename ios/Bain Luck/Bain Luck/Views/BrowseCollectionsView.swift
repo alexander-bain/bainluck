@@ -10,6 +10,78 @@ struct BrowsePublicSet402A: Identifiable, Hashable, Sendable {
 
     var id: String { slug }
     @MainActor var route: Route { .containerHub(slug: slug, name: title) }
+
+    nonisolated static func extractFromFeedItems(_ items: [FeedItem], limit: Int = 8) -> [BrowsePublicSet402A] {
+        var seen = Set<String>()
+        var extracted: [BrowsePublicSet402A] = []
+        for item in items {
+            guard item.type == "bundle", let bundle = item.bundle else { continue }
+            let rawSlug = bundle.collectionRef?.slug
+                ?? (bundle.id.hasPrefix("roundup:") ? String(bundle.id.dropFirst("roundup:".count)) : bundle.id)
+            guard rawSlug.hasPrefix("machinery-"), seen.insert(rawSlug).inserted else { continue }
+            let rawTitle = (bundle.collectionRef?.name ?? bundle.title)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawTitle.isEmpty else { continue }
+            let marketCount = max(bundle.collectionRef?.collectionCount ?? 0, bundle.items.count)
+            let subtitle = Self.formatSetSubtitle(kicker: bundle.roundupContract?.kicker, count: marketCount)
+            let url = bundle.imageUrl.flatMap(URL.init(string:))
+            extracted.append(
+                BrowsePublicSet402A(
+                    slug: rawSlug,
+                    title: rawTitle,
+                    subtitle: subtitle,
+                    imageURL: url
+                )
+            )
+            if extracted.count >= limit { break }
+        }
+        return extracted
+    }
+
+    private nonisolated static func formatSetSubtitle(kicker: String?, count: Int) -> String {
+        let countText = count > 0 ? "\(count) \(count == 1 ? "market" : "markets")" : ""
+        let topic = humanizedTopic(from: kicker)
+        if !topic.isEmpty && !countText.isEmpty {
+            return "\(topic) · \(countText)"
+        }
+        return !topic.isEmpty ? topic : (countText.isEmpty ? "Curated set" : countText)
+    }
+
+    private nonisolated static func humanizedTopic(from kicker: String?) -> String {
+        guard let raw = kicker?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return ""
+        }
+        let segments = raw
+            .split(separator: "·")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let chosen: String = {
+            if segments.count >= 2, segments.first?.uppercased() == "ODD" {
+                return segments.dropFirst().joined(separator: " · ")
+            }
+            return segments.last ?? raw
+        }()
+        let keepUpper: Set<String> = ["AI", "US", "UK", "EU", "GDP", "SNL", "NBA", "NFL", "MLB", "NHL", "UFC", "FOMC"]
+        return chosen
+            .split(separator: " ")
+            .map { token -> String in
+                let upper = token.uppercased()
+                if keepUpper.contains(upper) { return upper }
+                return token.lowercased().capitalized
+            }
+            .joined(separator: " ")
+    }
+}
+
+protocol BrowsePublicSetsLoading: Sendable {
+    func loadPublicSets() async throws -> [BrowsePublicSet402A]
+}
+
+struct FeedPublicSetsService402A: BrowsePublicSetsLoading {
+    func loadPublicSets() async throws -> [BrowsePublicSet402A] {
+        let feed = try await APIClient.shared.fetchFeed(limit: 80)
+        return BrowsePublicSet402A.extractFromFeedItems(feed.items, limit: 8)
+    }
 }
 
 /// Shared category catalog for Browse tiles and Search empty-state pills (402: A draft 2),
@@ -78,6 +150,8 @@ struct BrowseCollectionsView: View {
     @StateObject private var vm: ContainerDiscoveryViewModel
     private let previewSets: [BrowsePublicSet402A]
     private let preloadedSetImages: [String: Image]
+    private let publicSetsService: (any BrowsePublicSetsLoading)?
+    @State private var loadedPublicSets: [BrowsePublicSet402A] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -85,17 +159,28 @@ struct BrowseCollectionsView: View {
     init(
         service: any ContainerDiscoveryLoading = ContainerDiscoveryService(),
         previewSets: [BrowsePublicSet402A] = [],
-        preloadedSetImages: [String: Image] = [:]
+        preloadedSetImages: [String: Image] = [:],
+        publicSetsService: (any BrowsePublicSetsLoading)? = nil
     ) {
         _vm = StateObject(wrappedValue: ContainerDiscoveryViewModel(service: service))
         self.previewSets = previewSets
         self.preloadedSetImages = preloadedSetImages
+        if let publicSetsService {
+            self.publicSetsService = publicSetsService
+        } else if service is ContainerDiscoveryService && previewSets.isEmpty {
+            self.publicSetsService = FeedPublicSetsService402A()
+        } else {
+            self.publicSetsService = nil
+        }
     }
 
     private var combinedSets: [BrowsePublicSet402A] {
         var seen = Set<String>()
         var result: [BrowsePublicSet402A] = []
         for s in previewSets where seen.insert(s.slug).inserted {
+            result.append(s)
+        }
+        for s in loadedPublicSets where seen.insert(s.slug).inserted {
             result.append(s)
         }
         for entry in vm.entries where seen.insert(entry.collection.slug).inserted {
@@ -178,9 +263,28 @@ struct BrowseCollectionsView: View {
                 }
             }
         }
-        .task { await vm.load() }
+        .task {
+            await loadAllSets()
+        }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await vm.load() } }
+            if phase == .active {
+                Task { await loadAllSets() }
+            }
+        }
+    }
+
+    private func loadAllSets() async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                await vm.load()
+            }
+            if let publicSetsService {
+                group.addTask { @MainActor in
+                    if let sets = try? await publicSetsService.loadPublicSets(), !sets.isEmpty {
+                        loadedPublicSets = sets
+                    }
+                }
+            }
         }
     }
 

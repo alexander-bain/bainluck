@@ -17,6 +17,11 @@ final class BrowseHome402AFirstDraftTests: XCTestCase {
         }
     }
 
+    private struct StaticPublicSets402A: BrowsePublicSetsLoading {
+        let sets: [BrowsePublicSet402A]
+        func loadPublicSets() async throws -> [BrowsePublicSet402A] { sets }
+    }
+
     private final class Browse402ATraitContainer: UIViewController {
         let child: UIViewController
         let traits: UITraitCollection
@@ -40,7 +45,39 @@ final class BrowseHome402AFirstDraftTests: XCTestCase {
         }
     }
 
-    private static let v2ScratchDir = "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/scratch/13750-v2"
+    private static func makeSetArtImage(
+        symbol: String,
+        topColor: UIColor,
+        bottomColor: UIColor
+    ) -> UIImage {
+        let size = CGSize(width: 104, height: 104)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { ctx in
+            let cg = ctx.cgContext
+            let colors = [topColor.cgColor, bottomColor.cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0.0, 1.0]) {
+                cg.drawLinearGradient(
+                    gradient,
+                    start: .zero,
+                    end: CGPoint(x: size.width, y: size.height),
+                    options: []
+                )
+            } else {
+                topColor.setFill()
+                ctx.fill(CGRect(origin: .zero, size: size))
+            }
+            let config = UIImage.SymbolConfiguration(pointSize: 40, weight: .semibold)
+            if let icon = UIImage(systemName: symbol, withConfiguration: config)?
+                .withTintColor(.white.withAlphaComponent(0.92), renderingMode: .alwaysOriginal) {
+                let iconSize = icon.size
+                let origin = CGPoint(
+                    x: (size.width - iconSize.width) / 2,
+                    y: (size.height - iconSize.height) / 2
+                )
+                icon.draw(at: origin)
+            }
+        }
+    }
 
     func testCategoryOrderMatchesAcrossBrowseAndSearchAndPastWindowWeeksAreDropped() throws {
         XCTAssertEqual(
@@ -94,44 +131,277 @@ final class BrowseHome402AFirstDraftTests: XCTestCase {
         XCTAssertEqual(kept.map(\.id), ["nfl-\(nflSeason)-week-13"])
     }
 
-    func testBrowseHome402ASecondDraftSetsCategoriesEntertainmentDestinationAndSearchPills() async throws {
+    func testExtractsLivePublicMachinerySetsAndConfiguresTechFeedMode() throws {
+        XCTAssertNil(SportCategoryViewModel.feedMode(for: "tech"))
+        XCTAssertEqual(SportCategoryViewModel.feedMode(for: "tennis_atp"), "sports")
+        XCTAssertFalse(SportCategoryViewModel.loadsLeagueMarkets(for: "tech"))
+        XCTAssertTrue(SportCategoryViewModel.loadsLeagueMarkets(for: "nba"))
+
+        let feedJSON = #"""
+        {
+          "items": [
+            {
+              "type": "bundle",
+              "data": {
+                "id": "roundup:by-november-30",
+                "title": "By November 30",
+                "kind": "roundup",
+                "collection_ref": {"slug": "by-november-30", "name": "By November 30", "revision": 1, "collection_count": 4},
+                "roundup": {"kicker": "TIMEFRAME", "footer": "", "rows": []},
+                "items": []
+              }
+            },
+            {
+              "type": "bundle",
+              "data": {
+                "id": "roundup:machinery-2026-summed-up",
+                "title": "Bad Bunny leads 2026 Summed Up",
+                "kind": "roundup",
+                "image_url": "https://example.invalid/set-2026.jpg",
+                "collection_ref": {"slug": "machinery-2026-summed-up", "name": "2026 Summed Up", "revision": 12, "collection_count": 9},
+                "roundup": {"kicker": "CULTURE", "footer": "", "rows": []},
+                "items": []
+              }
+            },
+            {
+              "type": "bundle",
+              "data": {
+                "id": "roundup:machinery-next-james-bond",
+                "title": "Margaret Qualley leads Bond",
+                "kind": "roundup",
+                "image_url": "https://example.invalid/set-bond.jpg",
+                "collection_ref": {"slug": "machinery-next-james-bond", "name": "The Next James Bond Film", "revision": 14, "collection_count": 7},
+                "roundup": {"kicker": "ENTERTAINMENT", "footer": "", "rows": []},
+                "items": []
+              }
+            },
+            {
+              "type": "bundle",
+              "data": {
+                "id": "roundup:machinery-2026-summed-up",
+                "title": "Duplicate entry must dedup",
+                "kind": "roundup",
+                "collection_ref": {"slug": "machinery-2026-summed-up", "name": "2026 Summed Up", "revision": 12, "collection_count": 9},
+                "roundup": {"kicker": "CULTURE", "footer": "", "rows": []},
+                "items": []
+              }
+            },
+            {
+              "type": "bundle",
+              "data": {
+                "id": "roundup:machinery-ai-model-leaderboard-2026",
+                "title": "A new Claude Opus leads",
+                "kind": "roundup",
+                "image_url": "https://example.invalid/set-ai.jpg",
+                "collection_ref": {"slug": "machinery-ai-model-leaderboard-2026", "name": "AI Model Leaderboard", "revision": 21, "collection_count": 7},
+                "roundup": {"kicker": "TECH · AI", "footer": "", "rows": []},
+                "items": []
+              }
+            }
+          ],
+          "total": 5,
+          "limit": 80,
+          "offset": 0,
+          "has_more": false
+        }
+        """#
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+        let feed = try dec.decode(FeedResponse.self, from: Data(feedJSON.utf8))
+        let sets = BrowsePublicSet402A.extractFromFeedItems(feed.items, limit: 8)
+        XCTAssertEqual(sets.map(\.slug), [
+            "machinery-2026-summed-up",
+            "machinery-next-james-bond",
+            "machinery-ai-model-leaderboard-2026",
+        ])
+        XCTAssertEqual(sets[0].title, "2026 Summed Up")
+        XCTAssertEqual(sets[0].subtitle, "Culture · 9 markets")
+        XCTAssertEqual(sets[0].imageURL?.absoluteString, "https://example.invalid/set-2026.jpg")
+        XCTAssertEqual(sets[2].subtitle, "AI · 7 markets")
+    }
+
+    func testBrowseHome402ASelfContainedSetsCategoriesDestinationsAndSearchPills390LightDark() async throws {
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         let emptyDiscovery = try dec.decode(ContainerDiscoveryResponse.self, from: Data(#"{"collections":[]}"#.utf8))
         let svc = StaticDiscovery402A(response: emptyDiscovery)
 
-        let publicSets: [BrowsePublicSet402A] = [
-            BrowsePublicSet402A(slug: "machinery-2026-summed-up", title: "2026 Summed Up", subtitle: "Culture · 9 markets", imageURL: nil),
-            BrowsePublicSet402A(slug: "machinery-next-james-bond", title: "The Next James Bond Film", subtitle: "Entertainment · 7 markets", imageURL: nil),
-            BrowsePublicSet402A(slug: "machinery-chess-milestones-and-curiosities", title: "Chess Milestones & Curiosities", subtitle: "Odds & Chess · 5 markets", imageURL: nil),
-            BrowsePublicSet402A(slug: "machinery-oscars-best-picture", title: "Oscars Best Picture", subtitle: "The Oscars · 8 markets", imageURL: nil),
-            BrowsePublicSet402A(slug: "machinery-ai-model-leaderboard-2026", title: "AI Model Leaderboard", subtitle: "Tech & AI · 7 markets", imageURL: nil),
-            BrowsePublicSet402A(slug: "machinery-space-race", title: "Race to the Moon & Mars", subtitle: "Tech & Space · 8 markets", imageURL: nil),
-            BrowsePublicSet402A(slug: "machinery-stage-and-cover", title: "Stage & Cover", subtitle: "Entertainment · 6 markets", imageURL: nil),
-            BrowsePublicSet402A(slug: "machinery-long-shots", title: "Long Shots", subtitle: "Long Shots · 14 markets", imageURL: nil),
+        let setSpecs: [(slug: String, title: String, subtitle: String, symbol: String, top: UIColor, bottom: UIColor)] = [
+            ("machinery-2026-summed-up", "2026 Summed Up", "Culture · 9 markets", "sparkles", .systemIndigo, .systemPurple),
+            ("machinery-next-james-bond", "The Next James Bond Film", "Entertainment · 7 markets", "film.fill", UIColor(red: 0.16, green: 0.22, blue: 0.32, alpha: 1.0), .darkGray),
+            ("machinery-chess-milestones-and-curiosities", "Chess Milestones & Curiosities", "Odds & Chess · 5 markets", "checkerboard.rectangle", .systemBrown, .systemOrange),
+            ("machinery-oscars-best-picture", "Oscars Best Picture", "The Oscars · 8 markets", "trophy.fill", .systemRed, .systemOrange),
+            ("machinery-ai-model-leaderboard-2026", "AI Model Leaderboard", "Tech & AI · 7 markets", "cpu.fill", .systemBlue, .systemTeal),
+            ("machinery-space-race", "Race to the Moon & Mars", "Tech & Space · 8 markets", "moon.stars.fill", .systemBlue, .black),
+            ("machinery-stage-and-cover", "Stage & Cover", "Entertainment · 6 markets", "music.mic", .systemPink, .systemPurple),
+            ("machinery-long-shots", "Long Shots", "Long Shots · 14 markets", "scope", .systemTeal, .systemGreen),
         ]
 
-        var setImages: [String: Image] = [:]
-        for s in publicSets {
-            let p = "\(Self.v2ScratchDir)/set-art/\(s.slug).jpg"
-            if let ui = UIImage(contentsOfFile: p) {
-                setImages[s.slug] = Image(uiImage: ui)
-            }
+        let publicSets = setSpecs.map {
+            BrowsePublicSet402A(slug: $0.slug, title: $0.title, subtitle: $0.subtitle, imageURL: nil)
         }
-        XCTAssertEqual(setImages.count, 8, "Expected all 8 downloaded real set cover images in \(Self.v2ScratchDir)/set-art")
+        let setImages = Dictionary(
+            uniqueKeysWithValues: setSpecs.map {
+                ($0.slug, Image(uiImage: Self.makeSetArtImage(symbol: $0.symbol, topColor: $0.top, bottomColor: $0.bottom)))
+            }
+        )
+        let setsSvc = StaticPublicSets402A(sets: publicSets)
 
-        let entDataPath = "\(Self.v2ScratchDir)/live_entertainment.json"
-        let entData = try Data(contentsOf: URL(fileURLWithPath: entDataPath))
-        let entResponse = try dec.decode(EntertainmentResponse.self, from: entData)
+        let entJSON = #"""
+        {
+          "total_markets": 100,
+          "updated_at": "2026-11-26T12:41:00Z",
+          "trending": [
+            {
+              "q": "Oscar Winner: Best Picture",
+              "prob": 52.5,
+              "src": "kalshi",
+              "market_id": 6173044,
+              "external_id": "KXOSCARPIC-27",
+              "kind": "multi",
+              "top_outcomes": [
+                {"name": "The Odyssey", "prob": 52.5, "delta_24h": 0.0},
+                {"name": "You Can See Everything", "prob": 23.5, "delta_24h": -1.0},
+                {"name": "Dune: Part Three", "prob": 10.5, "delta_24h": 0.0}
+              ],
+              "outcome_count": 41,
+              "volume_24h": 128866,
+              "resolution_date": "2027-12-31T15:00:00Z",
+              "image_url": null,
+              "hook": null
+            },
+            {
+              "q": "GTA VI Online released by...?",
+              "prob": 50.5,
+              "src": "polymarket",
+              "market_id": 69851943,
+              "external_id": "1353351",
+              "kind": "multi",
+              "top_outcomes": [
+                {"name": "June 30, 2027", "prob": 50.5, "delta_24h": 0.0},
+                {"name": "March 31, 2027", "prob": 18.5, "delta_24h": 0.0},
+                {"name": "December 31, 2026", "prob": 4.5, "delta_24h": 0.0}
+              ],
+              "outcome_count": 3,
+              "volume_24h": 13375,
+              "resolution_date": "2027-07-01T03:59:00Z",
+              "image_url": null,
+              "hook": null
+            },
+            {
+              "q": "\"Hexed\" 5-Day Opening Weekend Box Office",
+              "prob": 38.0,
+              "src": "kalshi",
+              "market_id": 71029001,
+              "external_id": "KXHEXED-26",
+              "kind": "multi",
+              "top_outcomes": [
+                {"name": "32m–36m", "prob": 38.0, "delta_24h": 2.0},
+                {"name": "36m–40m", "prob": 32.0, "delta_24h": 1.0},
+                {"name": "40m–44m", "prob": 13.0, "delta_24h": -1.0}
+              ],
+              "outcome_count": 8,
+              "volume_24h": 18200,
+              "resolution_date": "2026-11-29T23:59:00Z",
+              "image_url": null,
+              "hook": null
+            }
+          ],
+          "themes": {},
+          "cultural_moments": [],
+          "by_source": {"kalshi": 42, "polymarket": 58}
+        }
+        """#
+        let entResponse = try dec.decode(EntertainmentResponse.self, from: Data(entJSON.utf8))
 
-        let outPath = ProcessInfo.processInfo.environment["BUILDER_C_RENDER_402A_DIR"]
+        let techFeedJSON = #"""
+        {
+          "items": [
+            {
+              "type": "futures",
+              "score": 94,
+              "data": {
+                "id": 63522628,
+                "name": "Which company has the best AI model on LiveBench (Coding) end of November?",
+                "llm_sport_category": "tech",
+                "source": "polymarket",
+                "source_count": 1,
+                "sources": ["polymarket"],
+                "market_type": "field",
+                "status": "open",
+                "resolution_date": "2026-12-01T04:59:00+00:00",
+                "top_outcomes": [
+                  {"id": 239520644, "name": "OpenAI", "probability": 0.67, "rendered_percent": 67, "rank": 1},
+                  {"id": 239504971, "name": "Google", "probability": 0.10, "rendered_percent": 10, "rank": 2},
+                  {"id": 239579513, "name": "Meta", "probability": 0.08, "rendered_percent": 8, "rank": 3}
+                ]
+              }
+            },
+            {
+              "type": "futures",
+              "score": 89,
+              "data": {
+                "id": 63522629,
+                "name": "Will OpenAI complete an IPO before 2027?",
+                "llm_sport_category": "tech",
+                "source": "kalshi",
+                "source_count": 1,
+                "sources": ["kalshi"],
+                "market_type": "binary",
+                "status": "open",
+                "resolution_date": "2027-01-01T00:00:00+00:00",
+                "top_outcomes": [
+                  {"id": 3001, "name": "Yes", "probability": 0.42, "rendered_percent": 42, "rank": 1, "movement": 0.03}
+                ]
+              }
+            },
+            {
+              "type": "futures",
+              "score": 86,
+              "data": {
+                "id": 63522630,
+                "name": "Next frontier coding model leader in 2026",
+                "llm_sport_category": "tech",
+                "source": "polymarket",
+                "source_count": 1,
+                "sources": ["polymarket"],
+                "market_type": "field",
+                "status": "open",
+                "resolution_date": "2026-12-31T23:59:00+00:00",
+                "top_outcomes": [
+                  {"id": 4001, "name": "Anthropic", "probability": 0.56, "rendered_percent": 56, "rank": 1},
+                  {"id": 4002, "name": "Google Gemini", "probability": 0.28, "rendered_percent": 28, "rank": 2}
+                ]
+              }
+            }
+          ],
+          "total": 3,
+          "limit": 50,
+          "offset": 0,
+          "has_more": false
+        }
+        """#
+        let techFeed = try dec.decode(FeedResponse.self, from: Data(techFeedJSON.utf8))
+        let techVM = SportCategoryViewModel(categoryKey: "tech")
+        techVM.setItemsForTesting(techFeed.items, leagueMarkets: nil)
+        XCTAssertFalse(techVM.drawsNoRows)
+        XCTAssertEqual(techVM.topMarkets.count, 3)
+
+        let outPath = ProcessInfo.processInfo.environment["TEST_RUNNER_BUILDER_C_RENDER_402A_DIR"]
+            ?? ProcessInfo.processInfo.environment["BUILDER_C_RENDER_402A_DIR"]
         if let outPath, !outPath.isEmpty {
             try FileManager.default.createDirectory(atPath: outPath, withIntermediateDirectories: true)
         }
 
         for (scheme, sTag) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
+            // 1. Browse using previewPublicSetsService (with previewSets == []) to prove async set loading + artwork
             let browseImg = await render390(
-                view: LeaguesView(previewDiscoveryService: svc, previewSets: publicSets, preloadedSetImages: setImages),
+                view: LeaguesView(
+                    previewDiscoveryService: svc,
+                    previewSets: [],
+                    preloadedSetImages: setImages,
+                    previewPublicSetsService: setsSvc
+                ),
                 scheme: scheme,
                 height: 1920
             )
@@ -162,8 +432,11 @@ final class BrowseHome402AFirstDraftTests: XCTestCase {
                 XCTAssertTrue(browseOCR.localizedCaseInsensitiveContains(token), "Browse (\(sTag)) missing '\(token)' in \(browseOCR)")
             }
 
+            // 2. Search empty state using publicSetsService (with previewSets == [])
             let searchImg = await render390(
-                view: NavigationStack { SearchView(discoveryService: svc, previewSets: publicSets) },
+                view: NavigationStack {
+                    SearchView(discoveryService: svc, previewSets: [], publicSetsService: setsSvc)
+                },
                 scheme: scheme,
                 height: 1180
             )
@@ -175,20 +448,45 @@ final class BrowseHome402AFirstDraftTests: XCTestCase {
                 XCTAssertTrue(searchOCR.localizedCaseInsensitiveContains(token), "Search (\(sTag)) missing '\(token)' in \(searchOCR)")
             }
 
+            // 3. Category destination: Entertainment
             let entImg = await render390(
                 view: NavigationStack { EntertainmentView(preloadedData: entResponse) },
                 scheme: scheme,
-                height: 1080
+                height: 920
             )
             let entOCR = try ocrLines(entImg).joined(separator: " ")
             XCTAssertTrue(entOCR.localizedCaseInsensitiveContains("Entertainment"), "Entertainment destination (\(sTag)) missing header: \(entOCR)")
+            XCTAssertTrue(entOCR.localizedCaseInsensitiveContains("The Odyssey"), "Entertainment destination (\(sTag)) missing market row: \(entOCR)")
             XCTAssertFalse(entOCR.contains("…"), "Entertainment destination (\(sTag)) clipped text: \(entOCR)")
+
+            // 4. Category destination: Tech and business
+            let techImg = await render390(
+                view: NavigationStack {
+                    SportCategoryView(
+                        categoryKey: "tech",
+                        categoryName: "Tech and business",
+                        preloadedViewModel: techVM
+                    )
+                },
+                scheme: scheme,
+                height: 920
+            )
+            let techOCR = try ocrLines(techImg)
+                .joined(separator: " ")
+                .replacingOccurrences(of: "OpenAl", with: "OpenAI")
+                .replacingOccurrences(of: "Al ", with: "AI ")
+            XCTAssertFalse(techOCR.localizedCaseInsensitiveContains("No Tech and business Right Now"), "Tech destination (\(sTag)) rendered empty state: \(techOCR)")
+            for token in ["Tech and business", "Markets", "OpenAI", "67%"] {
+                XCTAssertTrue(techOCR.localizedCaseInsensitiveContains(token), "Tech destination (\(sTag)) missing '\(token)': \(techOCR)")
+            }
+            XCTAssertFalse(techOCR.contains("…"), "Tech destination (\(sTag)) clipped text: \(techOCR)")
 
             if let outPath, !outPath.isEmpty {
                 let dir = URL(fileURLWithPath: outPath, isDirectory: true)
-                if let p1 = browseImg.pngData() { try p1.write(to: dir.appendingPathComponent("browse-v2-\(sTag)-390.png")) }
-                if let p2 = searchImg.pngData() { try p2.write(to: dir.appendingPathComponent("search-v2-\(sTag)-390.png")) }
-                if let p3 = entImg.pngData() { try p3.write(to: dir.appendingPathComponent("entertainment-v2-\(sTag)-390.png")) }
+                if let p1 = browseImg.pngData() { try p1.write(to: dir.appendingPathComponent("browse-v3-\(sTag)-390.png")) }
+                if let p2 = searchImg.pngData() { try p2.write(to: dir.appendingPathComponent("search-v3-\(sTag)-390.png")) }
+                if let p3 = entImg.pngData() { try p3.write(to: dir.appendingPathComponent("entertainment-v3-\(sTag)-390.png")) }
+                if let p4 = techImg.pngData() { try p4.write(to: dir.appendingPathComponent("tech-v3-\(sTag)-390.png")) }
             }
         }
     }

@@ -116,15 +116,18 @@ struct LeaguesView: View {
     private let previewDiscoveryService: (any ContainerDiscoveryLoading)?
     private let previewSets: [BrowsePublicSet402A]
     private let preloadedSetImages: [String: Image]
+    private let previewPublicSetsService: (any BrowsePublicSetsLoading)?
 
     init(
         previewDiscoveryService: (any ContainerDiscoveryLoading)? = nil,
         previewSets: [BrowsePublicSet402A] = [],
-        preloadedSetImages: [String: Image] = [:]
+        preloadedSetImages: [String: Image] = [:],
+        previewPublicSetsService: (any BrowsePublicSetsLoading)? = nil
     ) {
         self.previewDiscoveryService = previewDiscoveryService
         self.previewSets = previewSets
         self.preloadedSetImages = preloadedSetImages
+        self.previewPublicSetsService = previewPublicSetsService
     }
 
     var body: some View {
@@ -136,12 +139,14 @@ struct LeaguesView: View {
                         BrowseCollectionsView(
                             service: previewDiscoveryService,
                             previewSets: previewSets,
-                            preloadedSetImages: preloadedSetImages
+                            preloadedSetImages: preloadedSetImages,
+                            publicSetsService: previewPublicSetsService
                         )
                     } else {
                         BrowseCollectionsView(
                             previewSets: previewSets,
-                            preloadedSetImages: preloadedSetImages
+                            preloadedSetImages: preloadedSetImages,
+                            publicSetsService: previewPublicSetsService
                         )
                     }
                     topicSection

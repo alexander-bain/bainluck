@@ -44,7 +44,7 @@ final class ContainerDiscoveryContractTests: XCTestCase {
     @MainActor
     func testBankedProducerNamesCountsAndDestinationReachExistingHub() throws {
         let response = try ContainerDiscoveryFixture.decode()
-        let entry = try XCTUnwrap(request.entries(in: response).first)
+        let entry = try XCTUnwrap(request.entries(in: response, asOf: ContainerDiscoveryFixture.now).first)
         XCTAssertEqual(entry.collection.name, "MLB 2026 · Postseason")
         XCTAssertEqual(entry.subtitle, "9 games · 6 markets")
         XCTAssertEqual(entry.collection.revision, 2)
@@ -57,7 +57,7 @@ final class ContainerDiscoveryContractTests: XCTestCase {
             try ContainerDiscoveryFixture.decode { $0["collections"] = NSNull() },
             ContainerDiscoveryFixture.empty,
         ] {
-            XCTAssertTrue(request.entries(in: response).isEmpty)
+            XCTAssertTrue(request.entries(in: response, asOf: ContainerDiscoveryFixture.now).isEmpty)
         }
     }
 
@@ -68,7 +68,7 @@ final class ContainerDiscoveryContractTests: XCTestCase {
             cards.append(["type": "collection", "id": "bad"])
             object["collections"] = cards
         }
-        XCTAssertEqual(request.entries(in: response).map(\.id), ["mlb-2026-postseason"])
+        XCTAssertEqual(request.entries(in: response, asOf: ContainerDiscoveryFixture.now).map(\.id), ["mlb-2026-postseason"])
     }
 
     func testUnpublishedRevokedAndUnknownStateCannotBeOffered() throws {
@@ -76,7 +76,7 @@ final class ContainerDiscoveryContractTests: XCTestCase {
             let response = try ContainerDiscoveryFixture.decode { object in
                 ContainerDiscoveryFixture.changeCard(&object) { $0["state"] = state }
             }
-            XCTAssertTrue(request.entries(in: response).isEmpty, state)
+            XCTAssertTrue(request.entries(in: response, asOf: ContainerDiscoveryFixture.now).isEmpty, state)
         }
     }
 
@@ -94,7 +94,7 @@ final class ContainerDiscoveryContractTests: XCTestCase {
             let response = try ContainerDiscoveryFixture.decode { object in
                 ContainerDiscoveryFixture.changeCard(&object, mutation)
             }
-            XCTAssertTrue(request.entries(in: response).isEmpty)
+            XCTAssertTrue(request.entries(in: response, asOf: ContainerDiscoveryFixture.now).isEmpty)
         }
     }
 
@@ -103,26 +103,26 @@ final class ContainerDiscoveryContractTests: XCTestCase {
             let response = try ContainerDiscoveryFixture.decode { object in
                 ContainerDiscoveryFixture.changeCard(&object) { $0["game_count"] = counts.0; $0["question_count"] = counts.1 }
             }
-            XCTAssertTrue(request.entries(in: response).isEmpty)
+            XCTAssertTrue(request.entries(in: response, asOf: ContainerDiscoveryFixture.now).isEmpty)
         }
         let duplicated = try ContainerDiscoveryFixture.decode { object in
             let cards = object["collections"] as! [[String: Any]]
             object["collections"] = cards + cards
         }
-        XCTAssertEqual(request.entries(in: duplicated).count, 1)
+        XCTAssertEqual(request.entries(in: duplicated, asOf: ContainerDiscoveryFixture.now).count, 1)
     }
 
     func testCountsUseSuppliedInventoryAndSingularLabels() throws {
         let response = try ContainerDiscoveryFixture.decode { object in
             ContainerDiscoveryFixture.changeCard(&object) { $0["game_count"] = 0; $0["question_count"] = 1 }
         }
-        XCTAssertEqual(request.entries(in: response).first?.subtitle, "1 market")
+        XCTAssertEqual(request.entries(in: response, asOf: ContainerDiscoveryFixture.now).first?.subtitle, "1 market")
     }
 
     func testNFLStageWeekAndSlugMustRoundTripWithoutGuessing() throws {
         let nfl = ContainerDiscoveryRequest(league: .nfl, season: 2026)
-        XCTAssertEqual(nfl.entries(in: try ContainerDiscoveryFixture.nfl()).map(\.id), ["nfl-2026-week-5"])
-        XCTAssertTrue(request.entries(in: try ContainerDiscoveryFixture.nfl()).isEmpty)
+        XCTAssertEqual(nfl.entries(in: try ContainerDiscoveryFixture.nfl(), asOf: ContainerDiscoveryFixture.now).map(\.id), ["nfl-2026-week-5"])
+        XCTAssertTrue(request.entries(in: try ContainerDiscoveryFixture.nfl(), asOf: ContainerDiscoveryFixture.now).isEmpty)
         // A matching destination cannot legitimize a conflicting stage.
         let wrong = try ContainerDiscoveryFixture.decode { object in
             ContainerDiscoveryFixture.changeCard(&object) { card in
@@ -131,7 +131,7 @@ final class ContainerDiscoveryContractTests: XCTestCase {
                 card["destination"] = ["kind": "container", "slug": "nfl-2026-week-5", "api": "/api/containers/nfl-2026-week-5"]
             }
         }
-        XCTAssertTrue(nfl.entries(in: wrong).isEmpty)
+        XCTAssertTrue(nfl.entries(in: wrong, asOf: ContainerDiscoveryFixture.now).isEmpty)
     }
 
     func testRequestsFollowExistingUTCSeasonConventionAcrossYearBoundary() throws {
@@ -153,15 +153,15 @@ final class ContainerDiscoveryContractTests: XCTestCase {
     func testBrowseWiringLeavesTheLeagueCatalogAndRouteReceiverIntact() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let leagues = try String(contentsOf: root.appendingPathComponent("Bain Luck/Views/LeaguesView.swift"), encoding: .utf8)
-        XCTAssertTrue(leagues.contains("BrowseCollectionsView()"))
+        XCTAssertTrue(leagues.contains("BrowseCollectionsView("))
         XCTAssertTrue(leagues.contains("leagueSections"))
         XCTAssertTrue(leagues.contains(".navigationDestination(for: Route.self)"))
         XCTAssertTrue(leagues.contains("path.append(route)"))
         let view = try String(contentsOf: root.appendingPathComponent("Bain Luck/Views/BrowseCollectionsView.swift"), encoding: .utf8)
-        XCTAssertTrue(view.contains("if !vm.entries.isEmpty"))
-        XCTAssertTrue(view.contains("NavigationLink(value: entry.route)"))
-        XCTAssertTrue(view.contains("Text(entry.collection.name)"))
-        XCTAssertTrue(view.contains("Text(entry.subtitle)"))
+        XCTAssertTrue(view.contains("if !combinedSets.isEmpty"))
+        XCTAssertTrue(view.contains("NavigationLink(value: setItem.route)"))
+        XCTAssertTrue(view.contains("Text(setItem.title)"))
+        XCTAssertTrue(view.contains("Text(setItem.subtitle)"))
     }
 }
 

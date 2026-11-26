@@ -17,6 +17,17 @@ final class SportCategoryViewModel: ObservableObject {
     private let pageSize = 50
     private let clock: () -> Date
 
+    /// Non-sports category keys such as `"tech"` live in the main category feed
+    /// (`/api/feed?sport=tech`) rather than `/api/feed?mode=sports` or `/api/leagues/tech`
+    /// (#13750 / 402: A — `mode=sports` returns 0 items vs 110 live Tech futures).
+    nonisolated static func feedMode(for categoryKey: String) -> String? {
+        categoryKey == "tech" ? nil : "sports"
+    }
+
+    nonisolated static func loadsLeagueMarkets(for categoryKey: String) -> Bool {
+        categoryKey != "tech"
+    }
+
     init(categoryKey: String, clock: @escaping () -> Date = Date.init) {
         self.categoryKey = categoryKey
         self.clock = clock
@@ -28,7 +39,7 @@ final class SportCategoryViewModel: ObservableObject {
 
         // #13001: publish whichever source arrives first so Tennis (`tennis_atp` + `tennis_wta`
         // in ~0.4s) draws matches immediately without waiting 4s+ on `/api/feed`, and use
-        // `mode: "sports"` on the category feed.
+        // `mode: "sports"` on sport category feeds (while `"tech"` omits `mode`).
         await withTaskGroup(of: Void.self) { group in
             group.addTask { @MainActor [weak self] in
                 guard let self else { return }
@@ -44,7 +55,7 @@ final class SportCategoryViewModel: ObservableObject {
                         sport: self.categoryKey,
                         limit: self.pageSize,
                         offset: 0,
-                        mode: "sports"
+                        mode: Self.feedMode(for: self.categoryKey)
                     )
                     self.items = feed.items
                     self.hasMore = feed.hasMore
@@ -66,9 +77,10 @@ final class SportCategoryViewModel: ObservableObject {
     /// Seed `items` without a network call, so the section partition (#1471)
     /// can be tested on a captured production payload. Test-only by
     /// convention — `items` stays `private(set)` for every other caller.
-    func setItemsForTesting(_ newItems: [FeedItem], leagueMarkets: LeagueMarketsResponse? = nil) {
+    func setItemsForTesting(_ newItems: [FeedItem], leagueMarkets: LeagueMarketsResponse? = nil, hasMore: Bool = false) {
         items = newItems
         self.leagueMarkets = leagueMarkets
+        self.hasMore = hasMore
         loading = false
     }
 
@@ -80,7 +92,7 @@ final class SportCategoryViewModel: ObservableObject {
                 sport: categoryKey,
                 limit: pageSize,
                 offset: items.count,
-                mode: "sports"
+                mode: Self.feedMode(for: categoryKey)
             )
             items.append(contentsOf: feed.items)
             hasMore = feed.hasMore
@@ -231,6 +243,7 @@ final class SportCategoryViewModel: ObservableObject {
     }
 
     private func loadLeagueMarkets() async {
+        guard Self.loadsLeagueMarkets(for: categoryKey) else { return }
         if categoryKey == "tennis" {
             async let atpTask = try? APIClient.shared.fetchLeagueMarkets(sportKey: "tennis_atp")
             async let wtaTask = try? APIClient.shared.fetchLeagueMarkets(sportKey: "tennis_wta")

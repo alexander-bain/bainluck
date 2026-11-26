@@ -86,6 +86,8 @@ struct SearchView: View {
     /// offset. `nil` everywhere else, which is today's behaviour.
     private let macPlace: MacReadingPlace<SearchViewModel>?
     private let previewSets: [BrowsePublicSet402A]
+    private let publicSetsService: (any BrowsePublicSetsLoading)?
+    @State private var loadedPublicSets: [BrowsePublicSet402A] = []
     /// #10878 / #4940 — the result row the Mac arrow keys have picked, by its
     /// canonical route. Never set anywhere else, so iPhone and iPad draw and
     /// behave exactly as before.
@@ -94,10 +96,18 @@ struct SearchView: View {
     init(
         macPlace: MacReadingPlace<SearchViewModel>? = nil,
         discoveryService: any ContainerDiscoveryLoading = ContainerDiscoveryService(),
-        previewSets: [BrowsePublicSet402A] = []
+        previewSets: [BrowsePublicSet402A] = [],
+        publicSetsService: (any BrowsePublicSetsLoading)? = nil
     ) {
         self.macPlace = macPlace
         self.previewSets = previewSets
+        if let publicSetsService {
+            self.publicSetsService = publicSetsService
+        } else if discoveryService is ContainerDiscoveryService && previewSets.isEmpty {
+            self.publicSetsService = FeedPublicSetsService402A()
+        } else {
+            self.publicSetsService = nil
+        }
         _viewModel = StateObject(wrappedValue: macPlace?.models(orMake: { SearchViewModel() }) ?? SearchViewModel())
         _discoveryVM = StateObject(wrappedValue: ContainerDiscoveryViewModel(service: discoveryService))
         _path = State(initialValue: macPlace?.path ?? NavigationPath())
@@ -128,6 +138,9 @@ struct SearchView: View {
         var seen = Set<String>()
         var result: [BrowsePublicSet402A] = []
         for s in previewSets where seen.insert(s.slug).inserted {
+            result.append(s)
+        }
+        for s in loadedPublicSets where seen.insert(s.slug).inserted {
             result.append(s)
         }
         for entry in discoveryVM.entries where seen.insert(entry.collection.slug).inserted {
@@ -233,6 +246,11 @@ struct SearchView: View {
             consumeSearchFocusRequest()
             await viewModel.loadTrending()
             await discoveryVM.load()
+            if let publicSetsService,
+               let sets = try? await publicSetsService.loadPublicSets(),
+               !sets.isEmpty {
+                loadedPublicSets = sets
+            }
         }
         .onChange(of: navCoordinator.pendingSearchQuery) { _, _ in
             consumePendingSearchQuery()
