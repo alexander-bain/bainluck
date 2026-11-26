@@ -97,7 +97,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.utils import game_markets_cache as _gmc
-from app.utils.db_session_identity import current_build_id
+from app.utils.db_session_identity import UNKNOWN_BUILD
 from app.utils.event_concept_cache import (
     AVAILABILITY_LIVE,
     AVAILABILITY_STALE_OK,
@@ -156,6 +156,18 @@ SOURCE_STATUS_FIELD = _gmc.SOURCE_STATUS_FIELD
 #: exists", because the payload a release invalidates is YOUNG, not old.
 BUILD_FIELD = _gmc.BUILD_FIELD
 
+#: Explicit content/contract version stamped into `/related-futures` cache
+#: entries (#13573). Bump whenever `_build_related_futures` changes what a
+#: reader sees (shape, filtering, withholding, scoring); unrelated deploys leave
+#: existing copies valid across releases while pre-versioned deploy stamps
+#: (`"v6636"`, etc.) are refused once on first rollout.
+RELATED_FUTURES_CACHE_VERSION: int = 1
+
+
+def current_cache_version() -> str:
+    """Content/contract version stamped into `/related-futures` cache entries (#13573)."""
+    return f"rf-v{RELATED_FUTURES_CACHE_VERSION}"
+
 
 def is_final(status: Any) -> bool:
     """True when `status` is a finished game, by the page's own definition."""
@@ -202,27 +214,33 @@ def stamp(
     )
     envelope = dict(enveloped.get(ENVELOPE_FIELD) or {})
     envelope[SOURCE_STATUS_FIELD] = str(source_status or "")
-    envelope[BUILD_FIELD] = current_build_id()
+    envelope[BUILD_FIELD] = current_cache_version()
     enveloped[ENVELOPE_FIELD] = envelope
     return enveloped
 
 
 def build_id_of(payload: Any) -> str:
-    """The build that produced a stored payload, or `""` when it does not say."""
+    """The stamp that produced a stored payload, or `""` when it does not say."""
     return _gmc.build_id_of(payload)
 
 
-def payload_is_current_build(payload: Any) -> bool:
-    """Was this payload built by the code that is running right now? (#6355)
+def payload_is_current_version(payload: Any) -> bool:
+    """Was this payload built under `RELATED_FUTURES_CACHE_VERSION`? (#13573)
 
-    Delegated, and that includes the sibling's deliberate FAIL-OPEN in BOTH
-    directions — an unknown stored build (every payload written before this
-    ship) and an unknown running build (local dev, CI, any app without dyno
-    metadata) both read as "cannot tell", whose only safe answer is to serve.
-    So this can turn a serve into a rebuild only when both builds are known and
-    they differ. The full reasoning is on `_gmc.payload_is_current_build`.
+    Old deploy-build stamps (e.g. `"v6636"`) differ from `"rf-v1"`, so the
+    first release after this ships throws old-style copies away once.
+    Absent/`UNKNOWN_BUILD` stored or running values fail open as in #6883.
     """
-    return _gmc.payload_is_current_build(payload)
+    stored = build_id_of(payload)
+    if not stored or stored == UNKNOWN_BUILD:
+        return True
+    running = current_cache_version()
+    if not running or running == UNKNOWN_BUILD:
+        return True
+    return stored == running
+
+
+payload_is_current_build = payload_is_current_version
 
 
 def source_status_of(payload: Any) -> str:
@@ -297,9 +315,9 @@ def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
         # of these lines just after a release, not which event; the refused
         # payload names its own build in the envelope this module publishes.
         logger.info(
-            "related-futures: a slot built by another release was refused "
-            "(running build %s) — rebuilding",
-            current_build_id(),
+            "related-futures: a slot built by an older cache version was refused "
+            "(running version %s) — rebuilding",
+            current_cache_version(),
         )
         return None, "stale_build"
 
@@ -311,9 +329,9 @@ def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
         # sibling line below it DOES carry the id and is pre-existing debt a new
         # line must not add to.
         logger.info(
-            "related-futures: a mirror built by another release was refused "
-            "(running build %s) — reader will rebuild",
-            current_build_id(),
+            "related-futures: a mirror built by an older cache version was refused "
+            "(running version %s) — reader will rebuild",
+            current_cache_version(),
         )
         return None, "stale_build"
     servable, reason = mirror_is_servable(mirror)
