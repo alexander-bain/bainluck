@@ -36,6 +36,31 @@ enum EventSportHeadlines12472 {
         return noLiveScoreGameLine
     }
 
+    /// #13799 — plain-English notice on the headline when a game that has not
+    /// settled has no printable current probability (`"No probability yet"`
+    /// before kickoff, `"No recent probability"` once started/live), returning
+    /// `nil` for terminal or stopped states that already carry a status badge.
+    nonisolated static func resolveProbabilityUnavailableNotice(
+        for event: EventDetail,
+        hasCurrentChance: Bool,
+        now: Date = Date()
+    ) -> String? {
+        guard !hasCurrentChance else { return nil }
+        let lowerStatus = (event.status ?? "").lowercased()
+        if lowerStatus == "postponed" || lowerStatus == "canceled" || lowerStatus == "cancelled" {
+            return nil
+        }
+        return EventAtlasStates11666.heroStateLabel(
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            authorityPeriod: event.espn?.period,
+            venueSettled: event.venueSettled,
+            venueClosedNoWinner: event.venueClosedNoWinner,
+            hasCurrentOdds: false,
+            now: now
+        )
+    }
+
     nonisolated enum Phase: String, Equatable, Sendable, CaseIterable {
         case before
         case during
@@ -307,6 +332,7 @@ enum EventSportHeadlines12472 {
         let pregameAwayMarker: Double?
         let livePregameSummary: LivePregameSummary?
         var scoreUnavailableNotice: String? = nil
+        var probabilityUnavailableNotice: String? = nil
         let showsEkg: Bool
         let sourceMark: SourceMark?
         let confidenceTier: String?
@@ -334,6 +360,7 @@ enum EventSportHeadlines12472 {
             pregameAwayMarker: Double?,
             livePregameSummary: LivePregameSummary?,
             scoreUnavailableNotice: String? = nil,
+            probabilityUnavailableNotice: String? = nil,
             showsEkg: Bool,
             sourceMark: SourceMark?,
             confidenceTier: String?
@@ -367,6 +394,7 @@ enum EventSportHeadlines12472 {
             self.pregameAwayMarker = pregameAwayMarker
             self.livePregameSummary = livePregameSummary
             self.scoreUnavailableNotice = scoreUnavailableNotice
+            self.probabilityUnavailableNotice = probabilityUnavailableNotice
             self.showsEkg = showsEkg
             self.sourceMark = sourceMark
             self.confidenceTier = confidenceTier
@@ -874,6 +902,37 @@ enum EventSportHeadlines12472 {
             homeProjCell = ""
         }
 
+        let hasCurrentChance = !awayChance.isEmpty || !homeChance.isEmpty
+        let resolvedColumns: [ColumnSpec] = {
+            var cols: [ColumnSpec] = []
+            if hasProjCol {
+                cols.append(.init(role: .projected, header: "Proj."))
+            }
+            if hasCurrentChance {
+                cols.append(.init(role: .chance, header: "Chance"))
+            }
+            return cols
+        }()
+
+        let awayCells: [String] = {
+            var cells: [String] = []
+            if hasProjCol { cells.append(awayProjCell) }
+            if hasCurrentChance { cells.append(awayChance) }
+            return cells
+        }()
+        let homeCells: [String] = {
+            var cells: [String] = []
+            if hasProjCol { cells.append(homeProjCell) }
+            if hasCurrentChance { cells.append(homeChance) }
+            return cells
+        }()
+
+        let probabilityUnavailableNotice = resolveProbabilityUnavailableNotice(
+            for: event,
+            hasCurrentChance: hasCurrentChance,
+            now: now
+        )
+
         let awayRow = CompetitorRow(
             role: .away,
             fullName: awayFullName,
@@ -881,7 +940,7 @@ enum EventSportHeadlines12472 {
             shortName: shortNames.away,
             logoURL: awayLogo,
             record: awayRecord,
-            cells: hasProjCol ? [awayProjCell, awayChance] : [awayChance],
+            cells: awayCells,
             rawProbability: awayChance.isEmpty ? nil : awayProb,
             won: nil
         )
@@ -892,7 +951,7 @@ enum EventSportHeadlines12472 {
             shortName: shortNames.home,
             logoURL: homeLogo,
             record: homeRecord,
-            cells: hasProjCol ? [homeProjCell, homeChance] : [homeChance],
+            cells: homeCells,
             rawProbability: homeChance.isEmpty ? nil : homeProb,
             won: nil
         )
@@ -908,7 +967,7 @@ enum EventSportHeadlines12472 {
             eventStatus: event.status,
             liveBadgeText: nil,
             leagueLabel: league,
-            columns: columns,
+            columns: resolvedColumns,
             rows: [awayRow, homeRow],
             bottomBar: bar,
             pregameColumnHeaders: pregameHeaders,
@@ -918,8 +977,9 @@ enum EventSportHeadlines12472 {
             home: makeCompatTeamRow(homeRow, projNumber: pregameProj?.homeNumber, liveScore: nil, pregameChance: nil, chance: homeChance, finalText: nil),
             pregameAwayMarker: nil,
             livePregameSummary: nil,
+            probabilityUnavailableNotice: probabilityUnavailableNotice,
             showsEkg: canGrade && !homeChance.isEmpty,
-            sourceMark: (awayChance.isEmpty && homeChance.isEmpty) ? nil : event.sourceMark,
+            sourceMark: hasCurrentChance ? event.sourceMark : nil,
             confidenceTier: confidenceTier
         )
     }
@@ -1205,6 +1265,30 @@ enum EventSportHeadlines12472 {
         }
 
         let summary = isLive ? resolveLivePregameSummary(event: event, shortNames: shortNames) : nil
+        let hasCurrentChance = !awayNow.isEmpty || !homeNow.isEmpty
+        let duringColumns: [ColumnSpec] = {
+            if let tennisSlot = tennisScoreSlot {
+                return hasCurrentChance
+                    ? tennisSlot.columns + [.init(role: .now, header: "Now")]
+                    : tennisSlot.columns
+            }
+            var cols: [ColumnSpec] = []
+            if !omitsScoreColumn {
+                cols.append(.init(role: .score, header: "Score"))
+            }
+            if hasProjCol {
+                cols.append(.init(role: .projected, header: "Proj."))
+            }
+            if hasCurrentChance {
+                cols.append(.init(role: .now, header: "Now"))
+            }
+            return cols
+        }()
+        let probabilityUnavailableNotice = resolveProbabilityUnavailableNotice(
+            for: event,
+            hasCurrentChance: hasCurrentChance,
+            now: now
+        )
 
         let awayScoreCell = (!omitsScoreColumn && effectiveHasScore && event.awayScore != nil) ? "\(event.awayScore!)" : ""
         let homeScoreCell = (!omitsScoreColumn && effectiveHasScore && event.homeScore != nil) ? "\(event.homeScore!)" : ""
@@ -1217,8 +1301,8 @@ enum EventSportHeadlines12472 {
         let homeSuperscripts: [Int: String]
 
         if let tennisSlot = tennisScoreSlot {
-            awayCells = tennisSlot.awayCells + [awayNow]
-            homeCells = tennisSlot.homeCells + [homeNow]
+            awayCells = hasCurrentChance ? tennisSlot.awayCells + [awayNow] : tennisSlot.awayCells
+            homeCells = hasCurrentChance ? tennisSlot.homeCells + [homeNow] : tennisSlot.homeCells
             awayEmph = tennisSlot.awayEmph
             homeEmph = tennisSlot.homeEmph
             awaySuperscripts = tennisSlot.awaySuperscripts
@@ -1234,8 +1318,10 @@ enum EventSportHeadlines12472 {
                 a.append(awayProjCell)
                 h.append(homeProjCell)
             }
-            a.append(awayNow)
-            h.append(homeNow)
+            if hasCurrentChance {
+                a.append(awayNow)
+                h.append(homeNow)
+            }
             awayCells = a
             homeCells = h
             awayEmph = []
@@ -1282,7 +1368,7 @@ enum EventSportHeadlines12472 {
             eventStatus: event.status,
             liveBadgeText: liveBadge,
             leagueLabel: league,
-            columns: columns,
+            columns: duringColumns,
             rows: [awayRow, homeRow],
             bottomBar: bar,
             pregameColumnHeaders: nil,
@@ -1294,8 +1380,9 @@ enum EventSportHeadlines12472 {
             pregameAwayMarker: pregameMarker,
             livePregameSummary: summary,
             scoreUnavailableNotice: noLiveScoreNotice,
+            probabilityUnavailableNotice: probabilityUnavailableNotice,
             showsEkg: isLive && !homeNow.isEmpty,
-            sourceMark: (awayNow.isEmpty && homeNow.isEmpty) ? nil : event.sourceMark,
+            sourceMark: hasCurrentChance ? event.sourceMark : nil,
             confidenceTier: confidenceTier
         )
     }
