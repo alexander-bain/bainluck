@@ -15,6 +15,7 @@ from app.utils.container_proposer import (
     propose_top_containers,
 )
 from app.utils.kit_container_page_builder import (
+    audit_container_page_invariants,
     derive_common_headline,
     propose_container_page_for_family,
 )
@@ -1201,3 +1202,199 @@ def test_13696_rework_five_fable_fixes():
         a.get("refusal_reason") == "refused_duplicate_page_subject"
         for a in out_dup_person["ranked_audit"]
     ), out_dup_person["ranked_audit"]
+
+
+def test_13696_fable_nov26_rework_six_invariants():
+    from app.utils.kit_container_page_builder import (
+        _build_countdown_section,
+        _build_dated_tiles_section,
+        _build_plain_bar_stack_section,
+        _build_shared_scale_section,
+        _dedupe_twins,
+        _derive_section_headline,
+        _parse_date_marker,
+    )
+
+    # 1a. Cross-venue verb-s / -ies twin collapse inside dated_tiles (testifies vs testify)
+    jensen_mkts = [
+        _bin(88001, "Will Meridian Exec publicly testify before Congress before Dec 31, 2026?", 78, vol=50000),
+        _bin(88002, "Will Meridian Exec publicly testify before Congress before Mar 31, 2027?", 94, vol=50000),
+        _bin(88003, "Will Meridian Exec publicly testify before Congress before Jun 30, 2027?", 96, vol=50000),
+        _bin(88004, "Meridian Exec publicly testifies before Congress by Dec 31, 2026", 77, vol=1000),
+        _bin(88005, "Meridian Exec publicly testifies before Congress by Mar 31, 2027", 87, vol=1000),
+        _bin(88006, "Meridian Exec publicly testifies before Congress by Jun 30, 2027", 91, vol=1000),
+    ]
+    dt_jensen = _build_dated_tiles_section("meridian-exec", "TECH", jensen_mkts, set(), now=REF_NOW)
+    assert dt_jensen is not None
+    assert len(dt_jensen["body"]["rows"]) == 1, dt_jensen["body"]["rows"]
+
+    # 1b. Same-group_id binary submarkets collapse into multi-outcome contender parent
+    multi_visit = {
+        "id": 88010,
+        "name": "Which countries will Meridian Explorer visit in 2026?",
+        "group_id": "polymarket:703477",
+        "mutually_exclusive": False,
+        "status": "open",
+        "volume_24h": 40000,
+        "outcomes": [
+            {"id": 1, "name": "Nordmark", "current_probability": 0.13},
+            {"id": 2, "name": "Valoria", "current_probability": 0.12},
+            {"id": 3, "name": "Kestrel", "current_probability": 0.09},
+            {"id": 4, "name": "Borea", "current_probability": 0.08},
+        ],
+    }
+    child_bins = [
+        _bin(88011, "Will Meridian Explorer visit Nordmark in 2026?", 12, group_id="polymarket:703477", res_days=35),
+        _bin(88012, "Will Meridian Explorer visit Valoria in 2026?", 11, group_id="polymarket:703477", res_days=35),
+        _bin(88013, "Will Meridian Explorer visit Kestrel in 2026?", 8, group_id="polymarket:703477", res_days=35),
+    ]
+    collapsed = _dedupe_twins([multi_visit, *child_bins])
+    assert [m["id"] for m in collapsed] == [88010], collapsed
+
+    # 4. Single multi-outcome market names the market and shows row lead % in caption
+    pb_visit = _build_plain_bar_stack_section("meridian-explorer", "CULTURE", collapsed, set(), now=REF_NOW)
+    assert pb_visit is not None
+    assert pb_visit["common_headline"] == "Countries to Visit", pb_visit
+    assert "milestones" not in pb_visit["common_headline"].lower()
+    assert "13%" in pb_visit["stat_caption"] and "countries to visit" in pb_visit["stat_caption"].lower()
+
+    # 2. Inverted numeric threshold rungs rejected ($1.5T reading higher than $1.4T)
+    inv_mkts = [
+        _bin(88020, "Will Meridian Labs's valuation hit (HIGH) $1.5T by Mar 31, 2027?", 3, vol=100),
+        _bin(88021, "Will Meridian Labs's valuation hit (HIGH) $1.5T by Jun 30, 2027?", 7, vol=100),
+        _bin(88022, "Will Meridian Labs's valuation hit (HIGH) $1.4T by Mar 31, 2027?", 1, vol=5000),
+        _bin(88023, "Will Meridian Labs's valuation hit (HIGH) $1.4T by Jun 30, 2027?", 5, vol=5000),
+        _bin(88024, "Will Meridian Labs IPO by Mar 31, 2027?", 1, vol=9000),
+        _bin(88025, "Will Meridian Labs IPO by Jun 30, 2027?", 16, vol=9000),
+    ]
+    dt_inv = _build_dated_tiles_section("meridian-labs", "TECH", inv_mkts, set(), now=REF_NOW)
+    assert dt_inv is not None
+    row_labels_inv = [r["leading"][0]["text"] for r in dt_inv["body"]["rows"]]
+    assert not (
+        any("$1.5T" in lbl for lbl in row_labels_inv)
+        and any("$1.4T" in lbl for lbl in row_labels_inv)
+    ), row_labels_inv
+
+    # Valid non-inverted lower/upper token rungs remain intact in shared_scale
+    tok_mkts = [
+        _bin(88030, "Will Meridian Labs's frontier output token price be at or below $15 in 2026?", 23),
+        _bin(88031, "Will Meridian Labs's frontier output token price be at or below $10 in 2026?", 12),
+        _bin(88032, "Will Meridian Labs's frontier output token price be at or above $50 in 2026?", 15),
+        _bin(88033, "Will Meridian Labs's frontier output token price be at or above $75 in 2026?", 6),
+    ]
+    ss_tok = _build_shared_scale_section("meridian-labs", "TECH", tok_mkts, set())
+    assert ss_tok is not None and len(ss_tok["body"]["series"]) == 4
+
+    # 3. Date tiles sort Nov 26 < Nov 28 < Nov 29 (no clamping at day 28)
+    d28 = _parse_date_marker("on Nov 28, 2026", default_year=2026)
+    d29 = _parse_date_marker("on Nov 29, 2026", default_year=2026)
+    assert d28 is not None and d29 is not None and d28["sort_dt"] < d29["sort_dt"]
+    nov_mkts = [
+        _bin(88040, "Meridian activity on Nov 26, 2026", 91),
+        _bin(88041, "Meridian activity on Nov 29, 2026", 85),
+        _bin(88042, "Meridian activity on Nov 28, 2026", 84),
+    ]
+    dt_nov = _build_dated_tiles_section("meridian-nov", "WORLD", nov_mkts, set(), now=REF_NOW)
+    assert dt_nov is not None
+    tile_periods = [c["marks"][0]["top_label"] for c in dt_nov["body"]["rows"][0]["cells"]]
+    assert tile_periods == ["Nov 26 '26", "Nov 28 '26", "Nov 29 '26"], tile_periods
+
+    # 5a. 100%-row-match requirement: 1/4 match cannot produce "Upcoming Launches"
+    hl_mix = _derive_section_headline(
+        "countdown",
+        [
+            "Region action against Sector A by November 30, 2026",
+            "Will Region make Official C a citizen?",
+            "Will Region launch an operation in Sector B by December 31, 2026?",
+            "Partner agrees to a new trade deal with Region before 2027",
+        ],
+        "Region Outlook",
+        rows_meta=[
+            {"days": 4, "pct": 5, "deadline_dt": datetime(2026, 11, 30, tzinfo=timezone.utc)},
+            {"days": 35, "pct": 18, "deadline_dt": datetime(2026, 12, 31, tzinfo=timezone.utc)},
+            {"days": 35, "pct": 7, "deadline_dt": datetime(2026, 12, 31, tzinfo=timezone.utc)},
+            {"days": 35, "pct": 5, "deadline_dt": datetime(2026, 12, 31, tzinfo=timezone.utc)},
+        ],
+    )
+    assert hl_mix == "By December 31", hl_mix
+
+    # Dec 31 of NEXT year must not claim "By December 31"
+    hl_2027 = _derive_section_headline(
+        "dated_tiles",
+        ["Senator exits role", "Senator joins new venture"],
+        "Senator Outlook",
+        rows_meta=[
+            {"pct": 29, "deadline_dt": datetime(2027, 12, 31, tzinfo=timezone.utc)},
+            {"pct": 11, "deadline_dt": datetime(2027, 12, 31, tzinfo=timezone.utc)},
+        ],
+    )
+    assert hl_2027 == "Through Dec 2027", hl_2027
+
+    # 5b. Countdown preserves 100%-true "Public Remarks", and cleanly splits out "Public Praise" when already used
+    praise_mix_mkts = [
+        _bin(88050, "Will Senator Alpha publicly praise Leader B by November 30, 2026?", 43, res_days=4),
+        _bin(88051, "Will Senator Alpha publicly insult Host C by November 30, 2026?", 20, res_days=4),
+        _bin(88052, "Will Senator Alpha publicly praise Leader D by November 30, 2026?", 17, res_days=4),
+        _bin(88053, "Will Senator Alpha publicly praise Artist E by November 30, 2026?", 13, res_days=4),
+    ]
+    cd_remarks = _build_countdown_section("senator-alpha", "POLITICS", praise_mix_mkts, set(), now=REF_NOW)
+    assert cd_remarks is not None and cd_remarks["common_headline"] == "Public Remarks", cd_remarks
+    cd_praise = _build_countdown_section(
+        "senator-alpha",
+        "POLITICS",
+        praise_mix_mkts,
+        set(),
+        now=REF_NOW,
+        seen_headlines={"public remarks"},
+    )
+    assert cd_praise is not None
+    assert cd_praise["common_headline"] == "Public Praise", cd_praise
+    assert all(
+        "praise" in it["marks"][0]["text"].lower()
+        for it in cd_praise["body"]["items"]
+    ), cd_praise["body"]["items"]
+
+    # 6. Full page satisfies audit_container_page_invariants == [] & catches crafted violations
+    full_mkts = [
+        _bin(88060, "Will Meridian Senator publicly insult Target A on Nov 26, 2026?", 72, res_days=2),
+        _bin(88061, "Will Meridian Senator publicly insult Target A on Nov 28, 2026?", 70, res_days=4),
+        _bin(88062, "Will Meridian Senator publicly insult Target A on Nov 29, 2026?", 77, res_days=5),
+        _bin(88063, "Will Meridian Senator publicly insult Guest One by December 31, 2026?", 61, res_days=60),
+        _bin(88064, "Will Meridian Senator publicly insult Guest Two by December 31, 2026?", 42, res_days=60),
+        _bin(88065, "Will Meridian Senator publicly insult Guest Three by December 31, 2026?", 28, res_days=60),
+        _bin(88066, "Will Meridian Senator publicly praise Ally One by November 30, 2026?", 43, res_days=4),
+        _bin(88067, "Will Meridian Senator publicly praise Ally Two by November 30, 2026?", 17, res_days=4),
+        _bin(88068, "Will Meridian Senator publicly praise Ally Three by November 30, 2026?", 13, res_days=4),
+        _bin(88069, "Will Meridian Senator attend Forum X in 2027?", 12, res_days=120),
+        _bin(88070, "Will Meridian Senator publish memoir in 2027?", 8, res_days=120),
+    ]
+    full_res = propose_container_page_for_family("Meridian Senator", full_mkts, now=REF_NOW)
+    assert full_res["accepted"], full_res
+    assert audit_container_page_invariants(
+        full_res["page"],
+        markets_by_id={m["id"]: m for m in full_mkts},
+    ) == []
+
+    # Craft violation checks for audit_container_page_invariants
+    bad_page = {
+        "title": "Donald Senator",
+        "snapshot_captured_at": REF_NOW.isoformat(),
+        "sections": [
+            {
+                "id": "s1",
+                "variant": "countdown",
+                "common_headline": "Public Remarks",
+                "stat_caption": "cap",
+                "body": {"items": []},
+            },
+            {
+                "id": "s2",
+                "variant": "shared_scale",
+                "common_headline": "Donald Public Remarks",
+                "stat_caption": "cap",
+                "body": {"series": []},
+            },
+        ],
+    }
+    bad_v = audit_container_page_invariants(bad_page)
+    assert any("repeats" in v for v in bad_v), bad_v

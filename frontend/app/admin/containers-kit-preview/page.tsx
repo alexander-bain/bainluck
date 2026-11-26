@@ -28,6 +28,11 @@ function ContainersKitPreviewContent() {
   const [payload, setPayload] = useState<KitContainerPagesPreviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
+
+  useEffect(() => {
+    setShowDebug(new URLSearchParams(window.location.search).get("debug") === "1");
+  }, []);
 
   useEffect(() => {
     if (!secret) return;
@@ -114,13 +119,13 @@ function ContainersKitPreviewContent() {
                     <div className="px-1 text-[10px] font-bold uppercase tracking-wider text-text-muted">
                       Light · 390 px
                     </div>
-                    <KitContainerPageView page={page} surfaceScheme="light" />
+                    <KitContainerPageView page={page} surfaceScheme="light" showDebugMeta={showDebug} />
                   </div>
                   <div className="w-[390px] max-w-full shrink-0 space-y-1">
                     <div className="px-1 text-[10px] font-bold uppercase tracking-wider text-text-muted">
                       Dark · 390 px
                     </div>
-                    <KitContainerPageView page={page} surfaceScheme="dark" />
+                    <KitContainerPageView page={page} surfaceScheme="dark" showDebugMeta={showDebug} />
                   </div>
                 </div>
               </div>

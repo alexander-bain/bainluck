@@ -13,6 +13,13 @@
   --text-muted: #94a3b8;
   --text-inverse: #0b0f17;
   --accent-brand: #34d399;
+  --kit-primary: #f8fafc;
+  --kit-secondary: #cbd5e1;
+  --kit-muted: #94a3b8;
+  --kit-accent: #34d399;
+  --kit-warn: #fbbf24;
+  --kit-track: #243042;
+  --kit-inverse: #ffffff;
   background-color: #0b0f17 !important;
   color: #f8fafc !important;
   border-color: #2a3444 !important;
@@ -43,3 +50,17 @@
 .darkSurface :global(.border-accent-brand) { border-color: #34d399 !important; }
 .darkSurface :global(.border-accent-brand\/30) { border-color: rgba(52, 211, 153, 0.4) !important; }
 .darkSurface :global(.border-accent-brand\/40) { border-color: rgba(52, 211, 153, 0.5) !important; }
+.darkSurface :global(.text-kit-primary) { color: #f8fafc !important; }
+.darkSurface :global(.text-kit-secondary) { color: #cbd5e1 !important; }
+.darkSurface :global(.text-kit-muted) { color: #94a3b8 !important; }
+.darkSurface :global(.text-kit-accent) { color: #34d399 !important; }
+.darkSurface :global(.text-kit-warn) { color: #fbbf24 !important; }
+.darkSurface :global(.text-kit-inverse) { color: #ffffff !important; }
+.darkSurface :global(.bg-kit-track) { background-color: #243042 !important; }
+.darkSurface :global(.bg-kit-accent) { background-color: #059669 !important; }
+.darkSurface :global(.bg-kit-accent\/\[0\.18\]) { background-color: rgba(52, 211, 153, 0.22) !important; }
+.darkSurface :global(.bg-kit-accent\/10) { background-color: rgba(52, 211, 153, 0.14) !important; }
+.darkSurface :global(.border-kit-accent) { border-color: #34d399 !important; }
+.darkSurface :global(.border-kit-accent\/65) { border-color: rgba(52, 211, 153, 0.65) !important; }
+.darkSurface :global(.border-kit-accent\/45) { border-color: rgba(52, 211, 153, 0.45) !important; }
+.darkSurface :global(.ring-kit-accent) { --tw-ring-color: #34d399 !important; }

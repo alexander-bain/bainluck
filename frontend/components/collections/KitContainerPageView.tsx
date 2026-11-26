@@ -36,7 +36,7 @@ export interface KitContainerPagesPreviewResponse {
 export function KitContainerPageView({
   page,
   surfaceScheme = "light",
-  showDebugMeta = true,
+  showDebugMeta = false,
 }: {
   page: KitContainerPageSpec;
   surfaceScheme?: "light" | "dark";
@@ -56,14 +56,16 @@ export function KitContainerPageView({
       <header className="rounded-xl border border-surface-border bg-surface-card p-3.5 shadow-sm">
         <div className="flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-wider">
           <span className="text-accent-brand">{page.kicker}</span>
-          <span className="rounded-full border border-surface-border bg-surface-elevated px-2 py-0.5 text-[10px] font-semibold text-text-secondary">
-            {page.state} · {page.section_count} sections
-          </span>
+          {showDebugMeta && (
+            <span className="rounded-full border border-surface-border bg-surface-elevated px-2 py-0.5 text-[10px] font-semibold text-text-secondary">
+              {page.state} · {page.section_count} sections
+            </span>
+          )}
         </div>
         <h2 className="mt-1 text-xl font-extrabold tracking-tight text-text-primary">
           {page.title}
         </h2>
-        {page.caption && (
+        {showDebugMeta && page.caption && (
           <p className="mt-1 text-xs leading-snug text-text-secondary">
             {page.caption}
           </p>

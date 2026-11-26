@@ -152,17 +152,18 @@ const SAMPLE_PAGE: KitContainerPageSpec = {
 };
 
 describe("Item 9 KitContainerPageView & preview page", () => {
-  test("renders preview header, declarative section headlines, and all 3 kit sections in light and dark modes", () => {
+  test("renders debug chrome only when showDebugMeta={true} and keeps clean reader chrome by default and when false", () => {
     const lightHtml = renderToStaticMarkup(
-      <KitContainerPageView page={SAMPLE_PAGE} surfaceScheme="light" />,
+      <KitContainerPageView page={SAMPLE_PAGE} surfaceScheme="light" showDebugMeta={true} />,
     );
     const darkHtml = renderToStaticMarkup(
-      <KitContainerPageView page={SAMPLE_PAGE} surfaceScheme="dark" />,
+      <KitContainerPageView page={SAMPLE_PAGE} surfaceScheme="dark" showDebugMeta={true} />,
     );
 
     for (const html of [lightHtml, darkHtml]) {
       expect(html).toContain("Policy Rates");
       expect(html).toContain("preview · 3 sections");
+      expect(html).toContain("3 disjoint views across 8 live markets");
       expect(html).toContain("Central Bank Decisions");
       expect(html).toContain("Recession Odds");
       expect(html).toContain("Macro Tail Risks");
@@ -170,15 +171,22 @@ describe("Item 9 KitContainerPageView & preview page", () => {
       expect(html).not.toContain("Standard card fallback");
     }
 
+    const defaultHtml = renderToStaticMarkup(
+      <KitContainerPageView page={SAMPLE_PAGE} surfaceScheme="light" />,
+    );
     const cleanHtml = renderToStaticMarkup(
       <KitContainerPageView page={SAMPLE_PAGE} surfaceScheme="light" showDebugMeta={false} />,
     );
-    expect(cleanHtml).toContain("Policy Rates");
-    expect(cleanHtml).toContain("Central Bank Decisions");
-    expect(cleanHtml).toContain("1 in 11");
-    expect(cleanHtml).not.toContain("scoreboard_grid");
-    expect(cleanHtml).not.toContain("shared_scale");
-    expect(cleanHtml).not.toContain("one_in_n");
+    for (const html of [defaultHtml, cleanHtml]) {
+      expect(html).toContain("Policy Rates");
+      expect(html).toContain("Central Bank Decisions");
+      expect(html).toContain("1 in 11");
+      expect(html).not.toContain("preview · 3 sections");
+      expect(html).not.toContain("3 disjoint views across 8 live markets");
+      expect(html).not.toContain("scoreboard_grid");
+      expect(html).not.toContain("shared_scale");
+      expect(html).not.toContain("one_in_n");
+    }
   });
 
   test("TSX components use light semantic classes only (zero dark: classes or hex literals)", () => {
@@ -198,6 +206,12 @@ describe("Item 9 KitContainerPageView & preview page", () => {
     expect(pageHtml).toContain("Kit Container Pages Preview (#12221 Item 9)");
     expect(compSrc).toContain("page_fingerprint");
     expect(pageSrc).toContain("not_built_yet");
+    const themeCss = fs.readFileSync(
+      path.join(process.cwd(), "components", "collections", "kitPreviewTheme.module.css"),
+      "utf-8",
+    );
+    expect(themeCss).toContain(".text-kit-primary");
+    expect(themeCss).toContain(".bg-kit-track");
   });
 
   test("KitContainerPagesPreviewResponse supports status=not_built_yet and frozen deck_id", () => {
