@@ -179,6 +179,16 @@ SOURCE_STATUS_FIELD = "source_status"
 #: way `source_status` and `quality_reasons` already do.
 BUILD_FIELD = "build_id"
 
+#: Bump whenever `/api/events/{id}/game-markets` response shape or scoring changes
+#: so cached payloads built for an older shape/formula are bypassed without
+#: cold-starting caches on unrelated code releases.
+GAME_MARKETS_CACHE_VERSION: int = 1
+
+
+def current_cache_version() -> str:
+    """Return the explicit shape/scoring version for game-markets cache entries."""
+    return f"gm-v{GAME_MARKETS_CACHE_VERSION}"
+
 #: Body key the finished-game winner quote rides on (`final_game_winner_quote`).
 #: Non-null means a venue contract behind a FINAL game is still open (#10610).
 OPEN_WINNER_QUOTE_FIELD = "open_winner_quote"
@@ -278,7 +288,7 @@ def stamp(
     )
     envelope = dict(enveloped.get(ENVELOPE_FIELD) or {})
     envelope[SOURCE_STATUS_FIELD] = str(source_status or "")
-    envelope[BUILD_FIELD] = current_build_id()
+    envelope[BUILD_FIELD] = current_cache_version()
     enveloped[ENVELOPE_FIELD] = envelope
     return enveloped
 
@@ -319,6 +329,17 @@ def payload_is_current_build(payload: Any) -> bool:
     if not stored or stored == UNKNOWN_BUILD:
         return True
     running = current_build_id()
+    if not running or running == UNKNOWN_BUILD:
+        return True
+    return stored == running
+
+
+def payload_is_current_version(payload: Any) -> bool:
+    """Return whether ``payload`` was built for ``current_cache_version()``."""
+    stored = build_id_of(payload)
+    if not stored or stored == UNKNOWN_BUILD:
+        return True
+    running = current_cache_version()
     if not running or running == UNKNOWN_BUILD:
         return True
     return stored == running
@@ -388,7 +409,7 @@ def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
     primary = read_slot(client, keys.primary)
     if (
         primary is not None
-        and payload_is_current_build(primary)
+        and payload_is_current_version(primary)
         and primary_outlived_fresh_ttl(primary)
     ):
         # #10610: a final body with an open quote, older than the TTL it earns
@@ -397,7 +418,7 @@ def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
         # `stale_ok` with one rebuild behind it, or a blocking rebuild past that.
         primary = None
     if primary is not None:
-        if payload_is_current_build(primary):
+        if payload_is_current_version(primary):
             return with_availability(primary, AVAILABILITY_LIVE), "live"
         # #6355: young, and built by code that is no longer running. NOT demoted
         # to the mirror path — the mirror is the same bytes from the same dead
@@ -417,30 +438,30 @@ def read(event_id: int, rc=None) -> tuple[dict[str, Any] | None, str]:
         # (`routes/events.py`, `league_futures.py`, `tournaments._log_slug`) is
         # to log a value we sourced ourselves or nothing at all.
         #
-        # Nothing diagnostic is actually lost. `current_build_id()` is read from
-        # the environment and is not a taint source, the interesting signal here
-        # is the COUNT of these lines just after a release rather than which
-        # event, and the refused payload names its own build in the envelope
+        # Nothing diagnostic is actually lost. `current_cache_version()` is internal
+        # and not a taint source, the interesting signal here
+        # is the COUNT of these lines just after a version bump rather than which
+        # event, and the refused payload names its own version in the envelope
         # this module publishes (`cache.build_id`).
         logger.info(
-            "game-markets: a slot built by another release was refused "
-            "(running build %s) — rebuilding",
-            current_build_id(),
+            "game-markets: a slot built for another cache version was refused "
+            "(running cache version %s) — rebuilding",
+            current_cache_version(),
         )
         return None, "stale_build"
 
     mirror = read_slot(client, keys.stale)
     if mirror is None:
         return None, "miss"
-    if not payload_is_current_build(mirror):
+    if not payload_is_current_version(mirror):
         # `event_id` is deliberately absent for the reason given on the primary
         # branch above. The sibling line below it DOES carry the id and is the
         # pre-existing `py/log-injection` alert already open against this file
         # on master — tolerated debt that a new line must not add to.
         logger.info(
-            "game-markets: a mirror built by another release was refused "
-            "(running build %s) — reader will rebuild",
-            current_build_id(),
+            "game-markets: a mirror built for another cache version was refused "
+            "(running cache version %s) — reader will rebuild",
+            current_cache_version(),
         )
         return None, "stale_build"
     servable, reason = mirror_is_servable(mirror)
