@@ -36,6 +36,7 @@ from app.utils.discover_fun_scout import (
     SCOUT_MAX_NEW_SETS_PER_DAY,
     SCOUT_RETIRED_SETS_PATH,
     load_retired_scout_sets,
+    normalize_scout_row_answers,
 )
 from app.utils.roundup_containers import (
     CONTAINERS_DATA_DIR,
@@ -208,9 +209,13 @@ def _sanitize_card_entry(
     clean_look = str(look or "bars").strip().lower()
     if clean_look not in _ALLOWED_LOOKS:
         clean_look = "bars"
-    clean_members = [
-        {
-            "title": _clean_blind_text(m.get("title")),
+    clean_members: list[dict[str, Any]] = []
+    for m in members:
+        clean_title = _clean_blind_text(m.get("title"))
+        if not clean_title:
+            continue
+        item_m: dict[str, Any] = {
+            "title": clean_title,
             "leading_outcome": _clean_blind_text(m.get("leading_outcome") or "Yes"),
             "probability": _safe_float(m.get("probability")),
             "change_24h": _safe_float(m.get("change_24h")),
@@ -220,12 +225,14 @@ def _sanitize_card_entry(
                 else None
             ),
         }
-        for m in members
-        if _clean_blind_text(m.get("title"))
-    ][:8]
+        row_ans = _clean_blind_text(m.get("row_answer") or m.get("context_line"))
+        if row_ans:
+            item_m["row_answer"] = row_ans
+        clean_members.append(item_m)
+    clean_members = clean_members[:8]
     return {
         "title": _clean_blind_text(title) or "Untitled set",
-        "kicker": _clean_blind_text(kicker) or "DISCOVER SET",
+        "kicker": _clean_blind_text(kicker) if kicker is not None else "DISCOVER SET",
         "category": _clean_blind_text(category or "other").lower() or "other",
         "summary": _clean_blind_text(summary),
         "look": clean_look,
@@ -476,23 +483,36 @@ async def build_scout_morning_deck(
 
     staged_entries: list[dict[str, Any]] = []
     for s in raw_staged:
+        row_answers_map = dict(
+            normalize_scout_row_answers(
+                s.get("row_answers")
+                or ((s.get("rule_definition") or {}).get("scout") or {}).get("row_answers")
+            )
+        )
         members: list[dict[str, Any]] = []
         for m in s.get("members") or ():
             if not isinstance(m, Mapping):
                 continue
             mid = m.get("market_id")
+            member_item: Optional[dict[str, Any]] = None
             if isinstance(mid, int) and mid in live_markets:
-                members.append(_serialize_market_row_member(live_markets[mid]))
+                member_item = _serialize_market_row_member(live_markets[mid])
             elif m.get("title"):
-                members.append(
-                    {
-                        "title": _clean_blind_text(m.get("title")),
-                        "leading_outcome": _clean_blind_text(m.get("leading_outcome") or "Yes"),
-                        "probability": _safe_float(m.get("probability")),
-                        "change_24h": _safe_float(m.get("change_24h")),
-                        "image_url": m.get("image_url"),
-                    }
+                member_item = {
+                    "title": _clean_blind_text(m.get("title")),
+                    "leading_outcome": _clean_blind_text(m.get("leading_outcome") or "Yes"),
+                    "probability": _safe_float(m.get("probability")),
+                    "change_24h": _safe_float(m.get("change_24h")),
+                    "image_url": m.get("image_url"),
+                }
+            if member_item is not None:
+                ans = _clean_blind_text(
+                    m.get("row_answer")
+                    or (row_answers_map.get(int(mid)) if isinstance(mid, int) else "")
                 )
+                if ans:
+                    member_item["row_answer"] = ans
+                members.append(member_item)
         card = _sanitize_card_entry(
             title=s.get("name"),
             kicker=s.get("kicker"),
