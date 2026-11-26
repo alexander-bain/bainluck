@@ -442,6 +442,7 @@ class TestRuleFilesLicenceAndEndToEnd:
             openai_client=_FakeOpenAI(),
             anthropic_client=_FakeAnthropic(),
             output_dir=tmp_path / "rules",
+            known_sets=(),
             now=FROZEN_NOW,
         )
 
@@ -850,6 +851,11 @@ class TestScoutDurabilityPreFlip13124:
         monkeypatch.setattr(scout_task, "SCOUT_RETIRED_SETS_PATH", missing_retired)
         monkeypatch.setattr(scout_task, "SCOUT_LICENCE_STATE_PATH", missing_licence)
 
+        async def _no_known_sets(_catalog_by_id):
+            return []
+
+        monkeypatch.setattr(scout_task, "_load_known_sets_durable", _no_known_sets)
+
         # 1. Exact reproduction of the 1:12 AM PT cold-start state: empty Redis + missing file
         out_empty = asyncio.run(
             scout_task._run_discover_fun_scout(
@@ -939,6 +945,7 @@ class TestScoutDurabilityPreFlip13124:
             openai_client=_FakeOpenAI(),
             anthropic_client=_FakeAnthropic(include_retired_proposal=False),
             retired_sets={"legacy-set-slug"},
+            known_sets=(),
             output_dir=tmp_path / "staged_direct",
             now=FROZEN_NOW,
         )
@@ -1360,6 +1367,9 @@ class TestFrozenBenchmarkInput:
 
             messages = _Messages()
 
+        from app.utils import discover_fun_scout as dfs_mod
+
+        monkeypatch.setattr(dfs_mod, "load_known_sets_for_scout", lambda **kw: [])
         monkeypatch.setattr(bench, "build_scout_openai_client", lambda: _FakeOpenAI())
         monkeypatch.setattr(bench, "build_scout_anthropic_client", lambda: _StrictAnthropicV2())
 
@@ -1642,7 +1652,7 @@ _RUN_3946_SETS_FIXTURES: tuple[tuple[str, ScoutProposedSet, str | None], ...] = 
             look="bars",
             member_ids=(27594646, 60473244, 62878194, 67717832, 61857942, 66639375),
         ),
-        None,
+        "mixed_ladder_missing_row_answer",
     ),
     (
         "opus",
@@ -1658,7 +1668,7 @@ _RUN_3946_SETS_FIXTURES: tuple[tuple[str, ScoutProposedSet, str | None], ...] = 
             look="bars",
             member_ids=(5398277, 68365230, 114149, 70733323, 59172754),
         ),
-        None,
+        "mixed_ladder_missing_row_answer",
     ),
     (
         "opus",
@@ -1754,7 +1764,7 @@ _RUN_3946_SETS_FIXTURES: tuple[tuple[str, ScoutProposedSet, str | None], ...] = 
             look="bars",
             member_ids=(59693617, 25924930, 109216, 109376, 70150728),
         ),
-        None,
+        "mixed_ladder_missing_row_answer",
     ),
     (
         "opus",
@@ -1770,7 +1780,7 @@ _RUN_3946_SETS_FIXTURES: tuple[tuple[str, ScoutProposedSet, str | None], ...] = 
             look="bars",
             member_ids=(52755889, 70534836, 2776130, 33282766),
         ),
-        None,
+        "mixed_ladder_missing_row_answer",
     ),
     (
         "opus",
