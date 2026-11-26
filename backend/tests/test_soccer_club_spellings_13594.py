@@ -10,7 +10,7 @@ from app.utils.event_twin_fold import fold_twin_events
 from app.utils.name_normalization import names_match, shared_token_rivals
 from app.utils.prediction_market_matching import _fuzzy_team_match
 
-_KICKOFF = datetime(2026, 11, 26, 17, 45, tzinfo=timezone.utc)
+_KICKOFF = datetime(2026, 6, 15, 17, 45, tzinfo=timezone.utc)
 
 
 def _event(
