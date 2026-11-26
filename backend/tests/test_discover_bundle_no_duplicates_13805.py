@@ -416,7 +416,34 @@ def test_different_markets_for_same_leader_must_stay_and_cross_venue_exact_drops
     )
     assert [m["data"]["id"] for m in _sanitize_bundle_members([nba_field, conf_bin])] == [3001, 3002]
 
-    # 4. Cross-venue control: exact same subject words (ignoring year) drops even with group_id=None
+    # 4. Cross-venue controls: same subject words and compatible year drop even with group_id=None
     time_field = _field(4001, "TIME Person of the Year 2026", "James Talarico", None)
     time_bin = _binary(4002, "Will James Talarico be TIME Person of the Year 2026?", None, 0.29)
     assert [m["data"]["id"] for m in _sanitize_bundle_members([time_field, time_bin])] == [4001]
+
+    # 5. Distinct contest qualifier in the binary row must stay (Fable 10:54 PM PT look)
+    jokic_field = _field(5001, "NBA MVP 2026-27", "Nikola Jokic", "kalshi:nba-mvp-27")
+    jokic_finals = _binary(5002, "Will Nikola Jokic win NBA Finals MVP?", "kalshi:nba-finals-mvp", 0.09)
+    assert [m["data"]["id"] for m in _sanitize_bundle_members([jokic_field, jokic_finals])] == [5001, 5002]
+
+    chalamet_field = _field(6001, "Oscars 2027: Best Actor", "Timothee Chalamet", "polymarket:oscars-actor")
+    chalamet_supp = _binary(
+        6002,
+        "Will Timothee Chalamet win Best Supporting Actor at the 2027 Oscars?",
+        "polymarket:oscars-supp",
+        0.05,
+    )
+    assert [m["data"]["id"] for m in _sanitize_bundle_members([chalamet_field, chalamet_supp])] == [6001, 6002]
+
+    vance_field = _field(7001, "2028 Presidential Election Winner", "JD Vance", "polymarket:pres-2028")
+    vance_margin = _binary(
+        7002,
+        "Will JD Vance win the 2028 presidential election by 5 points or more?",
+        "polymarket:pres-margin-2028",
+        0.08,
+    )
+    assert [m["data"]["id"] for m in _sanitize_bundle_members([vance_field, vance_margin])] == [7001, 7002]
+
+    # 6. Different explicit 4-digit year must stay even with identical non-year subject words
+    time_2027_bin = _binary(8002, "Will James Talarico be TIME Person of the Year 2027?", None, 0.12)
+    assert [m["data"]["id"] for m in _sanitize_bundle_members([time_field, time_2027_bin])] == [4001, 8002]
