@@ -849,6 +849,8 @@ celery_app.conf.task_routes = {
     # of one slot, and this lane has 4. If live scores fall behind by >60 s the
     # move is reverted the same hour — see the LAT-P179 receipt.
     "app.tasks.prewarm_live_feed_shapes": {"queue": "realtime"},
+    # #13606 Part 1: durable finished-game `/history` chart materialization.
+    "app.tasks.materialize_finished_event_charts": {"queue": "background"},
     # --- Everything else routes to background (default queue) ---
     # --- 600s-class grinders route to `heavy` (applied below) ---
 }
@@ -913,6 +915,9 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     # decision and the next reader of the routing block needs to see an
     # objection, not a silence.
     "app.tasks.run_settlement_sweep",
+    # #13606 Part 1: bounded 5-event/run materializer; keep off the 2-slot
+    # `heavy` calibration lane.
+    "app.tasks.materialize_finished_event_charts",
 }
 
 # The heavy lane = the calibration/precompute cache-warmer family PLUS the
@@ -1851,6 +1856,25 @@ def backfill_thin_event_charts(self, limit: int = 90):
     from app.tasks.event_chart_backfill import run_event_chart_backfill
     return _tracked_run(
         "thin_event_charts", run_event_chart_backfill(None, limit=limit)
+    )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=300,
+    time_limit=360,
+    name="app.tasks.materialize_finished_event_charts",
+)
+def materialize_finished_event_charts(self, event_ids=None, limit=None):
+    """#13606 Part 1: persist complete finished `"all"` `/history` payloads in durable storage."""
+    from app.services.database import get_task_session
+    from app.services.finished_event_history import materialize_finished_event_charts_async
+
+    return _tracked_run(
+        "materialize_finished_event_charts",
+        materialize_finished_event_charts_async(
+            get_task_session, event_ids=event_ids, limit=limit
+        ),
     )
 
 
@@ -10036,6 +10060,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_thin_event_charts",
         "schedule": crontab(minute=40, hour=8),
         "kwargs": {"limit": 90},
+        "options": {"queue": "background"},
+    },
+    # #13606 Part 1 (Condition 3): bounded 5-event/run materializer for complete
+    # finished-game charts; reads `FINISHED_EVENT_HISTORY_BATCH_SIZE` (default 5).
+    "materialize-finished-event-charts": {
+        "task": "app.tasks.materialize_finished_event_charts",
+        "schedule": crontab(minute="*/10"),
         "options": {"queue": "background"},
     },
     # --- live/059: the outright chart's venue history --------------------------

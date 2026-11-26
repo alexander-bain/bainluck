@@ -770,11 +770,19 @@ async def _create_or_update_snapshot(
         )
         if snapshot_cache is not None:
             snapshot_cache[cache_key] = snapshot
+        from app.tasks.snapshots import _identity_map_event_finished, _invalidate_finished_if_applicable
+
+        if _identity_map_event_finished(session, event_id):
+            await _invalidate_finished_if_applicable(session, event_id, is_completed=True)
         return snapshot, True
     else:
         # Values are the same - just update the existing snapshot
         existing.reading_count += 1
         existing.valid_until = now
+        from app.tasks.snapshots import _identity_map_event_finished, _invalidate_finished_if_applicable
+
+        if _identity_map_event_finished(session, event_id):
+            await _invalidate_finished_if_applicable(session, event_id, is_completed=True)
         return existing, False
 
 
@@ -942,6 +950,11 @@ async def _ingest_event_odds(
                     "bookmaker_last_update": bookmaker.get("last_update"),
                 })
         snapshots_processed += 1
+
+    if snapshots_processed and getattr(event, "status", None) in ("completed", "closed"):
+        from app.services.finished_event_history import invalidate_finished_event_history
+
+        await invalidate_finished_event_history(session, [event_id])
 
     # ── #12938 / ruling 233: A: IN A LIVE GAME, ONLY CURRENT LINES COUNT ─────
     # A book that stops updating its in-game line stays in The Odds API's
@@ -2781,6 +2794,9 @@ async def _poll_all_odds():
                                                 "source": "odds_poll",
                                                 "time_source": "espn" if event_obj.game_clock else "wall_clock",
                                             },
+                                            is_completed=(
+                                                getattr(event_obj, "status", None) in ("completed", "closed")
+                                            ),
                                             # #10673: live-only arm (gated on
                                             # `event_status == "live"` above).
                                             max_gap_seconds=STAT_MODEL_LIVE_HEARTBEAT_S,
@@ -2958,6 +2974,15 @@ async def _poll_sport_odds(sport_key: str):
                     snapshot = await _create_snapshot(event_id, bookmaker, event_data)
                     session.add(snapshot)
                     total_snapshots += 1
+                if (
+                    event_data.get("bookmakers")
+                    and getattr(event, "status", None) in ("completed", "closed")
+                ):
+                    from app.services.finished_event_history import (
+                        invalidate_finished_event_history,
+                    )
+
+                    await invalidate_finished_event_history(session, [event_id])
 
             await session.commit()
             from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames

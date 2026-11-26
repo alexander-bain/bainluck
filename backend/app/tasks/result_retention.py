@@ -142,6 +142,9 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         # hands back a task_id, so its result must be retained or that poll
         # never resolves.
         "app.tasks.matching_reconciliation",
+        # #13606 Part 1: dispatched on cold-miss from `routes/events.py::get_event_odds_history`
+        # (Condition 4); fire-and-forget, listed here so the route-scan guard matches.
+        "app.tasks.materialize_finished_event_charts",
         "app.tasks.merge_degenerate_combat_events",
         "app.tasks.merge_duplicate_events",
         "app.tasks.null_impossible_both_sides_openings",

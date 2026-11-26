@@ -361,6 +361,11 @@ async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff:
 
     await _bridge_valid_until(session, cfg, partition_id, cutoff)
 
+    if rows_deleted or keepers_updated:
+        from app.services.finished_event_history import invalidate_finished_event_history
+
+        await invalidate_finished_event_history(session, [partition_id])
+
     return rows_deleted, keepers_updated
 
 
@@ -574,7 +579,14 @@ async def _collapse_winprob_partition_sql(
 
     await _bridge_valid_until(session, cfg, partition_id, cutoff)
 
-    return int(rows_deleted or 0), int(keepers_updated or 0)
+    deleted_n = int(rows_deleted or 0)
+    updated_n = int(keepers_updated or 0)
+    if deleted_n or updated_n:
+        from app.services.finished_event_history import invalidate_finished_event_history
+
+        await invalidate_finished_event_history(session, [partition_id])
+
+    return deleted_n, updated_n
 
 
 # ---------------------------------------------------------------------------

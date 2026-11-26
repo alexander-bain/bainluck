@@ -266,6 +266,10 @@ async def repoint_event_children(
         await _repoint_duplicate_tags(session, keep_id=keep_id, orphan_id=orphan_id)
     )
 
+    from app.services.finished_event_history import invalidate_finished_event_history
+
+    await invalidate_finished_event_history(session, [orphan_id, keep_id])
+
     return {
         "repointed": repointed,
         "dropped_as_duplicate": dropped,
