@@ -28,7 +28,11 @@ from sqlalchemy.schema import CreateTable
 
 from app.main import app
 from app.models.models import AnonymousInstallCount
-from app.routes.telemetry import _UPSERT_ANONYMOUS_COUNT_SQL
+from app.routes.telemetry import (
+    MAX_ANONYMOUS_VERSIONS_PER_DAY,
+    _ANONYMOUS_COUNT_LOCK_NS,
+    _UPSERT_ANONYMOUS_COUNT_SQL,
+)
 from app.services import get_db, get_db_rw
 
 ENDPOINT = "/api/telemetry/anonymous-counts"
@@ -38,6 +42,18 @@ MIGRATION_PATH = (
     / "versions"
     / "anon_install_counts_434a.py"
 )
+
+
+class _SqliteResult:
+    """Minimal AsyncSession result shim exposing ``rowcount`` and ``scalar()``."""
+
+    def __init__(self, cursor: sqlite3.Cursor):
+        self.rowcount = cursor.rowcount
+        row = cursor.fetchone() if cursor.description is not None else None
+        self._scalar = row[0] if row is not None else None
+
+    def scalar(self):
+        return self._scalar
 
 
 class _SqliteAsyncSession:
@@ -53,7 +69,8 @@ class _SqliteAsyncSession:
             k: (v.isoformat() if isinstance(v, date) else v)
             for k, v in (params or {}).items()
         }
-        self._conn.execute(sql_str, bound)
+        cur = self._conn.execute(sql_str, bound)
+        return _SqliteResult(cur)
 
     async def commit(self):
         self._conn.commit()
@@ -323,3 +340,192 @@ def test_migration_metadata_and_constraints():
     ]
     compiled_pg = str(_UPSERT_ANONYMOUS_COUNT_SQL.compile(dialect=postgresql.dialect()))
     assert "ON CONFLICT (day, app_version, event)" in compiled_pg
+
+
+@pytest.mark.asyncio
+async def test_daily_distinct_app_version_cap_drops_overflow_and_keeps_admitted_versions(
+    sqlite_client, monkeypatch
+):
+    client, conn, fixed_today = sqlite_client
+    assert MAX_ANONYMOUS_VERSIONS_PER_DAY == 20
+
+    # Fill the day up to the cap of 20 distinct app_versions.
+    for idx in range(1, MAX_ANONYMOUS_VERSIONS_PER_DAY + 1):
+        resp = await client.post(
+            ENDPOINT,
+            json={
+                "event": "first_open",
+                "app_version": f"1.0.{idx}",
+                "day": fixed_today.isoformat(),
+            },
+        )
+        assert resp.status_code == 202
+
+    assert (
+        conn.execute(
+            "SELECT COUNT(DISTINCT app_version) FROM anonymous_install_counts WHERE day = ?",
+            (fixed_today.isoformat(),),
+        ).fetchone()[0]
+        == MAX_ANONYMOUS_VERSIONS_PER_DAY
+    )
+
+    # Past the cap, brand-new versions are accepted (202) and store nothing.
+    for overflow_ver in ("1.0.21", "9.9.9999", "2.0.1"):
+        resp = await client.post(
+            ENDPOINT,
+            json={
+                "event": "first_open",
+                "app_version": overflow_ver,
+                "day": fixed_today.isoformat(),
+            },
+        )
+        assert resp.status_code == 202
+        assert resp.json() == {"status": "accepted", "day": fixed_today.isoformat()}
+
+    assert (
+        conn.execute(
+            "SELECT COUNT(DISTINCT app_version) FROM anonymous_install_counts WHERE day = ?",
+            (fixed_today.isoformat(),),
+        ).fetchone()[0]
+        == MAX_ANONYMOUS_VERSIONS_PER_DAY
+    )
+
+    # An already-admitted version still increments existing rows and admits another event.
+    inc_resp = await client.post(
+        ENDPOINT,
+        json={
+            "event": "first_open",
+            "app_version": "1.0.1",
+            "day": fixed_today.isoformat(),
+        },
+    )
+    assert inc_resp.status_code == 202
+    new_event_resp = await client.post(
+        ENDPOINT,
+        json={
+            "event": "first_run_finished",
+            "app_version": "1.0.1",
+            "day": fixed_today.isoformat(),
+        },
+    )
+    assert new_event_resp.status_code == 202
+
+    rows_101 = conn.execute(
+        "SELECT event, count FROM anonymous_install_counts WHERE day = ? AND app_version = ? ORDER BY event",
+        (fixed_today.isoformat(), "1.0.1"),
+    ).fetchall()
+    assert rows_101 == [("first_open", 2), ("first_run_finished", 1)]
+
+    # Advancing to the next UTC day resets the per-day cap so previously dropped versions succeed.
+    next_day = fixed_today + timedelta(days=1)
+    monkeypatch.setattr("app.routes.telemetry._utc_today", lambda: next_day)
+    next_day_resp = await client.post(
+        ENDPOINT,
+        json={
+            "event": "first_open",
+            "app_version": "1.0.21",
+            "day": next_day.isoformat(),
+        },
+    )
+    assert next_day_resp.status_code == 202
+    assert (
+        conn.execute(
+            "SELECT count FROM anonymous_install_counts WHERE day = ? AND app_version = ?",
+            (next_day.isoformat(), "1.0.21"),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_postgres_slow_path_acquires_daily_advisory_lock_and_fast_path_skips_it(monkeypatch):
+    class _FakeDialect:
+        name = "postgresql"
+
+    class _FakeBind:
+        dialect = _FakeDialect()
+
+    class _FakeResult:
+        def __init__(self, rowcount: int = 0, scalar_val=None):
+            self.rowcount = rowcount
+            self._scalar = scalar_val
+
+        def scalar(self):
+            return self._scalar
+
+    class _PgTraceSession:
+        def __init__(self, initial_rowcount: int):
+            self.initial_rowcount = initial_rowcount
+            self.calls: list[tuple[str, dict]] = []
+            self.committed = 0
+            self.rolled_back = 0
+
+        def get_bind(self):
+            return _FakeBind()
+
+        async def execute(self, statement, params=None):
+            sql_str = statement.text if hasattr(statement, "text") else str(statement)
+            self.calls.append((sql_str, dict(params or {})))
+            if sql_str.lstrip().startswith("UPDATE anonymous_install_counts"):
+                return _FakeResult(rowcount=self.initial_rowcount)
+            if "SELECT 1" in sql_str:
+                return _FakeResult(scalar_val=None)
+            if "COUNT(DISTINCT app_version)" in sql_str:
+                return _FakeResult(scalar_val=0)
+            return _FakeResult(rowcount=1)
+
+        async def commit(self):
+            self.committed += 1
+
+        async def rollback(self):
+            self.rolled_back += 1
+
+    fixed_today = date(2026, 6, 15)
+    monkeypatch.setattr("app.routes.telemetry._utc_today", lambda: fixed_today)
+
+    # Slow path (rowcount == 0) must take per-day pg_advisory_xact_lock before counting/inserting.
+    slow_db = _PgTraceSession(initial_rowcount=0)
+
+    async def _override_slow():
+        yield slow_db
+
+    app.dependency_overrides[get_db] = _override_slow
+    app.dependency_overrides[get_db_rw] = _override_slow
+    try:
+        with patch("app.main.init_db", new_callable=AsyncMock):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    ENDPOINT,
+                    json={"event": "first_open", "app_version": "1.0.8", "day": fixed_today.isoformat()},
+                )
+        assert resp.status_code == 202
+        lock_calls = [p for sql, p in slow_db.calls if "pg_advisory_xact_lock" in sql]
+        assert lock_calls == [{"ns": _ANONYMOUS_COUNT_LOCK_NS, "key": fixed_today.toordinal()}]
+        assert slow_db.committed == 1
+    finally:
+        app.dependency_overrides.clear()
+
+    # Fast path (rowcount == 1) updates in place and skips advisory locking.
+    fast_db = _PgTraceSession(initial_rowcount=1)
+
+    async def _override_fast():
+        yield fast_db
+
+    app.dependency_overrides[get_db] = _override_fast
+    app.dependency_overrides[get_db_rw] = _override_fast
+    try:
+        with patch("app.main.init_db", new_callable=AsyncMock):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    ENDPOINT,
+                    json={"event": "first_open", "app_version": "1.0.8", "day": fixed_today.isoformat()},
+                )
+        assert resp.status_code == 202
+        assert not any("pg_advisory_xact_lock" in sql for sql, _ in fast_db.calls)
+        assert fast_db.committed == 1
+    finally:
+        app.dependency_overrides.clear()

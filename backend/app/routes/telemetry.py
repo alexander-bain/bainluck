@@ -284,8 +284,48 @@ ANONYMOUS_LIFECYCLE_EVENTS_434A = frozenset(
 )
 MAX_ANONYMOUS_APP_VERSION_LEN = 16
 MAX_ANONYMOUS_DAY_SKEW_DAYS = 1
+MAX_ANONYMOUS_VERSIONS_PER_DAY = 20
+_ANONYMOUS_COUNT_LOCK_NS = 43401
 ANONYMOUS_APP_VERSION_RE = re.compile(r"\A\d+(?:\.\d+){0,3}\Z")
 ANONYMOUS_DAY_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
+
+_INCREMENT_EXISTING_ANONYMOUS_COUNT_SQL = text(
+    """
+    UPDATE anonymous_install_counts
+    SET count = count + 1
+    WHERE day = :day AND app_version = :app_version AND event = :event
+    """
+).bindparams(
+    bindparam("day", type_=SaDate()),
+    bindparam("app_version", type_=SaString(MAX_ANONYMOUS_APP_VERSION_LEN)),
+    bindparam("event", type_=SaString(32)),
+)
+
+_ADVISORY_LOCK_DAY_SQL = text(
+    "SELECT pg_advisory_xact_lock(CAST(:ns AS integer), CAST(:key AS integer))"
+)
+
+_VERSION_EXISTS_FOR_DAY_SQL = text(
+    """
+    SELECT 1
+    FROM anonymous_install_counts
+    WHERE day = :day AND app_version = :app_version
+    LIMIT 1
+    """
+).bindparams(
+    bindparam("day", type_=SaDate()),
+    bindparam("app_version", type_=SaString(MAX_ANONYMOUS_APP_VERSION_LEN)),
+)
+
+_COUNT_DISTINCT_VERSIONS_FOR_DAY_SQL = text(
+    """
+    SELECT COUNT(DISTINCT app_version)
+    FROM anonymous_install_counts
+    WHERE day = :day
+    """
+).bindparams(
+    bindparam("day", type_=SaDate()),
+)
 
 _UPSERT_ANONYMOUS_COUNT_SQL = text(
     """
@@ -299,6 +339,15 @@ _UPSERT_ANONYMOUS_COUNT_SQL = text(
     bindparam("app_version", type_=SaString(MAX_ANONYMOUS_APP_VERSION_LEN)),
     bindparam("event", type_=SaString(32)),
 )
+
+
+def _is_postgres_session(db: Any) -> bool:
+    """Return True only when ``db`` is bound to PostgreSQL (safe on AsyncSession shims)."""
+    try:
+        bind = db.get_bind()
+    except Exception:
+        return False
+    return getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
 
 
 def _utc_today() -> date:
@@ -346,9 +395,12 @@ async def ingest_anonymous_install_count(
     """Increment the daily aggregate counter for one of three closed lifecycle events.
 
     Enforces closed keys, closed event names, digits-and-dots ``app_version``
-    (max 16 chars), and ``day`` within ±1 day of the server's UTC clock; records
-    the server's UTC day into ``anonymous_install_counts`` with zero per-event
-    rows, zero IPs, and zero identifiers. Metered by ``RateLimitMiddleware``.
+    (max 16 chars), ``day`` within ±1 day of the server's UTC clock, and at
+    most ``MAX_ANONYMOUS_VERSIONS_PER_DAY`` distinct ``app_version`` values per
+    UTC day; past the cap the request is accepted and nothing is stored.
+    Records onto the server's UTC day in ``anonymous_install_counts`` with zero
+    per-event rows, zero IPs, and zero identifiers. Metered by
+    ``RateLimitMiddleware``.
     """
     client_day = date.fromisoformat(body.day)
     server_today = _utc_today()
@@ -358,15 +410,41 @@ async def ingest_anonymous_install_count(
             detail="day outside allowed server window",
         )
 
+    params = {
+        "day": server_today,
+        "app_version": body.app_version,
+        "event": body.event,
+    }
     try:
-        await db.execute(
-            _UPSERT_ANONYMOUS_COUNT_SQL,
-            {
-                "day": server_today,
-                "app_version": body.app_version,
-                "event": body.event,
-            },
+        # Fast path: incrementing an existing (day, app_version, event) cell needs
+        # no daily lock and cannot expand distinct app_versions for the day.
+        inc_res = await db.execute(_INCREMENT_EXISTING_ANONYMOUS_COUNT_SQL, params)
+        if (inc_res.rowcount or 0) > 0:
+            await db.commit()
+            return {"status": "accepted", "day": server_today.isoformat()}
+
+        # Slow path: new (day, app_version, event). Serialize on the UTC day in
+        # Postgres so concurrent requests cannot race past MAX_ANONYMOUS_VERSIONS_PER_DAY.
+        if _is_postgres_session(db):
+            await db.execute(
+                _ADVISORY_LOCK_DAY_SQL,
+                {"ns": _ANONYMOUS_COUNT_LOCK_NS, "key": server_today.toordinal()},
+            )
+
+        exists_res = await db.execute(
+            _VERSION_EXISTS_FOR_DAY_SQL,
+            {"day": server_today, "app_version": body.app_version},
         )
+        if exists_res.scalar() is None:
+            count_res = await db.execute(
+                _COUNT_DISTINCT_VERSIONS_FOR_DAY_SQL,
+                {"day": server_today},
+            )
+            if int(count_res.scalar() or 0) >= MAX_ANONYMOUS_VERSIONS_PER_DAY:
+                await db.rollback()
+                return {"status": "accepted", "day": server_today.isoformat()}
+
+        await db.execute(_UPSERT_ANONYMOUS_COUNT_SQL, params)
         await db.commit()
     except Exception:
         await db.rollback()
