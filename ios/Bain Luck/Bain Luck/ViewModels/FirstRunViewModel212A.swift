@@ -579,6 +579,7 @@ final class FirstRunViewModel212A: ObservableObject {
         authManager: AuthManager,
         onDismiss: () -> Void
     ) {
+        let wasAlreadyOnboarded = defaults.bool(forKey: FirstRunStorageKeys212A.onboardedKey)
         defaults.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
 
         if !categoryInterests.isEmpty {
@@ -622,7 +623,7 @@ final class FirstRunViewModel212A: ObservableObject {
             isFinishing = false
         }
         if defaults === UserDefaults.standard {
-            AnonymousLifecycleCounts424A.shared.recordFirstRunFinished()
+            AnonymousLifecycleCounts424A.shared.recordFirstRunFinished(wasAlreadyOnboarded: wasAlreadyOnboarded)
         }
         onDismiss()
     }

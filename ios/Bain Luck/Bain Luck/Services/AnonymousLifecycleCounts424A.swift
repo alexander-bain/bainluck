@@ -8,6 +8,30 @@ enum AnonymousLifecycleEvent424A: String, Sendable, CaseIterable {
     case firstOpen = "first_open"
     case firstRunFinished = "first_run_finished"
     case previousSessionCrashed = "previous_session_crashed"
+
+    fileprivate var sentName: String {
+        switch self {
+        case .firstOpen: return "bl_424a_open_ok"
+        case .firstRunFinished: return "bl_424a_setup_ok"
+        case .previousSessionCrashed: return "bl_424a_crash_ok"
+        }
+    }
+
+    fileprivate var pendingName: String {
+        switch self {
+        case .firstOpen: return "bl_424a_open_p"
+        case .firstRunFinished: return "bl_424a_setup_p"
+        case .previousSessionCrashed: return "bl_424a_crash_p"
+        }
+    }
+
+    fileprivate var attemptsName: String {
+        switch self {
+        case .firstOpen: return "bl_424a_open_n"
+        case .firstRunFinished: return "bl_424a_setup_n"
+        case .previousSessionCrashed: return "bl_424a_crash_n"
+        }
+    }
 }
 
 /// Strictly isolated path for `424: A` anonymous lifecycle counts.
@@ -24,22 +48,43 @@ final class AnonymousLifecycleCounts424A: @unchecked Sendable {
 
     static let endpointURL = URL(string: "https://api.bainluck.com/api/telemetry/anonymous-counts")!
     static let allowedPayloadKeys: Set<String> = ["event", "app_version", "day"]
+    static let sessionCountStorageName = "bainluck_session_count"
+    static let maxDeliveryAttempts = 3
 
     private enum StorageName {
-        static let sentFirstOpen = "bl_424a_open"
-        static let sentFirstRunFinished = "bl_424a_setup"
-        static let sentCrashed = "bl_424a_crash"
+        static let initialized = "bl_424a_init"
         static let sessionActive = "bl_424a_active"
         static let sessionVersion = "bl_424a_ver"
     }
 
-    typealias PayloadSender = @Sendable (_ payload: [String: String], _ url: URL) -> Void
+    /// Invokes `completion(true)` only when the server returns HTTP 2xx.
+    ///
+    /// A count is marked sent strictly after HTTP 2xx so an offline first open or an
+    /// unprovisioned endpoint never drops the install count forever. A rare double count
+    /// (server counted, HTTP 2xx response lost in transit) is the lesser error (#13820).
+    typealias PayloadSender = @Sendable (
+        _ payload: [String: String],
+        _ url: URL,
+        _ completion: @escaping @Sendable (Bool) -> Void
+    ) -> Void
 
     private let defaults: UserDefaults
     private let lock = NSLock()
     private let nowProvider: @Sendable () -> Date
     private let appVersionProvider: @Sendable () -> String?
+    private let deliveryAllowed: @Sendable () -> Bool
     private let sender: PayloadSender
+    private var inFlightEvents: Set<AnonymousLifecycleEvent424A> = []
+
+    /// Never count DEBUG runs, Xcode/xcodebuild simulator captures, or test runs
+    /// against production counts (Fable #13820 ask 3).
+    static var isProductionDeliveryAllowed: Bool {
+        #if DEBUG || targetEnvironment(simulator)
+        return false
+        #else
+        return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+        #endif
+    }
 
     private static let defaultSession: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -59,25 +104,37 @@ final class AnonymousLifecycleCounts424A: @unchecked Sendable {
         appVersionProvider: @escaping @Sendable () -> String? = {
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         },
+        deliveryAllowed: @escaping @Sendable () -> Bool = {
+            AnonymousLifecycleCounts424A.isProductionDeliveryAllowed
+        },
         sender: PayloadSender? = nil
     ) {
         self.defaults = defaults
         self.nowProvider = now
         self.appVersionProvider = appVersionProvider
+        self.deliveryAllowed = deliveryAllowed
         self.sender = sender ?? AnonymousLifecycleCounts424A.defaultPayloadSender
     }
 
-    private static let defaultPayloadSender: PayloadSender = { payload, url in
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+    private static let defaultPayloadSender: PayloadSender = { payload, url, completion in
+        guard isProductionDeliveryAllowed else {
+            completion(false)
             return
         }
-        guard let body = try? JSONEncoder().encode(payload) else { return }
+        guard let body = try? JSONEncoder().encode(payload) else {
+            completion(false)
+            return
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.httpShouldHandleCookies = false
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        defaultSession.dataTask(with: request) { _, _, _ in }.resume()
+        defaultSession.dataTask(with: request) { _, response, error in
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let succeeded = error == nil && (200...299).contains(statusCode)
+            completion(succeeded)
+        }.resume()
     }
 
     // MARK: - Closed payload builders
@@ -113,8 +170,8 @@ final class AnonymousLifecycleCounts424A: @unchecked Sendable {
 
     // MARK: - Lifecycle entry points (at most once per install per event)
 
-    /// Checks whether the previous active session exited abnormally (crashed), marks
-    /// the current session active, and sends `first_open` if this install hasn't yet.
+    /// Initializes upgrade-safe `first_open` state, records unclean previous exit,
+    /// and attempts delivery for any due pending counts (including retries after failed launches).
     func handleAppLaunch(
         appVersion: String? = nil,
         date: Date? = nil,
@@ -122,64 +179,82 @@ final class AnonymousLifecycleCounts424A: @unchecked Sendable {
     ) {
         let resolvedDate = date ?? nowProvider()
         let resolvedVersion = Self.sanitizedAppVersion(appVersion ?? appVersionProvider())
-        var payloadsToSend: [[String: String]] = []
+        var eventsToDispatch: [AnonymousLifecycleEvent424A] = []
 
         lock.lock()
+        initializeInstallStateIfNeededLocked()
+
         let previousActive = defaults.bool(forKey: StorageName.sessionActive)
         let previousVersion = defaults.string(forKey: StorageName.sessionVersion)
         if previousActive,
            previousVersion == resolvedVersion,
            !isDebuggerAttached,
-           !defaults.bool(forKey: StorageName.sentCrashed) {
-            defaults.set(true, forKey: StorageName.sentCrashed)
-            payloadsToSend.append(
-                Self.makePayload(
-                    event: .previousSessionCrashed,
-                    appVersion: resolvedVersion,
-                    date: resolvedDate
-                )
-            )
+           !isSentLocked(.previousSessionCrashed),
+           !isPendingLocked(.previousSessionCrashed),
+           !inFlightEvents.contains(.previousSessionCrashed) {
+            defaults.set(true, forKey: AnonymousLifecycleEvent424A.previousSessionCrashed.pendingName)
         }
 
         defaults.set(true, forKey: StorageName.sessionActive)
         defaults.set(resolvedVersion, forKey: StorageName.sessionVersion)
 
-        if !defaults.bool(forKey: StorageName.sentFirstOpen) {
-            defaults.set(true, forKey: StorageName.sentFirstOpen)
-            payloadsToSend.append(
-                Self.makePayload(
-                    event: .firstOpen,
-                    appVersion: resolvedVersion,
-                    date: resolvedDate
-                )
-            )
+        if deliveryAllowed() {
+            for event in AnonymousLifecycleEvent424A.allCases where isPendingDueLocked(event) {
+                if attemptBeginLocked(event) {
+                    eventsToDispatch.append(event)
+                }
+            }
         }
         lock.unlock()
 
-        for payload in payloadsToSend {
-            dispatchIfClosed(payload)
+        for event in eventsToDispatch {
+            let payload = Self.makePayload(event: event, appVersion: resolvedVersion, date: resolvedDate)
+            dispatchIfClosed(event: event, payload: payload)
         }
     }
 
-    /// Sends `first_run_finished` at most once per install.
-    func recordFirstRunFinished(appVersion: String? = nil, date: Date? = nil) {
+    /// Sends `first_run_finished` at most once per genuinely new install (never when setup
+    /// had already been completed on an earlier version or sitting).
+    func recordFirstRunFinished(
+        wasAlreadyOnboarded: Bool? = nil,
+        appVersion: String? = nil,
+        date: Date? = nil
+    ) {
         let resolvedDate = date ?? nowProvider()
         let resolvedVersion = Self.sanitizedAppVersion(appVersion ?? appVersionProvider())
-        var payload: [String: String]?
+        var shouldDispatch = false
 
         lock.lock()
-        if !defaults.bool(forKey: StorageName.sentFirstRunFinished) {
-            defaults.set(true, forKey: StorageName.sentFirstRunFinished)
-            payload = Self.makePayload(
+        if isSentLocked(.firstRunFinished)
+            || isPendingLocked(.firstRunFinished)
+            || inFlightEvents.contains(.firstRunFinished) {
+            lock.unlock()
+            return
+        }
+
+        // Only send `first_run_finished` when setup had not already completed before
+        // this finish (upgrade reopening the checklist sends nothing).
+        let alreadyOnboarded = wasAlreadyOnboarded ?? defaults.bool(forKey: FirstRunStorageKeys212A.onboardedKey)
+        if alreadyOnboarded {
+            defaults.set(true, forKey: AnonymousLifecycleEvent424A.firstRunFinished.sentName)
+            defaults.set(false, forKey: AnonymousLifecycleEvent424A.firstRunFinished.pendingName)
+            lock.unlock()
+            return
+        }
+
+        defaults.set(true, forKey: AnonymousLifecycleEvent424A.firstRunFinished.pendingName)
+        if deliveryAllowed(), isPendingDueLocked(.firstRunFinished) {
+            shouldDispatch = attemptBeginLocked(.firstRunFinished)
+        }
+        lock.unlock()
+
+        if shouldDispatch {
+            let payload = Self.makePayload(
                 event: .firstRunFinished,
                 appVersion: resolvedVersion,
                 date: resolvedDate
             )
-        }
-        lock.unlock()
-
-        if let payload {
-            dispatchIfClosed(payload)
+            dispatchIfClosed(event: .firstRunFinished, payload: payload)
         }
     }
 
@@ -199,13 +274,73 @@ final class AnonymousLifecycleCounts424A: @unchecked Sendable {
         lock.unlock()
     }
 
-    private func dispatchIfClosed(_ payload: [String: String]) {
+    private func initializeInstallStateIfNeededLocked() {
+        guard !defaults.bool(forKey: StorageName.initialized) else { return }
+        defaults.set(true, forKey: StorageName.initialized)
+
+        let wasOnboarded = defaults.bool(forKey: FirstRunStorageKeys212A.onboardedKey)
+        let hadConsentChoice = defaults.string(forKey: TelemetryConsent.storageKey) != nil
+        let hadPriorSessions = defaults.integer(forKey: Self.sessionCountStorageName) > 0
+
+        if wasOnboarded || hadConsentChoice || hadPriorSessions {
+            // Existing/upgraded phone: suppress `first_open` (and `first_run_finished` if
+            // onboarding already completed) so updating to 1.0.8 never inflates new-install counts.
+            defaults.set(true, forKey: AnonymousLifecycleEvent424A.firstOpen.sentName)
+            defaults.set(false, forKey: AnonymousLifecycleEvent424A.firstOpen.pendingName)
+            if wasOnboarded {
+                defaults.set(true, forKey: AnonymousLifecycleEvent424A.firstRunFinished.sentName)
+                defaults.set(false, forKey: AnonymousLifecycleEvent424A.firstRunFinished.pendingName)
+            }
+        } else if !isSentLocked(.firstOpen) {
+            defaults.set(true, forKey: AnonymousLifecycleEvent424A.firstOpen.pendingName)
+        }
+    }
+
+    private func isSentLocked(_ event: AnonymousLifecycleEvent424A) -> Bool {
+        defaults.bool(forKey: event.sentName)
+    }
+
+    private func isPendingLocked(_ event: AnonymousLifecycleEvent424A) -> Bool {
+        defaults.bool(forKey: event.pendingName)
+    }
+
+    private func isPendingDueLocked(_ event: AnonymousLifecycleEvent424A) -> Bool {
+        !isSentLocked(event)
+            && isPendingLocked(event)
+            && !inFlightEvents.contains(event)
+            && defaults.integer(forKey: event.attemptsName) < Self.maxDeliveryAttempts
+    }
+
+    private func attemptBeginLocked(_ event: AnonymousLifecycleEvent424A) -> Bool {
+        guard isPendingDueLocked(event) else { return false }
+        let nextAttempts = defaults.integer(forKey: event.attemptsName) + 1
+        defaults.set(nextAttempts, forKey: event.attemptsName)
+        inFlightEvents.insert(event)
+        return true
+    }
+
+    private func finishAttempt(event: AnonymousLifecycleEvent424A, succeeded: Bool) {
+        lock.lock()
+        inFlightEvents.remove(event)
+        if succeeded {
+            defaults.set(true, forKey: event.sentName)
+            defaults.set(false, forKey: event.pendingName)
+        } else if defaults.integer(forKey: event.attemptsName) >= Self.maxDeliveryAttempts {
+            defaults.set(false, forKey: event.pendingName)
+        }
+        lock.unlock()
+    }
+
+    private func dispatchIfClosed(event: AnonymousLifecycleEvent424A, payload: [String: String]) {
         guard Set(payload.keys).isSubset(of: Self.allowedPayloadKeys),
               let eventRaw = payload["event"],
-              AnonymousLifecycleEvent424A(rawValue: eventRaw) != nil else {
+              AnonymousLifecycleEvent424A(rawValue: eventRaw) == event else {
+            finishAttempt(event: event, succeeded: false)
             return
         }
-        sender(payload, Self.endpointURL)
+        sender(payload, Self.endpointURL) { [weak self] succeeded in
+            self?.finishAttempt(event: event, succeeded: succeeded)
+        }
     }
 
     static func isDebuggerAttached() -> Bool {
@@ -222,11 +357,15 @@ final class AnonymousLifecycleCounts424A: @unchecked Sendable {
 
     func resetForTests() {
         lock.lock()
-        defaults.removeObject(forKey: StorageName.sentFirstOpen)
-        defaults.removeObject(forKey: StorageName.sentFirstRunFinished)
-        defaults.removeObject(forKey: StorageName.sentCrashed)
+        inFlightEvents.removeAll()
+        defaults.removeObject(forKey: StorageName.initialized)
         defaults.removeObject(forKey: StorageName.sessionActive)
         defaults.removeObject(forKey: StorageName.sessionVersion)
+        for event in AnonymousLifecycleEvent424A.allCases {
+            defaults.removeObject(forKey: event.sentName)
+            defaults.removeObject(forKey: event.pendingName)
+            defaults.removeObject(forKey: event.attemptsName)
+        }
         lock.unlock()
     }
 }

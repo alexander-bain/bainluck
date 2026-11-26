@@ -262,8 +262,10 @@ final class Telemetry417CAnd424ATests: XCTestCase {
             defaults: isolatedDefaults,
             now: { fixedDay },
             appVersionProvider: { "1.0.8 (internal-build)" },
-            sender: { payload, url in
+            deliveryAllowed: { true },
+            sender: { payload, url, completion in
                 sentPayloads.append((payload, url))
+                completion(true)
             }
         )
 
@@ -279,8 +281,8 @@ final class Telemetry417CAnd424ATests: XCTestCase {
         tracker.handleAppLaunch(isDebuggerAttached: false)
 
         // 2. First-run finished -> sends once; repeated calls are no-ops.
-        tracker.recordFirstRunFinished()
-        tracker.recordFirstRunFinished()
+        tracker.recordFirstRunFinished(wasAlreadyOnboarded: false)
+        tracker.recordFirstRunFinished(wasAlreadyOnboarded: false)
 
         // 3. Unclean exit while active on same version -> next launch sends previous_session_crashed once.
         tracker.handleAppLaunch(isDebuggerAttached: false) // active foreground without clean background
@@ -308,8 +310,10 @@ final class Telemetry417CAnd424ATests: XCTestCase {
         let tracker = AnonymousLifecycleCounts424A(
             defaults: isolatedDefaults,
             appVersionProvider: { "1.0.8" },
-            sender: { payload, _ in
+            deliveryAllowed: { true },
+            sender: { payload, _, completion in
                 if let e = payload["event"] { sentEvents.append(e) }
+                completion(true)
             }
         )
 
@@ -326,6 +330,129 @@ final class Telemetry417CAnd424ATests: XCTestCase {
         // Active session from prior app version also does not attribute to new version.
         tracker.handleAppLaunch(appVersion: "1.0.9", isDebuggerAttached: false)
         XCTAssertEqual(sentEvents, ["first_open"])
+    }
+
+    func testExistingOrUpgradedInstallNeverSendsFirstOpenOrReopenedFirstRunFinished() {
+        // Case A: Prior phone already completed setup before upgrading to 1.0.8.
+        let suiteA = "Telemetry417C.UpgradeA.\(UUID().uuidString)"
+        let defaultsA = UserDefaults(suiteName: suiteA)!
+        defaultsA.removePersistentDomain(forName: suiteA)
+        defer { defaultsA.removePersistentDomain(forName: suiteA) }
+        defaultsA.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
+
+        var sentA: [String] = []
+        let trackerA = AnonymousLifecycleCounts424A(
+            defaults: defaultsA,
+            appVersionProvider: { "1.0.8" },
+            deliveryAllowed: { true },
+            sender: { payload, _, completion in
+                if let e = payload["event"] { sentA.append(e) }
+                completion(true)
+            }
+        )
+        trackerA.handleAppLaunch(isDebuggerAttached: false)
+        trackerA.recordFirstRunFinished(wasAlreadyOnboarded: true)
+        XCTAssertTrue(sentA.isEmpty, "Upgraded onboarded install must never emit first_open or first_run_finished")
+
+        // Case B: Prior phone had unanswered setup but had already launched before (sessionCount > 0)
+        // or had answered the usage prompt.
+        let suiteB = "Telemetry417C.UpgradeB.\(UUID().uuidString)"
+        let defaultsB = UserDefaults(suiteName: suiteB)!
+        defaultsB.removePersistentDomain(forName: suiteB)
+        defer { defaultsB.removePersistentDomain(forName: suiteB) }
+        defaultsB.set(4, forKey: AnonymousLifecycleCounts424A.sessionCountStorageName)
+        defaultsB.set(ConsentLevel.none.rawValue, forKey: TelemetryConsent.storageKey)
+
+        var sentB: [String] = []
+        let trackerB = AnonymousLifecycleCounts424A(
+            defaults: defaultsB,
+            appVersionProvider: { "1.0.8" },
+            deliveryAllowed: { true },
+            sender: { payload, _, completion in
+                if let e = payload["event"] { sentB.append(e) }
+                completion(true)
+            }
+        )
+        trackerB.handleAppLaunch(isDebuggerAttached: false)
+        XCTAssertTrue(sentB.isEmpty, "Upgraded install with prior sessions/consent must never emit first_open")
+    }
+
+    func testFailedDeliveryRetriesNextLaunchMarksSentOnlyOn2xxAndStopsAfterMaxAttempts() {
+        var nextSucceeded = false
+        var deliveredEvents: [String] = []
+        let tracker = AnonymousLifecycleCounts424A(
+            defaults: isolatedDefaults,
+            appVersionProvider: { "1.0.8" },
+            deliveryAllowed: { true },
+            sender: { payload, _, completion in
+                if let e = payload["event"] { deliveredEvents.append(e) }
+                completion(nextSucceeded)
+            }
+        )
+
+        // Launch 1: 404 / offline -> attempts first_open once, does NOT mark sent.
+        tracker.handleAppLaunch(isDebuggerAttached: false)
+        tracker.markSessionCleanBackgroundOrExit()
+        XCTAssertEqual(deliveredEvents, ["first_open"])
+
+        // Launch 2: 200 OK -> retries first_open and marks sent permanently.
+        nextSucceeded = true
+        tracker.handleAppLaunch(isDebuggerAttached: false)
+        tracker.markSessionCleanBackgroundOrExit()
+        XCTAssertEqual(deliveredEvents, ["first_open", "first_open"])
+
+        // Launch 3: already sent -> does NOT resend.
+        tracker.handleAppLaunch(isDebuggerAttached: false)
+        XCTAssertEqual(deliveredEvents, ["first_open", "first_open"])
+
+        // Now verify bounded retry cap (3 failed attempts for first_run_finished -> stops).
+        var setupAttempts = 0
+        let retrySuite = "Telemetry417C.RetryCap.\(UUID().uuidString)"
+        let retryDefaults = UserDefaults(suiteName: retrySuite)!
+        retryDefaults.removePersistentDomain(forName: retrySuite)
+        defer { retryDefaults.removePersistentDomain(forName: retrySuite) }
+
+        let capTracker = AnonymousLifecycleCounts424A(
+            defaults: retryDefaults,
+            appVersionProvider: { "1.0.8" },
+            deliveryAllowed: { true },
+            sender: { payload, _, completion in
+                if payload["event"] == "first_run_finished" {
+                    setupAttempts += 1
+                    completion(false)
+                } else {
+                    completion(true)
+                }
+            }
+        )
+        capTracker.handleAppLaunch(isDebuggerAttached: false)
+        capTracker.markSessionCleanBackgroundOrExit()
+        capTracker.recordFirstRunFinished(wasAlreadyOnboarded: false) // attempt 1
+        capTracker.handleAppLaunch(isDebuggerAttached: false)        // attempt 2
+        capTracker.markSessionCleanBackgroundOrExit()
+        capTracker.handleAppLaunch(isDebuggerAttached: false)        // attempt 3
+        capTracker.markSessionCleanBackgroundOrExit()
+        capTracker.handleAppLaunch(isDebuggerAttached: false)        // capped: must stop
+        XCTAssertEqual(setupAttempts, AnonymousLifecycleCounts424A.maxDeliveryAttempts)
+    }
+
+    func testDebugAndSimulatorNeverDeliverProductionCounts() {
+        XCTAssertFalse(
+            AnonymousLifecycleCounts424A.isProductionDeliveryAllowed,
+            "Debug and simulator builds must never send counts to production"
+        )
+        var calls = 0
+        let tracker = AnonymousLifecycleCounts424A(
+            defaults: isolatedDefaults,
+            appVersionProvider: { "1.0.8" },
+            sender: { _, _, completion in
+                calls += 1
+                completion(true)
+            }
+        )
+        tracker.handleAppLaunch(isDebuggerAttached: false)
+        tracker.recordFirstRunFinished(wasAlreadyOnboarded: false)
+        XCTAssertEqual(calls, 0)
     }
 
     func testApprovedPrivacyDisclosureSentenceMatchesVerbatimAcrossPromptAndPreferences() throws {
