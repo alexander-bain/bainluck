@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -549,4 +549,216 @@ async def test_multi_wave_deferral_skips_unneeded_non_kalshi_stats_and_patches_s
     assert res2["items"][0]["market_id"] == 9001
     assert res2["items"][0]["total_outcomes"] == 7
     assert stats_query_binds[-1] == [9001]
+
+
+async def test_partial_stopped_board_does_not_cache_screen_verdict(monkeypatch):
+    """If staleness only stops this club's outcome (not all board legs), never cache mkt_screen."""
+    fake_redis = _FakeAsyncRedis()
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:56379/0")
+    monkeypatch.setattr(tf_cache, "get_shared_async_redis", lambda: _coro_val(fake_redis))
+
+    now = datetime.now(timezone.utc)
+    stale_10d = now - timedelta(days=10)
+    stale_35d = now - timedelta(days=35)
+
+    # 811: open board where ONLY Boston's leg (8111) is >7d behind 8112 -> partial stop.
+    m811 = _make_market(811, "NBA Championship Partial Stop", source="polymarket", stamp=now)
+    o8111 = _make_outcome(8111, 811, "Boston Celtics", 0.30, team_id=100, stamp=stale_10d)
+
+    # 812: open unobserved board (35d > BOARD_UNOBSERVED_DAYS) where ALL legs stop -> full stop.
+    m812 = _make_market(812, "NBA Old Unobserved Board", source="polymarket", stamp=stale_35d)
+    o8121 = _make_outcome(8121, 812, "Boston Celtics", 0.25, team_id=100, stamp=stale_35d)
+
+    db = _fake_real_pg_db(
+        _route_pg_sql(
+            fk_market_ids=[811, 812],
+            q1_rows=[
+                (o8111, m811, "basketball_nba"),
+                (o8121, m812, "basketball_nba"),
+            ],
+            wave_markets={
+                811: (811, "polymarket", "PM-811", "open", None, "championship", None, now, "NBA Championship Partial Stop"),
+                812: (812, "polymarket", "PM-812", "open", None, "championship", None, stale_35d, "NBA Old Unobserved Board"),
+            },
+            wave_outcomes={
+                811: [
+                    (8111, 811, 0.30, 0.29, 0.31, None, False, 250.0, stale_10d, stale_10d),
+                    (8112, 811, 0.35, 0.34, 0.36, None, False, 250.0, now, now),
+                ],
+                812: [
+                    (8121, 812, 0.25, 0.24, 0.26, None, False, 250.0, stale_35d, stale_35d),
+                    (8122, 812, 0.35, 0.34, 0.36, None, False, 250.0, stale_35d, stale_35d),
+                ],
+            },
+            fleet_now=now,
+        )
+    )
+    res = await user_route._query_team_futures([100], db, limit=20)
+    assert res["items"] == []
+    assert "team_futures:mkt_stats:v1:811" in fake_redis.data
+    assert "team_futures:mkt_screen:v1:811" not in fake_redis.data
+    assert "team_futures:mkt_screen:v1:812" in fake_redis.data
+
+
+async def test_read_market_stats_and_screen_rejects_expired_l2_envelopes(monkeypatch):
+    """Expired Redis mkt_stats / mkt_screen envelopes (rem_ttl <= 0) must not be returned."""
+    fake_redis = _FakeAsyncRedis()
+    now_wall = 1_800_000_100.0
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:56379/0")
+    monkeypatch.setattr(tf_cache, "get_shared_async_redis", lambda: _coro_val(fake_redis))
+    monkeypatch.setattr(tf_cache.time, "time", lambda: now_wall)
+
+    fake_redis.data["team_futures:mkt_stats:v1:30"] = json.dumps(
+        [12, 0.9, now_wall - 61.0, 60.0]
+    ).encode()
+    fake_redis.data["team_futures:mkt_screen:v1:30"] = json.dumps(
+        [[3001], now_wall - 61.0, 60.0]
+    ).encode()
+    fake_redis.data["team_futures:mkt_stats:v1:31"] = json.dumps(
+        [8, 0.8, now_wall - 15.0, 15.0]
+    ).encode()
+    fake_redis.data["team_futures:mkt_screen:v1:31"] = json.dumps(
+        [[], now_wall - 15.0, 15.0]
+    ).encode()
+    fake_redis.data["team_futures:mkt_stats:v1:32"] = json.dumps(
+        [4, 0.7, now_wall - 5.0, 15.0]
+    ).encode()
+    fake_redis.data["team_futures:mkt_screen:v1:32"] = json.dumps(
+        [[], now_wall - 5.0, 15.0]
+    ).encode()
+
+    stats_hits, screen_hits = await tf_cache.read_market_stats_and_screen(
+        99, [30, 31, 32], include_screen=True
+    )
+    assert set(stats_hits) == {32}
+    assert set(screen_hits) == {32}
+    assert 30 not in stats_hits and 31 not in stats_hits
+    assert 30 not in screen_hits and 31 not in screen_hits
+
+
+async def test_query_team_futures_assigns_15s_ttl_for_event_linked_and_60s_for_season(monkeypatch):
+    """End-to-end _query_team_futures assigns 60s to season markets and 15s to event-linked ones."""
+    fake_redis = _FakeAsyncRedis()
+    now_wall = 1_800_000_200.0
+    now_mono = 200.0
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:56379/0")
+    monkeypatch.setattr(tf_cache, "get_shared_async_redis", lambda: _coro_val(fake_redis))
+    monkeypatch.setattr(tf_cache.time, "time", lambda: now_wall)
+    monkeypatch.setattr(tf_cache.time, "monotonic", lambda: now_mono)
+    monkeypatch.setattr(user_route.time, "time", lambda: now_wall)
+    monkeypatch.setattr(user_route.time, "monotonic", lambda: now_mono)
+
+    now = datetime.now(timezone.utc)
+    m901 = _make_market(901, "NBA Championship", source="polymarket", event_id=None, stamp=now)
+    o901 = _make_outcome(9011, 901, "Boston Celtics", 0.30, team_id=100, stamp=now)
+    m902 = _make_market(902, "Celtics Game Prop", source="polymarket", event_id=445566, stamp=now)
+    o902 = _make_outcome(9021, 902, "Boston Celtics", 0.55, team_id=100, stamp=now)
+
+    db = _fake_real_pg_db(
+        _route_pg_sql(
+            fk_market_ids=[901, 902],
+            q1_rows=[(o902, m902, "basketball_nba"), (o901, m901, "basketball_nba")],
+            wave_markets={
+                901: (901, "polymarket", "PM-901", "open", None, "championship", None, now, "NBA Championship"),
+                902: (902, "polymarket", "PM-902", "open", 445566, "game_prop", None, now, "Celtics Game Prop"),
+            },
+            wave_outcomes={
+                901: [(9011, 901, 0.30, 0.29, 0.31, None, False, 250.0, now, now)],
+                902: [(9021, 902, 0.55, 0.54, 0.56, None, False, 250.0, now, now)],
+            },
+            fleet_now=now,
+        )
+    )
+    res1 = await user_route._query_team_futures([100], db, limit=20)
+    assert {it["market_id"] for it in res1["items"]} == {901, 902}
+    assert fake_redis.ttls["team_futures:mkt_stats:v1:901"] == 60
+    assert fake_redis.ttls["team_futures:mkt_screen:v1:901"] == 60
+    assert fake_redis.ttls["team_futures:mkt_stats:v1:902"] == 15
+    assert fake_redis.ttls["team_futures:mkt_screen:v1:902"] == 15
+    assert json.loads(fake_redis.data["team_futures:mkt_screen:v1:901"])[2] == pytest.approx(60.0)
+    assert json.loads(fake_redis.data["team_futures:mkt_screen:v1:902"])[2] == pytest.approx(15.0)
+
+    # +10s later (different worker): both hit Redis, and page expiry ceiling matches 902's +5s left.
+    user_route._award_outcomes_cache.clear()
+    tf_cache.clear_team_futures_shared_cache()
+    now_wall += 10.0
+    now_mono += 10.0
+    t_hit: dict = {}
+    await user_route._query_team_futures([100], db, limit=20, timings=t_hit)
+    assert t_hit["screen_waves"] == 0
+    assert t_hit["_cache_expires_at"] == pytest.approx(now_wall + 5.0)
+
+    # +16s from write (902 expired at 15s, 901 still live until 60s): only 902 re-screens.
+    user_route._award_outcomes_cache.clear()
+    tf_cache.clear_team_futures_shared_cache()
+    now_wall += 6.0
+    now_mono += 6.0
+    t_exp: dict = {}
+    await user_route._query_team_futures([100], db, limit=20, timings=t_exp)
+    assert t_exp["screened"] == 1
+
+
+async def test_oldest_piece_timestamp_beats_newer_award_copy(monkeypatch):
+    """_award_cached_at and _cache_expires_at reflect the oldest cached piece, not newer q2."""
+    fake_redis = _FakeAsyncRedis()
+    now_wall = 1_800_000_500.0
+    now_mono = 500.0
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:56379/0")
+    monkeypatch.setattr(tf_cache, "get_shared_async_redis", lambda: _coro_val(fake_redis))
+    monkeypatch.setattr(tf_cache.time, "time", lambda: now_wall)
+    monkeypatch.setattr(tf_cache.time, "monotonic", lambda: now_mono)
+    monkeypatch.setattr(user_route.time, "time", lambda: now_wall)
+    monkeypatch.setattr(user_route.time, "monotonic", lambda: now_mono)
+
+    old_mkt_ts = now_wall - 42.0
+    await tf_cache.write_market_stats_and_screen(
+        1,
+        stats_entries={951: (30, 1.0, old_mkt_ts)},
+        screen_entries={951: (set(), old_mkt_ts)},
+        ttl_by_mid={951: 60.0},
+    )
+
+    now = datetime.now(timezone.utc)
+    m951 = _make_market(951, "NBA Championship", source="polymarket", stamp=now)
+    o951 = _make_outcome(9511, 951, "Boston Celtics", 0.30, team_id=100, stamp=now)
+    m952 = _make_market(952, "NBA MVP", source="polymarket", stamp=now)
+    o952 = _make_outcome(9521, 952, "Jayson Tatum", 0.25, team_id=None, stamp=now)
+
+    db = _fake_real_pg_db(
+        _route_pg_sql(
+            fk_market_ids=[951],
+            q1_rows=[(o951, m951, "basketball_nba")],
+            award_market_ids=[952],
+            q2_rows=[(o952, m952, "basketball_nba")],
+            wave_markets={
+                952: (952, "polymarket", "PM-952", "open", None, "championship", None, now, "NBA MVP"),
+            },
+            wave_outcomes={
+                952: [(9521, 952, 0.25, 0.24, 0.26, None, False, 250.0, now, now)],
+            },
+            fleet_now=now,
+        )
+    )
+
+    t1: dict = {}
+    res1 = await user_route._query_team_futures([100], db, limit=20, timings=t1)
+    assert {it["market_id"] for it in res1["items"]} == {951, 952}
+    assert t1["_award_cached_at"] == pytest.approx(old_mkt_ts)
+    assert t1["_cache_expires_at"] == pytest.approx(old_mkt_ts + 60.0)
+
+    # Also verify an older stats-only hit beats newer award & screen timestamps.
+    user_route._award_outcomes_cache.clear()
+    tf_cache.clear_team_futures_shared_cache()
+    stats_old_ts = now_wall - 48.0
+    fake_redis.data.pop("team_futures:mkt_screen:v1:951", None)
+    await tf_cache.write_market_stats_and_screen(
+        2,
+        stats_entries={951: (30, 1.0, stats_old_ts)},
+        screen_entries={951: (set(), now_wall)},
+        ttl_by_mid={951: 60.0},
+    )
+    t2: dict = {}
+    await user_route._query_team_futures([100], db, limit=20, timings=t2)
+    assert t2["_award_cached_at"] == pytest.approx(stats_old_ts)
+    assert t2["_cache_expires_at"] == pytest.approx(stats_old_ts + 60.0)
 

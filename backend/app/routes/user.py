@@ -2914,8 +2914,10 @@ async def _query_team_futures(
         _stats_to_write: dict[int, tuple[int, float | None, float]] = {}
         _screen_to_write: dict[int, tuple[set[int], float]] = {}
         _used_cache_timestamps: list[float] = []
+        _used_cache_expiries: list[float] = []
         if _award_wall_ts is not None:
             _used_cache_timestamps.append(_award_wall_ts)
+            _used_cache_expiries.append(_award_wall_ts + _AWARD_OUTCOMES_TTL)
 
         withheld_by_market: dict[int, set[int]] = {}
         _screen_ids = _mkt_ids
@@ -3109,6 +3111,10 @@ async def _query_team_futures(
                             withheld_by_market[_mid] = set(_wset)
                         _screened_mids.add(_mid)
                         _used_cache_timestamps.append(_cached_screen_ts_by_mid[_mid])
+                        _used_cache_expiries.append(
+                            _cached_screen_ts_by_mid[_mid]
+                            + _market_ttl_by_id.get(_mid, MARKET_CACHE_TTL_SEASON_SECONDS)
+                        )
                     else:
                         _miss_ids_single.append(_mid)
                 if _miss_ids_single:
@@ -3126,6 +3132,10 @@ async def _query_team_futures(
                 for _mid in _screened_mids:
                     if _mid in _cached_stats_ts_by_mid:
                         _used_cache_timestamps.append(_cached_stats_ts_by_mid[_mid])
+                        _used_cache_expiries.append(
+                            _cached_stats_ts_by_mid[_mid]
+                            + _market_ttl_by_id.get(_mid, MARKET_CACHE_TTL_SEASON_SECONDS)
+                        )
             else:
                 _tq_st = time.perf_counter()
                 if not is_pg:
@@ -3139,6 +3149,10 @@ async def _query_team_futures(
                     for _mid in _mkt_ids:
                         if _market_source_by_id.get(_mid) == "kalshi" and _mid in _cached_stats_ts_by_mid:
                             _used_cache_timestamps.append(_cached_stats_ts_by_mid[_mid])
+                            _used_cache_expiries.append(
+                                _cached_stats_ts_by_mid[_mid]
+                                + _market_ttl_by_id.get(_mid, MARKET_CACHE_TTL_SEASON_SECONDS)
+                            )
                 await _fetch_missing_stats(_upfront_stats_ids)
                 _stats_elapsed_ms = (time.perf_counter() - _tq_st) * 1000
 
@@ -3358,6 +3372,10 @@ async def _query_team_futures(
                         )
                     _screened_mids.add(_hid)
                     _used_cache_timestamps.append(_cached_screen_ts_by_mid[_hid])
+                    _used_cache_expiries.append(
+                        _cached_screen_ts_by_mid[_hid]
+                        + _market_ttl_by_id.get(_hid, MARKET_CACHE_TTL_SEASON_SECONDS)
+                    )
 
                 if _miss_ids:
                     if not await _screen_db_miss_wave(_miss_ids):
@@ -3412,8 +3430,13 @@ async def _query_team_futures(
             _mid = it["market_id"]
             if it.get("total_outcomes") is None and _mid in _market_stats:
                 it["total_outcomes"] = _market_stats[_mid][0]
-            if _mid in _cached_stats_ts_by_mid:
+        for _mid in (_screened_mids | {it["market_id"] for it in items}):
+            if _market_source_by_id.get(_mid) != "kalshi" and _mid in _cached_stats_ts_by_mid:
                 _used_cache_timestamps.append(_cached_stats_ts_by_mid[_mid])
+                _used_cache_expiries.append(
+                    _cached_stats_ts_by_mid[_mid]
+                    + _market_ttl_by_id.get(_mid, MARKET_CACHE_TTL_SEASON_SECONDS)
+                )
 
     if _shared_cache_on and (_stats_to_write or _screen_to_write):
         await write_market_stats_and_screen(
@@ -3435,6 +3458,8 @@ async def _query_team_futures(
         timings["screen_unscreened"] = _screen_unscreened_count
         if _used_cache_timestamps:
             timings["_award_cached_at"] = min(_used_cache_timestamps)
+        if _used_cache_expiries:
+            timings["_cache_expires_at"] = min(_used_cache_expiries)
 
     # Build teams list for share link
     teams_list = [

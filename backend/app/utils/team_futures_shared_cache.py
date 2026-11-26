@@ -2,9 +2,10 @@
 
 Eliminates repeated cold DB work across clubs sharing league futures boards,
 multiple web workers/dynos, and the sibling ``/api/me/team-futures`` and
-``/api/shared/team-futures`` endpoints while keeping freshness strictly within
-the #13741 ceiling (60 s for season futures, 15 s when a market is linked to an
-event).
+``/api/shared/team-futures`` endpoints while keeping freshness within the #13741
+ceilings: 60 s for season/award futures (including season rows on a playing
+club's page), 15 s when a market is linked to an event, and team page response
+caching clamped to the earliest remaining piece expiry.
 
 Active ONLY for real PostgreSQL ``AsyncSession`` callers
 (``team_page_cache.is_real_pg_engine`` checks live in ``routes/user.py``), and

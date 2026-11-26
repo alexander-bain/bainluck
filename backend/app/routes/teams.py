@@ -722,7 +722,7 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
                     ).scalars().all()
                 ) or [team.id]
             futures_data = await _query_team_futures(
-                futures_team_ids, db, limit=30, timings=_ftime if debug_timing else None
+                futures_team_ids, db, limit=30, timings=_ftime
             )
             futures_items = futures_data.get("items", [])
             if futures_data.get("partial"):
@@ -818,7 +818,19 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             and not _futures_failed
             and not _championship_failed
         ):
-            await _write_team_page_cache(cache_target[0], cache_target[1], resp)
+            _futures_cache_exp = _ftime.get("_cache_expires_at")
+            _futures_oldest_ts = _ftime.get("_award_cached_at")
+            await _write_team_page_cache(
+                cache_target[0],
+                cache_target[1],
+                resp,
+                max_expires_at=(
+                    float(_futures_cache_exp) if _futures_cache_exp is not None else None
+                ),
+                oldest_source_ts=(
+                    float(_futures_oldest_ts) if _futures_oldest_ts is not None else None
+                ),
+            )
         return resp
 
     if cache_target is not None:
