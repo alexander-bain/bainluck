@@ -152,13 +152,17 @@ interface RetentionData {
     retentionRate: number;
     day2RetentionRate?: number | null;
     day7RetentionRate?: number | null;
-    day2Users?: number;
-    day2CohortBase?: number;
-    day7Users?: number;
-    day7CohortBase?: number;
-    returnVisitEvents?: number;
-    returnVisitUsers?: number;
+    day2Users?: number | null;
+    day2CohortBase?: number | null;
+    day7Users?: number | null;
+    day7CohortBase?: number | null;
+    returnVisitEvents?: number | null;
+    returnVisitUsers?: number | null;
+    cohortsUnavailable?: boolean;
+    returnVisitUnavailable?: boolean;
   };
+  cohortsUnavailable?: boolean;
+  returnVisitUnavailable?: boolean;
   cohorts?: CohortRow[];
   daily: RetentionDay[];
 }
@@ -995,6 +999,10 @@ function RetentionTab({ data }: { data: RetentionData }) {
   const cohorts = data.cohorts ?? [];
   const d2Rate = data.summary.day2RetentionRate;
   const d7Rate = data.summary.day7RetentionRate;
+  const cohortsUnavailable = Boolean(data.cohortsUnavailable ?? data.summary.cohortsUnavailable);
+  const returnVisitUnavailable = Boolean(
+    data.returnVisitUnavailable ?? data.summary.returnVisitUnavailable
+  );
 
   return (
     <div className="space-y-4">
@@ -1016,20 +1024,36 @@ function RetentionTab({ data }: { data: RetentionData }) {
         />
         <StatCard
           label="Day 2 Cohort"
-          value={d2Rate != null ? d2Rate + "%" : "—"}
+          value={
+            cohortsUnavailable
+              ? "Unavailable"
+              : d2Rate != null
+                ? d2Rate + "%"
+                : "—"
+          }
           sub={
-            data.summary.day2CohortBase
-              ? `${formatNum(data.summary.day2Users ?? 0)} / ${formatNum(data.summary.day2CohortBase)} (+1d)`
-              : "Awaiting mature cohorts"
+            cohortsUnavailable
+              ? "Could not read this from Google Analytics"
+              : data.summary.day2CohortBase
+                ? `Came back the next day · ${formatNum(data.summary.day2Users ?? 0)} / ${formatNum(data.summary.day2CohortBase)}`
+                : "Came back the next day · Awaiting mature cohorts"
           }
         />
         <StatCard
           label="Day 7 Cohort"
-          value={d7Rate != null ? d7Rate + "%" : "—"}
+          value={
+            cohortsUnavailable
+              ? "Unavailable"
+              : d7Rate != null
+                ? d7Rate + "%"
+                : "—"
+          }
           sub={
-            data.summary.day7CohortBase
-              ? `${formatNum(data.summary.day7Users ?? 0)} / ${formatNum(data.summary.day7CohortBase)} (+6d)`
-              : "Awaiting mature cohorts"
+            cohortsUnavailable
+              ? "Could not read this from Google Analytics"
+              : data.summary.day7CohortBase
+                ? `Came back 6 days later · ${formatNum(data.summary.day7Users ?? 0)} / ${formatNum(data.summary.day7CohortBase)}`
+                : "Came back 6 days later · Awaiting mature cohorts"
           }
         />
       </div>
@@ -1037,19 +1061,32 @@ function RetentionTab({ data }: { data: RetentionData }) {
       {/* Day-2 / Day-7 Cohort Retention (#13261 Row 3) */}
       <MetricSection
         question="Did new readers come back on Day 2 and Day 7?"
-        status={d2Rate != null && d2Rate >= 15 ? "good" : "warning"}
+        status={cohortsUnavailable ? "warning" : d2Rate != null && d2Rate >= 15 ? "good" : "warning"}
         summary={
-          (d2Rate != null ? `Day 2: ${d2Rate}%` : "Day 2: —") +
-          " · " +
-          (d7Rate != null ? `Day 7: ${d7Rate}%` : "Day 7: —") +
-          (data.summary.returnVisitEvents != null
-            ? ` · ${formatNum(data.summary.returnVisitEvents)} return_visit events`
-            : "")
+          cohortsUnavailable
+            ? "Could not read this from Google Analytics" +
+              (returnVisitUnavailable
+                ? " · return_visit unavailable"
+                : data.summary.returnVisitEvents != null
+                  ? ` · ${formatNum(data.summary.returnVisitEvents)} return_visit events`
+                  : "")
+            : (d2Rate != null ? `Day 2: ${d2Rate}%` : "Day 2: —") +
+              " · " +
+              (d7Rate != null ? `Day 7: ${d7Rate}%` : "Day 7: —") +
+              (returnVisitUnavailable
+                ? " · Could not read return_visit from Google Analytics"
+                : data.summary.returnVisitEvents != null
+                  ? ` · ${formatNum(data.summary.returnVisitEvents)} return_visit events`
+                  : "")
         }
         ideal="Day 2 above 20% and Day 7 above 10% across mature daily cohorts."
         defaultExpanded
       >
-        {cohorts.length > 0 ? (
+        {cohortsUnavailable ? (
+          <p className="text-xs text-red-600">
+            Could not read this from Google Analytics
+          </p>
+        ) : cohorts.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>

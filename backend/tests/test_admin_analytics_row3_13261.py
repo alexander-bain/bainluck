@@ -39,35 +39,61 @@ def test_split_source_medium_handles_standard_and_direct() -> None:
 def test_summarize_cohort_retention_computes_d2_and_d7_only_for_mature_cohorts() -> None:
     today = date(2026, 11, 20)
     rows = [
-        # 7 days old -> mature for both Day 2 (+1d) and Day 7 (+6d)
+        # Age 7 (2026-11-13) -> finished Day 2 (+1d) and Day 7 (+6d) -> IN both
         {"cohort": "2026-11-13", "cohortNthDay": "0000", "cohortActiveUsers": "20", "cohortTotalUsers": "20"},
         {"cohort": "2026-11-13", "cohortNthDay": "0001", "cohortActiveUsers": "6", "cohortTotalUsers": "20"},
         {"cohort": "2026-11-13", "cohortNthDay": "0006", "cohortActiveUsers": "4", "cohortTotalUsers": "20"},
-        # 3 days old -> mature for Day 2 (+1d), NOT mature for Day 7 (+6d)
-        {"cohort": "2026-11-17", "cohortNthDay": "0000", "cohortActiveUsers": "10", "cohortTotalUsers": "10"},
-        {"cohort": "2026-11-17", "cohortNthDay": "0001", "cohortActiveUsers": "3", "cohortTotalUsers": "10"},
-        # Today -> immature for both Day 2 and Day 7 (must NOT dilute denominators)
-        {"cohort": "2026-11-20", "cohortNthDay": "0000", "cohortActiveUsers": "50", "cohortTotalUsers": "50"},
+        # Age 6 (2026-11-14) -> Day 7 (+6d) is today (unfinished) -> IN Day 2, OUT of Day 7
+        {"cohort": "2026-11-14", "cohortNthDay": "0000", "cohortActiveUsers": "10", "cohortTotalUsers": "10"},
+        {"cohort": "2026-11-14", "cohortNthDay": "0001", "cohortActiveUsers": "2", "cohortTotalUsers": "10"},
+        {"cohort": "2026-11-14", "cohortNthDay": "0006", "cohortActiveUsers": "1", "cohortTotalUsers": "10"},
+        # Age 2 (2026-11-18) -> finished Day 2 (+1d) -> IN Day 2, OUT of Day 7
+        {"cohort": "2026-11-18", "cohortNthDay": "0000", "cohortActiveUsers": "10", "cohortTotalUsers": "10"},
+        {"cohort": "2026-11-18", "cohortNthDay": "0001", "cohortActiveUsers": "4", "cohortTotalUsers": "10"},
+        # Age 1 (2026-11-19) -> Day 2 (+1d) is today (unfinished) -> OUT of Day 2
+        {"cohort": "2026-11-19", "cohortNthDay": "0000", "cohortActiveUsers": "30", "cohortTotalUsers": "30"},
+        {"cohort": "2026-11-19", "cohortNthDay": "0001", "cohortActiveUsers": "3", "cohortTotalUsers": "30"},
+        # Unparseable cohort date -> must be skipped, NEVER treated as mature age 7
+        {"cohort": "not-a-date", "cohortNthDay": "0000", "cohortActiveUsers": "99", "cohortTotalUsers": "99"},
+        {"cohort": "not-a-date", "cohortNthDay": "0001", "cohortActiveUsers": "50", "cohortTotalUsers": "99"},
     ]
 
     summary = _summarize_cohort_retention(rows, today=today)
-    # Day 2 denominator = 20 + 10 = 30; users = 6 + 3 = 9 -> 30.0%
-    assert summary["day2CohortBase"] == 30
-    assert summary["day2Users"] == 9
+    # Day 2 eligible ages: 7 (20), 6 (10), 2 (10) -> base = 40; users = 6 + 2 + 4 = 12 -> 30.0%
+    assert summary["day2CohortBase"] == 40
+    assert summary["day2Users"] == 12
     assert summary["day2RetentionRate"] == 30.0
-    # Day 7 denominator = 20 only; users = 4 -> 20.0%
+    # Day 7 eligible age: 7 (20) only -> base = 20; users = 4 -> 20.0%
     assert summary["day7CohortBase"] == 20
     assert summary["day7Users"] == 4
     assert summary["day7RetentionRate"] == 20.0
 
     by_date = {c["cohortDate"]: c for c in summary["cohorts"]}
+    assert "not-a-date" not in by_date
     assert by_date["2026-11-13"]["day2Eligible"] is True
     assert by_date["2026-11-13"]["day7Eligible"] is True
-    assert by_date["2026-11-17"]["day2Eligible"] is True
-    assert by_date["2026-11-17"]["day7Eligible"] is False
-    assert by_date["2026-11-17"]["day7Rate"] is None
-    assert by_date["2026-11-20"]["day2Eligible"] is False
-    assert by_date["2026-11-20"]["day2Rate"] is None
+    assert by_date["2026-11-14"]["day2Eligible"] is True
+    assert by_date["2026-11-14"]["day7Eligible"] is False
+    assert by_date["2026-11-14"]["day7Rate"] is None
+    assert by_date["2026-11-18"]["day2Eligible"] is True
+    assert by_date["2026-11-18"]["day7Eligible"] is False
+    assert by_date["2026-11-19"]["day2Eligible"] is False
+    assert by_date["2026-11-19"]["day2Rate"] is None
+
+
+def test_ga_property_today_uses_pacific_time_across_utc_rollover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 01:00 UTC on Nov 21 is still 17:00 PST on Nov 20 in America/Los_Angeles
+    class _RolloverDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            utc_now = datetime(2026, 11, 21, 1, 0, tzinfo=timezone.utc)
+            return utc_now.astimezone(tz) if tz else utc_now
+
+    monkeypatch.setenv("GA4_PROPERTY_TIMEZONE", "America/Los_Angeles")
+    monkeypatch.setattr(admin_analytics_mod, "datetime", _RolloverDateTime)
+    assert admin_analytics_mod._ga_property_today() == date(2026, 11, 20)
 
 
 @pytest.mark.asyncio
@@ -151,10 +177,17 @@ async def test_analytics_retention_includes_d2_d7_cohorts_and_degrades_safely(
         {"cohort": "2026-11-10", "cohortNthDay": "0006", "cohortActiveUsers": "2", "cohortTotalUsers": "10"},
     ]
 
+    cohort_mock_calls: list[int] = []
+
+    def _fake_cohorts(*, days: int = 14, max_offset: int = 7, today=None):
+        cohort_mock_calls.append(days)
+        return cohort_rows
+
+    cache_set_ok = AsyncMock()
     with (
         patch("app.routes.admin_analytics._check_admin_secret"),
         patch("app.routes.admin_analytics._cache_get", new=AsyncMock(return_value=None)),
-        patch("app.routes.admin_analytics._cache_set", new=AsyncMock()),
+        patch("app.routes.admin_analytics._cache_set", new=cache_set_ok),
         patch(
             "app.services.ga4_api.get_user_retention",
             return_value=[
@@ -162,27 +195,32 @@ async def test_analytics_retention_includes_d2_d7_cohorts_and_degrades_safely(
                 {"date": "20261118", "newVsReturning": "returning", "activeUsers": "5", "sessions": "8"},
             ],
         ),
-        patch("app.services.ga4_api.get_cohort_retention", return_value=cohort_rows),
+        patch("app.services.ga4_api.get_cohort_retention", side_effect=_fake_cohorts),
         patch(
             "app.services.ga4_api.run_report",
             return_value=[{"eventName": "return_visit", "eventCount": "12", "totalUsers": "7"}],
         ),
     ):
-        res = await analytics_retention(fake_req, secret="s", period="14d")
+        res = await analytics_retention(fake_req, secret="s", period="7d")
 
+    assert cohort_mock_calls == [14]
     assert res["summary"]["totalNewUsers"] == 10
     assert res["summary"]["totalReturningUsers"] == 5
     assert res["summary"]["day2RetentionRate"] == 40.0
     assert res["summary"]["day7RetentionRate"] == 20.0
     assert res["summary"]["returnVisitEvents"] == 12
     assert res["summary"]["returnVisitUsers"] == 7
+    assert res["cohortsUnavailable"] is False
+    assert res["returnVisitUnavailable"] is False
     assert len(res["cohorts"]) == 1
+    cache_set_ok.assert_awaited_once()
 
-    # Graceful fallback when GA4 cohort query raises
+    # Failed GA4 read sets *Unavailable=True, returnVisit*=None (not 0), and skips caching
+    cache_set_fail = AsyncMock()
     with (
         patch("app.routes.admin_analytics._check_admin_secret"),
         patch("app.routes.admin_analytics._cache_get", new=AsyncMock(return_value=None)),
-        patch("app.routes.admin_analytics._cache_set", new=AsyncMock()),
+        patch("app.routes.admin_analytics._cache_set", new=cache_set_fail),
         patch("app.services.ga4_api.get_user_retention", return_value=[]),
         patch("app.services.ga4_api.get_cohort_retention", side_effect=RuntimeError("GA4 cohort unavailable")),
         patch("app.services.ga4_api.run_report", side_effect=RuntimeError("GA4 event unavailable")),
@@ -190,6 +228,12 @@ async def test_analytics_retention_includes_d2_d7_cohorts_and_degrades_safely(
         fallback = await analytics_retention(fake_req, secret="s", period="14d")
 
     assert fallback["cohorts"] == []
+    assert fallback["cohortsUnavailable"] is True
+    assert fallback["returnVisitUnavailable"] is True
+    assert fallback["summary"]["cohortsUnavailable"] is True
+    assert fallback["summary"]["returnVisitUnavailable"] is True
     assert fallback["summary"]["day2RetentionRate"] is None
     assert fallback["summary"]["day7RetentionRate"] is None
-    assert fallback["summary"]["returnVisitEvents"] == 0
+    assert fallback["summary"]["returnVisitEvents"] is None
+    assert fallback["summary"]["returnVisitUsers"] is None
+    cache_set_fail.assert_not_awaited()

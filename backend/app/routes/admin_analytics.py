@@ -4,10 +4,12 @@ All endpoints require the admin secret and cache responses in Redis
 to avoid hammering the GA4 API on repeated loads.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 import json
 import logging
+import os
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -268,6 +270,12 @@ def _parse_nth_day(raw: str | None) -> int | None:
         return None
 
 
+def _ga_property_today() -> date:
+    """Current calendar date in the GA4 property's reporting timezone (default America/Los_Angeles)."""
+    tz_name = os.getenv("GA4_PROPERTY_TIMEZONE", "America/Los_Angeles")
+    return datetime.now(ZoneInfo(tz_name)).date()
+
+
 def _summarize_cohort_retention(
     cohort_rows: list[dict[str, Any]],
     *,
@@ -275,11 +283,11 @@ def _summarize_cohort_retention(
 ) -> dict[str, Any]:
     """Aggregate GA4 CohortSpec rows into Day-2 (+1d) and Day-7 (+6d) cohort retention (#13261 Row 3).
 
-    Only cohorts old enough to have reached Day 2 (age >= 1 day) contribute to the
-    Day-2 denominator, and only cohorts old enough to have reached Day 7 (age >= 6 days)
-    contribute to the Day-7 denominator.
+    A cohort counts toward Day 2 only once its return day (+1d) has finished in the
+    property's reporting timezone (age >= 2 days), and toward Day 7 only once its
+    return day (+6d) has finished (age >= 7 days). Unparseable cohort dates are skipped.
     """
-    anchor = today or datetime.now(timezone.utc).date()
+    anchor = today or _ga_property_today()
     by_cohort: dict[str, dict[str, Any]] = {}
 
     for row in cohort_rows:
@@ -319,10 +327,12 @@ def _summarize_cohort_retention(
     for cohort_name in sorted(by_cohort.keys()):
         entry = by_cohort[cohort_name]
         c_date = _parse_cohort_date(cohort_name)
-        age_days = (anchor - c_date).days if c_date is not None else 7
+        if c_date is None:
+            continue
+        age_days = (anchor - c_date).days
         size = int(entry["cohortSize"])
-        d2_eligible = age_days >= 1 and size > 0
-        d7_eligible = age_days >= 6 and size > 0
+        d2_eligible = age_days >= 2 and size > 0
+        d7_eligible = age_days >= 7 and size > 0
 
         d2_users = int(entry["day2Users"]) if d2_eligible else 0
         d7_users = int(entry["day7Users"]) if d7_eligible else 0
@@ -544,18 +554,32 @@ async def analytics_retention(
         logger.error("GA4 retention query failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"GA4 API error: {exc}")
 
-    # True Day-2 / Day-7 cohort retention from GA4 CohortSpec (graceful fallback if unavailable)
-    cohort_days = 7 if period == "7d" else 14
+    # Always ask for 14 daily cohorts (even on the 7d view) so finished Day-7 cohorts exist.
     cohort_rows: list[dict[str, Any]] = []
+    cohorts_unavailable = False
     try:
-        cohort_rows = get_cohort_retention(days=cohort_days, max_offset=7)
+        cohort_rows = get_cohort_retention(days=14, max_offset=7)
     except Exception as exc:
+        cohorts_unavailable = True
         logger.warning("GA4 cohort retention query unavailable: %s", exc)
-    cohort_summary = _summarize_cohort_retention(cohort_rows)
+    cohort_summary = (
+        {
+            "day2RetentionRate": None,
+            "day7RetentionRate": None,
+            "day2Users": None,
+            "day2CohortBase": None,
+            "day7Users": None,
+            "day7CohortBase": None,
+            "cohorts": [],
+        }
+        if cohorts_unavailable
+        else _summarize_cohort_retention(cohort_rows)
+    )
 
-    # Consented return_visit event totals (web + iOS)
-    return_visit_events = 0
-    return_visit_users = 0
+    # Consented return_visit event totals (web + iOS); return None (never 0) if the read fails.
+    return_visit_events: int | None = 0
+    return_visit_users: int | None = 0
+    return_visit_unavailable = False
     try:
         ev_rows = run_report(
             dimensions=["eventName"],
@@ -571,6 +595,9 @@ async def analytics_retention(
                 return_visit_users = int(row.get("totalUsers", 0) or 0)
                 break
     except Exception as exc:
+        return_visit_unavailable = True
+        return_visit_events = None
+        return_visit_users = None
         logger.warning("GA4 return_visit query unavailable: %s", exc)
 
     # Reshape into daily buckets with new/returning split
@@ -612,12 +639,17 @@ async def analytics_retention(
             "day7CohortBase": cohort_summary["day7CohortBase"],
             "returnVisitEvents": return_visit_events,
             "returnVisitUsers": return_visit_users,
+            "cohortsUnavailable": cohorts_unavailable,
+            "returnVisitUnavailable": return_visit_unavailable,
         },
+        "cohortsUnavailable": cohorts_unavailable,
+        "returnVisitUnavailable": return_visit_unavailable,
         "cohorts": cohort_summary["cohorts"],
         "daily": sorted_daily,
     }
 
-    await _cache_set(cache_key, result, CACHE_TTL_STANDARD)
+    if not cohorts_unavailable and not return_visit_unavailable:
+        await _cache_set(cache_key, result, CACHE_TTL_STANDARD)
     return result
 
 
