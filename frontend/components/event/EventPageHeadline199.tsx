@@ -694,10 +694,12 @@ export default function EventPageHeadline199({
                     return (
                     <div
                       data-headline-nums=""
-                      className={`flex ${
-                        rowHasUnavailableNotice ? "items-center" : "items-baseline"
-                      } shrink-0 max-[359px]:ml-auto`}
-                      style={{ gap: colGapPx }}
+                      className="flex items-baseline shrink-0 max-[359px]:ml-auto"
+                      style={
+                        rowHasUnavailableNotice
+                          ? { gap: colGapPx, alignItems: "center" }
+                          : { gap: colGapPx }
+                      }
                     >
                       {visibleColumns.map(({ col, idx: colIdx }) => {
                         const text = colIdx < row.cells.length ? row.cells[colIdx] : "";
