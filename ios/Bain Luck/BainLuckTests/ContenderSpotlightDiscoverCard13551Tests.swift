@@ -41,7 +41,7 @@ final class ContenderSpotlightDiscoverCard13551Tests: XCTestCase {
       "stage": "public",
       "kicker": "POLITICS · 2028 RACE",
       "title": "Jon Ossoff leads the presidential race at 16%, with Democratic at 68%",
-      "subtitle": "Individual candidates priced highest to win the presidency.",
+      "subtitle": "Top candidates to win the presidency.",
       "footer": "",
       "scale_ordered": false,
       "section_count": 4,
@@ -110,7 +110,7 @@ final class ContenderSpotlightDiscoverCard13551Tests: XCTestCase {
         {
           "market_id": 57574217,
           "outcome_id": 1,
-          "name": "Rate Hold",
+          "name": "No change",
           "probability": 0.54,
           "rendered_percent": 54,
           "art": null
@@ -118,7 +118,7 @@ final class ContenderSpotlightDiscoverCard13551Tests: XCTestCase {
         {
           "market_id": 57574217,
           "outcome_id": 2,
-          "name": "25bp Cut",
+          "name": "Quarter-point cut",
           "probability": 0.31,
           "rendered_percent": 31,
           "art": null
@@ -126,7 +126,7 @@ final class ContenderSpotlightDiscoverCard13551Tests: XCTestCase {
         {
           "market_id": 57574217,
           "outcome_id": 3,
-          "name": "25bp Hike",
+          "name": "Quarter-point hike",
           "probability": 0.15,
           "rendered_percent": 15,
           "art": null
@@ -182,7 +182,8 @@ final class ContenderSpotlightDiscoverCard13551Tests: XCTestCase {
             "https://example.invalid/vance.png": Self.makeSwatchImage(color: .systemRed),
         ]
 
-        let outDir = ProcessInfo.processInfo.environment["BUILDER_C_RENDER_13551_CONTENDER_DIR"]
+        let outDir = ProcessInfo.processInfo.environment["TEST_RUNNER_BUILDER_C_RENDER_13551_CONTENDER_DIR"]
+            ?? ProcessInfo.processInfo.environment["BUILDER_C_RENDER_13551_CONTENDER_DIR"]
         if let outDir, !outDir.isEmpty {
             try FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
         }
@@ -206,7 +207,12 @@ final class ContenderSpotlightDiscoverCard13551Tests: XCTestCase {
             .environment(\.machineryPreloadedImages12288, preloaded)
 
             let img = await renderCard(view: view, width: cfg.width, scheme: cfg.scheme, typeSize: cfg.typeSize, height: cfg.height)
-            let ocr = try ocrLines(img).joined(separator: " ")
+            let lines = try ocrLines(img)
+            for line in lines {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                XCTAssertFalse(trimmed.hasPrefix("·"), "\(cfg.tag) wrapped detail line starts with '·': '\(line)'")
+            }
+            let ocr = lines.joined(separator: " ")
             let normalizedOcr = ocr.replacingOccurrences(of: "- ", with: "-")
 
             if cfg.card.slug == "machinery-2028-presidential" {
@@ -216,11 +222,11 @@ final class ContenderSpotlightDiscoverCard13551Tests: XCTestCase {
                 // 387: A — sibling without art draws initials circle ("AO").
                 XCTAssertTrue(ocr.contains("AO"), "\(cfg.tag) missing 387:A initials 'AO': \(ocr)")
             } else if cfg.card.slug == "machinery-rate-path-podium" {
-                for expected in ["#1", "#2", "#3", "Rate Hold", "54%", "25bp Cut", "31%", "25bp Hike", "15%"] {
-                    XCTAssertTrue(ocr.contains(expected), "\(cfg.tag) missing '\(expected)': \(ocr)")
+                for expected in ["#1", "#2", "#3", "No change", "54%", "Quarter-point cut", "31%", "Quarter-point hike", "15%"] {
+                    XCTAssertTrue(normalizedOcr.contains(expected), "\(cfg.tag) missing '\(expected)': \(ocr)")
                 }
-                // 388: A — all-text card never draws initials circles ("RH").
-                XCTAssertFalse(ocr.contains("RH"), "\(cfg.tag) all-text card must not draw initials 'RH': \(ocr)")
+                // 388: A — all-text card never draws initials circles ("NC").
+                XCTAssertFalse(ocr.contains("NC"), "\(cfg.tag) all-text card must not draw initials 'NC': \(ocr)")
             } else {
                 XCTAssertFalse(ocr.contains("#1"), "\(cfg.tag) scale_ordered contender_spotlight must keep horizontal bars, not podium ranks: \(ocr)")
                 XCTAssertTrue(ocr.contains("Quarter-point increase") && ocr.contains("54%"), "\(cfg.tag) missing scale row: \(ocr)")

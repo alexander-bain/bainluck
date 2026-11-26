@@ -2336,6 +2336,14 @@ struct MachineryDiscoverCardView: View {
         colorScheme == .dark ? Color.white.opacity(0.05) : DS.surface
     }
 
+    private var spotlightDetailInk: Color {
+        colorScheme == .dark ? Color(white: 0.82) : Color(red: 0.24, green: 0.27, blue: 0.33)
+    }
+
+    private func spotlightDetailDisplayText(_ raw: String) -> String {
+        raw.replacingOccurrences(of: " · ", with: "\u{00A0}·\u{00A0}")
+    }
+
     @ViewBuilder
     private var contenderSpotlightBody: some View {
         let topThree = Array(card.outcomeRows.prefix(3))
@@ -2420,9 +2428,9 @@ struct MachineryDiscoverCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if let detail = outcome.art?.detail, !detail.isEmpty {
-                Text(detail)
-                    .font(.system(size: min(kickerSize, 14)))
-                    .foregroundStyle(secondaryInk)
+                Text(spotlightDetailDisplayText(detail))
+                    .font(.system(size: min(max(kickerSize, 12.5), 14), weight: .medium))
+                    .foregroundStyle(spotlightDetailInk)
                     .multilineTextAlignment(.center)
                     .minimumScaleFactor(0.85)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2475,9 +2483,9 @@ struct MachineryDiscoverCardView: View {
                         .foregroundStyle(primaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                     if let detail = outcome.art?.detail, !detail.isEmpty {
-                        Text(detail)
-                            .font(.system(size: min(subSize, 18)))
-                            .foregroundStyle(secondaryInk)
+                        Text(spotlightDetailDisplayText(detail))
+                            .font(.system(size: min(subSize, 18), weight: .medium))
+                            .foregroundStyle(spotlightDetailInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
