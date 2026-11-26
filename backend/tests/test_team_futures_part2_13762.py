@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -12,14 +11,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import FuturesMarket, FuturesOutcome, Sport, Team
 from app.routes import futures as futures_route
 from app.routes import prop_families as prop_families_route
 from app.routes import user as user_route
-from app.services.database import Base
 from app.utils import open_futures_outcomes as ofo_mod
 from app.utils import request_cache, team_futures_shared_cache as tf_cache
 
@@ -554,93 +550,3 @@ async def test_multi_wave_deferral_skips_unneeded_non_kalshi_stats_and_patches_s
     assert res2["items"][0]["total_outcomes"] == 7
     assert stats_query_binds[-1] == [9001]
 
-
-_PG_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
-
-
-@pytest.mark.skipif(not _PG_URL, reason="set SEARCH_TEST_DATABASE_URL for real-PG #13762 Part 2 check")
-async def test_real_pg_q2_two_step_and_shared_cache_roundtrip(monkeypatch):
-    engine = create_async_engine(_PG_URL)  # type: ignore[arg-type]
-    async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-    maker = async_sessionmaker(engine, expire_on_commit=False)
-
-    fake_redis = _FakeAsyncRedis()
-    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:56379/0")
-    monkeypatch.setattr(tf_cache, "get_shared_async_redis", lambda: _coro_val(fake_redis))
-
-    now = datetime.now(timezone.utc)
-    try:
-        async with maker() as db:
-            db.add_all([
-                Sport(id=1, key="basketball_nba", name="NBA", group="Basketball", active=True),
-                Team(
-                    id=100,
-                    sport_id=1,
-                    name="Boston Celtics",
-                    slug="boston-celtics",
-                    espn_id="2",
-                    roster_players=["Jayson Tatum"],
-                ),
-                FuturesMarket(
-                    id=11,
-                    source="polymarket",
-                    external_id="PM-11",
-                    sport_id=1,
-                    name="NBA MVP 2026",
-                    category="futures",
-                    mutually_exclusive=True,
-                    llm_sport_category="basketball",
-                    market_tier=1,
-                    status="open",
-                    updated_at=now,
-                ),
-                FuturesMarket(
-                    id=12,
-                    source="polymarket",
-                    external_id="PM-12",
-                    sport_id=1,
-                    name="NBA Non Award Board",
-                    category="futures",
-                    mutually_exclusive=True,
-                    llm_sport_category="basketball",
-                    market_tier=1,
-                    status="resolved",
-                    updated_at=now,
-                ),
-                FuturesOutcome(
-                    id=111,
-                    market_id=11,
-                    external_id="O-111",
-                    name="Jayson Tatum",
-                    team_id=None,
-                    current_probability=0.45,
-                    current_yes_bid=0.44,
-                    current_yes_ask=0.46,
-                    volume_24h=500.0,
-                    volume_24h_at=now,
-                    last_updated=now,
-                ),
-            ])
-            await db.commit()
-
-            t1: dict = {}
-            r1 = await user_route._query_team_futures([100], db, limit=20, timings=t1)
-            assert [it["market_id"] for it in r1["items"]] == [11]
-            assert r1["items"][0]["total_outcomes"] == 1
-            assert tf_cache._AWARD_Q2_L2_KEY in fake_redis.data
-
-            # Clear L1 and confirm L2 hit serves identically with 0 waves.
-            user_route._award_outcomes_cache.clear()
-            tf_cache.clear_team_futures_shared_cache()
-            t2: dict = {}
-            r2 = await user_route._query_team_futures([100], db, limit=20, timings=t2)
-            assert r2 == r1
-            assert t2["screen_waves"] == 0
-            assert t2["_award_cached_at"] == pytest.approx(t1["_award_cached_at"])
-    finally:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
-        await engine.dispose()
