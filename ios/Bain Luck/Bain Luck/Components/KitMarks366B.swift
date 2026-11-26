@@ -768,15 +768,15 @@ struct KitLineMarkView366B: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let strokeColor = KitTones366B.barColor(
-            hex: mark.color?.light,
-            darkHex: mark.colorDark ?? mark.color?.dark,
-            fallbackIndex: 0,
-            scheme: colorScheme
-        )
-        GeometryReader { geo in
-            let pts = mark.points
-            if pts.count >= 2 {
+        if DiscoverCardChartRules13773.hasMovingKitLine(mark.points) {
+            let strokeColor = KitTones366B.barColor(
+                hex: mark.color?.light,
+                darkHex: mark.colorDark ?? mark.color?.dark,
+                fallbackIndex: 0,
+                scheme: colorScheme
+            )
+            GeometryReader { geo in
+                let pts = mark.points
                 let minX = pts.map(\.x).min() ?? 0
                 let maxX = max(minX + 0.0001, pts.map(\.x).max() ?? 1)
                 let minY = pts.map(\.y).min() ?? 0
@@ -802,7 +802,7 @@ struct KitLineMarkView366B: View {
                     )
                 )
             }
+            .frame(height: 36)
         }
-        .frame(height: 36)
     }
 }

@@ -104,7 +104,7 @@ function printedCards(markup: string): PrintedCard[] {
       const rows = [
         ...block.matchAll(
           new RegExp(
-            `class="min-w-0 truncate text-text-secondary">([^<]*)<[^]*?class="${FIELD_VALUE_CLASS}">([^<]*)<`,
+            `class="min-w-0 break-words leading-snug text-text-secondary">([^<]*)<[^]*?class="${FIELD_VALUE_CLASS}">([^<]*)<`,
             "g"
           )
         ),

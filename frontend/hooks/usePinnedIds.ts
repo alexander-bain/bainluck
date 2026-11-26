@@ -37,6 +37,7 @@ import {
   type BucketPolicy,
 } from "@/lib/principalStorage";
 import { parseIds, serializeIds, mergeForMigration } from "@/lib/pinnedIds";
+import { trackPinItem } from "@/lib/analytics/followPin";
 
 export interface UsePinnedIdsResult {
   /** Array of pinned ids for the CURRENT owner (empty while identity resolves) */
@@ -192,6 +193,10 @@ export function usePinnedIds(
       if (pinnedIds.length >= max) return false;
 
       commit((current) => [...current, id]);
+      trackPinItem({
+        item_type: pinType,
+        action: "pin",
+      });
 
       if (scope.kind === "principal") {
         addPin(pinType, id).catch((err) =>
@@ -206,7 +211,14 @@ export function usePinnedIds(
   const unpin = useCallback(
     (id: number): void => {
       if (!bucket) return;
+      const wasPinned = pinnedIds.includes(id);
       commit((current) => current.filter((existing) => existing !== id));
+      if (wasPinned) {
+        trackPinItem({
+          item_type: pinType,
+          action: "unpin",
+        });
+      }
 
       if (scope.kind === "principal") {
         removePin(pinType, id).catch((err) =>
@@ -214,7 +226,7 @@ export function usePinnedIds(
         );
       }
     },
-    [bucket, commit, scope, pinType]
+    [bucket, pinnedIds, commit, scope, pinType]
   );
 
   const togglePin = useCallback(

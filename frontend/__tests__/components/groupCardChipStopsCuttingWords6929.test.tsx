@@ -166,7 +166,14 @@ function chipClass(html: string): string {
  *     about being cut.
  */
 function isConstrained(cls: string): boolean {
-  return /\bmin-w-0\b/.test(cls) && /\bmax-w-full\b/.test(cls) && /\btruncate\b/.test(cls);
+  // #6929 + #13793: bounded inside the flex container (`min-w-0 max-w-full`) and wraps
+  // cleanly (`break-words`) without single-line `whitespace-nowrap` or `truncate` ellipsis.
+  return (
+    /\bmin-w-0\b/.test(cls) &&
+    /\bmax-w-full\b/.test(cls) &&
+    /\bbreak-words\b/.test(cls) &&
+    !/\btruncate\b/.test(cls)
+  );
 }
 
 /** The exact class string that shipped, from `GroupCard.tsx:72` before this fix. */
@@ -174,11 +181,13 @@ const SHIPPED_CHIP =
   "bg-lime-600/15 text-lime-700 text-[10px] font-bold uppercase tracking-wider " +
   "px-2 py-0.5 rounded-full whitespace-nowrap";
 
-describe("#6929 a group card's category chip stays inside its card", () => {
+const HAPPINESS_27_TITLE = "World Happiness Report 2026";
+
+describe("#6929 / #13793 a group card's category eyebrow wraps inside its card without clipping", () => {
   it.each([
     ["GroupCard (kind:comparison)", "comparison"],
     ["ThemeBundleCard (kind:theme)", "theme"],
-  ])("%s constrains the chip so a long title ellipsises instead of being cut", (_label, kind) => {
+  ])("%s wraps the eyebrow cleanly instead of cutting or ellipsising it", (_label, kind) => {
     // BOTH branches, because the two files carried identical markup and a fix applied
     // to one of them leaves the other cutting words on the same page.
     expect(isConstrained(chipClass(render(kind, LONG_TITLE)))).toBe(true);
@@ -187,47 +196,62 @@ describe("#6929 a group card's category chip stays inside its card", () => {
   it.each([
     ["GroupCard (kind:comparison)", "comparison"],
     ["ThemeBundleCard (kind:theme)", "theme"],
-  ])("%s no longer relies on a bare nowrap with nothing capping the width", (_label, kind) => {
-    // The defect was not "nowrap" — it was nowrap with no cap. `truncate` supplies
-    // `white-space: nowrap` itself, so the bare utility should now be gone from the
-    // chip; if it comes back ALONGSIDE the cap that is harmless, which is why the
-    // assertion above is the load-bearing one and this is the narrower statement.
+  ])("%s no longer relies on nowrap or truncate on the eyebrow", (_label, kind) => {
     const cls = chipClass(render(kind, LONG_TITLE));
-    expect(/\bwhitespace-nowrap\b/.test(cls) && !isConstrained(cls)).toBe(false);
+    expect(/\bwhitespace-nowrap\b/.test(cls)).toBe(false);
+    expect(/\btruncate\b/.test(cls)).toBe(false);
+  });
+
+  it("renders a 27-character set name in full on a narrow card with no ellipsis and keeps count on line 1 (#13793)", () => {
+    const item = {
+      type: "bundle",
+      score: 70,
+      reason: "",
+      headline: null,
+      data: {
+        id: "theme:world-happiness:1-2",
+        title: HAPPINESS_27_TITLE,
+        kind: "theme",
+        category: "politics",
+        item_count: MEMBERS.length,
+        member_ids: [1, 2],
+        items: MEMBERS,
+      } as unknown as FeedBundleData,
+    } as unknown as FeedItem;
+    const html = renderToStaticMarkup(
+      <DiscoverCard groupedItem={{ type: "single", item }} positionIndex={0} />,
+    );
+    const eyebrowMatch = html.match(/data-testid="bundle-eyebrow" class="([^"]*)"[^>]*>([^<]*)<\/span>/);
+    expect(eyebrowMatch).not.toBeNull();
+    expect(isConstrained(eyebrowMatch![1])).toBe(true);
+    expect(eyebrowMatch![2]).toContain(HAPPINESS_27_TITLE);
+    expect(eyebrowMatch![2]).not.toContain("…");
+    expect(eyebrowMatch![2]).not.toContain("...");
+    const sibling = html.match(/class="([^"]*text-text-muted[^"]*whitespace-nowrap[^"]*)"/);
+    expect(sibling).not.toBeNull();
+    expect(/\bshrink-0\b/.test(sibling![1])).toBe(true);
   });
 
   it("still renders the short category label the chip was designed for", () => {
-    // The fix must not be a regression for the 99% case. `truncate` on a chip that
-    // fits changes nothing a reader can see, and the label must still be present in
-    // full — a fix that ellipsised "⛳ Golf" would be worse than the bug.
     const html = render("comparison", SHORT_TITLE);
     expect(html).toContain("⛳ Golf");
     expect(isConstrained(chipClass(html))).toBe(true);
   });
 
   it("POSITIVE CONTROL: the predicate fires on the markup that shipped", () => {
-    // Without this the three assertions above could be describing something other
-    // than the bug, and would stay green if `isConstrained` were mis-written to be
-    // satisfied by everything.
     expect(isConstrained(SHIPPED_CHIP)).toBe(false);
+    expect(
+      isConstrained("text-[10px] font-bold uppercase tracking-wider text-text-secondary min-w-0 max-w-full truncate"),
+    ).toBe(false);
     expect(/\bwhitespace-nowrap\b/.test(SHIPPED_CHIP)).toBe(true);
-    // And the locator finds it, so a green run above is a real read and not a miss.
     expect(chipClass(`<span data-testid="bundle-eyebrow" class="${SHIPPED_CHIP}">x</span>`)).toBe(SHIPPED_CHIP);
   });
 
   it("CONTROL: the premise is intact — the card shell still clips its overflow", () => {
-    // The guard must not be able to go green because the CARD stopped clipping. That
-    // would "fix" the cut by letting the chip paint over the page instead, which is a
-    // different and worse defect, and every assertion above would still pass.
     expect(render("comparison", LONG_TITLE)).toContain("overflow-hidden");
   });
 
-  it("CONTROL: the sibling count keeps its nowrap — this was not a blanket sweep", () => {
-    // THE FIX THAT WOULD HAVE BEEN WRONG. Running `truncate` over every nowrap in
-    // these files also hits "· N related" / "N markets", a 9-character string that
-    // must never wrap or ellipsise and never overflowed anything. A blanket edit
-    // passes all six assertions above while quietly degrading a second label.
-    // `sharedQuestion` is what hides that sibling, so it is dropped for this render.
+  it("CONTROL: the sibling count keeps its nowrap and shrink-0 — this was not a blanket sweep", () => {
     const item = {
       type: "bundle",
       score: 70,
@@ -246,10 +270,10 @@ describe("#6929 a group card's category chip stays inside its card", () => {
       <DiscoverCard groupedItem={{ type: "single", item }} positionIndex={0} />,
     );
 
-    // The sibling is present on this branch (premise), and it is still a plain nowrap.
     expect(html).toContain("related");
     const sibling = html.match(/class="([^"]*text-text-muted[^"]*whitespace-nowrap[^"]*)"/);
     expect(sibling).not.toBeNull();
+    expect(/\bshrink-0\b/.test(sibling![1])).toBe(true);
     expect(/\btruncate\b/.test(sibling![1])).toBe(false);
   });
 });

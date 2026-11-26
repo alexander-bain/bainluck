@@ -106,7 +106,7 @@ const CARD_TITLE = "min-w-0 text-[14px] font-semibold leading-snug text-text-pri
 
 const FIELD_ROW = "flex items-baseline justify-between gap-3 text-[12px]";
 
-const FIELD_NAME = "min-w-0 truncate text-text-secondary";
+const FIELD_NAME = "min-w-0 break-words leading-snug text-text-secondary";
 
 const FIELD_VALUE = "shrink-0 tabular-nums font-semibold text-text-primary";
 
@@ -188,7 +188,7 @@ function FinishedEventCard({
           <li key={row.side} className={FIELD_ROW} data-side={row.side}>
             <span className="flex min-w-0 items-baseline gap-1.5">
               <span
-                className={`min-w-0 truncate ${
+                className={`min-w-0 break-words leading-snug ${
                   row.won ? "font-semibold text-text-primary" : "text-text-muted"
                 }`}
               >

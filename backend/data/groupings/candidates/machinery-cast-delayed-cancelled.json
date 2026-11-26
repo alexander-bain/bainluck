@@ -36,7 +36,7 @@
         "key": "cast_delayed_cancelled",
         "title": "Casting, Delays & Cancellations",
         "item_noun": "calls",
-        "note": "Major film castings, release delays, and TV cancellations priced for 2026.",
+        "note": "Major film castings, release delays, and TV cancellations tracked for 2026.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch3-cast-delayed-cancelled",

@@ -427,10 +427,11 @@ struct PreferencesView: View {
             Button {
                 showOnboarding = true
             } label: {
-                Text("Set up your teams")
+                Text("Follow your teams")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
                     .background(Color.accentColor, in: Capsule())
@@ -519,9 +520,10 @@ struct PreferencesView: View {
             HStack(spacing: 8) {
                 Image(systemName: "pencil.circle.fill")
                     .font(.system(size: 16))
-                Text("Edit Teams")
+                Text("Edit what you follow")
                     .font(.subheadline)
                     .fontWeight(.semibold)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .foregroundStyle(Color.accentColor)
             .padding(.horizontal, 20)
@@ -543,6 +545,12 @@ struct PreferencesView: View {
                 title: "Your Interests",
                 count: viewModel.sportAffinities.filter { $0.value > 0 }.count
             )
+
+            Text("More or less of a whole category")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal)
 
             // Legend
             HStack(spacing: 8) {
@@ -702,13 +710,15 @@ struct PreferencesView: View {
                         .font(.system(size: 20))
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Redo Onboarding")
+                        Text("Open the checklist")
                             .font(.subheadline)
                             .fontWeight(.medium)
                             .foregroundStyle(.primary)
-                        Text("Start fresh with team selection and interests")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Follow teams and topics, pick sets, turn on alerts")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -1188,9 +1198,26 @@ struct PreferencesView: View {
             sectionHeader(emoji: "\u{1F512}", title: "Privacy", count: nil)
             analyticsConsentRow
                 .padding(.horizontal)
+            anonymousCountsDisclosureRow
+                .padding(.horizontal)
             watchDiagnosticsInfoRow
                 .padding(.horizontal)
         }
+    }
+
+    private var anonymousCountsDisclosureRow: some View {
+        Text(AnonymousLifecycleCounts424A.privacyDisclosureSentence)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+            .accessibilityIdentifier("preferences.anonymousCountsDisclosure")
     }
 
     private var watchDiagnosticsInfoRow: some View {
@@ -1232,7 +1259,7 @@ struct PreferencesView: View {
         case .unknown, .saved:
             return analyticsConsentGranted
                 ? "Anonymous usage stats help us find what\u{2019}s broken"
-                : "Off \u{2014} no usage analytics or crash reports are sent"
+                : "Off \u{2014} optional usage analytics and crash reports are off"
         }
     }
 

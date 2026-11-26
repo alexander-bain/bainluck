@@ -1,0 +1,10 @@
+[
+  {
+    "testFile": "frontend/__tests__/lib/setPagesLiveReprice10090.test.tsx",
+    "testName": "CollectionHub machinery section (market_preview) and AwardCategoryPairedCard (server invalidation) re-price in < 500 ms",
+    "issue": 13810,
+    "added": "2026-11-25",
+    "expires": "2026-12-02",
+    "reason": "Ruling 241: A — 780 ms wall-clock budget miss against 500 ms bar at line 595 on full runner (master run 45748543191 attempt 1, untouched phone-only commit 729f3cd06e / #13801); passed on automatic re-run attempt 2."
+  }
+]

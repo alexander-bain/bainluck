@@ -46,7 +46,7 @@
       {
         "key": "presidential_field",
         "title": "General Election Contenders",
-        "note": "Individual candidates priced highest to win the presidency.",
+        "note": "Individual candidates with the highest probability to win the presidency.",
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["presidential", "election", "winner", "2028"],

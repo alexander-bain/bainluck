@@ -34,6 +34,7 @@ export function cleanPairedCardSubtitle(subtitle: string | null | undefined): st
     .replace(/\s*·\s*Nominee\s*%.*$/i, "")
     .replace(/\s*·\s*Paired by club.*$/i, "")
     .replace(/\s*·\s*Verified [A-Za-z0-9\s]+$/i, "")
+    .replace(/\s*·\s*[^·]*\bTMDB\b[^·]*$/i, "")
     .replace(/\s*\(ordered by [^)]*\)/gi, "")
     .replace(/\s*\([^)]*#\d+[^)]*\)/g, "")
     .trim();

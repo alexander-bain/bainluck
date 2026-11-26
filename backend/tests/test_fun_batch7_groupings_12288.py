@@ -264,7 +264,7 @@ async def test_batch7_eight_sets_cover_all_eight_visual_forms_and_clean_copy() -
         if card["form_id"] == "probability_history_chart":
             assert card["title"] == "The chance OpenAI lists below $1T rose 15 points since Nov 17"
             assert card["subtitle"] == (
-                "Pricing on SpaceX and OpenAI milestones shifted sharply over the past week."
+                "Probabilities on SpaceX and OpenAI milestones shifted sharply over the past week."
             )
             assert card["mini_chart"]["title"] == "OpenAI's IPO valuation"
             assert len(card["rows"]) == 3

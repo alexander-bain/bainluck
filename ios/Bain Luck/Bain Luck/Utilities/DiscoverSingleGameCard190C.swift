@@ -16,20 +16,12 @@ enum DiscoverSingleGameCard190C {
 
     // MARK: - 190-C / 191-A Eligibility
 
-    /// #12824 — strips win-chance fields from `currentOdds` when the feed item's
-    /// hero source is `"opening"` while retaining score projections.
+    /// #12824 / #13775 — resolves card-facing `currentOdds` through the single shared
+    /// `CompactGameCard12616.currentOddsForCard` rule (withholds opening-only chances while
+    /// falling back to `hero_probability` / `hero_probability_away` when `current_odds` is nil).
     nonisolated private static func sanitizedEventForCurrentChance(_ event: FeedEventData) -> FeedEventData {
-        guard event.heroProbabilitySource == OpeningLineHero.openingSource,
-              var odds = event.currentOdds else {
-            return event
-        }
         var copy = event
-        odds.homeProbability = nil
-        odds.awayProbability = nil
-        odds.drawProbability = nil
-        odds.homeRenderedPercent = nil
-        odds.awayRenderedPercent = nil
-        copy.currentOdds = odds
+        copy.currentOdds = CompactGameCard12616.currentOddsForCard(event)
         return copy
     }
 

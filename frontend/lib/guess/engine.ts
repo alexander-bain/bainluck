@@ -1,105 +1,148 @@
 // Scoring and standings for /guess. Pure functions, no React, no network.
 //
 // The rules a player meets:
-//   • a slider card pays 20 points less one for every point off (a count card
-//     loses `step` for each one off);
-//   • a pick or ladder card pays 20 for the answer, a few for the next best;
-//   • an order card pays by how many of the three pairs are the right way round.
+//   • a tap with two things to choose from pays 10 points when it is right, a
+//     tap with four pays 15, and a wrong tap pays nothing;
+//   • a slider pays 20 points, less one for every point off. A count card loses
+//     `step` for each one off. A duo card is two sliders and pays the average.
 //
-// Two house entries sit beside the players. THE COIN always says 50% and picks
-// at random; it is the opponent a person has when playing alone or first.
-// TOGETHER is the group's average guess scored as if it were one more player,
+// THE HARDER THE CARD, THE MORE IT IS WORTH: 10, 15, 20. With every card at 20,
+// five two-way taps swung the total further than five sliders did, so a lucky
+// Easy step all but decided the game before the part that takes judgment. At
+// 10, 15 and 20 the three steps of five are worth 50, 75 and 100, and a step
+// can still be read on its own ("4 of 5 on Easy").
+//
+// Two house entries sit beside the players. THE COIN flips for every tap and
+// leaves every slider in the middle; it is the opponent a person has when
+// playing alone or first. TOGETHER is the group's one answer on each card (the
+// most common tap, the average slider) scored as if it were one more player,
 // so a group can see whether it was smarter than its members.
 
-import type { GamePack, PackCard, PlayerEntry } from "./types";
+import type { GamePack, PackCard, PlayerEntry, TapCard } from "./types";
 
+/** What a slider pays for dead on. */
 export const FULL_POINTS = 20;
+/** What a right tap pays: less than a slider, and less still when there are only two things to tap. */
+export const TWO_WAY_POINTS = 10;
+export const FOUR_WAY_POINTS = 15;
 
-/** Every way to rank three things, surest first. A guess on an order card is an index into this. */
-export const ORDER_PERMS: readonly (readonly [number, number, number])[] = [
-  [0, 1, 2],
-  [0, 2, 1],
-  [1, 0, 2],
-  [1, 2, 0],
-  [2, 0, 1],
-  [2, 1, 0],
-];
-
-const ORDER_POINTS = [0, 5, 12, FULL_POINTS] as const;
+/** A duo guess packs two percents into one number: `first * DUO_BASE + second`. */
+export const DUO_BASE = 101;
 
 export const COIN_NAME = "The Coin";
 export const TOGETHER_NAME = "Together";
 
-/** Item indices of an order card, surest first. */
-export function rightOrder(card: PackCard): number[] {
-  if (card.kind !== "order") return [];
-  return card.items
-    .map((item, index) => ({ index, percent: item.percent ?? 0 }))
-    .sort((a, b) => b.percent - a.percent)
-    .map((x) => x.index);
+/** A card counts for at most this many seconds of a player's time, so a phone left on the table is not a slow player. */
+export const MAX_CARD_SECONDS = 120;
+
+export function packDuo(first: number, second: number): number {
+  return first * DUO_BASE + second;
 }
 
-/** How many of the three pairs a ranking has the right way round. */
-export function pairsRight(card: PackCard, guess: number): number {
-  if (card.kind !== "order") return 0;
-  const perm = ORDER_PERMS[guess];
-  if (!perm) return 0;
-  const place = new Map<number, number>();
-  perm.forEach((item, position) => place.set(item, position));
-  let right = 0;
-  for (let a = 0; a < card.items.length; a += 1) {
-    for (let b = a + 1; b < card.items.length; b += 1) {
-      const pa = card.items[a].percent ?? 0;
-      const pb = card.items[b].percent ?? 0;
-      const aFirst = (place.get(a) ?? 0) < (place.get(b) ?? 0);
-      if (pa > pb === aFirst) right += 1;
-    }
-  }
-  return right;
+export function duoParts(guess: number): [number, number] {
+  return [Math.floor(guess / DUO_BASE), guess % DUO_BASE];
 }
 
-/** How far a slider guess is from the answer. `null` for cards without a slider. */
-export function missFor(card: PackCard, guess: number): number | null {
-  if (card.kind === "chance" || card.kind === "count") return Math.abs(guess - card.answer);
-  return null;
+/** True for a card answered with one tap. */
+export function isTap(card: PackCard): card is TapCard {
+  return card.kind === "side" || card.kind === "versus" || card.kind === "four" || card.kind === "leader";
 }
 
-export function pointsFor(card: PackCard, guess: number | null): number {
-  if (guess === null || !Number.isFinite(guess)) return 0;
-  switch (card.kind) {
-    case "chance":
-      return Math.max(0, FULL_POINTS - Math.abs(guess - card.answer));
-    case "count":
-      return Math.max(0, FULL_POINTS - card.step * Math.abs(guess - card.answer));
-    case "pick":
-    case "ladder":
-      if (guess === card.answer) return FULL_POINTS;
-      return card.partial[String(guess)] ?? 0;
-    case "order":
-      return ORDER_POINTS[pairsRight(card, guess)] ?? 0;
-  }
+/** How many things there are to tap on a tap card. */
+export function optionCount(card: TapCard): number {
+  return card.kind === "side" ? 2 : card.options.length;
+}
+
+/** The most points this card can pay. */
+export function fullPoints(card: PackCard): number {
+  if (!isTap(card)) return FULL_POINTS;
+  return optionCount(card) <= 2 ? TWO_WAY_POINTS : FOUR_WAY_POINTS;
 }
 
 /** The largest value a guess on this card can take. */
 export function maxGuess(card: PackCard): number {
+  if (isTap(card)) return optionCount(card) - 1;
   switch (card.kind) {
     case "chance":
       return 100;
     case "count":
       return card.max;
-    case "pick":
-    case "ladder":
-      return card.options.length - 1;
-    case "order":
-      return ORDER_PERMS.length - 1;
+    case "duo":
+      return packDuo(100, 100);
   }
 }
 
 export function isValidGuess(card: PackCard, guess: number | null): guess is number {
-  return guess !== null && Number.isInteger(guess) && guess >= 0 && guess <= maxGuess(card);
+  if (guess === null || !Number.isInteger(guess) || guess < 0 || guess > maxGuess(card)) return false;
+  return card.kind !== "duo" || duoParts(guess)[0] <= 100;
 }
 
-/** A small seeded generator, so the Coin and the win chances are the same on every phone. */
+/** The guess that earns full points. On a tap card it is the place of the right option. */
+export function fullGuess(card: PackCard): number {
+  switch (card.kind) {
+    case "side":
+      return card.answer > 50 ? 1 : 0;
+    case "versus":
+    case "leader": {
+      let best = 0;
+      card.options.forEach((option, i) => {
+        if (option.percent > card.options[best].percent) best = i;
+      });
+      return best;
+    }
+    case "four":
+      return card.options.indexOf(card.answer);
+    case "duo":
+      return packDuo(card.parts[0].answer, card.parts[1].answer);
+    default:
+      return card.answer;
+  }
+}
+
+/**
+ * How far a guess is from the answer, in the card's own units. On a duo card it
+ * is the larger of the two misses, which is the one a line would be about. A
+ * tap is either right (0) or not (1).
+ */
+export function missFor(card: PackCard, guess: number): number {
+  if (isTap(card)) return guess === fullGuess(card) ? 0 : 1;
+  if (card.kind === "duo") {
+    const [a, b] = duoParts(guess);
+    return Math.max(Math.abs(a - card.parts[0].answer), Math.abs(b - card.parts[1].answer));
+  }
+  return Math.abs(guess - card.answer);
+}
+
+function sliderPoints(miss: number, step: number): number {
+  return Math.max(0, FULL_POINTS - step * miss);
+}
+
+export function pointsFor(card: PackCard, guess: number | null): number {
+  if (!isValidGuess(card, guess)) return 0;
+  if (isTap(card)) return guess === fullGuess(card) ? fullPoints(card) : 0;
+  switch (card.kind) {
+    case "chance":
+      return sliderPoints(Math.abs(guess - card.answer), 1);
+    case "count":
+      return sliderPoints(Math.abs(guess - card.answer), card.step);
+    case "duo": {
+      const [a, b] = duoParts(guess);
+      const first = sliderPoints(Math.abs(a - card.parts[0].answer), 1);
+      const second = sliderPoints(Math.abs(b - card.parts[1].answer), 1);
+      return Math.round((first + second) / 2);
+    }
+  }
+}
+
+/** Where a card starts: a slider in the middle, a tap card with nothing tapped. */
+export function startGuess(card: PackCard): number | null {
+  if (isTap(card)) return null;
+  if (card.kind === "chance") return 50;
+  if (card.kind === "count") return Math.round(card.max / 2);
+  return packDuo(50, 50);
+}
+
+/** A small seeded generator, so the win chances are the same on every phone. */
 export function seeded(seed: string): () => number {
   let h = 1779033703 ^ seed.length;
   for (let i = 0; i < seed.length; i += 1) {
@@ -116,53 +159,68 @@ export function seeded(seed: string): () => number {
   };
 }
 
-/** The Coin's guess: 50% on a chance card, half on a count card, a seeded random pick otherwise. */
+/**
+ * The Coin's guess: the middle of a slider, and a flip on a tap card. The flips
+ * were made once, when the set was built, and ride in the set (`coinTaps`), so
+ * the Coin taps the same thing on every phone and a group sees one Coin, not
+ * several. A set that carries no flips gets them from a seeded draw instead.
+ */
 export function coinGuess(pack: GamePack, index: number): number {
   const card = pack.cards[index];
-  if (card.kind === "chance") return 50;
-  if (card.kind === "count") return Math.round(card.max / 2);
-  const roll = seeded(`${pack.code}:coin:${card.id}`)();
-  return Math.min(maxGuess(card), Math.floor(roll * (maxGuess(card) + 1)));
+  if (!isTap(card)) return startGuess(card) as number;
+  const drawn = pack.coinTaps?.[index] ?? null;
+  if (isValidGuess(card, drawn)) return drawn;
+  return Math.floor(seeded(`${pack.code}:coin:${card.id}`)() * optionCount(card));
+}
+
+/** What every entry starts with besides its guesses. */
+function blankMarks(pack: GamePack): Pick<PlayerEntry, "ratings" | "good" | "times" | "fun"> {
+  return {
+    ratings: pack.cards.map(() => 0),
+    good: pack.cards.map(() => false),
+    times: pack.steps.map(() => 0),
+    fun: 0,
+  };
 }
 
 export function coinEntry(pack: GamePack): PlayerEntry {
   return {
     name: COIN_NAME,
     guesses: pack.cards.map((_, index) => coinGuess(pack, index)),
-    ratings: pack.cards.map(() => 0),
-    good: pack.cards.map(() => false),
+    ...blankMarks(pack),
     from: "house",
   };
 }
 
+function mean(values: number[]): number {
+  return Math.round(values.reduce((sum, v) => sum + v, 0) / values.length);
+}
+
 /**
- * The group's one guess on a card: the rounded average on a slider, the most
- * picked option on a pick or ladder (a tie goes to whoever in the tie guessed
- * first), and on an order card the ranking by average position.
+ * The group's one guess on a card: the rounded average of every slider, or the
+ * most common tap. When taps are level, the earliest option on the card wins,
+ * so every phone agrees.
  */
 export function togetherGuess(card: PackCard, guesses: number[]): number | null {
   const valid = guesses.filter((g) => isValidGuess(card, g));
   if (valid.length === 0) return null;
-  if (card.kind === "chance" || card.kind === "count") {
-    return Math.round(valid.reduce((sum, g) => sum + g, 0) / valid.length);
-  }
-  if (card.kind === "pick" || card.kind === "ladder") {
-    const tally = new Map<number, number>();
-    valid.forEach((g) => tally.set(g, (tally.get(g) ?? 0) + 1));
-    let best = valid[0];
-    for (const g of valid) {
-      if ((tally.get(g) ?? 0) > (tally.get(best) ?? 0)) best = g;
+  if (isTap(card)) {
+    let best = 0;
+    let bestCount = -1;
+    for (let option = 0; option < optionCount(card); option += 1) {
+      const count = valid.filter((g) => g === option).length;
+      if (count > bestCount) {
+        best = option;
+        bestCount = count;
+      }
     }
     return best;
   }
-  const positionSum = [0, 0, 0];
-  valid.forEach((g) => {
-    ORDER_PERMS[g].forEach((item, position) => {
-      positionSum[item] += position;
-    });
-  });
-  const ranked = [0, 1, 2].sort((a, b) => positionSum[a] - positionSum[b] || a - b);
-  return ORDER_PERMS.findIndex((perm) => perm.every((item, i) => item === ranked[i]));
+  if (card.kind === "duo") {
+    const pairs = valid.map(duoParts);
+    return packDuo(mean(pairs.map((p) => p[0])), mean(pairs.map((p) => p[1])));
+  }
+  return mean(valid);
 }
 
 export function togetherEntry(pack: GamePack, players: PlayerEntry[]): PlayerEntry {
@@ -174,8 +232,7 @@ export function togetherEntry(pack: GamePack, players: PlayerEntry[]): PlayerEnt
         players.map((p) => p.guesses[index]).filter((g): g is number => g !== null),
       ),
     ),
-    ratings: pack.cards.map(() => 0),
-    good: pack.cards.map(() => false),
+    ...blankMarks(pack),
     from: "house",
   };
 }
@@ -195,6 +252,104 @@ export function totalPoints(pack: GamePack, entry: PlayerEntry, upTo: number = p
 export function answeredCount(entry: PlayerEntry): number {
   return entry.guesses.filter((g) => g !== null).length;
 }
+
+// ---- steps -----------------------------------------------------------------
+
+/** Which step a card belongs to, counted from 0. */
+export function stepOf(pack: GamePack, index: number): number {
+  return Math.min(pack.steps.length - 1, Math.floor(index / pack.perRound));
+}
+
+/** The cards of a step, as the first index and one past the last. */
+export function stepRange(pack: GamePack, step: number): [number, number] {
+  const from = step * pack.perRound;
+  return [from, Math.min(pack.cards.length, from + pack.perRound)];
+}
+
+/** True when every card of the step is a tap, so its score reads as "4 of 5". */
+export function stepIsTaps(pack: GamePack, step: number): boolean {
+  const [from, to] = stepRange(pack, step);
+  return pack.cards.slice(from, to).every(isTap);
+}
+
+export interface StepScore {
+  points: number;
+  /** Cards answered with full points. */
+  right: number;
+  /** Cards answered at all. */
+  answered: number;
+  cards: number;
+}
+
+export function stepScore(pack: GamePack, entry: PlayerEntry, step: number): StepScore {
+  const [from, to] = stepRange(pack, step);
+  let points = 0;
+  let right = 0;
+  let answered = 0;
+  for (let i = from; i < to; i += 1) {
+    const guess = entry.guesses[i] ?? null;
+    if (!isValidGuess(pack.cards[i], guess)) continue;
+    answered += 1;
+    const got = pointsFor(pack.cards[i], guess);
+    points += got;
+    if (got === fullPoints(pack.cards[i])) right += 1;
+  }
+  return { points, right, answered, cards: to - from };
+}
+
+/** The most points a step can pay. */
+export function stepMax(pack: GamePack, step: number): number {
+  const [from, to] = stepRange(pack, step);
+  return pack.cards.slice(from, to).reduce((sum, card) => sum + fullPoints(card), 0);
+}
+
+/** A step's score as a player reads it: "4 of 5" for taps, points for sliders, a dash when not played. */
+export function stepScoreLabel(pack: GamePack, entry: PlayerEntry, step: number): string {
+  const score = stepScore(pack, entry, step);
+  if (score.answered === 0) return "–";
+  return stepIsTaps(pack, step) ? `${score.right} of ${score.cards}` : String(score.points);
+}
+
+export interface StepWin {
+  step: number;
+  /** Everyone level on the most points in the step. Empty when nobody scored in it. */
+  names: string[];
+  points: number;
+}
+
+/** Who did best in each step. Someone who loses overall can still win one. */
+export function stepWins(pack: GamePack, players: PlayerEntry[]): StepWin[] {
+  return pack.steps.map((_, step) => {
+    const scores = players.map((p) => ({ name: p.name, score: stepScore(pack, p, step) })).filter((s) => s.score.answered > 0);
+    const best = Math.max(0, ...scores.map((s) => s.score.points));
+    return { step, names: best > 0 ? scores.filter((s) => s.score.points === best).map((s) => s.name) : [], points: best };
+  });
+}
+
+/** Seconds as a stopwatch reads: 0:42, 1:07. */
+export function timeLabel(seconds: number): string {
+  const whole = Math.max(0, Math.round(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+/**
+ * One plain sentence about who got a tap card, for the reveal. Facts only: it
+ * is not a roast and is not rated. `names` are the people who answered, in the
+ * order they joined, and `right` says which of them tapped the right thing.
+ */
+export function tapNote(names: string[], right: boolean[]): string {
+  const winners = names.filter((_, i) => right[i]);
+  if (names.length === 0) return "";
+  if (names.length === 1) return winners.length === 1 ? "You got it." : "Not this time.";
+  if (winners.length === names.length) return "Everybody got it.";
+  if (winners.length === 0) return "Nobody got it.";
+  if (winners.length === 1) return `Only ${winners[0]} got it.`;
+  const losers = names.filter((_, i) => !right[i]);
+  if (losers.length === 1) return `Everybody but ${losers[0]} got it.`;
+  return `${joinNames(winners)} got it.`;
+}
+
+// ---- standings -------------------------------------------------------------
 
 export interface Standing {
   entry: PlayerEntry;
@@ -249,7 +404,7 @@ export interface TogetherReport {
   coin: number;
   /** The best single player's total. */
   best: number;
-  /** How many of the players the group's average beat. */
+  /** How many of the players the group's answer beat. */
   beat: number;
   /** Leaving this player out raises the group's score the most; null when nobody drags it down. */
   without: { name: string; score: number } | null;
@@ -294,6 +449,17 @@ export function cleanName(raw: string): string {
     .trim();
 }
 
+/**
+ * What a line calls each player: the first word of their name, unless two
+ * players would then be called the same thing, in which case everyone keeps
+ * their whole name. "Sam Lee said 29%" reads like a summons.
+ */
+export function spokenNames(names: string[]): Map<string, string> {
+  const first = names.map((n) => n.split(" ")[0]);
+  const clash = new Set(first.map((f) => f.toLowerCase())).size !== first.length;
+  return new Map(names.map((n, i) => [n, clash ? n : first[i]]));
+}
+
 /** "Ann", "Ann and Bo", "Ann, Bo and Cy". */
 export function joinNames(names: string[]): string {
   if (names.length <= 1) return names[0] ?? "";
@@ -305,52 +471,53 @@ export function emptyEntry(pack: GamePack, name: string, from: PlayerEntry["from
   return {
     name,
     guesses: pack.cards.map(() => null),
-    ratings: pack.cards.map(() => 0),
-    good: pack.cards.map(() => false),
+    ...blankMarks(pack),
     from,
   };
 }
 
 /** A guess in words, as it is shown beside a player's name. */
 export function guessLabel(card: PackCard, guess: number | null): string {
-  if (guess === null || !isValidGuess(card, guess)) return "";
+  if (!isValidGuess(card, guess)) return "";
   switch (card.kind) {
+    case "side":
+      return guess === 1 ? "Above 50%" : "Below 50%";
+    case "versus":
+    case "leader":
+      return card.options[guess].short;
+    case "four":
+      return `${card.options[guess]}%`;
     case "chance":
       return `${guess}%`;
     case "count":
       return `${guess} of ${card.max}`;
-    case "pick":
-    case "ladder":
-      return card.options[guess].short;
-    case "order":
-      return ORDER_PERMS[guess].map((item) => card.items[item].short).join(", then ");
+    case "duo": {
+      const [a, b] = duoParts(guess);
+      return `${a}% and ${b}%`;
+    }
   }
 }
 
-/** The guess that earns full points. */
-export function fullGuess(card: PackCard): number {
-  if (card.kind === "order") {
-    const right = rightOrder(card);
-    return ORDER_PERMS.findIndex((perm) => perm.every((item, i) => item === right[i]));
-  }
-  return card.answer;
-}
-
-/** A short name for what the card asks the player to do. */
+/** A short name for what the card asks the player to do. Kept short: it shares one line of a phone with the topic. */
 export function kindLabel(card: PackCard): string {
-  switch (card.kind) {
-    case "chance":
+  switch (card.flavor) {
+    case "side":
+      return "Above or below?";
+    case "versus":
+      return "Which is likelier?";
+    case "four":
+      return "Pick the number";
+    case "leader":
+      return "Pick the favorite";
+    case "straight":
       return "Guess the chance";
+    case "given":
+      return "With a clue";
+    case "rest":
+      return "Not the favorites";
     case "count":
       return "How many?";
-    case "ladder":
-      return "By what year?";
-    case "order":
-      return "Put them in order";
-    case "pick":
-      if (card.flavor === "pair") return "This or that";
-      if (card.flavor === "field") return "Name the favorite";
-      if (card.flavor === "longshot") return "Find the long shot";
-      return "Find the match";
+    case "duo":
+      return "Two at once";
   }
 }
