@@ -606,6 +606,7 @@ class PacedClient:
                     if parsed_age >= 0:
                         age_header_s = round(parsed_age, 1)
                 except ValueError:
+                    # Non-numeric Age header is ignored; body timestamps still provide copy age.
                     pass
             cache_hdr: str | None = None
             for hdr_name in (
