@@ -84,6 +84,7 @@ from app.utils.sport_keys import (
 )
 from app.utils.statement_timeout import is_statement_timeout
 from app.utils.team_linking import given_name_before_city
+from app.utils.team_page_cache import is_real_pg_engine
 from app.utils.team_short_name import is_college_sport, school_label
 
 logger = logging.getLogger(__name__)
@@ -2488,24 +2489,57 @@ async def _query_team_futures(
 
         _tq = time.perf_counter()
         if is_pg:
-            fk_hits = (
-                select(FuturesOutcome.id.label("outcome_id"))
-                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-                .where(
-                    FuturesOutcome.team_id.in_(team_ids),
-                    *market_base_filters,
-                    *fk_sport_filters,
+            if is_real_pg_engine(db):
+                open_fk_ids = list(
+                    (
+                        await db.execute(
+                            select(FuturesMarket.id).where(
+                                *market_base_filters,
+                                *fk_sport_filters,
+                            )
+                        )
+                    ).scalars().all()
                 )
-                .cte("fk_hits")
-                .prefix_with("MATERIALIZED")
-            )
-            fk_stmt = _q1(
-                FuturesOutcome.id
-                == any_(func.array(select(fk_hits.c.outcome_id).scalar_subquery()))
-            )
+                if not open_fk_ids:
+                    rows1 = []
+                else:
+                    open_fk_param = bindparam(
+                        "open_fk_ids", value=open_fk_ids, type_=ARRAY(Integer)
+                    )
+                    fk_hits = (
+                        select(FuturesOutcome.id.label("outcome_id"))
+                        .where(
+                            FuturesOutcome.team_id.in_(team_ids),
+                            FuturesOutcome.market_id == any_(open_fk_param),
+                        )
+                        .cte("fk_hits")
+                        .prefix_with("MATERIALIZED")
+                    )
+                    fk_stmt = _q1(
+                        FuturesOutcome.id
+                        == any_(func.array(select(fk_hits.c.outcome_id).scalar_subquery()))
+                    )
+                    rows1 = list((await db.execute(fk_stmt)).all())
+            else:
+                fk_hits = (
+                    select(FuturesOutcome.id.label("outcome_id"))
+                    .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                    .where(
+                        FuturesOutcome.team_id.in_(team_ids),
+                        *market_base_filters,
+                        *fk_sport_filters,
+                    )
+                    .cte("fk_hits")
+                    .prefix_with("MATERIALIZED")
+                )
+                fk_stmt = _q1(
+                    FuturesOutcome.id
+                    == any_(func.array(select(fk_hits.c.outcome_id).scalar_subquery()))
+                )
+                rows1 = list((await db.execute(fk_stmt)).all())
         else:
             fk_stmt = _q1(FuturesOutcome.team_id.in_(team_ids))
-        rows1 = list((await db.execute(fk_stmt)).all())
+            rows1 = list((await db.execute(fk_stmt)).all())
         if team_patterns:
             if is_pg:
                 from app.utils.open_futures_outcomes import open_outcomes_floor
