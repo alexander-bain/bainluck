@@ -514,7 +514,14 @@ final class DiscoverEventChartHistoryCache191A {
             return await existing.value
         }
         let task = Task<EventHistoryResponse?, Never> {
-            try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168)
+            guard let initial = try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168, range: "since_start") else {
+                return nil
+            }
+            if !isLive, initial.preWindowOmitted == true,
+               let full = try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168, range: "all") {
+                return full
+            }
+            return initial
         }
         inflight[eventId] = task
         let result = await task.value
@@ -526,7 +533,7 @@ final class DiscoverEventChartHistoryCache191A {
         return entries[eventId]?.response
     }
 
-    private func store(_ response: EventHistoryResponse, for eventId: Int) {
+    func store(_ response: EventHistoryResponse, for eventId: Int) {
         entries[eventId] = Entry(response: response, fetchedAt: Date())
         order.removeAll { $0 == eventId }
         order.append(eventId)
@@ -534,6 +541,11 @@ final class DiscoverEventChartHistoryCache191A {
             let evicted = order.removeFirst()
             entries.removeValue(forKey: evicted)
         }
+    }
+
+    func remove(eventId: Int) {
+        entries.removeValue(forKey: eventId)
+        order.removeAll { $0 == eventId }
     }
 }
 

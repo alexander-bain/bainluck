@@ -178,6 +178,9 @@ async def _sync_mlb_win_probability():
                         home_win_probability=home_wp,
                         away_win_probability=away_wp,
                         game_state=game_state if game_state else None,
+                        is_completed=(
+                            getattr(event, "status", None) in ("completed", "closed")
+                        ),
                     )
 
                     if is_new:

@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.utils.discover_opening_mix import summarize_discover_form_and_look_variety
+from app.utils.set_split_audit_report import audit_served_public_sets_report_only
 from app.utils.feed_market_quality import (
     classify_market_quality,
     editorial_archetype,
@@ -944,6 +946,8 @@ def served_window_quality(
     for item in window:
         key = item.get("type") or "?"
         types[key] = types.get(key, 0) + 1
+    variety = summarize_discover_form_and_look_variety(served_items)
+    split_audit = audit_served_public_sets_report_only(served_items)
     return {
         "window": "served_top20" if top_n == 20 else f"served_top{top_n}",
         "slots": len(window),
@@ -952,6 +956,12 @@ def served_window_quality(
         "boring_count": len(boring),
         "boring": boring,
         "types": types,
+        "forms_top10": variety["top_10"]["distinct_forms"],
+        "looks_top10": variety["top_10"]["distinct_looks"],
+        "forms_top20": variety["top_20"]["distinct_forms"],
+        "looks_top20": variety["top_20"]["distinct_looks"],
+        "variety_summary": variety,
+        "split_set_audit_report": split_audit,
     }
 
 

@@ -71,8 +71,14 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         func on(_ event: String, _ handler: @escaping @MainActor (String) -> Void) {
             callbacks[event, default: []].append(handler)
         }
-        func close() {}
+        func close() { isClosed = true }
         func open() { for handler in callbacks["open"] ?? [] { handler("") } }
+        @MainActor
+        func sendHeartbeat(at date: Date = Date()) {
+            let stamp = ISO8601DateFormatter().string(from: date)
+            let payload = #"{"activity_at":"\#(stamp)"}"#
+            for handler in callbacks["heartbeat"] ?? [] { handler(payload) }
+        }
     }
 
     /// The app's route stack in miniature: a link appends, exactly as
@@ -95,11 +101,11 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         }
     }
 
-    private func liveModel(_ id: Int) async -> EventDetailViewModel {
+    private func liveModel(_ id: Int) async -> (vm: EventDetailViewModel, handle: PageHandle) {
         let handle = PageHandle()
         let vm = EventDetailViewModel(eventId: id, client: PageClient(), makeStreamHandle: { _ in handle })
         await vm.load(); handle.open()
-        return vm
+        return (vm, handle)
     }
 
     /// A popover needs a window on a foreground-active scene (the
@@ -185,10 +191,18 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
     /// are still presented after a link pushes the second game.
     func testALinkToAnotherGameClosesTheDetailsTheCoveredPageOpened() async throws {
         let router = Router()
-        let pages = [Self.first: await liveModel(Self.first), Self.second: await liveModel(Self.second)]
+        let firstLive = await liveModel(Self.first)
+        let secondLive = await liveModel(Self.second)
+        let pages = [Self.first: firstLive.vm, Self.second: secondLive.vm]
+        let handles = [firstLive.handle, secondLive.handle]
         defer { pages.values.forEach { $0.stopRefresh() } }
         let (host, window, previous) = try await mount(Stack(router: router, pages: pages))
         defer { host.dismiss(animated: false); window.isHidden = true; previous?.makeKey() }
+
+        // Allow initial mount to bind `ekgTracker`, then emit a live venue beat so
+        // the EKG control becomes active (#12472 / #10090).
+        await settle(host, timeout: 0.3)
+        handles[0].sendHeartbeat(at: Date())
 
         var control: NSObject?
         await settle(host, timeout: 5) { control = self.detailsControl(in: self.topPage(host)); return control != nil }
@@ -218,6 +232,8 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
             + "are still up over the second game's page after the link")
 
         // The reader's own reveal still works on the page they are now on.
+        await settle(host, timeout: 0.3)
+        handles[1].sendHeartbeat(at: Date())
         var secondControl: NSObject?
         await settle(host, timeout: 5) {
             secondControl = self.detailsControl(in: self.topPage(host)); return secondControl != nil

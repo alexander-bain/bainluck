@@ -6,17 +6,23 @@ print them — Actions timestamps and pytest's colour escapes included.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 BACKEND = Path(__file__).resolve().parents[1]
+REPO_ROOT = BACKEND.parent
 sys.path.insert(0, str(BACKEND / "scripts"))
 
 import master_red_alarm as alarm  # noqa: E402
 
-WORKFLOW = BACKEND.parent / ".github" / "workflows" / "master-red-alarm.yml"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "master-red-alarm.yml"
+TRIAGE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "bug-report-triage.yml"
+CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
+NOW_LINES_ISSUE_FILE = REPO_ROOT / ".github" / "now-lines-issue.txt"
 
 SAMPLER_LOG = (
     "2026-11-16T14:01:04.8396402Z tests/test_loop_cpu_sampler_10090.py ...F...  [ 60%]\n"
@@ -104,7 +110,7 @@ def test_a_red_job_outside_deploys_needs_reports_without_holding_the_server():
 
 def test_main_reads_deploy_from_the_runs_own_jobs(monkeypatch, capsys):
     monkeypatch.setenv("REPO", "o/r")
-    monkeypatch.setenv("NOW_LINES_ISSUE", "12779")
+    monkeypatch.delenv("NOW_LINES_ISSUE", raising=False)
     monkeypatch.setenv("RUN_ID", "1")
     """`deployed` comes from the run's jobs list: a failed shard with deploy skipped holds,
     a failed canary with deploy green does not. Dry-run never triggers a re-run."""
@@ -144,8 +150,9 @@ def test_main_reads_deploy_from_the_runs_own_jobs(monkeypatch, capsys):
 def test_main_reruns_failed_jobs_once_on_attempt_1_and_never_on_attempt_2(monkeypatch):
     """Ruling 241: A: attempt 1 triggers rerun-failed-jobs once and says so in the stuck line;
     attempt 2 never re-runs again, and a duplicate alarm never double-triggers."""
+    expected_issue = alarm.read_now_lines_issue()
     monkeypatch.setenv("REPO", "o/r")
-    monkeypatch.setenv("NOW_LINES_ISSUE", "12779")
+    monkeypatch.delenv("NOW_LINES_ISSUE", raising=False)
     monkeypatch.setenv("RUN_ID", "99")
 
     def run_once(attempt, *, comments=(), rerun_error=None, deployed=False):
@@ -160,14 +167,14 @@ def test_main_reruns_failed_jobs_once_on_attempt_1_and_never_on_attempt_2(monkey
                 ]})
             if "/logs" in path:
                 return "FAILED tests/test_x.py::test_t - AssertionError\n"
-            if "/issues/12779/comments?per_page=100" in path:
+            if f"/issues/{expected_issue}/comments?per_page=100" in path:
                 return "\n".join(json.dumps(c) for c in comments)
             if path.endswith("/rerun-failed-jobs"):
                 reruns.append((path, rest))
                 if rerun_error:
                     raise RuntimeError(rerun_error)
                 return ""
-            if path.endswith("/issues/12779/comments"):
+            if path.endswith(f"/issues/{expected_issue}/comments"):
                 posted.append(body["body"])
                 return "{}"
             return json.dumps({
@@ -240,6 +247,45 @@ def test_the_workflow_fires_only_on_a_red_push_to_master_and_posts_to_one_issue(
     ):
         assert clause in cond
     assert "cancelled" not in cond
-    assert wf["env"]["NOW_LINES_ISSUE"] == "12779"
+    assert "NOW_LINES_ISSUE" not in (wf.get("env") or {})
+    checkout_step = next(s for s in job["steps"] if (s.get("uses") or "").startswith("actions/checkout@"))
+    sparse = checkout_step["with"]["sparse-checkout"]
+    assert ".github/now-lines-issue.txt" in sparse
+    assert "backend/scripts/master_red_alarm.py" in sparse
+    post_step = next(s for s in job["steps"] if s.get("name") == "Post the stuck line")
+    assert ".github/now-lines-issue.txt" in post_step["run"]
+    assert "export NOW_LINES_ISSUE" in post_step["run"]
     assert wf["permissions"] == {"actions": "write", "contents": "read", "issues": "write"}
     assert alarm.RED_CONCLUSIONS == ("failure", "timed_out")
+
+
+def test_now_lines_issue_single_source_of_truth_and_workflow_agreement(tmp_path):
+    """`.github/now-lines-issue.txt` is the one number both workflows read and CLAUDE.md matches."""
+    assert NOW_LINES_ISSUE_FILE.exists()
+    expected = alarm.read_now_lines_issue()
+    assert expected > 0
+
+    for bad_text in ("", "\n", "#13580\n", "0\n", "abc\n"):
+        bad = tmp_path / "now-lines-issue.txt"
+        bad.write_text(bad_text, encoding="utf-8")
+        with pytest.raises(ValueError):
+            alarm.read_now_lines_issue(bad)
+
+    alarm_text = WORKFLOW.read_text(encoding="utf-8")
+    assert "12779" not in alarm_text
+    assert str(expected) not in alarm_text
+    assert ".github/now-lines-issue.txt" in alarm_text
+
+    triage_wf = yaml.safe_load(TRIAGE_WORKFLOW.read_text(encoding="utf-8"))
+    triage_text = TRIAGE_WORKFLOW.read_text(encoding="utf-8")
+    assert "12779" not in triage_text
+    assert str(expected) not in triage_text
+    triage_step = triage_wf["jobs"]["triage"]["steps"][-1]
+    triage_script = triage_step["with"]["script"]
+    assert ".github/now-lines-issue.txt" in triage_script
+    assert "issue_number: nowLinesIssue" in triage_script
+
+    claude_text = CLAUDE_MD.read_text(encoding="utf-8")
+    assert "status lines: #12779" not in claude_text
+    matches = re.findall(r"^NOW #11852 is the priority list; status lines: #(\d+)\.$", claude_text, re.MULTILINE)
+    assert matches == [str(expected)]

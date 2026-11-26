@@ -798,6 +798,7 @@ celery_app.conf.task_routes = {
     # heavy task (main app, not `bainluck-heavy`).
     "app.tasks.assemble_theme_collections": {"queue": "background"},
     "app.tasks.rebuild_theme_snapshot": {"queue": "background"},
+    "app.tasks.refresh_kit_v1_real_sets_preview": {"queue": "background"},
     "app.tasks.refresh_awards_occasions": {"queue": "background"},
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
@@ -848,6 +849,8 @@ celery_app.conf.task_routes = {
     # of one slot, and this lane has 4. If live scores fall behind by >60 s the
     # move is reverted the same hour — see the LAT-P179 receipt.
     "app.tasks.prewarm_live_feed_shapes": {"queue": "realtime"},
+    # #13606 Part 1: durable finished-game `/history` chart materialization.
+    "app.tasks.materialize_finished_event_charts": {"queue": "background"},
     # --- Everything else routes to background (default queue) ---
     # --- 600s-class grinders route to `heavy` (applied below) ---
 }
@@ -912,6 +915,9 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     # decision and the next reader of the routing block needs to see an
     # objection, not a silence.
     "app.tasks.run_settlement_sweep",
+    # #13606 Part 1: bounded 5-event/run materializer; keep off the 2-slot
+    # `heavy` calibration lane.
+    "app.tasks.materialize_finished_event_charts",
 }
 
 # The heavy lane = the calibration/precompute cache-warmer family PLUS the
@@ -1850,6 +1856,25 @@ def backfill_thin_event_charts(self, limit: int = 90):
     from app.tasks.event_chart_backfill import run_event_chart_backfill
     return _tracked_run(
         "thin_event_charts", run_event_chart_backfill(None, limit=limit)
+    )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=300,
+    time_limit=360,
+    name="app.tasks.materialize_finished_event_charts",
+)
+def materialize_finished_event_charts(self, event_ids=None, limit=None):
+    """#13606 Part 1: persist complete finished `"all"` `/history` payloads in durable storage."""
+    from app.services.database import get_task_session
+    from app.services.finished_event_history import materialize_finished_event_charts_async
+
+    return _tracked_run(
+        "materialize_finished_event_charts",
+        materialize_finished_event_charts_async(
+            get_task_session, event_ids=event_ids, limit=limit
+        ),
     )
 
 
@@ -6019,6 +6044,42 @@ def discover_fun_scout(self, force=False):
     )
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=180,
+    time_limit=240,
+    name="app.tasks.refresh_kit_v1_real_sets_preview",
+)
+def refresh_kit_v1_real_sets_preview(self):
+    """Build the #13551 Kit v1 real-sets audit off-web and save to Redis."""
+
+    async def _build() -> dict:
+        import time as _time
+        from app.routes.containers import _build_live_real_sets_audit_report
+        from app.tasks.base import get_task_session
+
+        t0 = _time.monotonic()
+        async with get_task_session() as db:
+            report = await _build_live_real_sets_audit_report(db, request=None)
+        payload = dict(report)
+        payload["build_elapsed_s"] = round(_time.monotonic() - t0, 3)
+        payload["status"] = "ready"
+        payload["served_from"] = "worker_redis"
+        return payload
+
+    from app.routes.containers import write_saved_kit_v1_real_sets_preview_sync
+
+    report = _tracked_run("refresh_kit_v1_real_sets_preview", _build())
+    saved = write_saved_kit_v1_real_sets_preview_sync(report)
+    return {
+        "status": "ready" if saved else "redis_write_failed",
+        "saved": saved,
+        "total_sets": report.get("total_sets", 0),
+        "fitting_count": report.get("fitting_count", 0),
+        "build_elapsed_s": report.get("build_elapsed_s"),
+    }
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900,
                  name="app.tasks.anchor_schedule_sentinel")
 def anchor_schedule_sentinel(self, file_issues=True):
@@ -9999,6 +10060,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_thin_event_charts",
         "schedule": crontab(minute=40, hour=8),
         "kwargs": {"limit": 90},
+        "options": {"queue": "background"},
+    },
+    # #13606 Part 1 (Condition 3): bounded 5-event/run materializer for complete
+    # finished-game charts; reads `FINISHED_EVENT_HISTORY_BATCH_SIZE` (default 5).
+    "materialize-finished-event-charts": {
+        "task": "app.tasks.materialize_finished_event_charts",
+        "schedule": crontab(minute="*/10"),
         "options": {"queue": "background"},
     },
     # --- live/059: the outright chart's venue history --------------------------

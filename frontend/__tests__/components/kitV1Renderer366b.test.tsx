@@ -167,6 +167,79 @@ describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367
     expect(html).toContain("Slate mixes &gt;1 sport_key");
   });
 
+  test("countdown marks compute live PT days left (1 day left, ends today) and row secondary_text renders", () => {
+    const deadlineIso = "2026-11-30T23:59:00+00:00";
+    expect(computeCountdownDaysLeft(deadlineIso, new Date("2026-11-24T17:20:00Z"))).toBe(6);
+    expect(computeCountdownDaysLeft(deadlineIso, new Date("2026-11-29T17:20:00Z"))).toBe(1);
+    expect(computeCountdownDaysLeft(deadlineIso, new Date("2026-11-30T17:20:00Z"))).toBe(0);
+
+    const countdownCard: KitV1CardSpec = {
+      ...golden.items[2],
+      body: {
+        ...(golden.items[2].body as KitV1StackBody),
+        header_marks: [
+          {
+            mark: "number",
+            value: 6,
+            display: "6",
+            unit: "days",
+            deadline_iso: deadlineIso,
+            tone: "accent",
+            prominence: "hero",
+            align: "left",
+            width: "auto",
+          },
+          {
+            mark: "word",
+            text: "days left",
+            style: "hero_label",
+            deadline_iso: deadlineIso,
+            tone: "primary",
+            align: "left",
+            width: "flex",
+            bold: true,
+            secondary_text: "all of these end on November 30",
+          },
+        ],
+      },
+    };
+
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date("2026-11-29T17:20:00Z"));
+      const oneDayHtml = renderToStaticMarkup(<KitCardRenderer spec={countdownCard} />);
+      expect(oneDayHtml).toContain(">1<");
+      expect(oneDayHtml).toContain("day left");
+      expect(oneDayHtml).not.toContain("days left");
+
+      jest.setSystemTime(new Date("2026-11-30T17:20:00Z"));
+      const todayHtml = renderToStaticMarkup(<KitCardRenderer spec={countdownCard} />);
+      expect(todayHtml).toContain("Today");
+      expect(todayHtml).toContain("ends today");
+    } finally {
+      jest.useRealTimers();
+    }
+
+    const withSecondary = {
+      ...golden.items[0],
+      body: {
+        ...(golden.items[0].body as any),
+        rows: [
+          {
+            ...(golden.items[0].body as any).rows[0],
+            leading: [
+              ...(golden.items[0].body as any).rows[0].leading.slice(0, -1),
+              { mark: "word", text: "Inde Navarrette", secondary_text: "Actor", style: "row", width: "flex", bold: true },
+            ],
+          },
+        ],
+      },
+    } as KitV1CardSpec;
+    const secHtml = renderToStaticMarkup(<KitCardRenderer spec={withSecondary} />);
+    expect(secHtml).toContain("Inde Navarrette");
+    expect(secHtml).toContain("Actor");
+  });
+
   test("countdown marks compute live PT days left (1 day left, ends today) and unknown top-level keys are ignored", () => {
     const deadlineIso = "2026-12-31T23:59:59-08:00";
     expect(computeCountdownDaysLeft(deadlineIso, new Date("2026-12-30T17:20:00Z"))).toBe(1);
@@ -285,5 +358,82 @@ describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367
     expect(src).not.toMatch(/\bdark:/);
     expect(src).not.toMatch(/#[0-9a-fA-F]{3,6}/);
     expect(src).not.toMatch(/\.variant\b/);
+  });
+
+  test("renders 387:A initials circle, film 2:3 poster, person 1:1 circle, 389:C bubble % badges, and range outline", () => {
+    const partialSpec: KitV1CardSpec = {
+      kit_version: 1,
+      id: "kit-387a-web",
+      layout: "stack",
+      variant: "casting_sheet",
+      kicker: "FILM",
+      common_headline: "Casting and delays",
+      stat_caption: "Dune: Part Three leads at 81%.",
+      source_mark: { label: "2 sources", count: 2 },
+      route: { kind: "collection", id: 1, slug: "casting" },
+      refusal_reason: null,
+      body: {
+        header_layout: "none",
+        items: [
+          {
+            id: "r1",
+            marks: [
+              { mark: "picture", url: null, initials: "HJ", alt: "Hugh Jackman", subject_kind: "person", size: "sm" },
+              { mark: "word", text: "Hugh Jackman", style: "row", width: "flex" },
+              { mark: "number", value: 94, display: "94%", unit: "%" },
+            ],
+          },
+          {
+            id: "r2",
+            marks: [
+              { mark: "picture", url: "https://image.tmdb.org/t/p/w342/glt0v4I89rMWstDNCaFXc5SNyO1.jpg", alt: "Dune: Part Three", subject_kind: "film", size: "sm" },
+              { mark: "word", text: "Dune: Part Three", style: "row", width: "flex" },
+              { mark: "number", value: 81, display: "81%", unit: "%" },
+            ],
+          },
+          {
+            id: "r3",
+            marks: [
+              { mark: "picture", url: "https://image.tmdb.org/t/p/w185/sample.jpg", alt: "Matthew Rhys", subject_kind: "person", size: "sm" },
+              { mark: "word", text: "Matthew Rhys", style: "row", width: "flex" },
+              { mark: "number", value: 73, display: "73%", unit: "%" },
+            ],
+          },
+        ],
+      },
+    };
+    const parsedPartial = parseKitCardV1(partialSpec);
+    expect(parsedPartial).not.toBeNull();
+    const htmlPartial = renderToStaticMarkup(<KitCardRenderer spec={parsedPartial!} />);
+    expect(htmlPartial).toContain(">HJ<");
+    expect(htmlPartial).toContain("w-[22px]"); // 2:3 film poster
+    expect(htmlPartial).toContain("aspect-square shrink-0 rounded-full"); // 1:1 person circle
+
+    // Bubble line: % under crest + one-line end summaries + sr-only readable list
+    const nhlSpec: KitV1CardSpec = {
+      ...(golden.items[4] as KitV1CardSpec),
+      body: {
+        ...(golden.items[4].body as any),
+        marks: (golden.items[4].body as any).marks.map((m: any) =>
+          m.in_band ? { ...m, badge_text: `${Math.round(m.x)}%` } : m,
+        ),
+        summary_marks: [
+          { mark: "word", text: "25% or less (9): Canucks, Blackhawks, Red Wings +6", style: "sub", tone: "secondary" },
+          { mark: "word", text: "75% or more (11): Oilers, Wild, Hurricanes +8", style: "sub", tone: "secondary" },
+        ],
+        footer_marks: undefined,
+      },
+    };
+    const nhlHtml = renderToStaticMarkup(<KitCardRenderer spec={parseKitCardV1(nhlSpec)!} />);
+    expect(nhlHtml).toContain("38%");
+    expect(nhlHtml).toContain("Canucks, Blackhawks, Red Wings +6");
+    expect(nhlHtml).toContain("sr-only");
+
+    const largeTextNhlHtml = renderToStaticMarkup(
+      <KitCardRenderer spec={parseKitCardV1(nhlSpec)!} forceLargeText />,
+    );
+    expect(largeTextNhlHtml).toContain('data-testid="axis-large-text-list"');
+    expect(largeTextNhlHtml).toContain("Utah Mammoth");
+    expect(largeTextNhlHtml).toContain("73%");
   });
 });

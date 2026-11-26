@@ -429,6 +429,9 @@ async def delete_duplicate_events(
         {"ids": ids},
     )
 
+    from app.services.finished_event_history import invalidate_finished_event_history
+    await invalidate_finished_event_history(db, ids)
+
     result = await db.execute(
         text("DELETE FROM events WHERE id = ANY(:ids)"), {"ids": ids}
     )
@@ -1017,6 +1020,11 @@ async def merge_duplicate_events_sql(
                 "UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"
             ),
             {"ids": orphan_ids},
+        )
+
+        from app.services.finished_event_history import invalidate_finished_event_history
+        await invalidate_finished_event_history(
+            db, [row.keeper_id for row in pairs] + orphan_ids
         )
 
         # Step 4: Now delete orphan events (CASCADE handles espn/win_prob snapshots)
