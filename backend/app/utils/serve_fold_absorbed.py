@@ -246,11 +246,7 @@ async def _read_candidates(
     order_by_id: bool = True,
 ) -> list:
     """Read up to ``limit`` untagged twin candidates matching ``time_predicate``."""
-    predicates: list[Any] = [
-        time_predicate,
-        not_a_proven_duplicate(),
-        Event.status.notin_(list(RETIRED_STATUSES)),
-    ]
+    predicates: list[Any] = [time_predicate, not_a_proven_duplicate()]
     if sport_keys is not None:
         predicates.append(Sport.key.in_(list(sport_keys)))
     elif sport_ids is not None:
@@ -327,8 +323,17 @@ async def serve_fold_absorbed_rows_with_completeness(
     sport_ids, own_league_sport_ids = await _partition_foldable_sport_ids(db, sport_key)
     if not sport_ids:
         return [], True
+    retired_filters: tuple[Any, ...] = (
+        (Event.status.notin_(list(RETIRED_STATUSES)),)
+        if keep_page_survivor
+        else ()
+    )
     near_candidates = await _read_candidates(
-        db, event.id, sport_ids, _commence_arms(commence)
+        db,
+        event.id,
+        sport_ids,
+        _commence_arms(commence),
+        extra_filters=retired_filters,
     )
     same_day_claims: list = []
     if (
@@ -341,6 +346,7 @@ async def serve_fold_absorbed_rows_with_completeness(
             event.id,
             own_league_sport_ids,
             _same_day_idless_claim_predicate(commence),
+            extra_filters=retired_filters,
         )
     if not near_candidates and not same_day_claims:
         return [], True

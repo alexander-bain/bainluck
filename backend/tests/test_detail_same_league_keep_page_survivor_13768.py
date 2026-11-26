@@ -302,7 +302,12 @@ def test_13768_cross_board_winner_and_retired_exclusion_and_corner_flip_parity()
         absorbed, _ = asyncio.run(
             serve_fold_absorbed_rows_with_completeness(db, fcs_ev, keep_page_survivor=True)
         )
-        assert [r.id for r in absorbed] == [16002]  # retired 16003 excluded
+        assert [r.id for r in absorbed] == [16002]  # retired 16003 excluded on detail read
+
+        # Raw callers (`keep_page_survivor=False`) keep master behavior untouched for retired twins.
+        fbs_ev = _load_event(db, 16002)
+        absorbed_raw_fbs = asyncio.run(serve_fold_absorbed_rows(db, fbs_ev))
+        assert [r.id for r in absorbed_raw_fbs] == [16001, 16003]
 
         detail_fcs = asyncio.run(
             load_unified_game_reads(
@@ -455,3 +460,136 @@ def test_13768_same_league_same_status_loser_does_not_absorb_survivor_odds():
         )
         assert list(list_batch.by_id.keys()) == [42]
         assert list_batch.by_id[42].bookmaker_count == 1
+
+
+def test_13768_three_row_cluster_higher_ranked_other_status_loser_still_absorbs():
+    """3-row cluster: live page row still absorbs when higher-ranked same-league loser has another status."""
+    eng = create_engine("sqlite://")
+    Base.metadata.create_all(eng)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    kickoff = now - timedelta(minutes=20)
+    src_stamp = (now - timedelta(minutes=1)).isoformat()
+
+    with Session(eng) as s:
+        s.add(Sport(id=S_SERIE_B, key="soccer_italy_serie_b", name="Serie B", group="Soccer"))
+        s.add(Sport(id=76, key="soccer_other", name="Soccer Other", group="Soccer"))
+
+        # 1. Page row: `live`, id-less (`external_id=None`, `espn_id=None`)
+        s.add(
+            Event(
+                id=17001,
+                sport_id=S_SERIE_B,
+                away_team_name="Modena",
+                home_team_name="Reggiana",
+                commence_time=kickoff,
+                status="live",
+                external_id=None,
+                win_probability_sources={"polymarket": {"value": 0.48, "updated_at": src_stamp}},
+            )
+        )
+        # 2. Second loser: same league (`soccer_italy_serie_b`), DIFFERENT status (`scheduled`),
+        #    ranked ABOVE 17001 via `external_id`, owning the sportsbook snapshots.
+        s.add(
+            Event(
+                id=17002,
+                sport_id=S_SERIE_B,
+                away_team_name="Modena",
+                home_team_name="Reggiana",
+                commence_time=kickoff,
+                status="scheduled",
+                external_id="odds-17002",
+                win_probability_sources={
+                    "betting": {"value": 0.45, "updated_at": src_stamp},
+                    "betting_book_count": 3,
+                },
+            )
+        )
+        # 3. Outside winner: `soccer_other` + `espn_id` (highest `twin_identity_rank`).
+        s.add(
+            Event(
+                id=17003,
+                sport_id=76,
+                away_team_name="Modena",
+                home_team_name="Reggiana",
+                commence_time=kickoff,
+                status="scheduled",
+                espn_id="espn-17003",
+                win_probability_sources={"kalshi": {"value": 0.52, "updated_at": src_stamp}},
+            )
+        )
+        for i in range(3):
+            s.add(
+                OddsSnapshot(
+                    id=7100 + i,
+                    event_id=17002,
+                    bookmaker=f"three_bk_{i}",
+                    home_win_probability=0.45,
+                    away_win_probability=0.25,
+                    captured_at=now - timedelta(minutes=1),
+                )
+            )
+        s.commit()
+
+    with Session(eng) as s:
+        db = _SyncAsAsync(s)
+        ev_17001 = _load_event(db, 17001)
+        list_read = asyncio.run(
+            load_unified_game_reads(
+                db,
+                [ev_17001],
+                collapse_in_page=True,
+                include_same_league_external=True,
+                include_odds=True,
+                odds_query_fn=_portable_odds_query,
+                now=now,
+            )
+        ).by_id[17001]
+
+    with Session(eng) as s:
+        db = _SyncAsAsync(s)
+        ev_17001 = _load_event(db, 17001)
+        detail_read = asyncio.run(
+            load_unified_game_reads(
+                db,
+                [ev_17001],
+                collapse_in_page=False,
+                include_same_league_external=True,
+                include_odds=True,
+                odds_query_fn=_portable_odds_query,
+                now=now,
+            )
+        ).by_id[17001]
+
+    assert sorted(detail_read.folded_sources.keys()) == sorted(list_read.folded_sources.keys())
+    for source_name in ("betting", "kalshi", "polymarket"):
+        assert source_name in detail_read.folded_sources
+    assert detail_read.bookmaker_count == list_read.bookmaker_count == 3
+
+    # Control: once 17002 shares BOTH league and status (`live`) with 17001 and ranks higher,
+    # detail must NOT absorb the cluster onto the in-slice loser.
+    with Session(eng) as s:
+        s.get(Event, 17002).status = "live"
+        s.commit()
+
+    with Session(eng) as s:
+        db = _SyncAsAsync(s)
+        ev_17001 = _load_event(db, 17001)
+        absorbed_ctrl, complete_ctrl = asyncio.run(
+            serve_fold_absorbed_rows_with_completeness(db, ev_17001, keep_page_survivor=True)
+        )
+        assert absorbed_ctrl == []
+        assert complete_ctrl is True
+        detail_ctrl = asyncio.run(
+            load_unified_game_reads(
+                db,
+                [ev_17001],
+                collapse_in_page=False,
+                include_same_league_external=True,
+                include_odds=True,
+                odds_query_fn=_portable_odds_query,
+                now=now,
+            )
+        ).by_id[17001]
+        assert detail_ctrl.bookmaker_count == 0
+        assert "betting" not in detail_ctrl.folded_sources
+        assert "kalshi" not in detail_ctrl.folded_sources
