@@ -54,6 +54,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from app.utils.agent_origin import tagged  # noqa: E402 — stdlib-only module (#4642)
@@ -73,11 +74,40 @@ LAST_RATE: dict = {}
 #: Seconds per GitHub call; ``decide`` lowers it so ``change-scope`` (a 2-minute job) can't stall.
 TIMEOUT = 60
 
+_CROSS_HOST_STRIP_HEADERS = frozenset({"authorization", "x-github-api-version"})
+
+
+def _same_origin(src_url: str, dst_url: str) -> bool:
+    src = urlsplit(src_url)
+    dst = urlsplit(dst_url)
+    return (
+        src.scheme.lower() == dst.scheme.lower()
+        and src.netloc.lower() == dst.netloc.lower()
+    )
+
+
+class _CrossHostAuthStripRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Strip GitHub credentials on cross-host redirects (e.g. 302 to Azure SAS URLs)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is None:
+            return None
+        if not _same_origin(req.full_url, new_req.full_url):
+            for header_map in (new_req.headers, getattr(new_req, "unredirected_hdrs", {})):
+                for key in list(header_map.keys()):
+                    if key.lower() in _CROSS_HOST_STRIP_HEADERS:
+                        header_map.pop(key, None)
+        return new_req
+
+
+_URL_OPENER = urllib.request.build_opener(_CrossHostAuthStripRedirectHandler())
+
 
 def _default_open(req: urllib.request.Request) -> bytes:
     url = req.full_url
     tagged_req = urllib.request.Request(url, headers=tagged(url, dict(req.header_items())))
-    with urllib.request.urlopen(tagged_req, timeout=TIMEOUT) as resp:  # redirects are followed
+    with _URL_OPENER.open(tagged_req, timeout=TIMEOUT) as resp:  # redirects follow via cross-host auth strip
         for key in ("x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-used", "x-ratelimit-resource"):
             if resp.headers.get(key) is not None:
                 LAST_RATE[key] = resp.headers.get(key)
