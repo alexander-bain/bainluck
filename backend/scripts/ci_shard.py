@@ -48,8 +48,10 @@ import sys
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parent.parent
+REPO_ROOT = BACKEND.parent
 TESTS_DIR = BACKEND / "tests"
 DURATIONS_FILE = Path(__file__).resolve().parent / "ci_shard_durations.json"
+FAST_GATE_HOUSEKEEPING_MANIFEST = REPO_ROOT / ".github" / "ci-fast-gate-housekeeping-tests.txt"
 
 # Seconds assumed for a test file we have no measurement for. Deliberately a bit
 # above the median so an unmeasured newcomer is packed early (LPT places the
@@ -142,16 +144,33 @@ def _strip_log_prefix(line: str) -> str:
     return _LOG_LINE_PREFIX.sub("", line.lstrip("﻿").strip())
 
 
-def discover_test_files() -> list[str]:
-    """Every `test_*.py` under tests/, as posix paths relative to backend/.
+def load_fast_gate_housekeeping_tests(
+    manifest_path: Path = FAST_GATE_HOUSEKEEPING_MANIFEST,
+) -> set[str]:
+    """Return test files executed by `fast-gate` instead of `backend-tests` shards (412: D)."""
+    if not manifest_path.exists():
+        return set()
+    entries: set[str] = set()
+    for raw in manifest_path.read_text(encoding="utf-8").splitlines():
+        entry = raw.split("#", 1)[0].strip()
+        if entry:
+            entries.add(entry)
+    return entries
 
-    Mirrors pytest's default `python_files = test_*.py`. `--verify` proves this
-    agrees with pytest rather than assuming it.
+
+def discover_test_files() -> list[str]:
+    """Every sharded `test_*.py` under tests/, excluding `fast-gate` housekeeping guards.
+
+    Mirrors pytest's default `python_files = test_*.py` minus files owned by
+    `.github/ci-fast-gate-housekeeping-tests.txt`. `--verify` proves totality
+    and disjointness across both sets.
     """
+    housekeeping = load_fast_gate_housekeeping_tests()
     found = [
         p.relative_to(BACKEND).as_posix()
         for p in TESTS_DIR.rglob("test_*.py")
         if "__pycache__" not in p.parts
+        and p.relative_to(BACKEND).as_posix() not in housekeeping
     ]
     return sorted(found)
 
@@ -346,8 +365,19 @@ def cmd_verify(args: argparse.Namespace) -> int:
         missing = sorted(set(ours) - set(union))
         failures.append(f"files in no shard at all (would never run): {missing}")
 
-    # 2. Our enumeration vs pytest's. This is the half that catches a file we
-    #    failed to see — the whole reason this check is not just arithmetic.
+    # 2. Our enumeration + fast-gate housekeeping manifest vs pytest's collection.
+    #    This catches any file missed by both or missing on disk.
+    housekeeping = load_fast_gate_housekeeping_tests()
+    overlap = sorted(set(ours) & housekeeping)
+    if overlap:
+        failures.append(
+            f"files assigned to both backend-tests shards and fast-gate housekeeping: {overlap}"
+        )
+    missing_hk = sorted(hk for hk in housekeeping if not (BACKEND / hk).is_file())
+    if missing_hk:
+        failures.append(
+            f"fast-gate housekeeping manifest lists missing files: {missing_hk}"
+        )
     collected, raw = pytest_collected_files()
     if not collected:
         failures.append(
@@ -355,12 +385,13 @@ def cmd_verify(args: argparse.Namespace) -> int:
             f"refusing to certify a partition over an empty set.\n--- pytest output ---\n{raw}"
         )
     else:
-        unseen = sorted(set(collected) - set(ours))
+        expected_sharded = set(collected) - housekeeping
+        unseen = sorted(expected_sharded - set(ours))
         phantom = sorted(set(ours) - set(collected))
         if unseen:
             failures.append(
-                "pytest collects these files but the shard partition never saw them, so no "
-                f"shard runs them: {unseen}"
+                "pytest collects these files but neither the shard partition nor fast-gate "
+                f"housekeeping saw them: {unseen}"
             )
         if phantom:
             # Not fatal on its own: a file with zero test functions is collected

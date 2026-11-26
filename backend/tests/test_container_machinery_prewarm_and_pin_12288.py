@@ -902,7 +902,7 @@ async def test_load_snapshot_from_db_batches_withheld_prices_and_single_fleet_re
     monkeypatch.setattr("app.routes.futures._resolve_verified_title", _fake_vt)
     monkeypatch.setattr("app.routes.futures._format_market_detail", _fake_format)
     monkeypatch.setattr(
-        "app.routes.futures._apply_verified_title_to_detail", lambda d, v, fm: None
+        "app.routes.futures._apply_verified_title_to_detail", lambda d, v, fm, **kwargs: None
     )
 
     definition = {
@@ -1110,7 +1110,7 @@ async def test_scoped_scan_parity_with_legacy_ilike_across_all_five_definitions_
         },
     )
     monkeypatch.setattr(
-        "app.routes.futures._apply_verified_title_to_detail", lambda d, v, fm: None
+        "app.routes.futures._apply_verified_title_to_detail", lambda d, v, fm, **kwargs: None
     )
 
     def_min0 = {

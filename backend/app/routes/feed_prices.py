@@ -210,7 +210,9 @@ async def _market_cards(db, ids, now):
         for outcome in data.get("top_outcomes") or []:
             outcome["price_revision_at"] = clocks.get(str(outcome["id"]))
             outcome["price_observed_at"] = outcome["price_revision_at"]  # Legacy ordering only.
-        dispositions[f"futures-{market.id}"] = "updated"
+        dispositions[f"futures-{market.id}"] = (
+            "withheld" if data.get("field_price_coverage_incomplete") else "updated"
+        )
     from app.routes.title_feed_projection import project_super_bowl_card
 
     return terminal_items + await project_super_bowl_card(items, db), dispositions

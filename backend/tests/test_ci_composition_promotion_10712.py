@@ -34,6 +34,7 @@ from tests.test_ci_matrix_required_contexts import (
     JOB_IF,
     RUNS,
     LIVE,
+    NOT_DRAFT,
     REUSE,
     SCOPE_RUNS,
     SEARCH_RECALL,
@@ -388,7 +389,7 @@ def _validate_current_composed_promotion(
         "EVENT_FRAME_REDIS_SERVER",
     ], exported
     verifier = jobs["shard-completeness"]
-    assert verifier.get("if") == f"{SCOPE_RUNS} && {LIVE}"
+    assert verifier.get("if") == f"{SCOPE_RUNS} && {LIVE} && {NOT_DRAFT}"
     assert verifier["steps"][-1].get("if") == REUSE
     aggregate = jobs["search-recall"]
     assert set(aggregate["needs"]) == {"change-scope", "database-integration", "backend-tests"}
@@ -397,7 +398,7 @@ def _validate_current_composed_promotion(
     assert aggregate["if"] == SEARCH_RECALL
     for name in ("frontend-build", "e2e-contract", "release-required", "deploy", "native-backend-readers"):
         _current_checkout(jobs[name])
-    assert jobs["frontend-build"].get("if") == f"{LIVE} && needs.change-scope.outputs.scope != 'native'"
+    assert jobs["frontend-build"].get("if") == f"{LIVE} && needs.change-scope.outputs.scope != 'native' && {NOT_DRAFT}"
     assert jobs["e2e-contract"].get("if") is None
     assert len(deploy["steps"]) == 4, "no artifact substitution step"
     assert _current_checkout(deploy) is deploy["steps"][1]

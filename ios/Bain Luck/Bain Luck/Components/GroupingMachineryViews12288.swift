@@ -7,7 +7,8 @@ import SwiftUI
 // - Zero topic-specific code: dispatches strictly on `formId` and served atom shapes.
 // - Three rows then "Show all" (`effectiveVisibleLimit <= 3`).
 // - Ladder, range, rate, and count markets in ascending numerical order (Direction 228).
-// - Real verified art or nothing — never placeholder letters / monogram initials.
+// - When at least one sibling row has verified art, an artless sibling draws its
+//   initials in the same circle (Ruling 387: A); all-text cards draw no icons.
 // - Full text wrapping at largest Dynamic Type sizes (zero `"…"` truncation).
 
 private struct MachineryPreloadedImagesKey12288: EnvironmentKey {
@@ -106,13 +107,16 @@ enum MachineryDateFormatting12288 {
 }
 
 /// Renders verified art (`team_logo`, `tmdb_poster`, `tmdb_headshot`, `person`) when `art.verifiedURL`
-/// is present; renders `EmptyView()` otherwise — NEVER placeholder letters or monogram circles.
+/// is present. When a sibling row has a picture (`reservesWidthWhenEmpty == true`) and this row lacks
+/// one, draws its initials in the same circle (Ruling 387: A); otherwise renders `EmptyView()`.
 struct MachinerySubjectArtView: View {
     let art: MachinerySubjectArt?
     var width: CGFloat = 34
     var height: CGFloat = 34
     var reservesWidthWhenEmpty: Bool = false
     var emptySlotIsPoster: Bool = false
+    var subjectName: String? = nil
+    var defaultSubjectKind: String? = nil
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.machineryPreloadedImages12288) private var preloadedImages
 
@@ -122,6 +126,25 @@ struct MachinerySubjectArtView: View {
 
     private var borderColor: Color {
         colorScheme == .dark ? Color.white.opacity(0.14) : DS.border
+    }
+
+    /// Resolves server-provided initials (`art.initials`) or extracts the trailing entity
+    /// after `"Role · Entity"` / full `subjectName` via canonical `KitInitials366B`.
+    private var resolvedInitialsTarget: (raw: String, kind: String?)? {
+        if let provided = art?.initials?.trimmingCharacters(in: .whitespacesAndNewlines), !provided.isEmpty {
+            return (provided, art?.kind ?? defaultSubjectKind)
+        }
+        guard let rawName = subjectName?.trimmingCharacters(in: .whitespacesAndNewlines), !rawName.isEmpty else {
+            return nil
+        }
+        let subject: String = {
+            if let dotRange = rawName.range(of: " · ", options: .backwards) {
+                let tail = String(rawName[dotRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !tail.isEmpty { return tail }
+            }
+            return rawName
+        }()
+        return (subject, art?.kind ?? defaultSubjectKind)
     }
 
     @ViewBuilder
@@ -138,7 +161,15 @@ struct MachinerySubjectArtView: View {
                         case .success(let image):
                             styledImage(image, art: art, width: w, height: h)
                         default:
-                            blankSlot(art: art, width: w, height: h)
+                            if let target = resolvedInitialsTarget {
+                                KitInitialsCircle366B(
+                                    name: target.raw,
+                                    subjectKind: target.kind,
+                                    box: CGSize(width: w, height: h)
+                                )
+                            } else {
+                                blankSlot(art: art, width: w, height: h)
+                            }
                         }
                     }
                 }
@@ -155,9 +186,18 @@ struct MachinerySubjectArtView: View {
             .accessibilityHidden(true)
         } else if reservesWidthWhenEmpty {
             let w = emptySlotIsPoster ? width : max(width, height)
-            Color.clear
-                .frame(width: w, height: 1)
-                .accessibilityHidden(true)
+            let h = emptySlotIsPoster ? height : max(width, height)
+            if let target = resolvedInitialsTarget {
+                KitInitialsCircle366B(
+                    name: target.raw,
+                    subjectKind: target.kind,
+                    box: CGSize(width: w, height: h)
+                )
+            } else {
+                Color.clear
+                    .frame(width: w, height: 1)
+                    .accessibilityHidden(true)
+            }
         }
     }
 
@@ -807,9 +847,10 @@ private struct MachineryCoinFlipSectionView: View {
                         }
 
                         if dynamicTypeSize >= .xxxLarge {
+                            let rowHasArt = (item.awayArt?.verifiedURL != nil) || (item.homeArt?.verifiedURL != nil)
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 10) {
-                                    MachinerySubjectArtView(art: item.awayArt, width: 32, height: 32)
+                                    MachinerySubjectArtView(art: item.awayArt, width: 32, height: 32, reservesWidthWhenEmpty: rowHasArt, subjectName: item.awayShort, defaultSubjectKind: "team")
                                     Text(item.awayShort)
                                         .font(.system(size: min(teamSize, 24), weight: .semibold))
                                         .foregroundStyle(primaryInk)
@@ -825,7 +866,7 @@ private struct MachineryCoinFlipSectionView: View {
                                     }
                                 }
                                 HStack(spacing: 10) {
-                                    MachinerySubjectArtView(art: item.homeArt, width: 32, height: 32)
+                                    MachinerySubjectArtView(art: item.homeArt, width: 32, height: 32, reservesWidthWhenEmpty: rowHasArt, subjectName: item.homeShort, defaultSubjectKind: "team")
                                     Text(item.homeShort)
                                         .font(.system(size: min(teamSize, 24), weight: .semibold))
                                         .foregroundStyle(primaryInk)
@@ -842,9 +883,10 @@ private struct MachineryCoinFlipSectionView: View {
                                 }
                             }
                         } else {
+                            let rowHasArt = (item.awayArt?.verifiedURL != nil) || (item.homeArt?.verifiedURL != nil)
                             HStack(alignment: .center, spacing: 8) {
                                 HStack(spacing: 8) {
-                                    MachinerySubjectArtView(art: item.awayArt, width: 32, height: 32)
+                                    MachinerySubjectArtView(art: item.awayArt, width: 32, height: 32, reservesWidthWhenEmpty: rowHasArt, subjectName: item.awayShort, defaultSubjectKind: "team")
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(item.awayShort)
                                             .font(.system(size: min(teamSize, 22), weight: .semibold))
@@ -882,7 +924,7 @@ private struct MachineryCoinFlipSectionView: View {
                                             }
                                         }
                                     }
-                                    MachinerySubjectArtView(art: item.homeArt, width: 32, height: 32)
+                                    MachinerySubjectArtView(art: item.homeArt, width: 32, height: 32, reservesWidthWhenEmpty: rowHasArt, subjectName: item.homeShort, defaultSubjectKind: "team")
                                 }
                                 .frame(maxWidth: .infinity, alignment: .trailing)
                             }
@@ -1268,7 +1310,9 @@ private struct MachineryContenderSpotlightSectionView: View {
                                 rank: idx + 1,
                                 outcome: o,
                                 marketId: lead.marketId,
-                                marketTitle: lead.title
+                                marketTitle: lead.title,
+                                reservesArtSlot: topHasArt,
+                                listUsesPoster: topUsesPoster
                             )
                         }
                         .buttonStyle(.plain)
@@ -1288,7 +1332,8 @@ private struct MachineryContenderSpotlightSectionView: View {
                                     width: chasersUsePoster ? 28 : 32,
                                     height: rowIsPoster ? 40 : 32,
                                     reservesWidthWhenEmpty: chasersHaveArt,
-                                    emptySlotIsPoster: chasersUsePoster
+                                    emptySlotIsPoster: chasersUsePoster,
+                                    subjectName: o.name
                                 )
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(o.name)
@@ -1347,10 +1392,13 @@ private struct MachineryContenderSpotlightSectionView: View {
         rank: Int,
         outcome: MachineryOutcomeVisual,
         marketId: Int,
-        marketTitle: String
+        marketTitle: String,
+        reservesArtSlot: Bool = false,
+        listUsesPoster: Bool = false
     ) -> some View {
         let barColor = MachineryColorContrast12288.singleAccent(outcome.art?.accentColor, scheme: colorScheme)
         let resolvedMark = MachinerySourceMarkResolver11920.outcomeMark(for: outcome, marketId: marketId, members: members)
+        let rowIsPoster = outcome.art?.isPoster ?? listUsesPoster
         return VStack(spacing: 6) {
             HStack(spacing: 2) {
                 Text("#\(rank)")
@@ -1367,8 +1415,11 @@ private struct MachineryContenderSpotlightSectionView: View {
 
             MachinerySubjectArtView(
                 art: outcome.art,
-                width: outcome.art?.isPoster == true ? 44 : 48,
-                height: outcome.art?.isPoster == true ? 64 : 48
+                width: listUsesPoster ? 44 : 48,
+                height: rowIsPoster ? 64 : 48,
+                reservesWidthWhenEmpty: reservesArtSlot,
+                emptySlotIsPoster: listUsesPoster,
+                subjectName: outcome.name
             )
 
             Text(outcome.name)
@@ -1421,7 +1472,8 @@ private struct MachineryContenderSpotlightSectionView: View {
                 width: listUsesPoster ? 44 : 48,
                 height: rowIsPoster ? 64 : 48,
                 reservesWidthWhenEmpty: reservesArtSlot,
-                emptySlotIsPoster: listUsesPoster
+                emptySlotIsPoster: listUsesPoster,
+                subjectName: outcome.name
             )
             VStack(alignment: .leading, spacing: 3) {
                 Text("#\(rank) · \(outcome.name)")
@@ -1525,7 +1577,8 @@ private struct MachinerySiblingFieldsSectionView: View {
                                             width: 28,
                                             height: rowIsPoster ? 38 : 28,
                                             reservesWidthWhenEmpty: listHasArt,
-                                            emptySlotIsPoster: true
+                                            emptySlotIsPoster: true,
+                                            subjectName: o.name
                                         )
                                     }
                                     VStack(alignment: .leading, spacing: 4) {
@@ -1621,11 +1674,15 @@ private struct MachineryBenchmarkStripSectionView: View {
                         let yesMark = MachinerySourceMarkResolver11920.outcomeMark(for: yes, marketId: market.marketId, members: members)
                         NavigationLink(value: Route.futuresDetail(id: market.marketId)) {
                             HStack(alignment: .center, spacing: 10) {
+                                let benchSubjectName = ["yes", "no"].contains(yes.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+                                    ? market.title
+                                    : yes.name
                                 MachinerySubjectArtView(
                                     art: yes.art,
                                     width: 28,
                                     height: 28,
-                                    reservesWidthWhenEmpty: listHasArt
+                                    reservesWidthWhenEmpty: listHasArt,
+                                    subjectName: benchSubjectName
                                 )
                                 Text(market.title)
                                     .font(.system(size: min(rowSize, 21), weight: .medium))
@@ -1754,6 +1811,7 @@ struct MachineryDiscoverCardView: View {
     @ScaledMetric(relativeTo: .headline) private var titleSize: CGFloat = 17
     @ScaledMetric(relativeTo: .subheadline) private var rowSize: CGFloat = 14
     @ScaledMetric(relativeTo: .caption) private var subSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .title3) private var duelPctSize: CGFloat = 21
 
     private var cardBgColor: Color {
         colorScheme == .dark ? Color(red: 0.11, green: 0.11, blue: 0.12) : DS.cardBg
@@ -1803,6 +1861,8 @@ struct MachineryDiscoverCardView: View {
 
             if card.isEventCard {
                 eventRowsBody
+            } else if card.formId == .duelBar, card.outcomeRows.count >= 2 {
+                duelBarBody
             } else {
                 outcomeRowsBody
             }
@@ -1865,11 +1925,12 @@ struct MachineryDiscoverCardView: View {
     }
 
     private func singleLineEventRowsList(_ rows: [MachineryEventVisualItem]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let listHasArt = rows.contains { ($0.awayArt?.verifiedURL != nil) || ($0.homeArt?.verifiedURL != nil) }
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { idx, r in
                 HStack(alignment: .center, spacing: 8) {
                     HStack(spacing: 6) {
-                        MachinerySubjectArtView(art: r.awayArt, width: 26, height: 26)
+                        MachinerySubjectArtView(art: r.awayArt, width: 26, height: 26, reservesWidthWhenEmpty: listHasArt, subjectName: r.awayShort, defaultSubjectKind: "team")
                         Text(r.awayShort)
                             .font(.system(size: min(rowSize, 20), weight: .semibold))
                             .foregroundStyle(primaryInk)
@@ -1880,7 +1941,7 @@ struct MachineryDiscoverCardView: View {
                             .foregroundStyle(secondaryInk)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
-                        MachinerySubjectArtView(art: r.homeArt, width: 26, height: 26)
+                        MachinerySubjectArtView(art: r.homeArt, width: 26, height: 26, reservesWidthWhenEmpty: listHasArt, subjectName: r.homeShort, defaultSubjectKind: "team")
                         Text(r.homeShort)
                             .font(.system(size: min(rowSize, 20), weight: .semibold))
                             .foregroundStyle(primaryInk)
@@ -1912,11 +1973,12 @@ struct MachineryDiscoverCardView: View {
     }
 
     private func stackedEventRowsList(_ rows: [MachineryEventVisualItem]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let listHasArt = rows.contains { ($0.awayArt?.verifiedURL != nil) || ($0.homeArt?.verifiedURL != nil) }
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { idx, r in
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .center, spacing: 8) {
-                        MachinerySubjectArtView(art: r.awayArt, width: 24, height: 24)
+                        MachinerySubjectArtView(art: r.awayArt, width: 24, height: 24, reservesWidthWhenEmpty: listHasArt, subjectName: r.awayShort, defaultSubjectKind: "team")
                         Text(r.awayShort)
                             .font(.system(size: min(rowSize, 22), weight: .semibold))
                             .foregroundStyle(primaryInk)
@@ -1933,7 +1995,7 @@ struct MachineryDiscoverCardView: View {
                         }
                     }
                     HStack(alignment: .center, spacing: 8) {
-                        MachinerySubjectArtView(art: r.homeArt, width: 24, height: 24)
+                        MachinerySubjectArtView(art: r.homeArt, width: 24, height: 24, reservesWidthWhenEmpty: listHasArt, subjectName: r.homeShort, defaultSubjectKind: "team")
                         (Text("at ").foregroundStyle(secondaryInk) + Text(r.homeShort).foregroundStyle(primaryInk))
                             .font(.system(size: min(rowSize, 22), weight: .semibold))
                             .fixedSize(horizontal: false, vertical: true)
@@ -1980,7 +2042,8 @@ struct MachineryDiscoverCardView: View {
                             width: listUsesPoster ? 28 : 32,
                             height: rowIsPoster ? 40 : 32,
                             reservesWidthWhenEmpty: listHasArt,
-                            emptySlotIsPoster: listUsesPoster
+                            emptySlotIsPoster: listUsesPoster,
+                            subjectName: o.name
                         )
                     }
                     VStack(alignment: .leading, spacing: 5) {
@@ -2014,6 +2077,173 @@ struct MachineryDiscoverCardView: View {
                 .padding(.vertical, 8)
                 if idx < rows.count - 1 {
                     Rectangle().fill(borderColor).frame(height: 1)
+                }
+            }
+        }
+    }
+
+    // MARK: - Pile 7 (`duel_bar` split bar on Discover cards)
+
+    /// Resolves the two primary sides (plus an optional Draw/Tie/Neither middle leg).
+    /// When >= 3 rows arrive without an explicit draw/tie/neither row, the top two rows
+    /// (`rows[0]` and `rows[1]`) are the two sides and nothing grey is drawn in between.
+    static func resolveDuelBarSides(
+        _ rawRows: [MachineryOutcomeVisual]
+    ) -> (left: MachineryOutcomeVisual, right: MachineryOutcomeVisual, middle: MachineryOutcomeVisual?)? {
+        let rows = Array(rawRows.prefix(3))
+        guard rows.count >= 2 else { return nil }
+        let drawNames: Set<String> = ["tie", "draw", "neither"]
+        let midIdx: Int? = rows.count >= 3
+            ? rows.firstIndex {
+                drawNames.contains($0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+            }
+            : nil
+        if let midIdx {
+            let sides = rows.enumerated().filter { $0.offset != midIdx }.map(\.element)
+            guard sides.count >= 2 else { return nil }
+            return (left: sides[0], right: sides[1], middle: rows[midIdx])
+        }
+        return (left: rows[0], right: rows[1], middle: nil)
+    }
+
+    @ViewBuilder
+    private var duelBarBody: some View {
+        if let resolved = Self.resolveDuelBarSides(card.outcomeRows) {
+            let left = resolved.left
+            let right = resolved.right
+            let middle = resolved.middle
+            let colors = MachineryColorContrast12288.pairHexes(
+                awayHex: left.art?.accentColor,
+                homeHex: right.art?.accentColor,
+                scheme: colorScheme
+            )
+            let leftColor = Color(hex: colors.away)
+            let rightColor = Color(hex: colors.home)
+            let leftPct = max(0, left.renderedPercent)
+            let rightPct = max(0, right.renderedPercent)
+            let midPct = max(0, middle?.renderedPercent ?? 0)
+            let totalPct = max(1, leftPct + rightPct + midPct)
+
+            VStack(alignment: .leading, spacing: 10) {
+                if dynamicTypeSize >= .xxxLarge {
+                    VStack(alignment: .leading, spacing: 10) {
+                        duelSideRow(outcome: left, dotColor: leftColor)
+                        if let middle {
+                            duelSideRow(outcome: middle, dotColor: secondaryInk.opacity(0.45))
+                        }
+                        duelSideRow(outcome: right, dotColor: rightColor)
+                    }
+                } else {
+                    HStack(alignment: .bottom, spacing: 12) {
+                        HStack(alignment: .bottom, spacing: 10) {
+                            MachinerySubjectArtView(art: left.art, width: 36, height: 36)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    if left.art?.verifiedURL == nil {
+                                        Circle().fill(leftColor).frame(width: 9, height: 9)
+                                    }
+                                    Text(left.name)
+                                        .font(.system(size: min(rowSize, 20), weight: .semibold))
+                                        .foregroundStyle(primaryInk)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                    Text(left.probabilityLabel)
+                                        .font(.system(size: min(duelPctSize, 26), weight: .heavy).monospacedDigit())
+                                        .foregroundStyle(primaryInk)
+                                    if let m = SourceMarkButton(left.sourceMark, number: left.probability, subject: left.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
+                                        m
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .bottomLeading)
+
+                        HStack(alignment: .bottom, spacing: 10) {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(right.name)
+                                        .font(.system(size: min(rowSize, 20), weight: .semibold))
+                                        .foregroundStyle(primaryInk)
+                                        .multilineTextAlignment(.trailing)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if right.art?.verifiedURL == nil {
+                                        Circle().fill(rightColor).frame(width: 9, height: 9)
+                                    }
+                                }
+                                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                    Text(right.probabilityLabel)
+                                        .font(.system(size: min(duelPctSize, 26), weight: .heavy).monospacedDigit())
+                                        .foregroundStyle(primaryInk)
+                                    if let m = SourceMarkButton(right.sourceMark, number: right.probability, subject: right.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
+                                        m
+                                    }
+                                }
+                            }
+                            MachinerySubjectArtView(art: right.art, width: 36, height: 36)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .bottomTrailing)
+                    }
+                }
+
+                GeometryReader { geo in
+                    let leftFrac = CGFloat(min(94, max(6, Int(round(Double(leftPct) * 100.0 / Double(totalPct)))))) / 100.0
+                    let midFrac = middle == nil ? 0 : CGFloat(max(4, Int(round(Double(midPct) * 100.0 / Double(totalPct))))) / 100.0
+                    HStack(spacing: 2) {
+                        Rectangle()
+                            .fill(leftColor)
+                            .frame(width: max(8, geo.size.width * leftFrac - 1))
+                        if middle != nil {
+                            Rectangle()
+                                .fill(secondaryInk.opacity(colorScheme == .dark ? 0.42 : 0.28))
+                                .frame(width: max(6, geo.size.width * midFrac - 1))
+                        }
+                        Rectangle()
+                            .fill(rightColor)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .frame(height: 11)
+                .clipShape(Capsule())
+
+                if let middle, !dynamicTypeSize.isAccessibilitySize {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(secondaryInk.opacity(colorScheme == .dark ? 0.42 : 0.28))
+                            .frame(width: 7, height: 7)
+                        Text("\(middle.name) \(middle.probabilityLabel)")
+                            .font(.system(size: min(subSize, 17), weight: .medium).monospacedDigit())
+                            .foregroundStyle(secondaryInk)
+                        if let m = SourceMarkButton(middle.sourceMark, number: middle.probability, subject: middle.name, subtitle: card.title, numberSize: min(subSize, 16), compactRow: true) {
+                            m
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    @ViewBuilder
+    private func duelSideRow(outcome: MachineryOutcomeVisual, dotColor: Color) -> some View {
+        HStack(spacing: 10) {
+            if outcome.art?.verifiedURL != nil {
+                MachinerySubjectArtView(art: outcome.art, width: 36, height: 36)
+            } else {
+                Circle().fill(dotColor).frame(width: 10, height: 10)
+            }
+            Text(outcome.name)
+                .font(.system(size: min(rowSize, 22), weight: .semibold))
+                .foregroundStyle(primaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 6)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(outcome.probabilityLabel)
+                    .font(.system(size: min(duelPctSize, 26), weight: .heavy).monospacedDigit())
+                    .foregroundStyle(primaryInk)
+                if let m = SourceMarkButton(outcome.sourceMark, number: outcome.probability, subject: outcome.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
+                    m
                 }
             }
         }

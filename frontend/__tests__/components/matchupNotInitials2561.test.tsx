@@ -99,7 +99,7 @@ function renderDiscover(id: string): string {
  */
 function leaderboardRows(html: string): Array<{ full: string; shown: string }> {
   const rows: Array<{ full: string; shown: string }> = [];
-  const re = /<span class="min-w-0 truncate [^"]*" title="([^"]*)">([^<]*)<\/span>/g;
+  const re = /<span class="min-w-0 break-words [^"]*" title="([^"]*)">([^<]*)<\/span>/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html))) {
     rows.push({ full: decode(m[1]), shown: decode(m[2]) });
@@ -263,13 +263,10 @@ describe("controls (green on master too)", () => {
   });
 });
 
-// ── The render must clip what it no longer abbreviates ──────────────────────
+// ── The render wraps long verbatim labels cleanly (#13720) ──────────────────
 
-describe("the label span truncates", () => {
-  it("carries the truncate class, so a long verbatim label clips instead of wrapping", () => {
-    // Without this the party card's 48-character label wraps to a second line
-    // and every row on the card grows taller. Asserted through the rendered
-    // class list, on the same span the labels come out of.
+describe("the label span wraps without clipping (#13720)", () => {
+  it("carries break-words without truncate, so long verbatim labels stay readable instead of clipping", () => {
     const rows = leaderboardRows(renderDiscover("party"));
     expect(rows).toHaveLength(4);
     expect(rows.map((r) => r.full)).toContain(

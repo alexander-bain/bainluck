@@ -140,4 +140,31 @@ struct MyStuffLoadStage: Sendable {
     let cacheOutcome: String
     let cacheAgeSeconds: Double
     let outcomeClass: MyStuffOutcomeClass
+    let hasPins: Bool
+
+    var state: String {
+        (itemCount > 0 || hasPins) ? "populated" : "empty"
+    }
+
+    init(
+        kind: Kind,
+        authReadyMs: Double,
+        networkMs: Double,
+        requiredDataReadyMs: Double,
+        itemCount: Int,
+        cacheOutcome: String,
+        cacheAgeSeconds: Double,
+        outcomeClass: MyStuffOutcomeClass,
+        hasPins: Bool = false
+    ) {
+        self.kind = kind
+        self.authReadyMs = authReadyMs
+        self.networkMs = networkMs
+        self.requiredDataReadyMs = requiredDataReadyMs
+        self.itemCount = itemCount
+        self.cacheOutcome = cacheOutcome
+        self.cacheAgeSeconds = cacheAgeSeconds
+        self.outcomeClass = outcomeClass
+        self.hasPins = hasPins
+    }
 }
