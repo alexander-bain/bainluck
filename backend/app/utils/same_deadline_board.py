@@ -746,7 +746,7 @@ def _binary_source_marks(
         # used, rather than presenting the complement as a separate venue quote.
         no_mark = deepcopy(yes_mark)
         if no_mark["state"] == "single":
-            no_mark["method"] = "The No number is 100% minus this source's Yes price"
+            no_mark["method"] = "The No number is 100% minus this source's Yes probability"
     elif abs(yes_probability + no_probability - 1.0) > 1e-8:
         # Existing payloads can carry a stored No value alongside a different
         # rendered_percent derived from Yes. Preserve both; neither has one

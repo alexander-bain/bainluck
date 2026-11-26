@@ -791,7 +791,7 @@ function verifySingleMember(
   } else if (isDeadlinePassed) {
     narrativeCaption = "Deadline passed · awaiting result";
   } else if (yesProbability == null) {
-    narrativeCaption = `Price unavailable · ${deadlineLabel}`;
+    narrativeCaption = `No recent probability · ${deadlineLabel}`;
   } else if (movementSentenceSummary) {
     narrativeCaption = `${movementSentenceSummary} — ${yesPercentText} chance by ${shortDeadline}`;
   } else if (movementStatus === "measured_zero") {
@@ -831,7 +831,7 @@ function verifySingleMember(
         ? `${name} — Deadline passed (awaiting result)`
         : yesProbability != null
           ? `${name} — Yes (${yesPercentText})${accessibleMovementSuffix}`
-          : `${name} — price unavailable`;
+          : `${name} — no recent probability`;
 
   const providerMarketCount =
     typeof contract.provider_market_count === "number" &&
