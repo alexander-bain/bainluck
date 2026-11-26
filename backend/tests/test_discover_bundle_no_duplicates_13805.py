@@ -353,3 +353,70 @@ def test_every_grouped_card_bundler_enforces_no_duplicates_and_no_leader_binary(
     assert bundles, f"Expected a bundle from assembler={assembler_name}"
     for bundle in bundles:
         _assert_grouped_card_invariants(bundle)
+
+
+def test_different_markets_for_same_leader_must_stay_and_cross_venue_exact_drops() -> None:
+    """Fable 9:32 PM PT #13822 review: distinct markets about a field's leader must stay."""
+    def _field(mid: int, name: str, leader: str, gid: str | None) -> dict:
+        return {
+            "type": "futures",
+            "score": 90.0,
+            "data": {
+                "id": mid,
+                "name": name,
+                "group_id": gid,
+                "outcome_count": 10,
+                "top_outcomes": [
+                    {"id": mid * 10 + 1, "name": leader, "probability": 0.33, "rendered_percent": 33},
+                    {"id": mid * 10 + 2, "name": "Other Contender", "probability": 0.15, "rendered_percent": 15},
+                ],
+                "discover_card": {"suggested_format": "outcome_distribution"},
+            },
+        }
+
+    def _binary(mid: int, name: str, gid: str | None, prob: float = 0.41) -> dict:
+        return {
+            "type": "futures",
+            "score": 80.0,
+            "data": {
+                "id": mid,
+                "name": name,
+                "group_id": gid,
+                "outcome_count": 2,
+                "top_outcomes": [
+                    {"id": mid * 10 + 1, "name": "Yes", "probability": prob, "rendered_percent": int(round(prob * 100))},
+                    {"id": mid * 10 + 2, "name": "No", "probability": 1 - prob, "rendered_percent": 100 - int(round(prob * 100))},
+                ],
+                "discover_card": {"suggested_format": "binary_probability"},
+            },
+        }
+
+    # 1. 2028 Democratic presidential nominee vs presidential election
+    dem_field = _field(1001, "2028 Democratic presidential nominee", "Gavin Newsom", "polymarket:dem28")
+    pres_bin = _binary(1002, "Will Gavin Newsom win the 2028 presidential election?", "polymarket:pres28", 0.14)
+    assert [m["data"]["id"] for m in _sanitize_bundle_members([dem_field, pres_bin])] == [1001, 1002]
+
+    # 2. Oscars 2027: Best Picture vs Best Adapted Screenplay
+    oscars_field = _field(2001, "Oscars 2027: Best Picture", "The Odyssey", "polymarket:oscars-pic")
+    screenplay_bin = _binary(
+        2002,
+        "Will The Odyssey win Best Adapted Screenplay at the 2027 Oscars?",
+        "polymarket:oscars-screenplay",
+        0.41,
+    )
+    assert [m["data"]["id"] for m in _sanitize_bundle_members([oscars_field, screenplay_bin])] == [2001, 2002]
+
+    # 3. 2027 NBA Champion vs Western Conference
+    nba_field = _field(3001, "2027 NBA Champion", "Oklahoma City Thunder", "kalshi:nba-champ")
+    conf_bin = _binary(
+        3002,
+        "Will the Oklahoma City Thunder win the 2027 NBA Western Conference?",
+        "kalshi:nba-west",
+        0.47,
+    )
+    assert [m["data"]["id"] for m in _sanitize_bundle_members([nba_field, conf_bin])] == [3001, 3002]
+
+    # 4. Cross-venue control: exact same subject words (ignoring year) drops even with group_id=None
+    time_field = _field(4001, "TIME Person of the Year 2026", "James Talarico", None)
+    time_bin = _binary(4002, "Will James Talarico be TIME Person of the Year 2026?", None, 0.29)
+    assert [m["data"]["id"] for m in _sanitize_bundle_members([time_field, time_bin])] == [4001]

@@ -823,11 +823,14 @@ def _sanitize_bundle_members(members: list[dict[str, Any]]) -> list[dict[str, An
             if not _contains_subseq(b_tokens, leader_toks):
                 continue
             same_group = bool(b_group and f_group and b_group == f_group)
-            non_leader_subject = f_subject - set(leader_toks)
-            shared_subject = len((b_subject & non_leader_subject)) >= 2 or (
-                len(non_leader_subject) == 1 and non_leader_subject <= b_subject
+            non_leader_non_year = {
+                tok for tok in (f_subject - set(leader_toks))
+                if not tok.isdigit()
+            }
+            exact_subject_match = (
+                len(non_leader_non_year) >= 2 and non_leader_non_year <= b_subject
             )
-            if same_group or shared_subject:
+            if same_group or exact_subject_match:
                 redundant = True
                 break
         if not redundant:
