@@ -345,7 +345,7 @@ def select_opening_weekend_slate(
         )
         context_line = _assert_clean_copy(
             f"That would beat the record {record_display} opening. "
-            f"{other_word} other {other_noun} on the board too."
+            f"{other_word} other {other_noun} on the slate too."
         )
     else:
         second = shown[1]
