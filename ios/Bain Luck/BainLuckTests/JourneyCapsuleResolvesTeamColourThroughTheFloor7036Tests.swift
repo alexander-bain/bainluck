@@ -230,7 +230,9 @@ final class JourneyCapsuleResolvesTeamColourThroughTheFloor7036Tests: XCTestCase
     func testTheCapsuleAndTheStripeRouteThroughTheFloor() throws {
         let body = try Self.myStuffViewCode()
 
-        XCTAssertTrue(body.contains("Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor)).opacity(0.5)"),
+        XCTAssertTrue(body.contains("Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor, colorScheme: colorScheme)).opacity(0.65)"),
+                      "the AX journey card's probability capsule is not routing through the floor")
+        XCTAssertTrue(body.contains("Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor, colorScheme: colorScheme)).opacity(0.5)"),
                       "the journey card's probability capsule is not routing through the floor")
         XCTAssertTrue(body.contains("if let c = MyStuffTeamTextColour.edgeAccentHex(journey.teamColor)"),
                       "the journey card's leading stripe is not routing through the floor")
@@ -240,26 +242,24 @@ final class JourneyCapsuleResolvesTeamColourThroughTheFloor7036Tests: XCTestCase
                        "the stripe is being drawn from the raw stored colour again")
     }
 
-    /// 🪤 **The blanket assertion this file could not carry until now, and the
-    /// reason the capsule survived five arms.** Every earlier suite had to anchor
-    /// on one spelling at a time (`item.matchedTeam?.primaryColor`), because a
-    /// blanket rule failed on the two `journey.teamColor` sites — so the guard
-    /// with the power to find an unnamed site was exactly the guard nobody could
-    /// write. With those two resolved, every `Color(hex:` in this file names a
-    /// resolver, and a SEVENTH site added tomorrow fails here on its first run.
-    ///
-    /// This is an existence rule over every occurrence, not a ban on one string:
-    /// a ban cannot see the site nobody thought of.
     func testEveryColourInThisFileNamesAResolver() throws {
         let body = try Self.myStuffViewCode()
+
+        XCTAssertTrue(body.contains("let probHex = MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)"))
+        XCTAssertTrue(body.contains("let logoHex = MyStuffTeamTextColour.logoTintHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)"))
 
         let occurrences = body.components(separatedBy: "Color(hex:").dropFirst()
         XCTAssertGreaterThanOrEqual(occurrences.count, 6,
                                     "the scan found fewer colour sites than this file has — check the needle")
         for (index, tail) in occurrences.enumerated() {
-            XCTAssertTrue(tail.hasPrefix(" MyStuffTeamTextColour.") || tail.hasPrefix(" c)"),
-                          "Color(hex: site #\(index + 1) paints a colour that never met the #7036 floor: "
-                          + String(tail.prefix(70)))
+            XCTAssertTrue(
+                tail.hasPrefix(" MyStuffTeamTextColour.")
+                    || tail.hasPrefix(" c)")
+                    || tail.hasPrefix(" probHex)")
+                    || tail.hasPrefix(" logoHex)"),
+                "Color(hex: site #\(index + 1) paints a colour that never met the #7036 floor: "
+                    + String(tail.prefix(70))
+            )
         }
     }
 
