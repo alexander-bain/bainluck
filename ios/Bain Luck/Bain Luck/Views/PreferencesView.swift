@@ -189,12 +189,12 @@ struct PreferencesView: View {
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingView()
+            OnboardingView(entryPoint: "preferences")
                 .environmentObject(authManager)
         }
         #else
         .sheet(isPresented: $showOnboarding) {
-            OnboardingView()
+            OnboardingView(entryPoint: "preferences")
                 .environmentObject(authManager)
                 .frame(minWidth: 500, minHeight: 400)
         }

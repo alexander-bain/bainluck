@@ -181,38 +181,77 @@ struct FirstRunChecklistRootView364A: View {
     var initialStep: FirstRunChecklistRowID364A? = nil
     var initialLookupQuery: String? = nil
     var arrivedHeadline: String? = nil
+    var entryPoint: String = "first_launch"
     var onComplete: () -> Void = {}
 
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.followManager295A) private var followManager
     @Environment(\.firstRunChecklistStore364A) private var checklistStore
-    @EnvironmentObject private var authManager: AuthManager
-    @EnvironmentObject private var pinManager: PinManager
 
     @StateObject private var coordinatorVM: FirstRunChecklistCoordinatorVM364A
     @StateObject private var lookupVM: FirstRunLookupViewModel364A
     @StateObject private var followVM: FirstRunViewModel212A
-
-    @State private var path: [ChecklistSheetRoute364A] = []
-    @State private var draftSetSlugs: Set<String> = []
-    @State private var isRequestingAlerts = false
-    @State private var didApplyInitialStep = false
+    @StateObject private var telemetryTracker = FirstRunChecklistTelemetryTracker364A()
 
     init(
         initialStep: FirstRunChecklistRowID364A? = nil,
         initialLookupQuery: String? = nil,
         arrivedHeadline: String? = nil,
+        entryPoint: String? = nil,
         initialContent: FirstRunChecklistContent364A? = nil,
+        coordinatorVM: FirstRunChecklistCoordinatorVM364A? = nil,
+        followVM: FirstRunViewModel212A? = nil,
         onComplete: @escaping () -> Void = {}
     ) {
         self.initialStep = initialStep
         self.initialLookupQuery = initialLookupQuery
         self.arrivedHeadline = arrivedHeadline
+        self.entryPoint = entryPoint ?? (arrivedHeadline == nil ? "first_launch" : "shared_link")
         self.onComplete = onComplete
-        _coordinatorVM = StateObject(wrappedValue: FirstRunChecklistCoordinatorVM364A(initialContent: initialContent))
+        _coordinatorVM = StateObject(
+            wrappedValue: coordinatorVM ?? FirstRunChecklistCoordinatorVM364A(initialContent: initialContent)
+        )
         _lookupVM = StateObject(wrappedValue: FirstRunLookupViewModel364A())
-        _followVM = StateObject(wrappedValue: FirstRunViewModel212A(arrivedHeadline: arrivedHeadline, initialStep: 3))
+        _followVM = StateObject(
+            wrappedValue: followVM ?? FirstRunViewModel212A(arrivedHeadline: arrivedHeadline, initialStep: 3)
+        )
     }
+
+    var body: some View {
+        FirstRunChecklistRootBody364A(
+            initialStep: initialStep,
+            initialLookupQuery: initialLookupQuery,
+            entryPoint: entryPoint,
+            coordinatorVM: coordinatorVM,
+            lookupVM: lookupVM,
+            followVM: followVM,
+            telemetryTracker: telemetryTracker,
+            followManager: followManager,
+            checklistStore: checklistStore,
+            onComplete: onComplete
+        )
+    }
+}
+
+private struct FirstRunChecklistRootBody364A: View {
+    let initialStep: FirstRunChecklistRowID364A?
+    let initialLookupQuery: String?
+    let entryPoint: String
+    @ObservedObject var coordinatorVM: FirstRunChecklistCoordinatorVM364A
+    @ObservedObject var lookupVM: FirstRunLookupViewModel364A
+    @ObservedObject var followVM: FirstRunViewModel212A
+    @ObservedObject var telemetryTracker: FirstRunChecklistTelemetryTracker364A
+    @ObservedObject var followManager: FollowManager295A
+    @ObservedObject var checklistStore: FirstRunChecklistStore364A
+    let onComplete: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var authManager: AuthManager
+    @EnvironmentObject private var pinManager: PinManager
+
+    @State private var path: [ChecklistSheetRoute364A] = []
+    @State private var draftSetSlugs: Set<String> = []
+    @State private var isRequestingAlerts = false
+    @State private var didApplyInitialStep = false
 
     var body: some View {
         let storeBinding = Binding<FirstRunChecklistState364A>(
@@ -241,6 +280,11 @@ struct FirstRunChecklistRootView364A: View {
         #endif
         .task {
             syncStoreExternalSignals()
+            telemetryTracker.recordStartIfNeeded(
+                entryPoint: entryPoint,
+                initialCompletedRows: checklistStore.state.completedRows,
+                initialFollowedSubjects: followManager.subjects
+            )
             draftSetSlugs = checklistStore.state.selectedSetSlugs
             if let initialLookupQuery, !initialLookupQuery.isEmpty {
                 lookupVM.runImmediateSearch(
@@ -256,14 +300,29 @@ struct FirstRunChecklistRootView364A: View {
             async let loadFollow: Void = followVM.loadLivePairsIfNeeded()
             _ = await (loadContent, loadFollow)
         }
+        .onChange(of: checklistStore.state.completedRows) { _, newRows in
+            telemetryTracker.syncCompletedRows(newRows)
+        }
+        .onReceive(checklistStore.$state) { newState in
+            telemetryTracker.syncCompletedRows(newState.completedRows)
+        }
         .onChange(of: followManager.subjects.count) { _, newCount in
             checklistStore.syncFollowCount(newCount, markFollowCompleted: !path.isEmpty && newCount > 0)
+        }
+        .onReceive(followManager.$subjects) { newSubjects in
+            telemetryTracker.syncFollowedSubjects(newSubjects)
         }
         .onChange(of: authManager.isAuthenticated) { _, authed in
             checklistStore.syncAuthState(isAuthenticated: authed)
         }
         .onChange(of: lookupVM.query) { _, _ in
             lookupVM.onQueryChanged(subjectArt: coordinatorVM.content.subjectArtByCategory)
+        }
+        .onDisappear {
+            telemetryTracker.recordFinishOrSkip(
+                completedRows: checklistStore.state.completedRows,
+                followedSubjects: followManager.subjects
+            )
         }
     }
 
@@ -382,6 +441,8 @@ struct FirstRunChecklistRootView364A: View {
     private func commitFollowChangesAndPop() {
         let count = followManager.subjects.count
         checklistStore.syncFollowCount(count, markFollowCompleted: count > 0 || !followVM.pickedItems.isEmpty)
+        telemetryTracker.syncFollowedSubjects(followManager.subjects)
+        telemetryTracker.syncCompletedRows(checklistStore.state.completedRows)
         persistMergedDiscoverPreferences()
         popTopStep()
     }
@@ -397,6 +458,10 @@ struct FirstRunChecklistRootView364A: View {
             pinManager: pinManager,
             authManager: authManager,
             onDismiss: {
+                telemetryTracker.recordFinishOrSkip(
+                    completedRows: checklistStore.state.completedRows,
+                    followedSubjects: followManager.subjects
+                )
                 onComplete()
                 dismiss()
             }
