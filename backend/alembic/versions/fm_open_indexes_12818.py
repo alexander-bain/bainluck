@@ -4,16 +4,19 @@ MIGRATION-CLASS (D45 / notice 47b): merged and applied only on Alex's separate
 go. Prepared ahead of Step 1 open-catalog growth (55k -> 179.2k open markets):
 
 1. ``ix_fm_open_volume_24h``:
-   Covers open markets sorted by 24h volume (``enrich_cu_v2_profiles`` Phase 1
-   and open catalog volume scans across all open markets, including
-   event-linked ones that ``ix_fm_feed_open_volume`` omits).
+   Covers open markets sorted by 24h volume (``enrich_cu_v2_profiles`` Phase 1,
+   ``enrich_market_images``, and ``/api/events/search-suggestions`` tier-1
+   volume scans across all open markets, including event-linked ones omitted
+   by ``ix_fm_feed_open_volume``). Omits ``updated_at`` so poll stamp-only
+   rewrites retain PostgreSQL HOT updates when heap pages have room.
 2. ``ix_fm_open_resolution_date``:
    Covers open markets with a ``resolution_date`` (e.g. ``daily_digest``,
    open expiry windows, and resolution-date scans across all open markets).
 3. ``ix_fm_open_pm_event_slug``:
-   Prefix-capable (``text_pattern_ops``) partial expression index on
-   ``market_metadata ->> 'polymarket_event_slug'`` for open markets, serving
-   ``_verified_title_candidates_stmt``'s ``slug LIKE :stem || '%'`` lookup.
+   C-collated partial expression index on
+   ``((market_metadata ->> 'polymarket_event_slug') COLLATE "C")`` for open
+   markets, serving ``_verified_title_candidates_stmt``'s bytewise prefix
+   range predicate (``>= stem AND < upper``) even under cached generic plans.
 
 THE UNDO LINE (D51):
 
@@ -28,13 +31,13 @@ these CONCURRENTLY via ``psql`` ahead of the release if desired, making release
 application a metadata no-op:
 
     CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_fm_open_volume_24h
-        ON futures_markets (volume_24h DESC NULLS LAST, updated_at DESC NULLS LAST, id)
+        ON futures_markets (volume_24h DESC NULLS LAST, id)
         WHERE status = 'open';
     CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_fm_open_resolution_date
         ON futures_markets (resolution_date ASC, volume_24h DESC NULLS LAST, id)
         WHERE status = 'open' AND resolution_date IS NOT NULL;
     CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_fm_open_pm_event_slug
-        ON futures_markets ((market_metadata ->> 'polymarket_event_slug') text_pattern_ops)
+        ON futures_markets (((market_metadata ->> 'polymarket_event_slug') COLLATE "C"))
         WHERE status = 'open' AND (market_metadata ->> 'polymarket_event_slug') IS NOT NULL;
 
 Revision ID: fm_open_indexes_12818
@@ -62,7 +65,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE INDEX IF NOT EXISTS ix_fm_open_volume_24h
-        ON futures_markets (volume_24h DESC NULLS LAST, updated_at DESC NULLS LAST, id)
+        ON futures_markets (volume_24h DESC NULLS LAST, id)
         WHERE status = 'open'
         """
     )
@@ -76,7 +79,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE INDEX IF NOT EXISTS ix_fm_open_pm_event_slug
-        ON futures_markets ((market_metadata ->> 'polymarket_event_slug') text_pattern_ops)
+        ON futures_markets (((market_metadata ->> 'polymarket_event_slug') COLLATE "C"))
         WHERE status = 'open' AND (market_metadata ->> 'polymarket_event_slug') IS NOT NULL
         """
     )

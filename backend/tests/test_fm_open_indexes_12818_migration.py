@@ -81,7 +81,8 @@ def test_upgrade_and_downgrade_emit_expected_partial_indexes(monkeypatch):
 
     vol, res, slug, check = execs
     assert "CREATE INDEX IF NOT EXISTS ix_fm_open_volume_24h" in vol
-    assert "ON futures_markets (volume_24h DESC NULLS LAST, updated_at DESC NULLS LAST, id)" in vol
+    assert "ON futures_markets (volume_24h DESC NULLS LAST, id)" in vol
+    assert "updated_at" not in vol
     assert "WHERE status = 'open'" in vol
 
     assert "CREATE INDEX IF NOT EXISTS ix_fm_open_resolution_date" in res
@@ -89,7 +90,7 @@ def test_upgrade_and_downgrade_emit_expected_partial_indexes(monkeypatch):
     assert "WHERE status = 'open' AND resolution_date IS NOT NULL" in res
 
     assert "CREATE INDEX IF NOT EXISTS ix_fm_open_pm_event_slug" in slug
-    assert "ON futures_markets ((market_metadata ->> 'polymarket_event_slug') text_pattern_ops)" in slug
+    assert "ON futures_markets (((market_metadata ->> 'polymarket_event_slug') COLLATE \"C\"))" in slug
     assert "WHERE status = 'open' AND (market_metadata ->> 'polymarket_event_slug') IS NOT NULL" in slug
 
     assert "pg_index" in check
