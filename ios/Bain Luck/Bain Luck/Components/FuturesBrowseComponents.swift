@@ -262,7 +262,7 @@ struct FuturesBrowseMarketRow: View {
                 // The string existed only here — no web twin, no backend copy —
                 // so the web list has always drawn nothing in this slot and this
                 // only brings the phone into line with it.
-                if let outcomes = market.topOutcomes, !outcomes.isEmpty {
+                if let outcomes = market.topOutcomes?.filter({ $0.probability != nil }), !outcomes.isEmpty {
                     let shown = NumericalMarketScaleOrder228.orderedSlice(
                         outcomes,
                         limit: 3,
@@ -270,7 +270,7 @@ struct FuturesBrowseMarketRow: View {
                         probability: \.probability,
                         explicitSortKey: \.sortKey,
                         marketType: market.marketType,
-                        totalOutcomeCount: market.outcomeCount ?? outcomes.count,
+                        totalOutcomeCount: market.outcomeCount ?? market.topOutcomes?.count ?? outcomes.count,
                         isCumulative: market.mutuallyExclusive == false
                     )?.map(\.element) ?? Array(outcomes.prefix(3))
                     VStack(spacing: 5) {

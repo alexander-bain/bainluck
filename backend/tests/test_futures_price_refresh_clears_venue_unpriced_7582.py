@@ -159,13 +159,13 @@ class _ClearSession:
     def clears(self):
         """The UPDATEs that are clears — the ones carrying the guard clause.
 
-        Selected on ``calibration_probability``, which appears in this module's
-        WHERE clauses nowhere else, so a price write can never be counted here.
+        The age predicate distinguishes the stale-price clear from the
+        current book-only write that records a zero bid and an ask.
         """
         out = []
         for st in self.updates:
             text = str(st.compile(dialect=postgresql.dialect()))
-            if "calibration_probability IS NULL" in text:
+            if "AND futures_outcomes.last_updated < " in text:
                 out.append(st)
         return out
 
@@ -175,6 +175,22 @@ _ROWS = ((11, "KXSLRCHAMP-26-LEE"), (12, "KXSLRCHAMP-26-HKR"))
 
 
 class TestTheClearFires:
+    async def test_a_low_zero_bid_ask_refreshes_the_book_without_a_price_snapshot(self):
+        session = _ClearSession(_ROWS)
+
+        written = await fpr._write_prices(
+            session, _BOARD, "kalshi", [dict(_hull_kr(), yes_ask=0.05)], {}
+        )
+
+        assert written == session.inserts == 0
+        assert len(session.updates) == 1
+        statement = session.updates[0].compile(dialect=postgresql.dialect())
+        assignments, guard = str(statement).split(" WHERE ", 1)
+        assert "last_updated=" in assignments
+        assert "last_updated <=" in guard
+        assert statement.params["current_probability"] is None
+        assert statement.params["current_yes_bid"] == 0
+
     async def test_the_measured_specimen_has_its_price_taken_down(self):
         session = _ClearSession(_ROWS)
         stats: dict = {}

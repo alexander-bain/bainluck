@@ -445,6 +445,7 @@ class _OutcomeRow:
         self.current_yes_ask = 0.39
         self.probability_change_24h = 0.02
         self.is_winner = is_winner
+        self.resolution_source = None
         self.calibration_probability = calibration_probability
         self.last_updated = "OLD"
 
@@ -453,6 +454,16 @@ def _clear(row):
     stats = {"kalshi_outcomes_withdrawn_cleared": 0}
     changed = pmm._clear_withdrawn_outcome(row, "NOW", stats)
     return changed, stats
+
+
+def test_a_live_poll_ceiling_clears_the_price_and_keeps_the_book():
+    row = _OutcomeRow(prob=0.06)
+    row.current_yes_bid, row.current_yes_ask = 0.05, 0.07
+    assert pmm._clear_outcome_price(row, "NOW", ask_ceiling=0.03)
+    assert row.current_probability is None
+    assert (row.current_yes_bid, row.current_yes_ask) == (0, 0.03)
+    assert not pmm._clear_outcome_price(row, "LATER", ask_ceiling=0.03)
+    assert row.last_updated == "NOW"
 
 
 def test_the_live_polls_clear_takes_every_price_column_off():

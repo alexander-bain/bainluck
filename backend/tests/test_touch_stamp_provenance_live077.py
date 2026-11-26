@@ -100,6 +100,8 @@ _PREDICATE = re.compile(r"^\s*(AND|OR|WHERE)\b", re.I)
 #: Values that stamp a clock — the writes.
 _CLOCK_VALUES = frozenset({
     "func.now()", "now()", "NOW()", "now", "at",
+    # The venue-book observation that sets or clears the stored reading.
+    "observed_at",
     ":applied_version", ":restored_version",
     # #11138: `HeldRowQuotes.overlay` dates a held quote by its frozen DB-clock
     # sample (`clock_timestamp()`, the same domain as `now()`), beside the price.

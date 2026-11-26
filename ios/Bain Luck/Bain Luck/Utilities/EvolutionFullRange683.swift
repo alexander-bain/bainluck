@@ -65,7 +65,7 @@ nonisolated enum EvolutionFullRange {
     /// The server's word for a full read that withheld points it could not place.
     static let servedPartial = "partial"
     /// The one caption a partial read earns. Plain, and no count (notice 34).
-    static let partialNote = "Some older prices aren't shown"
+    static let partialNote = "Some older readings aren't shown"
     /// Bases at which the drawn span begins on a venue's record rather than on our
     /// own captures or the requested hours.
     static let recoveredRecordBases: Set<String> = ["archive_first_interval", "venue_first_observation"]

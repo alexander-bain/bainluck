@@ -38,7 +38,7 @@ function row(
 
 it("names the missing current price while retaining the labelled historical opening", () => {
   const html = row({}, false, 17);
-  expect(html).toContain("No current price");
+  expect(html).toContain("No recent probability");
   expect(html).toContain('data-testid="outcome-open"');
   expect(html).not.toContain('data-testid="outcome-price"');
   expect(html).not.toContain("Latest");
@@ -49,26 +49,26 @@ it.each([0, 0.17])("keeps a genuine %s price numeric", (probability) => {
   const html = row({ probability });
   expect(html).toContain('data-testid="outcome-price"');
   expect(html).toContain("Latest");
-  expect(html).not.toContain("No current price");
+  expect(html).not.toContain("No recent probability");
 });
 
 it("keeps a venue winner on an open market as a settled result even without a price", () => {
   const html = row({ is_winner: true, resolution_source: "api_settlement" });
   expect(html).toContain("100%");
   expect(html).toContain("Settled");
-  expect(html).not.toContain("No current price");
+  expect(html).not.toContain("No recent probability");
 });
 
 it("keeps a settled loss without a price", () => {
   const html = row({ is_winner: false, resolution_source: "api_settlement" }, true);
   expect(html).toContain("0%");
   expect(html).toContain("Settled");
-  expect(html).not.toContain("No current price");
+  expect(html).not.toContain("No recent probability");
 });
 
 it("preserves the existing result-unknown treatment for a resolved market", () => {
   const html = row({ settlement_display: { verdict: "unknown" } as FuturesOutcome["settlement_display"] }, true);
   expect(html).toContain("Result unknown");
-  expect(html).not.toContain("No current price");
+  expect(html).not.toContain("No recent probability");
   expect(html).not.toContain('data-testid="outcome-price"');
 });

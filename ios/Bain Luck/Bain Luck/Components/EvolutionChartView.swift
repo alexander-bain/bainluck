@@ -859,7 +859,7 @@ struct EvolutionChartView: View {
                 return
             }
             if let seconds = FuturesPriceReadCooldown.timelineRetrySeconds(for: apiError) {
-                self.error = "Prices are temporarily unavailable. Trying again shortly."
+                self.error = "Probabilities are temporarily unavailable. Trying again shortly."
                 errorIsRetryable = true
                 loading = false
                 // A successful detail must not strand its chart after the last
@@ -1451,12 +1451,12 @@ struct EvolutionChartView: View {
     ) -> String? {
         if EvolutionFullRange.servedPartially(historyRange) { return EvolutionFullRange.partialNote }
         if let seen = observationTimes, seen > 0, seen <= 3 {
-            return seen == 1 ? "Only one price seen so far" : "Only \(seen) prices seen so far"
+            return seen == 1 ? "Only one reading seen so far" : "Only \(seen) readings seen so far"
         }
         guard !EvolutionFullRange.earliestPointIsUnproven(historyRange) else { return nil }
         guard let covered = coverageHours, covered >= 0, requestedHours > 0 else { return nil }
         guard covered < Double(requestedHours) * 0.5 else { return nil }
-        return "Prices only go back \(coverageSpanWord(covered))"
+        return "Readings only go back \(coverageSpanWord(covered))"
     }
 
     /// #10141 — *Will the Iranian regime fall before 2027?* (113200) on Alex's build 34:
@@ -1466,7 +1466,7 @@ struct EvolutionChartView: View {
     ///
     /// Says "Unchanged <window>" only when every plotted outcome has at least two
     /// prices in the window and all of them are equal, and the window holds more
-    /// instants than the "Only N prices seen so far" sentence covers — a two-dot line
+    /// instants than the "Only N readings seen so far" sentence covers — a two-dot line
     /// is not evidence of holding steady.
     static let heldSteadyMinimumInstants = 4
 
@@ -1537,9 +1537,9 @@ struct EvolutionChartView: View {
     ///
     /// #683 (CERT-4158) — a full read the server served `partial` withheld older
     /// prices it could not place, so when the window already holds everything the
-    /// response carries, "No price history yet" and "… seen so far" are both untrue:
+    /// response carries, "No probability history yet" and "… seen so far" are both untrue:
     /// the card says the one partial sentence instead, as `coverageNote` does over a
-    /// plot. A window with earlier prices outside it keeps its own sentence and its
+    /// plot. A window with earlier readings outside it keeps its own sentence and its
     /// hint — that sentence is about the window, and the widest chip says the rest.
     static func sparseCopy(
         windowInstants: Int, totalInstants: Int, windowWord: String,
@@ -1560,7 +1560,7 @@ struct EvolutionChartView: View {
             return SparseCopy(note: EvolutionFullRange.partialNote, hint: nil)
         }
 
-        guard seen > 0 else { return SparseCopy(note: "No price history yet", hint: nil) }
+        guard seen > 0 else { return SparseCopy(note: "No probability history yet", hint: nil) }
 
         // 🔴 The window count is NOT capped at one. `cardBody` gates on POINTS and
         // this sentence counts INSTANTS, and the two diverge: `chartEntries` only
@@ -1571,9 +1571,9 @@ struct EvolutionChartView: View {
         // every one of them as "One price". Count what is there.
         let windowPhrase: String
         switch inWindow {
-        case 0: windowPhrase = "No prices \(windowWord)"
-        case 1: windowPhrase = "One price \(windowWord)"
-        default: windowPhrase = "\(inWindow) prices \(windowWord)"
+        case 0: windowPhrase = "No readings \(windowWord)"
+        case 1: windowPhrase = "One reading \(windowWord)"
+        default: windowPhrase = "\(inWindow) readings \(windowWord)"
         }
 
         // Nothing older means the window already holds everything the response has,
@@ -1582,19 +1582,19 @@ struct EvolutionChartView: View {
         guard earlier > 0 else {
             return SparseCopy(
                 note: inWindow == 1
-                    ? "Only one price seen so far"
-                    : "\(inWindow) prices seen so far",
+                    ? "Only one reading seen so far"
+                    : "\(inWindow) readings seen so far",
                 hint: nil)
         }
 
-        let earlierPhrase = earlier == 1 ? "one earlier price" : "\(earlier) earlier prices"
+        let earlierPhrase = earlier == 1 ? "one earlier reading" : "\(earlier) earlier readings"
         let note = "\(windowPhrase) — \(earlierPhrase)"
         return SparseCopy(note: note, hint: "Try a longer range")
     }
 
     /// The window a chip actually selects, as it reads INSIDE the sentence — the
     /// preposition belongs to the phrase, because `Today` does not take one and
-    /// every other window does ("No prices today", "No prices in the last 7 days").
+    /// every other window does ("No readings today", "No readings in the last 7 days").
     ///
     /// Named from the RANGE, never from the chip's own label: `Max` reads fine on a
     /// chip and not in a sentence, and the widest range's cutoff is nil — so when it

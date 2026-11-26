@@ -124,6 +124,53 @@ def test_unknown_winner_count_uses_all_open_rows(open_outcome_count, unsupported
     assert item["data"]["field_price_coverage_incomplete"] is unsupported
 
 
+@pytest.mark.parametrize(
+    ("ceiling", "stale", "withheld"),
+    [(0.15, False, False), (0.37, False, True), (0.51, False, True), (0.15, True, True)],
+)
+def test_a_trusted_ceiling_below_the_leader_keeps_the_kalshi_field(ceiling, stale, withheld):
+    board = _board(
+        70160273, "Award winner", "entertainment", True,
+        [("Alice", 0.37), ("Beatrice", 0.18)], ("Carmen", "Diana"),
+    )
+    board.source = "kalshi"
+    open_rows = []
+    for row, ask in zip(board.outcomes, (None, None, ceiling, 0.20)):
+        data = {"name": row.name, "probability": row.current_probability}
+        if ask is not None:
+            row.current_yes_bid = 0
+            row.current_yes_ask = ask
+            if not stale or row.name != "Carmen":
+                data.update(
+                    kalshi_no_bid=True, ask_ceiling=ask, probability=None,
+                    source_mark={"state": "none"},
+                )
+        open_rows.append(data)
+    item = {
+        "type": "futures",
+        "data": {
+            "status": "open",
+            "market_type": "field",
+            "discover_card": {"suggested_format": "outcome_distribution"},
+            "top_outcomes": open_rows[:2],
+        },
+    }
+    feed._withhold_unsupported_field_leader(
+        item, board, board.outcomes[:2], field_incomplete=False,
+        stale_outcome_ids={board.outcomes[2].id} if stale else (),
+    )
+    assert item["data"]["field_price_coverage_incomplete"] is withheld
+    assert feed._suppress_zero_probability_cards([item])[0] == ([] if withheld else [item])
+
+    detail = dict(
+        status="open", market_type="field", name=board.name, source="kalshi",
+        mutually_exclusive=True, outcomes=open_rows,
+    )
+    assert grouped_field_leader_is_unsupported(
+        detail, expected_winners=None, group_type=None,
+    ) is withheld
+
+
 @pytest.mark.parametrize("path", ["discover", "sports", "price_refresh"])
 async def test_fresh_feed_drops_the_field_and_refresh_retires_its_leader(monkeypatch, path):
     cup = _board(
@@ -186,7 +233,7 @@ async def test_fresh_feed_drops_the_field_and_refresh_retires_its_leader(monkeyp
             assert "discover_card" not in data
             assert data["hook_description"] is None
             assert item["headline"] is None
-            assert item["context_summary"] == "Limited price coverage"
+            assert item["context_summary"] == "Limited probability coverage"
         assert feed._suppress_zero_probability_cards(items) == ([by_id[qatar.id]], 2)
     else:
         assert list(by_id) == [qatar.id]

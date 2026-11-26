@@ -222,7 +222,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             EvolutionChartView.coverageNote(
                 coverageHours: 720, observationTimes: 200, requestedHours: 4320, historyRange: range)
         }
-        let today = "Prices only go back 30d"
+        let today = "Readings only go back 30d"
         XCTAssertEqual(note(nil), today, "no block = today's sentence")
         XCTAssertNil(note(block("archive_first_interval", "incomplete")),
                      "an incomplete import's first interval is not the question's open")
@@ -238,7 +238,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             EvolutionChartView.coverageNote(
                 coverageHours: 720, observationTimes: 2, requestedHours: 4320,
                 historyRange: block("archive_first_interval", "incomplete")),
-            "Only 2 prices seen so far", "the count sentence is about what is drawn, and stays")
+            "Only 2 readings seen so far", "the count sentence is about what is drawn, and stays")
     }
 
     // MARK: - A partial read says so
@@ -263,7 +263,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
         let note = EvolutionChartView.coverageNote(
             coverageHours: payload.coverageHours, observationTimes: payload.observationTimes,
             requestedHours: 4320, historyRange: payload.historyRange)
-        XCTAssertEqual(note, "Some older prices aren't shown")
+        XCTAssertEqual(note, "Some older readings aren't shown")
         XCTAssertFalse(try XCTUnwrap(note).contains(where: \.isNumber), "no counts on the reader's screen")
     }
 
@@ -273,7 +273,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             EvolutionChartView.coverageNote(
                 coverageHours: 4600, observationTimes: seen, requestedHours: 4320, historyRange: range)
         }
-        let partial = "Some older prices aren't shown"
+        let partial = "Some older readings aren't shown"
         XCTAssertEqual(note(FuturesHistoryRange(requested: "full", servedHistory: "partial")), partial)
         XCTAssertNil(note(FuturesHistoryRange(requested: "full", servedHistory: "complete")))
         XCTAssertNil(note(FuturesHistoryRange(requested: "full")), "an older server = complete")
@@ -323,7 +323,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
     }
 
     /// CERT-4158: an EMPTY Full read the server served `partial` fell to the sparse
-    /// branch, which never read the block, and printed "No price history yet" over
+    /// branch, which never read the block, and printed "No probability history yet" over
     /// prices the server withheld. Real client, real decode, the body's own rule.
     func testAnEmptyPartialFullReadSaysPricesAreWithheldNotThatThereAreNone() async throws {
         Origin.reset(bodies: ["/api/futures/68306/probability-timeline": sparse("[]", block: partialBlock)])
@@ -332,10 +332,10 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
         XCTAssertTrue(payload.timeline.isEmpty, "nothing is drawn, nothing is invented")
         XCTAssertEqual(
             card(payload, points: 0),
-            .sparse(.init(note: "Some older prices aren't shown", hint: nil)))
+            .sparse(.init(note: "Some older readings aren't shown", hint: nil)))
     }
 
-    /// One served price: still too few to draw, and "Only one price seen so far" is
+    /// One served price: still too few to draw, and "Only one reading seen so far" is
     /// untrue when the server withheld older ones.
     func testAOneValuePartialFullReadSaysPricesAreWithheld() async throws {
         Origin.reset(bodies: ["/api/futures/68306/probability-timeline": sparse(
@@ -346,7 +346,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
         XCTAssertEqual(payload.timeline.count, 1)
         XCTAssertEqual(
             card(payload, points: 1),
-            .sparse(.init(note: "Some older prices aren't shown", hint: nil)))
+            .sparse(.init(note: "Some older readings aren't shown", hint: nil)))
     }
 
     /// The instant/point split #7350 pinned: two served instants that draw one point
@@ -357,7 +357,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             EvolutionChartView.cardBody(
                 windowPoints: 1, windowInstants: 2, totalInstants: 2,
                 windowWord: EvolutionChartView.windowWord(for: .season), historyRange: partial),
-            .sparse(.init(note: "Some older prices aren't shown", hint: nil)))
+            .sparse(.init(note: "Some older readings aren't shown", hint: nil)))
     }
 
     /// Controls: everything that is not a served partial full read keeps today's words.
@@ -368,8 +368,8 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             EvolutionChartView.sparseCopy(
                 windowInstants: window, totalInstants: total, windowWord: word, historyRange: range)
         }
-        let none = EvolutionChartView.SparseCopy(note: "No price history yet", hint: nil)
-        let one = EvolutionChartView.SparseCopy(note: "Only one price seen so far", hint: nil)
+        let none = EvolutionChartView.SparseCopy(note: "No probability history yet", hint: nil)
+        let one = EvolutionChartView.SparseCopy(note: "Only one reading seen so far", hint: nil)
         for range in [
             FuturesHistoryRange(requested: "full", servedHistory: "complete"),
             FuturesHistoryRange(requested: "full"),                               // older server
@@ -381,12 +381,12 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             XCTAssertEqual(copy(range, window: 1, total: 1), one, "\(String(describing: range))")
         }
 
-        // A window with earlier prices outside it keeps its own sentence and its way
+        // A window with earlier readings outside it keeps its own sentence and its way
         // out: the sentence is about the window, and the widest chip says the rest.
         let partial = FuturesHistoryRange(requested: "full", servedHistory: "partial")
         XCTAssertEqual(
             copy(partial, window: 0, total: 3, word: "in the last 7 days"),
-            .init(note: "No prices in the last 7 days — 3 earlier prices", hint: "Try a longer range"))
+            .init(note: "No readings in the last 7 days — 3 earlier readings", hint: "Try a longer range"))
         // Two points still plot — the partial caption there is `coverageNote`'s.
         XCTAssertEqual(
             EvolutionChartView.cardBody(

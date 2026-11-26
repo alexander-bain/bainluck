@@ -340,8 +340,10 @@ class TestTheTwoRoutesAgree:
         assert (
             detail_prices == group_prices
         ), "the two payloads the event page fetches together must not disagree"
-        assert detail_prices[WITHHELD_ID] is None
-        assert detail["prices_withheld"] == 1
+        # The open zero-bid rungs have no current number under 418-A.
+        withheld = {1597371, 1597372, WITHHELD_ID, 1597368, 1597369, 1597373, 1597370}
+        assert {oid for oid, probability in detail_prices.items() if probability is None} == withheld
+        assert detail["prices_withheld"] == len(withheld)
 
     @pytest.mark.asyncio
     async def test_the_group_route_asks_the_union_and_does_not_re_spell_it(

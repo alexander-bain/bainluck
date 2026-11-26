@@ -5,7 +5,7 @@
  * Production 2026-09-28, Alfred Dunhill Links: `current_event.market_ids` opens on
  * DataGolf 62904927 (30 outcomes × 1 point, all at 00:37:20Z). The old fallback
  * advanced only on `outcomes.length === 0`, read 30, and stopped — the chart printed
- * "Limited price history available". Kalshi's Winner 62455818 (120 points over 8
+ * "Limited probability history available". Kalshi's Winner 62455818 (120 points over 8
  * timestamps) never got asked. The walk must also never land on a Round Leader or
  * Top-N curve under a "Win Probability" heading (#955).
  */
