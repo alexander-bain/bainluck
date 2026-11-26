@@ -798,6 +798,7 @@ celery_app.conf.task_routes = {
     # heavy task (main app, not `bainluck-heavy`).
     "app.tasks.assemble_theme_collections": {"queue": "background"},
     "app.tasks.rebuild_theme_snapshot": {"queue": "background"},
+    "app.tasks.refresh_kit_v1_real_sets_preview": {"queue": "background"},
     "app.tasks.refresh_awards_occasions": {"queue": "background"},
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
@@ -6017,6 +6018,42 @@ def discover_fun_scout(self, force=False):
         "discover_fun_scout",
         _run_discover_fun_scout(force=force),
     )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=180,
+    time_limit=240,
+    name="app.tasks.refresh_kit_v1_real_sets_preview",
+)
+def refresh_kit_v1_real_sets_preview(self):
+    """Build the #13551 Kit v1 real-sets audit off-web and save to Redis."""
+
+    async def _build() -> dict:
+        import time as _time
+        from app.routes.containers import _build_live_real_sets_audit_report
+        from app.tasks.base import get_task_session
+
+        t0 = _time.monotonic()
+        async with get_task_session() as db:
+            report = await _build_live_real_sets_audit_report(db, request=None)
+        payload = dict(report)
+        payload["build_elapsed_s"] = round(_time.monotonic() - t0, 3)
+        payload["status"] = "ready"
+        payload["served_from"] = "worker_redis"
+        return payload
+
+    from app.routes.containers import write_saved_kit_v1_real_sets_preview_sync
+
+    report = _tracked_run("refresh_kit_v1_real_sets_preview", _build())
+    saved = write_saved_kit_v1_real_sets_preview_sync(report)
+    return {
+        "status": "ready" if saved else "redis_write_failed",
+        "saved": saved,
+        "total_sets": report.get("total_sets", 0),
+        "fitting_count": report.get("fitting_count", 0),
+        "build_elapsed_s": report.get("build_elapsed_s"),
+    }
 
 
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900,

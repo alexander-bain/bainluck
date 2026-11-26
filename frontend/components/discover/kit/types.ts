@@ -48,7 +48,8 @@ export interface KitV1Route {
 
 export interface KitV1PictureMark {
   mark: "picture";
-  url: string;
+  url: string | null;
+  initials?: string | null;
   alt: string;
   subject_kind: string;
   size?: "xs" | "sm" | "md";
@@ -129,6 +130,7 @@ export interface KitV1DotMark {
   color?: KitV1AdaptiveColor | null;
   in_band?: boolean;
   picture?: KitV1PictureMark | null;
+  badge_text?: string | null;
 }
 
 export interface KitV1LineMark {
