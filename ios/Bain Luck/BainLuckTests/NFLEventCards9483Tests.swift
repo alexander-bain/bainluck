@@ -550,6 +550,7 @@ final class NFLEventCards9483Tests: XCTestCase {
                 .padding(16)
                 .frame(width: 402)
                 .background(Color.white)
+                .environment(\.colorScheme, .light)
             let (labels, stems, scale, read) = try labelsAndStems(view, size: size, name: name)
             let tag = "\(name): labels \(labels.map { "\($0.text)@\(Int($0.x))" }) stems \(stems) read \(read)"
             XCTAssertEqual(stems.count, lines.count, "\(tag): one stem per line was found")
@@ -590,8 +591,11 @@ final class NFLEventCards9483Tests: XCTestCase {
     private func labelsAndStems<V: View>(_ view: V, size: DynamicTypeSize, name: String)
         throws -> (labels: [(text: String, x: CGFloat)], stems: [CGFloat], scale: CGFloat, read: [String]) {
         let host = hostForMeasurement(view, at: size)
+        host.overrideUserInterfaceStyle = .light
         host.view.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
         let window = UIWindow(frame: host.view.frame)
+        window.overrideUserInterfaceStyle = .light
+        window.backgroundColor = .white
         window.rootViewController = host
         window.isHidden = false
         defer { window.isHidden = true }
@@ -706,8 +710,11 @@ final class NFLEventCards9483Tests: XCTestCase {
     @MainActor
     private func render<V: View>(_ view: V, size: DynamicTypeSize, name: String, scrolled: Bool) throws -> String {
         let host = hostForMeasurement(view, at: size)
+        host.overrideUserInterfaceStyle = .light
         host.view.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
         let window = UIWindow(frame: host.view.frame)
+        window.overrideUserInterfaceStyle = .light
+        window.backgroundColor = .white
         window.rootViewController = host
         window.isHidden = false
         defer { window.isHidden = true }
