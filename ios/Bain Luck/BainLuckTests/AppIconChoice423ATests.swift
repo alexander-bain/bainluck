@@ -326,7 +326,7 @@ final class AppIconChoice423ATests: XCTestCase {
         dynamicType: DynamicTypeSize,
         contentSize: UIContentSizeCategory
     ) -> UIImage {
-        let host = UIHostingController(rootView: view.environment(\.dynamicTypeSize, dynamicType))
+        let host = hostForMeasurement(view, at: dynamicType)
         host.safeAreaRegions = []
         host.overrideUserInterfaceStyle = style
         host.traitOverrides.horizontalSizeClass = .compact
