@@ -83,7 +83,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from app.utils.db_session_identity import UNKNOWN_BUILD, current_build_id
+from app.utils.db_session_identity import (
+    UNKNOWN_BUILD,
+    current_build_id as current_build_id,
+)
 from app.utils.event_concept_cache import (
     AVAILABILITY_LIVE,
     AVAILABILITY_STALE_OK,
@@ -303,39 +306,14 @@ def build_id_of(payload: Any) -> str:
     return str(envelope.get(BUILD_FIELD) or "")
 
 
-def payload_is_current_build(payload: Any) -> bool:
-    """Was this payload built by the code that is running right now? (#6355)
-
-    🔴 FAILS OPEN, DELIBERATELY, IN BOTH DIRECTIONS. Either side being unknown
-    means "we cannot tell", and the only safe reading of that is the pre-#6355
-    behaviour — serve it.
-
-    * **The stored side** is unknown for every payload written before this
-      shipped, and for anything a future writer forgets to stamp. Reading that
-      as a mismatch would invalidate the entire tier at the moment this ship
-      deploys and again on any writer bug — a self-inflicted thundering herd on
-      one of the four north-star pages.
-    * **The running side** is unknown wherever the platform sets no build
-      identity: local dev, CI, and any Heroku app without dyno metadata (see
-      `current_build_id`). Reading that as a mismatch would mean EVERY read is a
-      miss and the cache is dead in exactly the environments that cannot notice.
-
-    So this can only ever turn a serve into a rebuild when both builds are known
-    AND they differ — which is the one case #6355 is about. The cost of the
-    fail-open is bounded and self-healing: the first rebuild after this ships
-    stamps the slot, and from then on the check is live.
-    """
-    stored = build_id_of(payload)
-    if not stored or stored == UNKNOWN_BUILD:
-        return True
-    running = current_build_id()
-    if not running or running == UNKNOWN_BUILD:
-        return True
-    return stored == running
-
-
 def payload_is_current_version(payload: Any) -> bool:
-    """Return whether ``payload`` was built for ``current_cache_version()``."""
+    """Was this payload built under ``current_cache_version()``? (#13573 / #6355)
+
+    Fails open in both directions (`UNKNOWN_BUILD` or missing stamp) so
+    un-stamped payloads or environments without a version fail open. Old
+    deploy-SHA stamps (e.g. ``v6636``) differ from ``gm-v1`` and are refused
+    once, while unrelated releases keep valid entries warm.
+    """
     stored = build_id_of(payload)
     if not stored or stored == UNKNOWN_BUILD:
         return True
@@ -343,6 +321,9 @@ def payload_is_current_version(payload: Any) -> bool:
     if not running or running == UNKNOWN_BUILD:
         return True
     return stored == running
+
+
+payload_is_current_build = payload_is_current_version
 
 
 def source_status_of(payload: Any) -> str:
