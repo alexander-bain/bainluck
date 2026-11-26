@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { defaultShareCard } from "@/lib/shareCard";
 
-const DESCRIPTION = "Fourteen cards. Guess what the world thinks will happen, then send it to your group.";
+const DESCRIPTION = "Fifteen cards in three steps. Guess what the world thinks will happen, then send it to your group.";
 
 export const metadata: Metadata = {
   title: "Guess the Chance",

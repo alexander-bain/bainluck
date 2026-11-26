@@ -1,399 +1,331 @@
-// THE FIRST SET for /guess (425: C, 426: A).
+// SET THREE for /guess: THREE STEPS (430: A).
 //
-// GENERATED from a public read of Bain Luck's own pages taken Wed Nov 25, 12:02 PM PT. Every
+// GENERATED from a public read of Bain Luck's own pages taken Wed Nov 25, 8:12 PM PT. Every
 // number below was looked up by market and outcome when the set was built;
-// none was typed. Every answer is derived from those numbers by rule: the
-// larger of two, the nearest to a stated reference, the earliest year at 50%
-// or more, the count at 50% or more. The sentences, the context lines and the
-// roasts are written by hand. A set is a dated edition: its numbers stay as
-// they were read, and the page says when that was.
+// none was typed, and each is the percent the site itself prints. The
+// sentences, the context lines and the roasts are written by hand. A set is a
+// dated edition: its numbers stay as they were read, and the page says when.
 //
-// `ours: true` marks a card of a kind that compares or counts ACROSS markets,
-// which no single market page can show. `ours: false` is one market, restated.
-// The marks people give at the end of a round are kept with this flag, so the
-// first thing the game teaches us is which kind people like better.
+// Fifteen cards in three steps of five, easiest first:
+//   Easy    above or below 50% (`side`), and which of two is more likely (`versus`)
+//   Medium  pick the chance from four numbers (`four`), and pick the favorite (`leader`)
+//   Hard    slide to the chance (`chance`)
+//
+// The two `versus` cards are ours (`ours: true`): each puts two markets side
+// by side. Every other card restates one market and changes only how it is
+// answered. Nothing here was shown in an earlier round or set.
+//
+// `coinTaps` is what the Coin taps on the ten tap cards. It was drawn at random
+// when the set was built and kept only because it is an ordinary coin's result:
+// two or three right of the five two-way taps, one right of the five four-way.
 //
 // `__tests__/guess/guessPack.test.ts` holds this file to its rules.
 
 import type { GamePack } from "./types";
 
 export const GUESS_PACK: GamePack = {
-  "id": "2026-11-25-a",
-  "code": "a1",
-  "asOf": "Wed Nov 25, 12:02 PM PT",
-  "perRound": 7,
+  "id": "2026-11-25-c",
+  "code": "c1",
+  "asOf": "Wed Nov 25, 8:12 PM PT",
+  "perRound": 5,
+  "steps": [
+    {
+      "name": "Easy",
+      "how": "Above or below 50%? Which is more likely? One tap each."
+    },
+    {
+      "name": "Medium",
+      "how": "Pick one of four."
+    },
+    {
+      "name": "Hard",
+      "how": "Slide to the number. Closest wins."
+    }
+  ],
+  "coinTaps": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    1,
+    3,
+    3,
+    1,
+    0,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
   "topics": [
     "Sports",
-    "Screen and games",
-    "Space and science",
-    "Odd ones"
+    "Stars",
+    "Odd stuff"
   ],
   "cards": [
     {
-      "id": "g1",
-      "kind": "chance",
+      "kind": "side",
+      "flavor": "side",
       "ours": false,
-      "topic": "Odd ones",
-      "emoji": "🛒",
+      "topic": "Sports",
+      "emoji": "⛳",
       "extras": [
-        "🎮",
-        "📦"
+        "🇺🇸",
+        "🏆"
       ],
-      "prompt": "GameStop buys eBay in 2026",
-      "short": "GameStop buys eBay",
-      "context": "GameStop is the video-game shop chain. eBay is the online marketplace.",
-      "answer": 3,
-      "roastHigh": "{n} said {g}%. A video-game shop buying eBay. {n} {has} seen the future, and it is confusing."
+      "prompt": "Team USA wins the 2027 Ryder Cup",
+      "short": "USA wins the Ryder Cup",
+      "context": "Europe has won the last two. The 2027 matches are in Ireland, and a tie is possible.",
+      "answer": 40,
+      "id": "t1"
     },
     {
-      "id": "g2",
-      "kind": "pick",
-      "flavor": "pair",
-      "ours": true,
-      "topic": "Screen and games",
-      "emoji": "⚖️",
-      "prompt": "Which is more likely?",
-      "short": "Iron Man or Duke",
-      "context": "Robert Downey Jr. last played Iron Man in 2019. He is back in a Marvel film this December as a different character. The Final Four is the last weekend of college basketball’s tournament.",
-      "options": [
-        {
-          "label": "Duke reaches the Final Four",
-          "short": "Duke",
-          "emoji": "🏀",
-          "percent": 37
-        },
-        {
-          "label": "Robert Downey Jr. is back as Iron Man this year",
-          "short": "Iron Man",
-          "emoji": "🦾",
-          "percent": 45
-        }
-      ],
-      "roastWrong": "{n} backed a college basketball team over Hollywood bringing a favorite back. The world has Iron Man at {w}% and Duke at {pp}%.",
-      "answer": 1,
-      "partial": {}
-    },
-    {
-      "id": "g3",
-      "kind": "pick",
-      "flavor": "match",
+      "kind": "versus",
+      "flavor": "versus",
       "ours": true,
       "topic": "Sports",
-      "emoji": "🎲",
-      "target": 17,
-      "prompt": "Which of these is about as likely as rolling a six?",
-      "sub": "One roll of one die: 1 in 6, about 17%.",
-      "short": "As likely as rolling a six",
-      "context": "The Hurricanes are the favorite for the Stanley Cup. In hockey, even the favorite is about a roll of the dice.",
+      "emoji": "🤼",
+      "prompt": "Which is more likely?",
+      "short": "Brady in the WWE, or Rondo at the Olympics",
+      "context": "Brady won seven Super Bowls. Rondo won NBA titles with the Celtics and the Lakers. Flag football joins the Olympics in 2028.",
       "options": [
         {
-          "label": "Christopher Nolan wins the Oscar for Best Director",
-          "short": "the Nolan Oscar",
-          "emoji": "🎬",
-          "percent": 58
-        },
-        {
-          "label": "The Carolina Hurricanes win the Stanley Cup",
-          "short": "the Hurricanes",
-          "emoji": "🏒",
-          "percent": 17
-        },
-        {
-          "label": "Joe Rogan joins 60 Minutes as a correspondent this year",
-          "short": "Joe Rogan on 60 Minutes",
-          "emoji": "🎙️",
-          "percent": 3
-        },
-        {
-          "label": "Brock Purdy is the NFL’s Most Valuable Player",
-          "short": "Purdy for MVP",
+          "label": "Rajon Rondo plays flag football at the 2028 Olympics",
+          "short": "Rondo at the Olympics",
           "emoji": "🏈",
-          "percent": 40
+          "percent": 15
+        },
+        {
+          "label": "Tom Brady fights in the WWE before 2028",
+          "short": "Brady in the WWE",
+          "emoji": "🤼",
+          "percent": 29
         }
       ],
-      "roastWrong": "{n} picked {pick}, which the world has at {pp}%. A six comes up about 17% of the time.",
-      "answer": 1,
-      "partial": {
-        "2": 8
-      }
+      "id": "t2"
     },
     {
-      "id": "g4",
-      "kind": "chance",
+      "kind": "side",
+      "flavor": "side",
       "ours": false,
-      "topic": "Screen and games",
-      "emoji": "🎮",
+      "topic": "Stars",
+      "emoji": "💒",
       "extras": [
-        "🏆",
-        "🚗"
+        "🎤",
+        "🎬"
       ],
-      "prompt": "Grand Theft Auto VI wins Game of the Year",
-      "short": "GTA VI wins Game of the Year",
-      "context": "The Game Awards name one Game of the Year each December.",
-      "answer": 94,
-      "roastLow": "{n} said {g}%. {n} {has} not been near a teenager lately. The world says {w}%."
+      "prompt": "Harry Styles and Zoë Kravitz are married before 2027",
+      "short": "Styles and Kravitz marry this year",
+      "context": "The singer and the actor were first linked in 2025. The year has five weeks left.",
+      "answer": 18,
+      "id": "t3"
     },
     {
-      "id": "g5",
-      "kind": "ladder",
+      "kind": "versus",
+      "flavor": "versus",
       "ours": true,
-      "topic": "Space and science",
-      "emoji": "⚛️",
-      "prompt": "When is nuclear fusion achieved?",
-      "sub": "Pick the earliest year the world calls more likely than not.",
-      "short": "When fusion arrives",
-      "context": "Fusion is what powers the Sun. No power plant runs on it yet.",
-      "options": [
-        {
-          "label": "By 2030",
-          "short": "2030",
-          "emoji": "",
-          "percent": 37
-        },
-        {
-          "label": "By 2035",
-          "short": "2035",
-          "emoji": "",
-          "percent": 64
-        },
-        {
-          "label": "By 2040",
-          "short": "2040",
-          "emoji": "",
-          "percent": 78
-        },
-        {
-          "label": "Not by 2040",
-          "short": "not by 2040",
-          "emoji": "",
-          "percent": null
-        }
-      ],
-      "roastWrong": "{n} said {pick}. The world gets past even by 2035. Fusion has been thirty years away for sixty years, so that is forgivable.",
-      "answer": 1,
-      "partial": {
-        "0": 8,
-        "2": 8
-      }
-    },
-    {
-      "id": "g6",
-      "kind": "count",
-      "ours": true,
-      "topic": "Sports",
-      "emoji": "🏒",
-      "prompt": "How many of these six score 100 points this season?",
-      "sub": "Count the ones the world has above 50%.",
-      "short": "NHL stars reaching 100 points",
-      "context": "A 100-point season is rare. Only a few NHL players get there each year.",
-      "items": [
-        {
-          "label": "Connor McDavid",
-          "short": "McDavid",
-          "emoji": "🏒",
-          "percent": 94
-        },
-        {
-          "label": "Nathan MacKinnon",
-          "short": "MacKinnon",
-          "emoji": "🏒",
-          "percent": 22
-        },
-        {
-          "label": "Leon Draisaitl",
-          "short": "Draisaitl",
-          "emoji": "🏒",
-          "percent": 95
-        },
-        {
-          "label": "Cale Makar",
-          "short": "Makar",
-          "emoji": "🏒",
-          "percent": 14
-        },
-        {
-          "label": "Macklin Celebrini",
-          "short": "Celebrini",
-          "emoji": "🏒",
-          "percent": 62
-        },
-        {
-          "label": "Jack Eichel",
-          "short": "Eichel",
-          "emoji": "🏒",
-          "percent": 45
-        }
-      ],
-      "step": 7,
-      "roastHigh": "{n} said {g}. The world counts {w}. {n} {has} a generous heart.",
-      "roastLow": "{n} said {g}. The world counts {w}. {n} trust{s} nobody.",
-      "answer": 3,
-      "max": 6
-    },
-    {
-      "id": "g7",
-      "kind": "order",
-      "ours": true,
-      "topic": "Odd ones",
-      "emoji": "🥇",
-      "prompt": "Three favorites. Put them in order, the surest first.",
-      "short": "Three favorites in order",
-      "context": "An Oscar, the NBA scoring title, and Billboard’s artist of the year.",
-      "items": [
-        {
-          "label": "Luka Dončić leads the NBA in scoring",
-          "short": "the scoring title",
-          "emoji": "🏀",
-          "percent": 77
-        },
-        {
-          "label": "Morgan Wallen is Billboard’s top artist of 2026",
-          "short": "the singer",
-          "emoji": "🎤",
-          "percent": 66
-        },
-        {
-          "label": "Julianne Moore wins the Oscar for Best Actress",
-          "short": "the Oscar",
-          "emoji": "🏆",
-          "percent": 86
-        }
-      ],
-      "roastWrong": "{n} had them out of order. The world is surest about the Oscar, then the scoring title, then the singer."
-    },
-    {
-      "id": "g8",
-      "kind": "chance",
-      "ours": false,
-      "topic": "Space and science",
-      "emoji": "☄️",
-      "extras": [
-        "🔭",
-        "🪐"
-      ],
-      "prompt": "A new interstellar visitor is confirmed before 2027",
-      "short": "A new interstellar visitor",
-      "context": "An interstellar visitor is an object passing through from outside our solar system. Only three have ever been confirmed.",
-      "answer": 7,
-      "roastHigh": "{n} said {g}%. There are five weeks left in the year, {n}. Space is big and slow."
-    },
-    {
-      "id": "g9",
-      "kind": "pick",
-      "flavor": "pair",
-      "ours": true,
-      "topic": "Space and science",
-      "emoji": "⚖️",
+      "topic": "Odd stuff",
+      "emoji": "🌋",
       "prompt": "Which is more likely?",
-      "short": "The novel or the rocket",
-      "context": "The Winds of Winter is the sixth Game of Thrones novel. Readers have been waiting since 2011. Nothing SpaceX has built has landed on Mars.",
+      "short": "A supervolcano, or a Rihanna album",
+      "context": "Rihanna’s last album, Anti, came out in 2016. The last supervolcano eruption was about 26,000 years ago.",
       "options": [
         {
-          "label": "The Winds of Winter gets a release date this year",
-          "short": "the novel",
-          "emoji": "📚",
-          "percent": 7
+          "label": "A supervolcano erupts before 2050",
+          "short": "A supervolcano",
+          "emoji": "🌋",
+          "percent": 31
         },
         {
-          "label": "SpaceX lands something on Mars before 2030",
-          "short": "Mars",
-          "emoji": "🚀",
-          "percent": 26
+          "label": "Rihanna releases an album this year",
+          "short": "A Rihanna album",
+          "emoji": "💿",
+          "percent": 2
         }
       ],
-      "roastWrong": "{n} had the novel arriving before the rocket. The world has Mars at {w}% and the novel at {pp}%.",
-      "answer": 1,
-      "partial": {}
+      "id": "t4"
     },
     {
-      "id": "g10",
-      "kind": "pick",
-      "flavor": "field",
+      "kind": "side",
+      "flavor": "side",
       "ours": false,
-      "topic": "Odd ones",
-      "emoji": "📖",
-      "prompt": "Which is the favorite for Merriam-Webster’s Word of the Year?",
-      "short": "Word of the Year",
-      "context": "Larping: playing a part, from live-action role-playing. Agentic: software that acts on its own. Looksmaxxing: going all out to improve your looks.",
+      "topic": "Odd stuff",
+      "emoji": "❄️",
+      "extras": [
+        "🌨️",
+        "🏙️"
+      ],
+      "prompt": "Boston gets more than two inches of snow in December",
+      "short": "Two inches of snow in Boston",
+      "context": "All the snow measured in Boston over the whole month counts.",
+      "answer": 62,
+      "id": "t5"
+    },
+    {
+      "kind": "four",
+      "flavor": "four",
+      "ours": false,
+      "topic": "Odd stuff",
+      "emoji": "📺",
+      "extras": [
+        "🏃",
+        "💯"
+      ],
+      "prompt": "IShowSpeed reaches 100 million YouTube subscribers before 2029",
+      "short": "IShowSpeed hits 100 million",
+      "context": "IShowSpeed is a streamer. Only a few channels have ever passed 100 million subscribers.",
+      "answer": 51,
+      "options": [
+        12,
+        25,
+        38,
+        51
+      ],
+      "id": "t6"
+    },
+    {
+      "kind": "leader",
+      "flavor": "leader",
+      "ours": false,
+      "topic": "Stars",
+      "emoji": "🎤",
+      "prompt": "Who is most likely to perform at the Super Bowl halftime show?",
+      "sub": "Not counting Jay-Z, who is all but certain.",
+      "short": "Halftime show guests",
+      "independent": true,
+      "context": "The show is on February 14, 2027. More than one of these four can be on that stage.",
       "options": [
         {
-          "label": "vibe",
-          "short": "vibe",
-          "emoji": "✨",
-          "percent": 4
+          "label": "Eminem",
+          "short": "Eminem",
+          "emoji": "🎧",
+          "percent": 24
         },
         {
-          "label": "looksmaxxing",
-          "short": "looksmaxxing",
-          "emoji": "🪞",
-          "percent": 6
+          "label": "Justin Timberlake",
+          "short": "Timberlake",
+          "emoji": "🕺",
+          "percent": 40
         },
         {
-          "label": "larping",
-          "short": "larping",
-          "emoji": "🎭",
-          "percent": 22
+          "label": "Beyoncé",
+          "short": "Beyoncé",
+          "emoji": "👑",
+          "percent": 70
         },
         {
-          "label": "agentic",
-          "short": "agentic",
-          "emoji": "🤖",
+          "label": "Pharrell Williams",
+          "short": "Pharrell",
+          "emoji": "🎩",
+          "percent": 43
+        }
+      ],
+      "id": "t7"
+    },
+    {
+      "kind": "four",
+      "flavor": "four",
+      "ours": false,
+      "topic": "Sports",
+      "emoji": "🏈",
+      "extras": [
+        "🧢",
+        "🏟️"
+      ],
+      "prompt": "The New England Patriots make the playoffs",
+      "short": "Patriots make the playoffs",
+      "context": "Fourteen of the 32 NFL teams get in. The regular season ends in early January.",
+      "answer": 30,
+      "options": [
+        30,
+        45,
+        60,
+        75
+      ],
+      "id": "t8"
+    },
+    {
+      "kind": "leader",
+      "flavor": "leader",
+      "ours": false,
+      "topic": "Sports",
+      "emoji": "🏈",
+      "prompt": "Who is the favorite to win the NFC South?",
+      "short": "NFC South favorite",
+      "independent": false,
+      "context": "Four teams, one division title. The regular season ends in early January.",
+      "options": [
+        {
+          "label": "Falcons",
+          "short": "Falcons",
+          "emoji": "🦅",
           "percent": 10
-        }
-      ],
-      "roastWrong": "{n} picked {pick}, at {pp}%. The world’s word is larping, at {w}%, which is also what that pick was.",
-      "answer": 2,
-      "partial": {
-        "3": 8
-      }
-    },
-    {
-      "id": "g11",
-      "kind": "pick",
-      "flavor": "match",
-      "ours": true,
-      "topic": "Screen and games",
-      "emoji": "🪙",
-      "target": 50,
-      "prompt": "Which of these is a coin flip?",
-      "sub": "The world has one of them at about 50%.",
-      "short": "The coin flip",
-      "context": "Avengers: Secret Wars is the Marvel film planned for December 2027.",
-      "options": [
+        },
         {
-          "label": "Johnny Depp is cast in the next Pirates of the Caribbean film",
-          "short": "Johnny Depp in Pirates",
+          "label": "Panthers",
+          "short": "Panthers",
+          "emoji": "🐆",
+          "percent": 53
+        },
+        {
+          "label": "Saints",
+          "short": "Saints",
+          "emoji": "⚜️",
+          "percent": 8
+        },
+        {
+          "label": "Buccaneers",
+          "short": "Buccaneers",
           "emoji": "🏴‍☠️",
-          "percent": 77
-        },
-        {
-          "label": "OpenAI launches a gadget by the end of the year",
-          "short": "the OpenAI gadget",
-          "emoji": "📱",
-          "percent": 19
-        },
-        {
-          "label": "Avengers: Secret Wars is delayed",
-          "short": "the Marvel delay",
-          "emoji": "🎬",
-          "percent": 50
-        },
-        {
-          "label": "Spider-Man: Brand New Day is the top-grossing movie of 2026",
-          "short": "Spider-Man on top",
-          "emoji": "🕷️",
-          "percent": 88
+          "percent": 27
         }
       ],
-      "roastWrong": "{n} picked {pick}, which the world has at {pp}%. The coin flip was the Marvel delay, at {w}%.",
-      "answer": 2,
-      "partial": {
-        "0": 8
-      }
+      "id": "t9"
     },
     {
-      "id": "g12",
+      "kind": "four",
+      "flavor": "four",
+      "ours": false,
+      "topic": "Stars",
+      "emoji": "🎬",
+      "extras": [
+        "🌟",
+        "🏆"
+      ],
+      "prompt": "Zendaya is nominated for Best Actress at the Oscars",
+      "short": "Zendaya gets an Oscar nomination",
+      "context": "Nominations for the 99th Academy Awards come out in January.",
+      "answer": 36,
+      "options": [
+        8,
+        22,
+        36,
+        57
+      ],
+      "id": "t10"
+    },
+    {
       "kind": "chance",
+      "flavor": "straight",
+      "ours": false,
+      "topic": "Stars",
+      "emoji": "👯",
+      "extras": [
+        "📸",
+        "🤝"
+      ],
+      "prompt": "Blake Lively and Taylor Swift are seen together in public this year",
+      "short": "Lively and Swift seen together",
+      "context": "The two were close friends for years. The year has five weeks left.",
+      "answer": 9,
+      "roastHigh": "{n} said {g}%. {n} still believe{s} in best friends forever. The world says {w}%.",
+      "id": "t11"
+    },
+    {
+      "kind": "chance",
+      "flavor": "straight",
       "ours": false,
       "topic": "Sports",
       "emoji": "🐻",
@@ -404,68 +336,63 @@ export const GUESS_PACK: GamePack = {
       "prompt": "The Boston Bruins make the playoffs",
       "short": "Bruins make the playoffs",
       "context": "Sixteen of the 32 NHL teams make the playoffs. The regular season ends in April.",
-      "answer": 72,
-      "roastHigh": "{n} gave the Bruins {g}%. That is a jersey talking. The world says {w}%.",
-      "roastLow": "{n} gave the Bruins {g}%. Somewhere in Boston, somebody just felt a chill."
+      "answer": 71,
+      "roastHigh": "{n} said {g}%. {n} {has} already cleared the calendar for May.",
+      "roastLow": "{n} said {g}%. Nobody tell Boston what {n} said.",
+      "id": "t12"
     },
     {
-      "id": "g13",
-      "kind": "pick",
-      "flavor": "longshot",
-      "ours": true,
-      "topic": "Odd ones",
-      "emoji": "🎯",
-      "prompt": "Which of these is the longest shot?",
-      "short": "The longest shot",
-      "context": "Bryan Johnson is the tech founder trying not to age. The Elder Scrolls VI was announced in 2018. Ryanair is a budget airline based in Ireland.",
-      "options": [
-        {
-          "label": "The Elder Scrolls VI is out before 2028",
-          "short": "The Elder Scrolls VI",
-          "emoji": "🗡️",
-          "percent": 13
-        },
-        {
-          "label": "Jenna Ortega hosts Saturday Night Live this season",
-          "short": "Jenna Ortega hosting",
-          "emoji": "📺",
-          "percent": 31
-        },
-        {
-          "label": "Elon Musk buys Ryanair this year",
-          "short": "the Ryanair purchase",
-          "emoji": "✈️",
-          "percent": 1
-        },
-        {
-          "label": "Bryan Johnson dunks a basketball before 2027",
-          "short": "the dunk",
-          "emoji": "⛹️",
-          "percent": 16
-        }
-      ],
-      "roastWrong": "{n} picked {pick}, at {pp}%. The world gives Elon Musk buying an airline {w}%.",
-      "answer": 2,
-      "partial": {
-        "0": 8
-      }
-    },
-    {
-      "id": "g14",
       "kind": "chance",
+      "flavor": "straight",
       "ours": false,
-      "topic": "Space and science",
-      "emoji": "🤖",
+      "topic": "Stars",
+      "emoji": "💍",
       "extras": [
-        "🔴",
-        "👣"
+        "🎬",
+        "🎵"
       ],
-      "prompt": "A humanoid robot walks on Mars before a human does",
-      "short": "A robot walks on Mars first",
-      "context": "No person has been to Mars. Rovers on wheels have. A walking robot has not.",
-      "answer": 51,
-      "roastHigh": "{n} said {g}%. {n} welcome{s} the robots. The world is split, at {w}%.",
-      "roastLow": "{n} said {g}%. {n} still believe{s} in people. The world is split, at {w}%."
+      "prompt": "Sydney Sweeney and Scooter Braun get engaged this year",
+      "short": "Sweeney and Braun get engaged",
+      "context": "The actor and the music manager were first linked in 2025. The year has five weeks left.",
+      "answer": 24,
+      "roastHigh": "{n} said {g}%. {n} {has} already picked an outfit for the wedding.",
+      "roastLow": "{n} said {g}%. {n} think{s} love is dead. The world says {w}%.",
+      "id": "t13"
+    },
+    {
+      "kind": "chance",
+      "flavor": "straight",
+      "ours": false,
+      "topic": "Sports",
+      "emoji": "👑",
+      "extras": [
+        "🏀",
+        "⏳"
+      ],
+      "prompt": "LeBron James retires before the 2027–28 NBA season",
+      "short": "LeBron retires after this season",
+      "context": "James turns 42 on December 30. He entered the NBA in 2003.",
+      "answer": 42,
+      "roastHigh": "{n} said {g}%. {n} {has} been calling it his last year since 2020.",
+      "roastLow": "{n} said {g}%. {n} think{s} he plays until his grandkids are in the league.",
+      "id": "t14"
+    },
+    {
+      "kind": "chance",
+      "flavor": "straight",
+      "ours": false,
+      "topic": "Odd stuff",
+      "emoji": "🎮",
+      "extras": [
+        "🖥️",
+        "🚗"
+      ],
+      "prompt": "Grand Theft Auto VI comes out on PC before 2028",
+      "short": "GTA VI on PC before 2028",
+      "context": "Rockstar has announced GTA VI for consoles only so far. Its last two big games took more than a year to reach PC.",
+      "answer": 90,
+      "roastLow": "{n} said {g}%. {n} think{s} PC players can wait. They always do. The world says {w}%.",
+      "id": "t15"
     }
   ]
 };

@@ -2,7 +2,7 @@
 // leaves the device, and the game works without it (a private window, blocked
 // storage) by simply not remembering.
 
-import { isValidGuess } from "./engine";
+import { isValidGuess, MAX_CARD_SECONDS } from "./engine";
 import type { GamePack, PlayerEntry } from "./types";
 
 export type Phase = "home" | "play" | "reveal" | "round" | "results";
@@ -26,6 +26,8 @@ function cleanEntry(pack: GamePack, raw: unknown, from: PlayerEntry["from"]): Pl
   const guesses = Array.isArray(r.guesses) ? r.guesses : [];
   const ratings = Array.isArray(r.ratings) ? r.ratings : [];
   const good = Array.isArray(r.good) ? r.good : [];
+  const times = Array.isArray(r.times) ? r.times : [];
+  const fun = typeof r.fun === "number" && Number.isInteger(r.fun) && r.fun >= 1 && r.fun <= pack.steps.length ? r.fun : 0;
   return {
     name: r.name.slice(0, 16),
     guesses: pack.cards.map((card, i) => {
@@ -34,6 +36,11 @@ function cleanEntry(pack: GamePack, raw: unknown, from: PlayerEntry["from"]): Pl
     }),
     ratings: pack.cards.map((_, i) => (typeof ratings[i] === "number" ? Math.max(0, Math.min(5, ratings[i] as number)) : 0)),
     good: pack.cards.map((_, i) => good[i] === true),
+    times: pack.steps.map((_, s) => {
+      const t = times[s];
+      return typeof t === "number" && Number.isFinite(t) && t > 0 ? Math.min(pack.perRound * MAX_CARD_SECONDS, t) : 0;
+    }),
+    fun,
     from,
   };
 }
