@@ -383,20 +383,26 @@ STAMP_BOOK_REFUSED_SQL = f"""
 #: no winner recorded at all. It is the only tier-1 market re-admitted; the other
 #: 344 are tier 2+. The venue's own answer is the right authority for a market our
 #: classifier cannot vouch for, which is what that arm is for.
-SETTLED_PREDICATE_SQL = f"""
-       (
+#: The graded-winner half of :data:`SETTLED_PREDICATE_SQL`, against ``fm``.
+WINNER_NOT_SETTLED_SQL = """(
              COALESCE(fm.market_metadata->'shape'->>'expected_winners', '') <> '1'
           OR NOT EXISTS (
                 SELECT 1 FROM futures_outcomes fo_w
                  WHERE fo_w.market_id = fm.id
                    AND fo_w.is_winner IS TRUE
               )
-       )
-       AND (
+       )"""
+
+#: The venue-settled stamp half of :data:`SETTLED_PREDICATE_SQL`, against ``fm``.
+VENUE_SETTLED_LIVE_SQL = f"""(
              fm.market_metadata->>'{VENUE_SETTLED_KEY}' IS NULL
           OR fm.market_metadata->>'{VENUE_SETTLED_KEY}' > {_VENUE_SETTLED_CUTOFF_SQL}
-           )
-"""
+           )"""
+
+SETTLED_PREDICATE_SQL = (
+    f"\n       {WINNER_NOT_SETTLED_SQL}\n"
+    f"       AND {VENUE_SETTLED_LIVE_SQL}\n"
+)
 
 #: The mutual-exclusivity gate on its own, so a caller can report WHY a market
 #: was or was not eligible for the winner shortcut without restating the test.
@@ -416,6 +422,35 @@ BASE_LIVENESS_SQL = """
 #: The whole answer. Every selector and every guard that asks "can this market
 #: be priced" composes THIS, and the guard test asserts they all do.
 LIVE_MARKET_SQL = f"{BASE_LIVENESS_SQL}       AND {SETTLED_PREDICATE_SQL.strip()}\n"
+
+#: Market-level bounds of :data:`LIVE_MARKET_SQL` without the correlated
+#: ``EXISTS (SELECT 1 FROM futures_outcomes fo_w ...)`` probe, for CTE-split
+#: selectors that evaluate :func:`settled_one_winner_markets_sql` once over a
+#: materialized outcomes CTE instead of probing per market row.
+LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL = (
+    f"{BASE_LIVENESS_SQL}       AND {VENUE_SETTLED_LIVE_SQL}\n"
+)
+
+
+def settled_one_winner_markets_sql(
+    source_cte: str = "pool_outcomes",
+    market_id_col: str = "fm_id",
+    one_winner_col: str = "is_one_winner",
+    is_winner_col: str = "fo_is_winner",
+) -> str:
+    """Single-pass winner arm of :data:`SETTLED_PREDICATE_SQL` over an outcomes CTE.
+
+    Pairs with :data:`LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL` and
+    :data:`EXACTLY_ONE_WINNER_SQL` so CTE-split selectors compose the exact
+    ``is_winner IS TRUE`` one-winner retirement rule from this module without
+    running a correlated subquery per market.
+    """
+    return (
+        f"SELECT DISTINCT {market_id_col}\n"
+        f"              FROM {source_cte}\n"
+        f"             WHERE {one_winner_col}\n"
+        f"               AND {is_winner_col} IS TRUE"
+    )
 
 #: #4840 — THE SAME CONTRACT, ONE LEVEL DOWN: "this LEG can still be priced".
 #:

@@ -336,32 +336,73 @@ _PM_TOKEN_KEYS_SQL = (
 def kalshi_population_sql(open_arm: bool) -> str:
     from app.tasks.kalshi_ws import _kalshi_slate_event_window
     from app.tasks.ws_open_contracts import kalshi_open_contract_stmt
-    from app.utils.futures_liveness import LIVE_MARKET_SQL
+    from app.utils.futures_liveness import (
+        EXACTLY_ONE_WINNER_SQL,
+        LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL,
+        settled_one_winner_markets_sql,
+    )
 
     window = _render(_kalshi_slate_event_window())
-    open_leg = (
-        f"AND NOT COALESCE({_render(kalshi_open_contract_stmt().whereclause)}, FALSE)"
+    open_leg_expr = (
+        f"(TRUE AND NOT COALESCE({_render(kalshi_open_contract_stmt().whereclause)}, FALSE))"
         if open_arm
-        else ""
+        else "TRUE"
     )
     return f"""
-        WITH {_pool_sql("kalshi", window)}
-        SELECT fm.id, fo.id, fo.external_id
-          FROM pool
-          JOIN futures_markets fm ON fm.id = pool.id
-          JOIN futures_outcomes fo ON fo.market_id = fm.id
-         WHERE {LIVE_MARKET_SQL}
-           AND fo.external_id IS NOT NULL
-           AND {_ELIGIBLE_LEG_SQL}
-           {open_leg}
-         ORDER BY fm.id, fo.id
+        WITH {_pool_sql("kalshi", window)},
+        pool_markets AS MATERIALIZED (
+            SELECT fm.id,
+                   fm.status,
+                   fm.source,
+                   fm.resolution_date,
+                   fm.market_metadata,
+                   ({EXACTLY_ONE_WINNER_SQL}) AS is_one_winner
+              FROM pool
+              JOIN futures_markets fm ON fm.id = pool.id
+        ),
+        live_markets AS MATERIALIZED (
+            SELECT fm.id AS fm_id,
+                   fm.is_one_winner
+              FROM pool_markets fm
+             WHERE {LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL}
+        ),
+        pool_outcomes AS MATERIALIZED (
+            SELECT lm.fm_id,
+                   fo.id AS fo_id,
+                   fo.external_id AS fo_external_id,
+                   fo.is_winner AS fo_is_winner,
+                   fo.resolution_source AS fo_resolution_source,
+                   lm.is_one_winner,
+                   {open_leg_expr} AS keep_open_leg
+              FROM live_markets lm
+              JOIN futures_markets fm ON fm.id = lm.fm_id
+              JOIN futures_outcomes fo ON fo.market_id = lm.fm_id
+        ),
+        settled_winners AS MATERIALIZED (
+            {settled_one_winner_markets_sql()}
+        )
+        SELECT po.fm_id, po.fo_id, po.fo_external_id
+          FROM pool_outcomes po
+          LEFT JOIN settled_winners sw
+            ON po.is_one_winner
+           AND sw.fm_id = po.fm_id
+         WHERE po.fo_external_id IS NOT NULL
+           AND po.fo_is_winner IS NOT TRUE
+           AND po.fo_resolution_source IS DISTINCT FROM 'api_settlement'
+           AND po.keep_open_leg
+           AND sw.fm_id IS NULL
+         ORDER BY po.fm_id, po.fo_id
     """
 
 
 def polymarket_population_sql(open_arm: bool) -> str:
     from app.tasks.polymarket_open_contracts import OUTCOME_TOKEN_METADATA_KEY
     from app.tasks.polymarket_ws import _slate_event_window
-    from app.utils.futures_liveness import LIVE_MARKET_SQL
+    from app.utils.futures_liveness import (
+        EXACTLY_ONE_WINNER_SQL,
+        LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL,
+        settled_one_winner_markets_sql,
+    )
     from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
 
     window = _render(_slate_event_window())
@@ -371,16 +412,50 @@ def polymarket_population_sql(open_arm: bool) -> str:
         else ""
     )
     return f"""
-        WITH {_pool_sql("polymarket", window, _pm_props_sql(window))}
-        SELECT fm.id, {GAMMA_EVENT_ID_EXPR} AS gamma_event_id, fo.id, fo.external_id
-          FROM pool
-          JOIN futures_markets fm ON fm.id = pool.id
-          JOIN futures_outcomes fo ON fo.market_id = fm.id
-         WHERE {LIVE_MARKET_SQL}
-           {open_market}
-           AND fo.external_id IS NOT NULL
-           AND {_ELIGIBLE_LEG_SQL}
-         ORDER BY fm.id, fo.id
+        WITH {_pool_sql("polymarket", window, _pm_props_sql(window))},
+        pool_markets AS MATERIALIZED (
+            SELECT fm.id,
+                   fm.status,
+                   fm.source,
+                   fm.resolution_date,
+                   fm.market_metadata,
+                   {GAMMA_EVENT_ID_EXPR} AS gamma_event_id,
+                   ({EXACTLY_ONE_WINNER_SQL}) AS is_one_winner
+              FROM pool
+              JOIN futures_markets fm ON fm.id = pool.id
+        ),
+        live_markets AS MATERIALIZED (
+            SELECT fm.id AS fm_id,
+                   fm.gamma_event_id,
+                   fm.is_one_winner
+              FROM pool_markets fm
+             WHERE {LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL}
+               {open_market}
+        ),
+        pool_outcomes AS MATERIALIZED (
+            SELECT lm.fm_id,
+                   lm.gamma_event_id,
+                   fo.id AS fo_id,
+                   fo.external_id AS fo_external_id,
+                   fo.is_winner AS fo_is_winner,
+                   fo.resolution_source AS fo_resolution_source,
+                   lm.is_one_winner
+              FROM live_markets lm
+              JOIN futures_outcomes fo ON fo.market_id = lm.fm_id
+        ),
+        settled_winners AS MATERIALIZED (
+            {settled_one_winner_markets_sql()}
+        )
+        SELECT po.fm_id, po.gamma_event_id, po.fo_id, po.fo_external_id
+          FROM pool_outcomes po
+          LEFT JOIN settled_winners sw
+            ON po.is_one_winner
+           AND sw.fm_id = po.fm_id
+         WHERE po.fo_external_id IS NOT NULL
+           AND po.fo_is_winner IS NOT TRUE
+           AND po.fo_resolution_source IS DISTINCT FROM 'api_settlement'
+           AND sw.fm_id IS NULL
+         ORDER BY po.fm_id, po.fo_id
     """
 
 
@@ -395,28 +470,34 @@ def _pm_props_sql(window_sql: str) -> str:
 
     if not props_to_poll_enabled():
         return ""
-    # 11/01 17:35Z: planned from futures_markets this read took ~3 s (an index
-    # scan of every open Polymarket market under the JSON refusal). The window's
-    # events are a few hundred: a superset of them by index first, then the
-    # socket's exact predicate and the refusal on their markets only.
+    # Bound `suspended` in `props_events` to SLATE_SUPERSET_PAST_HOURS so
+    # historical suspended events use `ix_events_status_commence`, then filter
+    # `COALESCE(window_sql, FALSE)` before detoasting `market_metadata` under
+    # `PM_VENUE_LABEL_REFUSAL_SQL` (#13673 / 413:A).
     return f"""
         props_events AS MATERIALIZED (
             SELECT e.id
               FROM events e
-             WHERE e.status IN ('live', 'suspended')
+             WHERE e.status = 'live'
+                OR (e.status = 'suspended'
+                    AND e.commence_time >= NOW() - INTERVAL '{int(SLATE_SUPERSET_PAST_HOURS)} hours')
                 OR (e.status = 'scheduled'
                     AND e.commence_time >= NOW() - INTERVAL '{int(SLATE_SUPERSET_PAST_HOURS)} hours'
                     AND e.commence_time <= NOW() + INTERVAL '{int(SLATE_SUPERSET_AHEAD_HOURS)} hours')
         ),
-        props AS MATERIALIZED (
-            SELECT fm.id
+        props_window AS MATERIALIZED (
+            SELECT fm.id, fm.market_metadata
               FROM props_events pe
               JOIN events e ON e.id = pe.id
               JOIN futures_markets fm ON fm.event_id = e.id
              WHERE fm.status = 'open'
                AND fm.source = 'polymarket'
                AND COALESCE({window_sql}, FALSE)
-               AND {PM_VENUE_LABEL_REFUSAL_SQL}
+        ),
+        props AS MATERIALIZED (
+            SELECT fm.id
+              FROM props_window fm
+             WHERE {PM_VENUE_LABEL_REFUSAL_SQL}
         ),"""
 
 
