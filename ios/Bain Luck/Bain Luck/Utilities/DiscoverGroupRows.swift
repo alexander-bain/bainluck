@@ -96,21 +96,8 @@ enum DiscoverGroupRows {
         return !(next.isLetter || next.isNumber || next == "_")
     }
 
-    private static func isAtLeastRungLabel(_ label: String) -> Bool {
-        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return trimmed.range(
-            of: #"^(?:above|over|at least|more than|≥|>)\s*\S|\+$|\bor (?:more|higher|above)$"#,
-            options: [.regularExpression, .caseInsensitive]
-        ) != nil
-    }
-
-    private static func isAtLeastLadder(_ rows: [HeatmapLadderRow]) -> Bool {
-        rows.count >= 2 && rows.allSatisfy { $0.source != "date_bucket" && isAtLeastRungLabel($0.label) }
-    }
-
-    private static func isDateLadder(_ rows: [HeatmapLadderRow]) -> Bool {
-        !rows.isEmpty && rows.allSatisfy { $0.source == "date_bucket" }
+    private static func isDateLadder(_ points: [FeedDiscoverThresholdPoint]) -> Bool {
+        !points.isEmpty && points.allSatisfy { $0.source == "date_bucket" }
     }
 
     static func resolveRungDateIso(
@@ -185,6 +172,7 @@ enum DiscoverGroupRows {
             }
         }
 
+        var orderedKeys: [String] = []
         var byLabel: [String: HeatmapLadderRow] = [:]
         for point in data.discoverCard?.thresholdPoints ?? [] {
             let label = point.label.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -192,6 +180,9 @@ enum DiscoverGroupRows {
             let key = label.lowercased()
             let matchedOutcome = outcomesByName[key]
             let existing = byLabel[key]
+            if existing == nil {
+                orderedKeys.append(key)
+            }
             let probability = point.probability ?? matchedOutcome?.probability
             let movement = matchedOutcome?.movement ?? point.movement
             let pointValue = point.value ?? 0
@@ -209,50 +200,32 @@ enum DiscoverGroupRows {
             )
         }
 
-        return byLabel.values.sorted { $0.sortValue < $1.sortValue }
+        // Preserve served array order across ties (Dictionary.values would scramble tie order
+        // across launches). When rungs carry resolved calendar dates, compare chronologically
+        // so yearless `2000MMDD` sentinels crossing New Year (Dec -> Jan) stay in order.
+        return orderedKeys.compactMap { byLabel[$0] }.sorted { lhs, rhs in
+            if let lDate = lhs.dateIso, let rDate = rhs.dateIso, lDate != rDate {
+                return lDate < rDate
+            }
+            return lhs.sortValue < rhs.sortValue
+        }
     }
 
-    private static func heatmapShownCells(for data: FeedFuturesData, now: Date) -> [HeatmapLadderRow]? {
-        let allRows = buildHeatmapRows(for: data, now: now)
-        let pricedRows = allRows.filter { $0.probability != nil }
-        let minRows = (allRows.count >= 2 && pricedRows.count < 2) ? 1 : 2
-        guard data.discoverCard?.suggestedFormat == "threshold_heatmap",
-              pricedRows.count >= minRows else {
-            return nil
-        }
-        return Array(pricedRows.prefix(8))
-    }
-
-    private static func ruleRung(in shownCells: [HeatmapLadderRow]) -> HeatmapLadderRow? {
-        let above50 = shownCells.filter { ($0.probability ?? 0) >= 0.5 }
-        guard !above50.isEmpty else { return nil }
-        if isDateLadder(shownCells) {
-            return above50.first
-        }
-        if isAtLeastLadder(shownCells) {
-            return above50.last
-        }
-        return nil
-    }
-
-    private static func compactLadderHeadlineRung(
-        shownCells: [HeatmapLadderRow],
+    private static func dateLadderHeadlineRung(
+        pricedDateRows: [HeatmapLadderRow],
         heroName: String?,
         now: Date
     ) -> HeatmapLadderRow? {
-        guard isDateLadder(shownCells) else {
-            return ruleRung(in: shownCells)
-        }
         let todayIso = utcDayString(now)
-        let upcoming = shownCells.filter { $0.dateIso == nil || $0.dateIso! >= todayIso }
+        let upcoming = pricedDateRows.filter { $0.dateIso == nil || $0.dateIso! >= todayIso }
         if upcoming.isEmpty {
-            return ruleRung(in: shownCells)
+            return pricedDateRows.first(where: { ($0.probability ?? 0) >= 0.5 })
         }
         if let firstAbove50 = upcoming.first(where: { ($0.probability ?? 0) >= 0.5 }) {
             return firstAbove50
         }
         let heroKey = (heroName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let pastControlsHeadline = shownCells.contains { row in
+        let pastControlsHeadline = pricedDateRows.contains { row in
             guard let dateIso = row.dateIso, dateIso < todayIso else { return false }
             return (row.probability ?? 0) >= 0.5 || (!heroKey.isEmpty && row.key == heroKey)
         }
@@ -288,22 +261,39 @@ enum DiscoverGroupRows {
     }
 
     static func compactSummary(for data: FeedFuturesData, now: Date = Date()) -> CompactSummary {
-        if let shownCells = heatmapShownCells(for: data, now: now),
-           let rung = compactLadderHeadlineRung(
-               shownCells: shownCells,
-               heroName: data.topOutcomes?.first?.name,
-               now: now
-           ) {
-            let matching = data.topOutcomes?.first {
-                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == rung.key
+        let points = (data.discoverCard?.thresholdPoints ?? []).filter { $0.probability != nil }
+        if fullCardStyle(for: data) == .heatmap {
+            if isDateLadder(points) {
+                let pricedDateRows = buildHeatmapRows(for: data, now: now).filter { $0.probability != nil }
+                if let rung = dateLadderHeadlineRung(
+                    pricedDateRows: pricedDateRows,
+                    heroName: data.topOutcomes?.first?.name,
+                    now: now
+                ) {
+                    let matching = data.topOutcomes?.first {
+                        $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == rung.key
+                    }
+                    return CompactSummary(
+                        label: rung.label,
+                        probability: rung.probability,
+                        movement: matching?.movement ?? rung.movement,
+                        sourceMark: data.resolvedSourceMark(for: matching),
+                        renderedPercent: matching?.renderedPercent
+                    )
+                }
+            } else if let rung = markedRung(in: points) {
+                let matching = data.topOutcomes?.first {
+                    $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        == rung.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                }
+                return CompactSummary(
+                    label: rung.label,
+                    probability: rung.probability,
+                    movement: matching?.movement ?? rung.movement,
+                    sourceMark: data.resolvedSourceMark(for: matching),
+                    renderedPercent: matching?.renderedPercent
+                )
             }
-            return CompactSummary(
-                label: rung.label,
-                probability: rung.probability,
-                movement: matching?.movement ?? rung.movement,
-                sourceMark: data.resolvedSourceMark(for: matching),
-                renderedPercent: matching?.renderedPercent
-            )
         }
         // Ordinary and all-below-even cards retain their served leader; missing
         // probability stays missing rather than turning into a fabricated zero.

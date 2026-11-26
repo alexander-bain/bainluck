@@ -4261,7 +4261,6 @@ private struct NativeCompactFuturesRow: View {
     static var rowIdentifier: String { "discover-group-row" }
 
     var body: some View {
-        let summary = DiscoverGroupRows.compactSummary(for: data)
         Group {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -4269,8 +4268,8 @@ private struct NativeCompactFuturesRow: View {
                         .font(.caption.weight(.semibold))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let label = summary.label, !label.isEmpty {
-                        Text(label)
+                    if let leader = data.topOutcomes?.first {
+                        Text(leader.name)
                             .font(.caption2)
                             .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(2)
@@ -4278,11 +4277,10 @@ private struct NativeCompactFuturesRow: View {
                     }
                 }
                 Spacer()
-                if let probability = summary.probability {
-                    let pct = summary.renderedPercent ?? Int((probability * 100).rounded())
-                    Text("\(pct)%")
+                if let leader = data.topOutcomes?.first {
+                    Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
                         .font(.subheadline.weight(.black).monospacedDigit())
-                    MovementBadge(movement: summary.movement)
+                    MovementBadge(movement: leader.movement)
                 }
             }
         }
