@@ -4738,14 +4738,14 @@ struct OddsChartView: View {
         dataRange: ClosedRange<Date>? = nil
     ) -> [Date] {
         let regular = xAxisTicks(for: domain, plan: plan, calendar: calendar)
+        guard plan.labelStyle == .calendarDay || plan.labelStyle == .monthAndYear,
+              domain.upperBound > domain.lowerBound else { return regular }
         let openBound = dataRange.map { max(domain.lowerBound, $0.lowerBound) } ?? domain.lowerBound
         let closeBound = dataRange.map { min(domain.upperBound, $0.upperBound) } ?? domain.upperBound
         let clampedBoundsValid = closeBound >= openBound
         let boundedRegular = (dataRange != nil && clampedBoundsValid)
             ? regular.filter { $0 >= openBound && $0 <= closeBound }
             : regular
-        guard plan.labelStyle == .calendarDay || plan.labelStyle == .monthAndYear,
-              domain.upperBound > domain.lowerBound else { return boundedRegular }
         let effectiveOpen = clampedBoundsValid ? openBound : domain.lowerBound
         let effectiveClose = clampedBoundsValid ? closeBound : domain.upperBound
         guard effectiveClose > effectiveOpen else { return [effectiveOpen] }
