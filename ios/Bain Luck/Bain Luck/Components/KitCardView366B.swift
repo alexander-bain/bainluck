@@ -1156,6 +1156,10 @@ struct KitAxisBodyView366B: View {
         return inset + usable * xFraction(value)
     }
 
+    private var movingLines: [KitV1LineMark] {
+        lines.filter { DiscoverCardChartRules13773.hasMovingKitLine($0.points) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !dots.isEmpty {
@@ -1169,12 +1173,27 @@ struct KitAxisBodyView366B: View {
                 accessibleBubbleTeamsList
             }
 
-            if !lines.isEmpty && dots.isEmpty {
+            if !movingLines.isEmpty && dots.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    ForEach(Array(movingLines.enumerated()), id: \.offset) { _, line in
                         KitLineMarkView366B(mark: line)
                     }
-                    scaleTicksView
+                    if !axisBody.scale.ticks.isEmpty {
+                        scaleTicksView
+                    } else if let firstLabel = movingLines.first?.points.first?.label,
+                              let lastLabel = movingLines.first?.points.last?.label,
+                              !firstLabel.isEmpty, !lastLabel.isEmpty {
+                        HStack(spacing: 8) {
+                            Text(firstLabel)
+                                .lineLimit(1)
+                            Spacer(minLength: 6)
+                            Text(lastLabel)
+                                .lineLimit(1)
+                        }
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                        .accessibilityIdentifier("kit.lineMark.xAxis")
+                    }
                 }
             }
 
@@ -1184,7 +1203,7 @@ struct KitAxisBodyView366B: View {
                         axisSeriesRow(row, index: idx, total: series.count)
                     }
 
-                    if dots.isEmpty && lines.isEmpty && !axisBody.scale.ticks.isEmpty {
+                    if dots.isEmpty && movingLines.isEmpty && !axisBody.scale.ticks.isEmpty {
                         Rectangle()
                             .fill(KitTones366B.divider(for: colorScheme))
                             .frame(height: 1)

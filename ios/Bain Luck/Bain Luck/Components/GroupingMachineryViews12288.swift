@@ -504,6 +504,7 @@ struct MachineryHistoryChartCardView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.timeZone) private var timeZone
     @ScaledMetric(relativeTo: .caption) private var titleSize: CGFloat = 13
     @ScaledMetric(relativeTo: .caption2) private var metaSize: CGFloat = 11
 
@@ -532,11 +533,29 @@ struct MachineryHistoryChartCardView: View {
     private var yMid: Int { Int((Double(yMin + yMax) / 2.0).rounded()) }
 
     var body: some View {
+        if chart.hasMovingSeries {
+            chartCardBody
+        }
+    }
+
+    @ViewBuilder
+    private var chartCardBody: some View {
         let spanText = MachineryDateFormatting12288.shortSpan(chart.startIso, chart.endIso)
         let shownSeries = Array(chart.series.prefix(3))
         let seriesHexes = MachineryChartSeriesPalette12288.resolvedHexes(
             for: shownSeries,
             isDark: colorScheme == .dark
+        )
+        let resolvedStartIso = chart.startIso.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (shownSeries.compactMap(\.points.first?.t).first ?? "")
+            : chart.startIso
+        let resolvedEndIso = chart.endIso.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (shownSeries.compactMap(\.points.last?.t).last ?? "")
+            : chart.endIso
+        let xAxisLabels = DiscoverCardChartRules13773.axisEndLabels(
+            startIso: resolvedStartIso,
+            endIso: resolvedEndIso,
+            timeZone: timeZone
         )
         let content = VStack(alignment: .leading, spacing: 8) {
             if dynamicTypeSize >= .xxxLarge {
@@ -688,6 +707,22 @@ struct MachineryHistoryChartCardView: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Probability trend chart for \(chart.title)")
+
+            if let xAxisLabels {
+                HStack(spacing: 8) {
+                    Text(xAxisLabels.start)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                    Spacer(minLength: 6)
+                    Text(xAxisLabels.end)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .foregroundStyle(secondaryInk)
+                .padding(.leading, 40)
+                .accessibilityIdentifier("machinery.historyChart.xAxis")
+            }
         }
 
         if compact {
