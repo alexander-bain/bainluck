@@ -97,7 +97,6 @@ struct PreferencesView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .subheadline) private var interestNameSizeAX: CGFloat = 15
     @ScaledMetric(relativeTo: .caption2) private var capsuleFontSizeAX: CGFloat = 11
     @State private var interestsRowWidth: CGFloat = 0
