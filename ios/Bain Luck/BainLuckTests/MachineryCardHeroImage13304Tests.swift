@@ -188,6 +188,72 @@ final class MachineryCardHeroImage13304Tests: XCTestCase {
             "Missing CTA in AX5 render; got: \(joined)"
         )
         XCTAssertFalse(lines.contains(where: { $0.contains("…") || $0.contains("...") }), "Unexpected ellipsis at AX5: \(lines)")
+
+        if let outPath = ProcessInfo.processInfo.environment["EXPORT_13304_HERO_SHEET_PATH"], !outPath.isEmpty {
+            let heroPreloaded: [String: UIImage] = [
+                img2to1URL: makeStripedImage(size: CGSize(width: 1080, height: 540), base: .systemBlue, stripe: .systemIndigo),
+                img3to2URL: makeStripedImage(size: CGSize(width: 1024, height: 683), base: .systemTeal, stripe: .systemGreen),
+            ]
+            func column(_ scheme: ColorScheme, label: String) -> UIImage {
+                let colView = VStack(alignment: .leading, spacing: 12) {
+                    Text(label)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    MachineryDiscoverCardView(card: card2to1, onOpenContainer: { _, _ in })
+                    MachineryDiscoverCardView(card: card3to2, onOpenContainer: { _, _ in })
+                    MachineryDiscoverCardView(card: cardNoImage, onOpenContainer: { _, _ in })
+                }
+                .padding(16)
+                .frame(width: 390, alignment: .topLeading)
+                .background(scheme == .dark ? Color.black : Color(white: 0.96))
+                .environment(\.colorScheme, scheme)
+                .environment(\.machineryPreloadedImages12288, heroPreloaded)
+                let h = hostForMeasurement(colView, at: .large)
+                h.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
+                let fit = h.sizeThatFits(in: CGSize(width: 390, height: 4000))
+                h.view.frame = CGRect(origin: .zero, size: CGSize(width: 390, height: ceil(fit.height) + 8))
+                h.view.setNeedsLayout()
+                h.view.layoutIfNeeded()
+                let f = UIGraphicsImageRendererFormat()
+                f.scale = 2.0
+                return UIGraphicsImageRenderer(bounds: h.view.bounds, format: f).image { ctx in
+                    if !h.view.drawHierarchy(in: h.view.bounds, afterScreenUpdates: true) {
+                        h.view.layer.render(in: ctx.cgContext)
+                    }
+                }
+            }
+            let lightImg = column(.light, label: "LIGHT · 390pt · #13304 RESTORED (2:1, 3:2 CROPPED, BASELINE)")
+            let darkImg = column(.dark, label: "DARK · 390pt · #13304 RESTORED (2:1, 3:2 CROPPED, BASELINE)")
+            let gap: CGFloat = 16
+            let canvasSize = CGSize(width: lightImg.size.width + darkImg.size.width + gap,
+                                    height: max(lightImg.size.height, darkImg.size.height))
+            let jf = UIGraphicsImageRendererFormat()
+            jf.scale = 2.0
+            let sheet = UIGraphicsImageRenderer(size: canvasSize, format: jf).image { ctx in
+                UIColor(white: 0.18, alpha: 1.0).setFill()
+                ctx.fill(CGRect(origin: .zero, size: canvasSize))
+                lightImg.draw(at: .zero)
+                darkImg.draw(at: CGPoint(x: lightImg.size.width + gap, y: 0))
+            }
+            let outURL = URL(fileURLWithPath: outPath)
+            try FileManager.default.createDirectory(at: outURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try XCTUnwrap(sheet.jpegData(compressionQuality: 0.90)).write(to: outURL)
+        }
+    }
+
+    private func makeStripedImage(size: CGSize, base: UIColor, stripe: UIColor) -> UIImage {
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 1.0
+        return UIGraphicsImageRenderer(size: size, format: fmt).image { ctx in
+            base.setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            stripe.setFill()
+            ctx.fill(CGRect(x: 0, y: size.height * 0.25, width: size.width, height: size.height * 0.5))
+            UIColor.white.withAlphaComponent(0.35).setStroke()
+            ctx.cgContext.setLineWidth(8)
+            ctx.cgContext.stroke(CGRect(x: 8, y: 8, width: size.width - 16, height: size.height - 16))
+        }
     }
 
     private func makeSolidImage(size: CGSize, color: UIColor) -> UIImage {

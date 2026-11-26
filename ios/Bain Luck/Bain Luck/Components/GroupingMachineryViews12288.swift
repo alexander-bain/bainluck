@@ -15,6 +15,27 @@ private struct MachineryPreloadedImagesKey12288: EnvironmentKey {
     static let defaultValue: [String: PairedPlatformImage] = [:]
 }
 
+/// #13304 — Enforces an exact width:height ratio filling the proposed width so parent VStacks
+/// cannot compress a flexible background/image placeholder narrower than card width.
+private struct HeroAspectRatioLayout13304: Layout {
+    let ratio: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.replacingUnspecifiedDimensions().width
+        return CGSize(width: width, height: width / ratio)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for subview in subviews {
+            subview.place(
+                at: CGPoint(x: bounds.midX, y: bounds.midY),
+                anchor: .center,
+                proposal: ProposedViewSize(bounds.size)
+            )
+        }
+    }
+}
+
 extension EnvironmentValues {
     var machineryPreloadedImages12288: [String: PairedPlatformImage] {
         get { self[MachineryPreloadedImagesKey12288.self] }
@@ -1807,6 +1828,7 @@ struct MachineryDiscoverCardView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.machineryPreloadedImages12288) private var preloadedImages
     @ScaledMetric(relativeTo: .caption2) private var kickerSize: CGFloat = 11
     @ScaledMetric(relativeTo: .headline) private var titleSize: CGFloat = 17
     @ScaledMetric(relativeTo: .subheadline) private var rowSize: CGFloat = 14
@@ -1855,7 +1877,9 @@ struct MachineryDiscoverCardView: View {
                 }
             }
 
-            if let miniChart = card.miniChart {
+            if let imageURL = card.verifiedImageURL {
+                cardHeroImage(url: imageURL)
+            } else if let miniChart = card.miniChart {
                 MachineryHistoryChartCardView(chart: miniChart, compact: true)
             }
 
@@ -1905,6 +1929,61 @@ struct MachineryDiscoverCardView: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    @ViewBuilder
+    private func cardHeroImage(url: URL) -> some View {
+        if let preloaded = preloadedImages[url.absoluteString] {
+            fittedCardHeroFrame(platformImage(preloaded))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(card.imageAlt ?? card.title)
+                .accessibilityIdentifier("machinery.card.heroImage.\(card.slug)")
+        } else {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    fittedCardHeroFrame(image)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(card.imageAlt ?? card.title)
+                        .accessibilityIdentifier("machinery.card.heroImage.\(card.slug)")
+                case .empty:
+                    fittedCardHeroFrame(nil)
+                        .accessibilityHidden(true)
+                case .failure:
+                    EmptyView()
+                @unknown default:
+                    EmptyView()
+                }
+            }
+        }
+    }
+
+    private func fittedCardHeroFrame(_ image: Image?) -> some View {
+        HeroAspectRatioLayout13304(ratio: 2) {
+            ZStack {
+                trackBgColor
+                if let image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                }
+            }
+            .clipped()
+        }
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(borderColor, lineWidth: 1)
+        )
+    }
+
+    private func platformImage(_ img: PairedPlatformImage) -> Image {
+        #if canImport(UIKit)
+        return Image(uiImage: img)
+        #elseif canImport(AppKit)
+        return Image(nsImage: img)
+        #endif
     }
 
     private var eventRowsBody: some View {
