@@ -51,6 +51,15 @@ final class OnboardingViewModel: ObservableObject {
     // MARK: - Debounce
 
     private var debounceTask: Task<Void, Never>?
+    private let trackStep: (Int, String) -> Void
+
+    init(
+        trackStep: @escaping (Int, String) -> Void = { step, stepName in
+            AnalyticsService.trackOnboardingStep(step: step, stepName: stepName)
+        }
+    ) {
+        self.trackStep = trackStep
+    }
 
     // MARK: - All Selected IDs (for dedup)
 
@@ -258,10 +267,16 @@ final class OnboardingViewModel: ObservableObject {
 
     func goNext() {
         if currentStep < totalSteps {
+            let finishedStep = currentStep
+            let name = Self.stepName(for: finishedStep)
+            trackStep(finishedStep, name)
             currentStep += 1
-            let name = currentStep <= Self.stepNames.count ? Self.stepNames[currentStep - 1] : "unknown"
-            AnalyticsService.trackOnboardingStep(step: currentStep, stepName: name)
         }
+    }
+
+    nonisolated static func stepName(for step: Int) -> String {
+        guard step >= 1, step <= stepNames.count else { return "unknown" }
+        return stepNames[step - 1]
     }
 
     func goBack() {
