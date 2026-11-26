@@ -371,7 +371,7 @@ final class DiscoverGroupedLooks12642Tests: XCTestCase {
         let blackBallS2 = PairedMetricPresentation.formatStage2Display(entry: sorted[2], set: fromConvert)
         XCTAssertEqual(blackBallS2.label, "15%")
 
-        // Open probabilities clamp to `1..99%` (never `0%` or `100%` while unsettled).
+        // Unsettled >99.5% and <0.5% read `>99%` and `<1%` instead of saturating to `100%` / `0%` (#13619).
         let tinyEntry = PairedSubjectEntry(
             subjectKey: "tiny",
             subject: "Longshot Film",
@@ -381,8 +381,8 @@ final class DiscoverGroupedLooks12642Tests: XCTestCase {
             stage2MarketId: 2,
             stage2Probability: 0.001
         )
-        XCTAssertEqual(PairedMetricPresentation.formatStage1Display(entry: tinyEntry, set: fromConvert).label, "99%")
-        XCTAssertEqual(PairedMetricPresentation.formatStage2Display(entry: tinyEntry, set: fromConvert).label, "1%")
+        XCTAssertEqual(PairedMetricPresentation.formatStage1Display(entry: tinyEntry, set: fromConvert).label, ">99%")
+        XCTAssertEqual(PairedMetricPresentation.formatStage2Display(entry: tinyEntry, set: fromConvert).label, "<1%")
 
         // Look 1 collapsed expander calls out the hidden unpriced contender dynamically.
         let collapsedExpander = PairedMetricPresentation.expanderCopy(
