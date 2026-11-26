@@ -618,51 +618,14 @@ struct PreferencesView: View {
         let isActive = currentLevel != .nah
         let activeColor = affinityColor[currentLevel] ?? .gray
         let isAX = dynamicTypeSize.isAccessibilitySize
-        let stackVertical = isAX || (interestsRowWidth > 0 && interestsRowWidth < 315)
+        // #6681 + #13832: keep the 1-line AffinityRowMetrics layout first (and
+        // active at 390pt+ where the row width >= 345pt) so the #6681 guard and
+        // 402pt width arithmetic hold unchanged, while stacking cleanly below 345pt
+        // (e.g. 320pt) and at accessibility sizes so long names never break mid-word.
+        let stackVertical = isAX || (interestsRowWidth > 0 && interestsRowWidth < 345)
 
         return Group {
-            if stackVertical {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline, spacing: AffinityRowMetrics.emojiNameSpacing) {
-                        Text(item.emoji)
-                            .font(.system(size: min(interestNameSizeAX * 1.15, 28)))
-                            .frame(minWidth: AffinityRowMetrics.emojiWidth)
-
-                        Text(item.name)
-                            .font(
-                                isAX
-                                    ? .system(size: min(interestNameSizeAX, 27), weight: isActive ? .semibold : .regular)
-                                    : .subheadline.weight(isActive ? .semibold : .regular)
-                            )
-                            .foregroundStyle(isActive ? .primary : .secondary)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    ViewThatFits(in: .horizontal) {
-                        affinityCapsulesRow(
-                            itemKey: item.key,
-                            currentLevel: currentLevel,
-                            fontSize: isAX ? min(capsuleFontSizeAX, 15) : AffinityRowMetrics.capsuleFontSize
-                        )
-                        VStack(alignment: .leading, spacing: 6) {
-                            affinityCapsulesSubset(
-                                itemKey: item.key,
-                                levels: Array(AffinityLevel.allCases.prefix(2)),
-                                currentLevel: currentLevel,
-                                fontSize: isAX ? min(capsuleFontSizeAX, 15) : AffinityRowMetrics.capsuleFontSize
-                            )
-                            affinityCapsulesSubset(
-                                itemKey: item.key,
-                                levels: Array(AffinityLevel.allCases.dropFirst(2)),
-                                currentLevel: currentLevel,
-                                fontSize: isAX ? min(capsuleFontSizeAX, 15) : AffinityRowMetrics.capsuleFontSize
-                            )
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
+            if !stackVertical {
                 HStack(spacing: AffinityRowMetrics.rowSpacing) {
                     // Emoji + name
                     HStack(spacing: AffinityRowMetrics.emojiNameSpacing) {
@@ -694,15 +657,56 @@ struct PreferencesView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    Spacer(minLength: 0)
+                    Spacer()
 
                     // Affinity capsules
                     affinityCapsulesRow(
                         itemKey: item.key,
                         currentLevel: currentLevel,
-                        fontSize: AffinityRowMetrics.capsuleFontSize
+                        isAccessibility: false
                     )
                 }
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: AffinityRowMetrics.emojiNameSpacing) {
+                        Text(item.emoji)
+                            .font(.system(size: min(interestNameSizeAX * 1.15, 28)))
+                            .frame(minWidth: AffinityRowMetrics.emojiWidth)
+
+                        Text(item.name)
+                            .font(
+                                isAX
+                                    ? .system(size: min(interestNameSizeAX, 27), weight: isActive ? .semibold : .regular)
+                                    : .subheadline.weight(isActive ? .semibold : .regular)
+                            )
+                            .foregroundStyle(isActive ? .primary : .secondary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    ViewThatFits(in: .horizontal) {
+                        affinityCapsulesRow(
+                            itemKey: item.key,
+                            currentLevel: currentLevel,
+                            isAccessibility: isAX
+                        )
+                        VStack(alignment: .leading, spacing: 6) {
+                            affinityCapsulesSubset(
+                                itemKey: item.key,
+                                levels: Array(AffinityLevel.allCases.prefix(2)),
+                                currentLevel: currentLevel,
+                                isAccessibility: isAX
+                            )
+                            affinityCapsulesSubset(
+                                itemKey: item.key,
+                                levels: Array(AffinityLevel.allCases.dropFirst(2)),
+                                currentLevel: currentLevel,
+                                isAccessibility: isAX
+                            )
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.horizontal, AffinityRowMetrics.cardHorizontalPadding)
@@ -726,13 +730,13 @@ struct PreferencesView: View {
     private func affinityCapsulesRow(
         itemKey: String,
         currentLevel: AffinityLevel,
-        fontSize: CGFloat
+        isAccessibility: Bool
     ) -> some View {
         affinityCapsulesSubset(
             itemKey: itemKey,
             levels: AffinityLevel.allCases,
             currentLevel: currentLevel,
-            fontSize: fontSize
+            isAccessibility: isAccessibility
         )
     }
 
@@ -740,7 +744,7 @@ struct PreferencesView: View {
         itemKey: String,
         levels: [AffinityLevel],
         currentLevel: AffinityLevel,
-        fontSize: CGFloat
+        isAccessibility: Bool
     ) -> some View {
         HStack(spacing: AffinityRowMetrics.capsuleSpacing) {
             ForEach(levels, id: \.rawValue) { level in
@@ -753,10 +757,17 @@ struct PreferencesView: View {
                     }
                 } label: {
                     Text(level.shortLabel)
-                        .font(.system(
-                            size: fontSize,
-                            weight: selected ? .bold : .medium
-                        ))
+                        .font(
+                            isAccessibility
+                                ? .system(
+                                    size: min(capsuleFontSizeAX, 15),
+                                    weight: selected ? .bold : .medium
+                                )
+                                : .system(
+                                    size: AffinityRowMetrics.capsuleFontSize,
+                                    weight: selected ? .bold : .medium
+                                )
+                        )
                         .lineLimit(1)
                         .fixedSize()
                         .padding(.horizontal, AffinityRowMetrics.capsuleHorizontalPadding)

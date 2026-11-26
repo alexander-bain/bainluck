@@ -105,6 +105,7 @@ struct NativeFuturesDiscoverCard: View {
     /// drifting apart.
     @ScaledMetric(relativeTo: .largeTitle) private var heroNumeralSize: CGFloat = 52
     @ScaledMetric(relativeTo: .headline) private var cardTitleSizeAX: CGFloat = 17
+    @ScaledMetric(relativeTo: .caption2) private var chipFontSizeAX: CGFloat = 11
 
     /// #6343 — the price-age reveal, open or closed. The phone has no hover, so
     /// the precise stamp arrives by tap; the state lives here rather than in the
@@ -247,24 +248,53 @@ struct NativeFuturesDiscoverCard: View {
             // tall as the content, and 170 is a FLOOR rather than a value — a
             // short card still draws the full hero it always did.
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text(categoryLabel)
-                        .font(.caption2.weight(.heavy))
-                        .tracking(0.8)
-                        .foregroundStyle(.white.opacity(0.78))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.black.opacity(0.24), in: Capsule())
+                let categoryChip = Text(categoryLabel)
+                    .font(
+                        dynamicTypeSize.isAccessibilitySize
+                            ? .system(size: min(chipFontSizeAX, 17), weight: .heavy)
+                            : .caption2.weight(.heavy)
+                    )
+                    .tracking(dynamicTypeSize.isAccessibilitySize ? 0.3 : 0.8)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .allowsTightening(true)
+                    .foregroundStyle(.white.opacity(0.78))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.24), in: Capsule())
 
-                    Spacer()
-
-                    if isTrending(data) {
+                if dynamicTypeSize.isAccessibilitySize && isTrending(data) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        categoryChip
                         Label("Trending", systemImage: "flame.fill")
-                            .font(.caption2.weight(.heavy))
+                            .font(.system(size: min(chipFontSizeAX, 17), weight: .heavy))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                             .foregroundStyle(.orange)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(.black.opacity(0.24), in: Capsule())
+                    }
+                } else {
+                    HStack {
+                        categoryChip
+
+                        Spacer()
+
+                        if isTrending(data) {
+                            Label("Trending", systemImage: "flame.fill")
+                                .font(
+                                    dynamicTypeSize.isAccessibilitySize
+                                        ? .system(size: min(chipFontSizeAX, 17), weight: .heavy)
+                                        : .caption2.weight(.heavy)
+                                )
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                                .foregroundStyle(.orange)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.black.opacity(0.24), in: Capsule())
+                        }
                     }
                 }
 

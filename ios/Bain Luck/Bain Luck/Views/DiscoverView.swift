@@ -3787,6 +3787,8 @@ struct ExpandableNativeContextText: View {
     var onExpand: (() -> Void)? = nil
     var onCollapse: (() -> Void)? = nil
     @State private var expanded = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var contextSizeAX: CGFloat = 15
 
     private var compactText: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3801,11 +3803,12 @@ struct ExpandableNativeContextText: View {
     }
 
     var body: some View {
+        let isAX = dynamicTypeSize.isAccessibilitySize
         VStack(alignment: .leading, spacing: 4) {
             Text(expanded || !canExpand ? fullText : compactText)
-                .font(font)
+                .font(isAX ? .system(size: min(contextSizeAX, 24)) : font)
                 .foregroundStyle(DS.textSecondaryReadable)
-                .lineLimit(expanded ? nil : 2)
+                .lineLimit((expanded || isAX) ? nil : 2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 

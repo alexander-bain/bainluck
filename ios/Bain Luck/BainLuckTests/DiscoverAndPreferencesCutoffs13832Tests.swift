@@ -140,6 +140,10 @@ final class DiscoverAndPreferencesCutoffs13832Tests: XCTestCase {
             XCTAssertFalse(ocr.contains("Thun…"), "\(name) truncated Oklahoma City Thunder: \(ocr)")
             XCTAssertFalse(ocr.contains("Okla-"), "\(name) hyphen-broke Oklahoma: \(ocr)")
             XCTAssertFalse(ocr.contains("Bos-"), "\(name) hyphen-broke Boston: \(ocr)")
+            XCTAssertFalse(ocr.contains("BASKET-"), "\(name) hyphen-broke BASKETBALL chip: \(ocr)")
+            XCTAssertFalse(ocr.contains("…"), "\(name) truncated text with ellipsis: \(ocr)")
+            XCTAssertTrue(ocr.contains("BASKETBALL"), "\(name) missing whole category chip BASKETBALL: \(ocr)")
+            XCTAssertTrue(ocr.contains("December"), "\(name) truncated context line under title: \(ocr)")
             XCTAssertTrue(ocr.contains("Oklahoma"), "\(name) missing whole word Oklahoma: \(ocr)")
             XCTAssertTrue(ocr.contains("Thunder"), "\(name) missing whole word Thunder: \(ocr)")
             XCTAssertTrue(ocr.contains("Boston") && ocr.contains("Celtics"), "\(name) missing whole Boston Celtics: \(ocr)")
@@ -167,29 +171,35 @@ final class DiscoverAndPreferencesCutoffs13832Tests: XCTestCase {
         }
         """
         let prefs = try decoder.decode(PreferencesResponse.self, from: Data(prefsJSON.utf8))
-        let prefsVariants: [(String, CGFloat, ColorScheme, DynamicTypeSize)] = [
-            ("06-prefs-390-light", 390, .light, .large),
-            ("07-prefs-320-light", 320, .light, .large),
-            ("08-prefs-390-ax5-light", 390, .light, .accessibility5),
-            ("09-prefs-390-ax5-dark", 390, .dark, .accessibility5),
-            ("10-prefs-320-ax5-light", 320, .light, .accessibility5),
+        let prefsVariants: [(String, CGFloat, ColorScheme, DynamicTypeSize, String, [String])] = [
+            ("06-prefs-390-light", 390, .light, .large, "Your Interests", ["College Football", "College Basketball"]),
+            ("07-prefs-320-light", 320, .light, .large, "Your Interests", ["College Football", "College Basketball"]),
+            ("07b-prefs-320-beyond-light", 320, .light, .large, "Beyond Sports", ["Entertainment"]),
+            ("08-prefs-390-ax5-light", 390, .light, .accessibility5, "Your Interests", ["College Football"]),
+            ("09-prefs-390-ax5-dark", 390, .dark, .accessibility5, "Your Interests", ["College Football"]),
+            ("10-prefs-320-ax5-light", 320, .light, .accessibility5, "Your Interests", ["College Football"]),
         ]
 
-        for (name, width, scheme, dt) in prefsVariants {
+        for (name, width, scheme, dt, anchorLabel, expectedWholeNames) in prefsVariants {
             let img = try await capturePreferencesInterests(
                 prefs: prefs,
                 width: width,
                 colorScheme: scheme,
                 dynamicTypeSize: dt,
+                anchorText: anchorLabel,
                 auth: auth
             )
             let ocr = try recognizeText(in: img)
             XCTAssertFalse(ocr.contains("Col-"), "\(name) hyphen-broke College: \(ocr)")
             XCTAssertFalse(ocr.contains("Basket-"), "\(name) hyphen-broke Basketball: \(ocr)")
             XCTAssertFalse(ocr.contains("Foot-"), "\(name) hyphen-broke Football: \(ocr)")
+            XCTAssertFalse(ocr.contains("Enter-"), "\(name) hyphen-broke Entertainment: \(ocr)")
             XCTAssertFalse(ocr.contains("…"), "\(name) truncated text: \(ocr)")
-            XCTAssertTrue(ocr.contains("College") && ocr.contains("Football"), "\(name) missing whole College Football: \(ocr)")
-            XCTAssertTrue(ocr.contains("College") && ocr.contains("Basketball"), "\(name) missing whole College Basketball: \(ocr)")
+            for whole in expectedWholeNames {
+                for word in whole.split(separator: " ").map(String.init) {
+                    XCTAssertTrue(ocr.contains(word), "\(name) missing whole word '\(word)' from '\(whole)': \(ocr)")
+                }
+            }
             try savePNG(img, to: outDir.appendingPathComponent("\(name).png"))
         }
 
@@ -381,6 +391,7 @@ final class DiscoverAndPreferencesCutoffs13832Tests: XCTestCase {
         width: CGFloat,
         colorScheme: ColorScheme,
         dynamicTypeSize: DynamicTypeSize,
+        anchorText: String,
         auth: AuthManager
     ) async throws -> UIImage {
         let uiStyle: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
@@ -419,8 +430,16 @@ final class DiscoverAndPreferencesCutoffs13832Tests: XCTestCase {
 
         if let scrollView = findScrollView(in: host.view) {
             let maxOffset = max(0, scrollView.contentSize.height - scrollView.bounds.height)
-            let fraction: CGFloat = dynamicTypeSize.isAccessibilitySize ? 0.08 : 0.14
-            scrollView.setContentOffset(CGPoint(x: 0, y: min(maxOffset, maxOffset * fraction)), animated: false)
+            let desiredOffset: CGFloat
+            if let windowFrame = findAccessibilityElementFrame(containing: anchorText, in: scrollView) {
+                let frameInScroll = scrollView.convert(windowFrame, from: nil)
+                let topInset = scrollView.adjustedContentInset.top
+                desiredOffset = max(0, min(maxOffset, frameInScroll.minY - topInset - 14))
+            } else {
+                let fallbackFraction: CGFloat = anchorText == "Beyond Sports" ? 0.55 : (dynamicTypeSize.isAccessibilitySize ? 0.055 : 0.11)
+                desiredOffset = min(maxOffset, maxOffset * fallbackFraction)
+            }
+            scrollView.setContentOffset(CGPoint(x: 0, y: desiredOffset), animated: false)
             for _ in 0..<4 {
                 host.view.setNeedsLayout()
                 host.view.layoutIfNeeded()
@@ -439,6 +458,33 @@ final class DiscoverAndPreferencesCutoffs13832Tests: XCTestCase {
                 host.view.layer.render(in: ctx.cgContext)
             }
         }
+    }
+
+    private func findAccessibilityElementFrame(containing needle: String, in root: Any) -> CGRect? {
+        if let elem = root as? NSObject {
+            if let label = elem.accessibilityLabel,
+               label.localizedCaseInsensitiveContains(needle),
+               elem.accessibilityFrame != .zero {
+                return elem.accessibilityFrame
+            }
+            let count = elem.accessibilityElementCount()
+            if count != NSNotFound && count > 0 {
+                for idx in 0..<count {
+                    if let child = elem.accessibilityElement(at: idx),
+                       let found = findAccessibilityElementFrame(containing: needle, in: child) {
+                        return found
+                    }
+                }
+            }
+        }
+        if let view = root as? UIView {
+            for child in view.subviews {
+                if let found = findAccessibilityElementFrame(containing: needle, in: child) {
+                    return found
+                }
+            }
+        }
+        return nil
     }
 
     private func findScrollView(in root: UIView) -> UIScrollView? {
