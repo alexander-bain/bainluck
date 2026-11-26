@@ -616,11 +616,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // unless the server named a lead leg (#8892).
   const leader = useMemo(() => {
     if (leadOutcome) return leadOutcome;
-    if (!market?.outcomes || market.outcomes.length === 0) return null;
-    return [...market.outcomes].sort(
+    const outcomes = market?.outcomes ?? [];
+    const eligible = market?.status === "resolved" ? outcomes : outcomes.filter(hasCurrentPrice);
+    return [...eligible].sort(
       (a, b) => (b.probability ?? 0) - (a.probability ?? 0)
-    )[0];
-  }, [market?.outcomes, leadOutcome]);
+    )[0] ?? null;
+  }, [market?.outcomes, market?.status, leadOutcome]);
 
   useFuturesDetailStream({
     marketId, market, history: historyData, historyHours, historyRange,
@@ -738,6 +739,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         }
       : undefined,
   }));
+  const atlasSelectableOutcomes = market?.status === "resolved" ? sortedOutcomes : pricedOutcomes;
+  const atlasSelectedOutcome = atlasSelectableOutcomes.find((outcome) => outcome.id === atlasSelectedOutcomeId) ?? null;
 
   const atlasActiveSubjectOutcome = useMemo(() => {
     if (!market?.outcomes) return null;
@@ -759,20 +762,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     const hero =
       leadOutcome ??
       pickHeroOutcome(market.outcomes, leader, resolved, market.mutually_exclusive);
-    const selected =
-      atlasSelectedOutcomeId != null
-        ? market.outcomes.find((o) => o.id === atlasSelectedOutcomeId) ?? null
-        : null;
-    return selected ?? champ ?? singleLost ?? hero;
-  }, [market, leader, leadOutcome, atlasSelectedOutcomeId]);
+    return atlasSelectedOutcome ?? champ ?? singleLost ?? hero;
+  }, [market, leader, leadOutcome, atlasSelectedOutcome]);
 
   const atlasChartCohort = useMemo(() => {
     if (!atlasEnabled || (atlasBodyKind !== "field" && atlasBodyKind !== "qualifier")) {
       return [];
     }
-    const pool = pricedOutcomes.length > 0 ? pricedOutcomes : sortedOutcomes;
-    return buildAtlasFieldCohort(pool, atlasSelectedOutcomeId, 3);
-  }, [atlasEnabled, atlasBodyKind, pricedOutcomes, sortedOutcomes, atlasSelectedOutcomeId]);
+    return buildAtlasFieldCohort(pricedOutcomes, atlasSelectedOutcomeId, 3);
+  }, [atlasEnabled, atlasBodyKind, pricedOutcomes, atlasSelectedOutcomeId]);
 
   const atlasColorSlotsRef = useRef<Record<string, number>>({});
   const atlasOutcomeColors = useMemo(() => {
@@ -1181,10 +1179,6 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     market.outcomes.length === 1 &&
     outcomeRowVerdict(market.outcomes[0], true) === "lost"
       ? market.outcomes[0]
-      : null;
-  const atlasSelectedOutcome =
-    atlasSelectedOutcomeId != null
-      ? market.outcomes.find((o) => o.id === atlasSelectedOutcomeId) ?? null
       : null;
   const atlasSubjectOutcome =
     atlasSelectedOutcome ?? gradedChampion ?? settledSingleLostOutcome ?? heroOutcome;

@@ -369,7 +369,7 @@ export default function FuturesShapeBody({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [sheetOpen]);
 
-  if (!bodyKind || bodyKind === "quantity") {
+  if (!bodyKind || bodyKind === "quantity" || orderedOutcomes.length === 0) {
     return null;
   }
 

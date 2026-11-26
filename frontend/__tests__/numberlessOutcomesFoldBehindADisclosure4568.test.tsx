@@ -45,8 +45,9 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+let ATLAS = false;
 jest.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(""),
+  useSearchParams: () => new URLSearchParams(ATLAS ? "atlas=1" : ""),
   useRouter: () => ({ replace: () => {}, push: () => {} }),
 }));
 
@@ -83,9 +84,10 @@ import { partitionOutcomesByPrice } from "@/lib/futuresDetailDisplay";
 
 /* ────────────────────────────── the harness ────────────────────────────── */
 
-function render(market: unknown, id: string, group: unknown = null): string {
+function render(market: unknown, id: string, group: unknown = null, atlas = false): string {
   ACTIVE_MARKET = market;
   ACTIVE_GROUP = group;
+  ATLAS = atlas;
   return renderToStaticMarkup(<FuturesDetailPage params={{ id }} />);
 }
 
@@ -487,4 +489,13 @@ it("omits a numberless related threshold while retaining the market's own disclo
   expect(html).toContain("Supported window");
   expect(html).not.toContain("Unsupported window");
   expect(html).toContain("5 others: no recent probability");
+});
+
+it("shows only the disclosure in the Atlas outcomes section when the whole field has no reading", () => {
+  const market = ufcHeavyweight();
+  market.outcomes = market.outcomes.map((row) => ({ ...row, probability: null }));
+  const html = render(market, "114175", null, true);
+  expect(html).toContain("19 others: no recent probability");
+  expect(html).not.toContain('data-testid="atlas-field-top-three"');
+  expect(splitAtFold(html).beforeFold).not.toContain("Ciryl Gane");
 });
