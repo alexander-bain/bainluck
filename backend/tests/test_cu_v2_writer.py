@@ -182,11 +182,11 @@ def test_linked_match_facts_take_the_day_and_league(league, geography):
     facts = cu_event_facts(
         "Spread: home team (-1.5)",
         linked_game_id=1,
-        linked_start=datetime(2026, 11, 28, 14, 0, tzinfo=timezone.utc),
+        linked_start=datetime(2025, 11, 28, 14, 0, tzinfo=timezone.utc),
         start_source="odds_api",
         linked_league=league,
     )
-    expected = {"event_date": "2026-11-28" if geography else None}
+    expected = {"event_date": "2025-11-28" if geography else None}
     if geography:
         expected["geography"] = geography
     assert facts == expected
@@ -223,8 +223,8 @@ def test_other_markets_keep_model_fields_when_there_is_no_link(title):
 @pytest.mark.parametrize(
     ("league", "start", "local_day"),
     [
-        ("basketball_ncaab", "2026-11-26T00:30:00+00:00", "2026-11-25"),
-        ("soccer_italy_serie_b", "2026-11-25T23:30:00+00:00", "2026-11-26"),
+        ("basketball_ncaab", "2025-11-26T00:30:00+00:00", "2025-11-25"),
+        ("soccer_italy_serie_b", "2025-11-25T23:30:00+00:00", "2025-11-26"),
     ],
 )
 def test_scheduled_link_uses_the_league_day(league, start, local_day):
@@ -243,7 +243,7 @@ def test_unscheduled_link_supplies_no_event_day(source):
     facts = cu_event_facts(
         "Who wins?",
         linked_game_id=1,
-        linked_start=datetime(2026, 11, 26, 0, 30, tzinfo=timezone.utc),
+        linked_start=datetime(2025, 11, 26, 0, 30, tzinfo=timezone.utc),
         start_source=source,
         linked_league="basketball_ncaab",
     )
