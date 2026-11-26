@@ -217,8 +217,9 @@ async def test_settled_retirement_skips_discover_and_keeps_collection_page(
     monkeypatch.setattr(rc_mod, "ensure_optional_roundup_candidates", lambda: None)
 
     # First evaluate builds & retires both
+    db = object()
     meta_s: dict[str, Any] = {}
-    fi_s, cp_s = await rc_mod.evaluate_roundup_producer(p_series, object(), now=now, outcome_meta=meta_s)
+    fi_s, cp_s = await rc_mod.evaluate_roundup_producer(p_series, db, now=now, outcome_meta=meta_s)
     assert fi_s is None and cp_s is not None
     assert meta_s["settled_retired"] is True
     assert meta_s["fixed_members"] is True
@@ -226,7 +227,7 @@ async def test_settled_retirement_skips_discover_and_keeps_collection_page(
     assert meta_s["reason"] == "all_members_settled"
 
     meta_g: dict[str, Any] = {}
-    fi_g, cp_g = await rc_mod.evaluate_roundup_producer(p_generic, object(), now=now, outcome_meta=meta_g)
+    fi_g, cp_g = await rc_mod.evaluate_roundup_producer(p_generic, db, now=now, outcome_meta=meta_g)
     assert fi_g is None and cp_g is not None
     assert meta_g["settled_retired"] is True
     assert meta_g["fixed_members"] is True
@@ -241,7 +242,7 @@ async def test_settled_retirement_skips_discover_and_keeps_collection_page(
         for i in range(15)
     ]
     before = rc_mod.get_roundup_read_failure_stats_10m(now=now.timestamp())
-    out = await rc_mod.add_roundup_feed_items(object(), copy.deepcopy(base_items), now=now)
+    out = await rc_mod.add_roundup_feed_items(db, copy.deepcopy(base_items), now=now)
     after = rc_mod.get_roundup_read_failure_stats_10m(now=now.timestamp())
 
     # Neither settled set appeared on Discover and neither hit produce or dropped_no_copy!
@@ -251,8 +252,8 @@ async def test_settled_retirement_skips_discover_and_keeps_collection_page(
     assert after == before
 
     # Direct set page (`serve_roundup`) STILL serves the settled results page!
-    served_series = await rc_mod.serve_roundup("mlb-2026-alwc-bos-nyy", object(), include_children=False, now=now)
-    served_generic = await rc_mod.serve_roundup("settled-fixed-set", object(), include_children=False, now=now)
+    served_series = await rc_mod.serve_roundup("mlb-2026-alwc-bos-nyy", db, include_children=False, now=now)
+    served_generic = await rc_mod.serve_roundup("settled-fixed-set", db, include_children=False, now=now)
     assert served_series["state"] == "published"
     assert served_generic["state"] == "published"
     assert series_calls == 0
@@ -352,9 +353,11 @@ async def test_prewarm_standing_roundups_retires_and_skips_settled_set(
         {p_settled.slug: p_settled, p_active.slug: p_active},
     )
 
+    db = object()
+
     @asynccontextmanager
     async def _fake_session(**_kw):
-        yield object()
+        yield db
 
     monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
 
@@ -428,7 +431,8 @@ async def test_roundup_with_any_open_member_is_not_retired(
         {"type": "futures", "score": 80 - i, "data": {"id": 6000 + i, "name": f"M{i}", "status": "open"}}
         for i in range(15)
     ]
-    out = await rc_mod.add_roundup_feed_items(object(), base_items, now=now)
+    db = object()
+    out = await rc_mod.add_roundup_feed_items(db, base_items, now=now)
     bundle_slugs = [
         (it.get("data") or {}).get("collection_ref", {}).get("slug")
         for it in out
@@ -597,9 +601,10 @@ async def test_all_settled_fixed_set_gets_24h_long_skip_and_retired_hash(
     monkeypatch.setattr(rc_mod, "ROUNDUP_PRODUCERS", {p_settled.slug: p_settled})
     monkeypatch.setattr(rc_mod, "ensure_optional_roundup_candidates", lambda: None)
     monkeypatch.setattr("app.routes.containers.containers_read_enabled", lambda: True)
+    db = object()
     monkeypatch.setattr(
         "app.tasks.base.get_task_session",
-        lambda **_kw: contextlib.nullcontext(object()),
+        lambda **_kw: contextlib.nullcontext(db),
     )
     monkeypatch.setattr("time.time", lambda: frozen_now.timestamp())
 
@@ -711,8 +716,9 @@ async def test_all_closed_without_result_keeps_short_ttl_and_no_retired_marker(
     monkeypatch.setattr(rc_mod, "ROUNDUP_PRODUCERS", {p_closed.slug: p_closed})
     monkeypatch.setattr(rc_mod, "ensure_optional_roundup_candidates", lambda: None)
 
+    db = object()
     meta: dict[str, Any] = {}
-    fi, cp = await rc_mod.evaluate_roundup_producer(p_closed, object(), now=frozen_now, outcome_meta=meta)
+    fi, cp = await rc_mod.evaluate_roundup_producer(p_closed, db, now=frozen_now, outcome_meta=meta)
     assert fi is None and cp is not None
     assert meta["settled_retired"] is True
     assert meta["long_skip"] is False
@@ -722,7 +728,7 @@ async def test_all_closed_without_result_keeps_short_ttl_and_no_retired_marker(
     monkeypatch.setattr("app.routes.containers.containers_read_enabled", lambda: True)
     monkeypatch.setattr(
         "app.tasks.base.get_task_session",
-        lambda **_kw: contextlib.nullcontext(object()),
+        lambda **_kw: contextlib.nullcontext(db),
     )
     monkeypatch.setattr("time.time", lambda: frozen_now.timestamp())
 
@@ -801,21 +807,22 @@ async def test_closed_set_recovers_on_reopen_after_short_ttl(
     monkeypatch.setattr(rc_mod, "ensure_optional_roundup_candidates", lambda: None)
     monkeypatch.setattr("app.routes.containers.containers_read_enabled", lambda: True)
 
-    fi0, cp0 = await rc_mod.evaluate_roundup_producer(p, object(), now=t0)
+    db = object()
+    fi0, cp0 = await rc_mod.evaluate_roundup_producer(p, db, now=t0)
     assert fi0 is None and cp0 is not None
     assert calls == 1
 
     # Within short TTL, cache keeps it hidden without hitting produce_fn.
     member_status = "open"
     fi_mid, _cp_mid = await rc_mod.evaluate_roundup_producer(
-        p, object(), now=t0 + timedelta(seconds=30)
+        p, db, now=t0 + timedelta(seconds=30)
     )
     assert fi_mid is None
     assert calls == 1
 
     # Right after ROUNDUP_CACHE_TTL_S expires, re-evaluation recovers the feed item.
     t_reopen = t0 + timedelta(seconds=rc_mod.ROUNDUP_CACHE_TTL_S + 1)
-    fi_reopen, cp_reopen = await rc_mod.evaluate_roundup_producer(p, object(), now=t_reopen)
+    fi_reopen, cp_reopen = await rc_mod.evaluate_roundup_producer(p, db, now=t_reopen)
     assert fi_reopen is not None and cp_reopen is not None
     assert calls == 2
 
@@ -823,7 +830,7 @@ async def test_closed_set_recovers_on_reopen_after_short_ttl(
         {"type": "futures", "score": 80 - i, "data": {"id": 6200 + i, "name": f"M{i}", "status": "open"}}
         for i in range(12)
     ]
-    out = await rc_mod.add_roundup_feed_items(object(), base_items, now=t_reopen)
+    out = await rc_mod.add_roundup_feed_items(db, base_items, now=t_reopen)
     bundles = [
         it
         for it in out
