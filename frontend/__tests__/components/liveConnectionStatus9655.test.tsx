@@ -204,7 +204,7 @@ describe('#10200 motion, colour and announcements', () => {
 
   it('nothing but a healthy connection moves', () => {
     for (const presentation of [
-      { label: 'Price may be old', tone: 'neutral', breathes: false, announcement: '' },
+      { label: 'Probability may be old', tone: 'neutral', breathes: false, announcement: '' },
       { label: 'Updates interrupted · reconnecting', tone: 'attention', breathes: false, announcement: 'Updates interrupted · reconnecting' },
       { label: 'Finished', tone: 'neutral', breathes: false, announcement: 'Finished' },
     ] as ConnectionPresentation[]) {

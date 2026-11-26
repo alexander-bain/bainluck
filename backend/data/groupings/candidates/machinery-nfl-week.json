@@ -23,7 +23,7 @@
       {
         "key": "closest_games",
         "title": "Coin-Flip Matchups",
-        "note": "Games on this slate priced closest to a 50–50 toss-up.",
+        "note": "Games on this slate closest to a 50–50 toss-up.",
         "atom_query": {
           "kind": "events",
           "sport_key": "americanfootball_nfl",
@@ -37,7 +37,7 @@
       {
         "key": "prop_leaders",
         "title": "Season Stat Leaders",
-        "note": "Players priced highest across open NFL stat-leader markets.",
+        "note": "Players with the highest probabilities across open NFL stat-leader markets.",
         "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",
@@ -92,7 +92,7 @@
       {
         "key": "division_races",
         "title": "Tightest Division Races",
-        "note": "Open NFL division title fields priced closest at the top.",
+        "note": "Open NFL division title fields with the tightest race at the top.",
         "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",

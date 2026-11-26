@@ -42,7 +42,7 @@
         "key": "unsolved_big_problems",
         "title": "Science & AI Breakthroughs",
         "item_noun": "breakthroughs",
-        "note": "Millennium Prize math, nuclear fusion, quantum computing, and AGI timelines priced by the markets.",
+        "note": "Millennium Prize math, nuclear fusion, quantum computing, and AGI timelines tracked across open markets.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch4-unsolved-big-problems",
