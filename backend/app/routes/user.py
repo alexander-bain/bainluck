@@ -39,6 +39,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
+from app.config.major_team_search import MAJOR_TEAM_QUERY_ALIASES
 from app.dependencies.auth import get_current_user, get_optional_user
 from app.utils.surface_rank import (
     MY_STUFF_SURFACE_PROFILE,
@@ -83,6 +84,7 @@ from app.utils.sport_keys import (
 )
 from app.utils.statement_timeout import is_statement_timeout
 from app.utils.team_linking import given_name_before_city
+from app.utils.team_short_name import is_college_sport, school_label
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,7 @@ _BAY_AREA = [
     "santa cruz",
     "santa clara",
     "san jose",
+    "san josé",
 ]
 _LOS_ANGELES = ["los angeles", "la", "anaheim", "inglewood", "carson"]
 _ST_LOUIS = ["st louis", "st. louis", "saint louis"]
@@ -110,6 +113,28 @@ _TWIN_CITIES = [
     "minnesota", "minneapolis", "st. paul", "st paul", "saint paul", "twin cities"
 ]
 _DC = ["dc", "d.c.", "washington", "washington dc", "washington, dc"]
+_METRO_CLUB_LEAGUES = {
+    "americanfootball_nfl", "baseball_mlb", "basketball_nba", "basketball_wnba",
+    "icehockey_nhl", "soccer_usa_mls", "soccer_usa_nwsl",
+}
+_METRO_MAJOR_CLUBS = {
+    name.casefold(): league
+    for (league, name) in MAJOR_TEAM_QUERY_ALIASES
+    if league in _METRO_CLUB_LEAGUES
+}
+_METRO_LEAGUE_SCOPE = {
+    "boston", "new york", "los angeles", "kansas city", "bay area",
+    "las vegas", "st louis", "philadelphia", "dc", "twin cities",
+}
+_METRO_CLUB_ALIASES = {
+    "kansas city": {
+        "soccer_usa_mls": ("sporting kansas city", "sporting kc"),
+        "soccer_usa_nwsl": ("kansas city current", "kc current"),
+    },
+    "bay area": {"soccer_usa_nwsl": ("bay fc",)},
+    "dc": {"soccer_usa_nwsl": ("washington spirit",)},
+}
+_LEAGUES_CUP = "soccer_concacaf_leagues_cup"
 METRO_ALIASES: dict[str, list[str]] = {
     "golden state": _BAY_AREA,
     "new england": ["boston", "foxborough", "foxboro"],
@@ -142,6 +167,7 @@ METRO_ALIASES: dict[str, list[str]] = {
     "los angeles": _LOS_ANGELES,
     "la": _LOS_ANGELES,
     "kc": ["kansas city"],
+    "kansas city": ["kc"],
     "vegas": ["las vegas"],
     "las vegas": ["vegas", "paradise"],
     "st louis": _ST_LOUIS,
@@ -950,12 +976,18 @@ def _onboarding_name_candidates(
 async def _fold_onboarding_season_clubs(
     db: AsyncSession,
     clubs: list[tuple[Team, str, str]],
+    *,
+    mls_metro: bool = False,
 ) -> list[tuple[Team, str, str]]:
     parents = {
         key: key.removesuffix("_preseason").removesuffix("_summer_league")
         for _, key, _ in clubs
         if is_season_variant(key)
     }
+    # Only this US metro lookup can assume an MLS parent for the Leagues Cup.
+    # The existing identity check still requires the two registrations to match.
+    if mls_metro and any(key == _LEAGUES_CUP for _, key, _ in clubs):
+        parents[_LEAGUES_CUP] = "soccer_usa_mls"
     if not parents:
         return clubs
 
@@ -1153,6 +1185,8 @@ async def teams_by_location(
     from app.models.models import Sport
 
     terms = _expand_location_query(q_lower)
+    scoped_metro = _METRO_LEAGUE_SCOPE.intersection(terms)
+    college = Sport.key.regexp_match(r"_(?:w?ncaa|college)")
     location_matches = []
     brand_matches = []
     for term in terms:
@@ -1166,10 +1200,9 @@ async def teams_by_location(
             continue
         if term == "washington" and q_lower in _DC:
             # The state and its college teams share this generic label.
-            pro_league = ~Sport.key.contains("_ncaa", autoescape=True)
-            location_matches.append(and_(func.lower(Team.location) == term, pro_league))
+            location_matches.append(and_(func.lower(Team.location) == term, ~college))
             brand_matches.append(
-                and_(Team.name.istartswith(term + " ", autoescape=True), pro_league)
+                and_(Team.name.istartswith(term + " ", autoescape=True), ~college)
             )
             continue
         boundary = rf"(?i)^{re.escape(term)}(?:$|\W)"
@@ -1179,6 +1212,23 @@ async def teams_by_location(
             else Team.location.regexp_match(boundary)
         )
         brand_matches.append(Team.name.regexp_match(boundary))
+    for metro in sorted(scoped_metro):
+        for league, names in _METRO_CLUB_ALIASES.get(metro, {}).items():
+            brand_matches.append(and_(Sport.key == league, func.lower(Team.name).in_(names)))
+
+    filters = list(club_filters(include_mlb_preseason=True))
+    if scoped_metro:
+        variants = {
+            key + suffix
+            for key in _METRO_CLUB_LEAGUES
+            for suffix in ("_preseason", "_summer_league")
+        }
+        filters.append(or_(college, Sport.key.in_(sorted(_METRO_CLUB_LEAGUES | variants | {_LEAGUES_CUP}))))
+    if "bay area" in scoped_metro:
+        # College locations are sometimes an institution's abbreviated name.
+        # A bare "Oakland" cannot place an Oakland University team in California.
+        filters.append(~and_(college, func.lower(Team.location) == "oakland"))
+
     relevance = case(
         (func.lower(Team.location) == q_lower, 0),
         (Team.location.istartswith(q_lower, autoescape=True), 1),
@@ -1187,24 +1237,45 @@ async def teams_by_location(
     )
 
     result = await db.execute(
-        select(Team, Sport.key.label("sport_key"))
+        select(Team, Sport.key, Sport.name)
+        .options(_TEAM_SEARCH_COLUMNS)
         .join(Sport, Team.sport_id == Sport.id)
-        .where(or_(*location_matches, *brand_matches), *club_filters())
+        .where(or_(*location_matches, and_(~college, or_(*brand_matches))), *filters)
         .order_by(relevance, Team.name, Team.id)
-        .limit(50)
+        # A named metro has a bounded league scope. Its raw registrations
+        # can exceed the reader's cap before they fold into actual clubs.
+        .limit(None if scoped_metro else 50)
     )
     rows = result.all()
-    members = await onboarding_team_members(
-        [(team.sport_id, team.id) for team, _ in rows]
+    if not rows:
+        return []
+    folded = await _fold_onboarding_season_clubs(
+        db, [(team, key, name) for team, key, name in rows], mls_metro=bool(scoped_metro)
     )
+    clubs = await _verified_onboarding_clubs(db, folded) if folded else []
 
-    # Clubs in different leagues can share a city and still be distinct.
     seen: set[tuple[str, str]] = set()
+    seen_schools: set[str] = set()
     results: list[TeamSearchResult] = []
-    for team, sport_key in rows:
-        if members is not None and members.get((team.sport_id, team.id)) != team.id:
+    for team, sport_key, _ in clubs:
+        college_team = is_college_sport(sport_key)
+        if scoped_metro and not college_team and sport_key not in _METRO_CLUB_LEAGUES:
             continue
-        key = (sport_key, " ".join(team.name.casefold().split()))
+        name = " ".join(team.name.casefold().split())
+        if scoped_metro and _METRO_MAJOR_CLUBS.get(name, sport_key) != sport_key:
+            continue
+        key = (sport_key, name)
+        if college_team:
+            school = school_label(team.name, team.location) or team.name
+            school_key = " ".join(school.casefold().split())
+            campus = (team.location or "").casefold().split()
+            if campus and campus[-1] == "university" and school_key == "".join(word[0] for word in campus):
+                school_key = " ".join(campus)
+            key = ("college", school_key)
+            if team.espn_id:
+                if team.espn_id in seen_schools:
+                    continue
+                seen_schools.add(team.espn_id)
         if key in seen:
             continue
         seen.add(key)
@@ -1219,7 +1290,7 @@ async def teams_by_location(
             )
         )
 
-    return results
+    return results[:50]
 
 
 # =============================================================================

@@ -50,23 +50,27 @@ nonisolated enum MachineryFormId: String, Codable, CaseIterable, Equatable, Send
 }
 
 /// Verified subject art (`team_logo`, `tmdb_poster`, `tmdb_headshot`, `person`, etc.).
-/// When `verifiedURL` is `nil`, views draw NO avatar/placeholder letters ("real art or nothing").
+/// When `verifiedURL` is `nil`, rows with an illustrated sibling render deterministic
+/// initials inside the same circle (`387: A`), while all-text cards draw no icon.
 nonisolated struct MachinerySubjectArt: Decodable, Equatable, Sendable {
     let url: String?
     let kind: String
     let detail: String
     let accentColor: String
+    let initials: String?
 
     init(
         url: String? = nil,
         kind: String = "none",
         detail: String = "",
-        accentColor: String = ""
+        accentColor: String = "",
+        initials: String? = nil
     ) {
         self.url = url
         self.kind = kind
         self.detail = detail
         self.accentColor = accentColor
+        self.initials = initials
     }
 
     init(from decoder: Decoder) throws {
@@ -76,6 +80,8 @@ nonisolated struct MachinerySubjectArt: Decodable, Equatable, Sendable {
         self.kind = c.decodeFirst(String.self, keys: ["kind"]) ?? "none"
         self.detail = c.decodeFirst(String.self, keys: ["detail"]) ?? ""
         self.accentColor = c.decodeFirst(String.self, keys: ["accentColor", "accent_color"]) ?? ""
+        let rawInitials = c.decodeFirst(String.self, keys: ["initials"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.initials = (rawInitials?.isEmpty == false) ? rawInitials : nil
     }
 
     var verifiedURL: URL? {

@@ -231,7 +231,8 @@ def test_retired_scout_sets_include_deck2_drops_and_load_durably(monkeypatch) ->
             return None
 
     monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: _FakeRedis())
-    durable_slugs = scout_task._load_retired_sets_durable(SCOUT_RETIRED_SETS_PATH)
+    durable_entries = scout_task._load_retired_sets_durable(SCOUT_RETIRED_SETS_PATH)
+    durable_slugs = {str(e.get("slug") or "") for e in durable_entries}
     assert {"finale-week", "what-things-cost-2026", "what-things-cost"}.issubset(durable_slugs)
 
 

@@ -2248,6 +2248,10 @@ class RankingGrade(Base):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "grade IN ('shareable', 'interesting', 'neither')",
+            name="ck_ranking_grades_grade",
+        ),
         Index("ix_ranking_grades_slate", "slate_id", "grader"),
         Index("ix_ranking_grades_graded_at", "graded_at"),
     )
