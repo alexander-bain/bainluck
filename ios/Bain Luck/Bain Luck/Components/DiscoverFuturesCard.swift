@@ -168,7 +168,9 @@ struct NativeFuturesDiscoverCard: View {
     /// `hookDescription` is still the last rung; it is applied there, not here.
     /// Kept as a trim-and-nil so a whitespace-only caption cannot reserve a line.
     private var contextText: String? {
-        let caption = DiscoverCaption.firstMeaningful([feedContext, data.hookDescription])
+        let caption = DiscoverCaption.firstMeaningful(
+            [data.withdrawnProbabilityNotice, feedContext, data.hookDescription]
+        )
         return caption.isEmpty ? nil : caption
     }
 
@@ -380,7 +382,8 @@ struct NativeFuturesDiscoverCard: View {
                 if let contextText {
                     ExpandableNativeContextText(
                         text: contextText,
-                        expandedText: expandedContext ?? data.hookDescription,
+                        expandedText: data.withdrawnProbabilityNotice == nil
+                            ? expandedContext ?? data.hookDescription : nil,
                         font: .subheadline,
                         onExpand: onContextExpand,
                         onCollapse: onContextCollapse

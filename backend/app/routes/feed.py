@@ -9432,7 +9432,7 @@ def _withhold_unsupported_field_leader(
     if not incomplete:
         return
 
-    notice = "Limited probability coverage"
+    notice = "No recent probability"
     item.update(headline=None, reason=notice, context_summary=notice)
     data.update(
         top_outcomes=[],

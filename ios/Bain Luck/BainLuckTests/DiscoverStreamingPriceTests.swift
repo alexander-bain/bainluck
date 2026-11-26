@@ -112,6 +112,7 @@ final class DiscoverStreamingPriceTests: XCTestCase {
                      "status": "open", "price_observed_at": "2026-09-29T00:01:00Z",
                      "top_outcomes": [["id": 10, "name": "Brooklyn Nets", "probability": 0.0525]]],
         ], as: FeedItem.self)
+        // A cached body can carry the previous notice after the clients update.
         let fresh = try decode([
             "type": "futures", "reason": "Limited probability coverage",
             "context_summary": "Limited probability coverage",
@@ -149,20 +150,35 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         renderer.scale = 3
         let image = try XCTUnwrap(renderer.uiImage)
         let attachment = XCTAttachment(image: image)
-        attachment.name = "13699-discover-after-withdrawal-390.png"
+        attachment.name = "438B-discover-after-withdrawal-390.png"
         attachment.lifetime = .keepAlways
         add(attachment)
 
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
-        let text = (request.results ?? [])
-            .compactMap { $0.topCandidates(1).first?.string }
-            .joined(separator: " ")
-        XCTAssertTrue(text.contains("NBA Cup finalists"), text)
-        XCTAssertTrue(text.contains("Limited probability coverage"), text)
-        XCTAssertFalse(text.contains("Brooklyn Nets"), text)
-        XCTAssertFalse(text.contains("%"), text)
+        @discardableResult
+        func assertWithdrawalNotice(in image: UIImage) throws -> String {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
+            let text = (request.results ?? [])
+                .compactMap { $0.topCandidates(1).first?.string }
+                .joined(separator: " ")
+            XCTAssertTrue(text.contains("No recent probability"), text)
+            XCTAssertFalse(text.contains("Limited probability coverage"), text)
+            XCTAssertFalse(text.contains("Brooklyn Nets"), text)
+            XCTAssertFalse(text.contains("%"), text)
+            return text
+        }
+        let discoverText = try assertWithdrawalNotice(in: image)
+        XCTAssertTrue(discoverText.contains("NBA Cup finalists"), discoverText)
+
+        let listCard = FuturesCardView(futures: data)
+            .environmentObject(PinManager())
+            .environment(\.colorScheme, .light)
+            .padding(16)
+            .frame(width: 390)
+        let listRenderer = rendererForMeasurement(listCard, at: .large)
+        listRenderer.scale = 3
+        try assertWithdrawalNotice(in: XCTUnwrap(listRenderer.uiImage))
         #endif
     }
 

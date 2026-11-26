@@ -233,7 +233,8 @@ async def test_fresh_feed_drops_the_field_and_refresh_retires_its_leader(monkeyp
             assert "discover_card" not in data
             assert data["hook_description"] is None
             assert item["headline"] is None
-            assert item["context_summary"] == "Limited probability coverage"
+            assert item["reason"] == "No recent probability"
+            assert item["context_summary"] == "No recent probability"
         assert feed._suppress_zero_probability_cards(items) == ([by_id[qatar.id]], 2)
     else:
         assert list(by_id) == [qatar.id]
