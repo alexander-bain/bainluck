@@ -56,6 +56,7 @@ jest.mock("@/components/Analytics", () => ({
 }));
 
 import DiscoverCard from "../../components/DiscoverCard";
+import { feedExpandedContext } from "../../components/discover/utils";
 import SERVED from "../fixtures/unpricedRowsNotDrawn6505.json";
 
 type Specimen = { item: Record<string, unknown>; data: Record<string, unknown> };
@@ -72,25 +73,30 @@ function render(s: Specimen): string {
   );
 }
 
-it("keeps the coverage notice only on a card whose displayed price was withdrawn", () => {
-  const source = specimen("premier_lacrosse_distribution");
-  const old = { ...source.item, data: { ...source.data, resolution_date: null } } as unknown as FeedItem;
-  const key = priceKey(old)!;
-  const withheld = {
-    ...old, headline: null, reason: "Limited probability coverage", context_summary: "Limited probability coverage",
-    data: { ...old.data, status: "open", top_outcomes: [], discover_card: undefined,
-      hook_description: null, price_observed_at: null, field_price_coverage_incomplete: true },
-  } as unknown as FeedItem;
-  expect(renderToStaticMarkup(<DiscoverCard groupedItem={{ type: "single", item: withheld }} />)).toBe("");
+it.each(["No recent probability", "Limited probability coverage"])(
+  "shows the withdrawal notice when the feed supplies %s",
+  (notice) => {
+    const source = specimen("premier_lacrosse_distribution");
+    const old = { ...source.item, data: { ...source.data, resolution_date: null } } as unknown as FeedItem;
+    const key = priceKey(old)!;
+    const withheld = {
+      ...old, headline: null, reason: notice, context_summary: notice,
+      data: { ...old.data, status: "open", top_outcomes: [], discover_card: undefined,
+        hook_description: null, price_observed_at: null, field_price_coverage_incomplete: true },
+    } as unknown as FeedItem;
+    expect(renderToStaticMarkup(<DiscoverCard groupedItem={{ type: "single", item: withheld }} />)).toBe("");
 
-  const book = adoptPriceCards(new Map(), [old], {
-    items: [withheld], dispositions: { [key]: "withheld" }, built_at: 1,
-  }, new Set([key]));
-  const [group] = projectPriceGroups([{ type: "single", item: old }], book);
-  const markup = renderToStaticMarkup(<DiscoverCard groupedItem={group} />);
-  expect(markup).toContain("Limited probability coverage");
-  expect(markup).not.toContain("Philadelphia Waterdogs");
-});
+    const book = adoptPriceCards(new Map(), [old], {
+      items: [withheld], dispositions: { [key]: "withheld" }, built_at: 1,
+    }, new Set([key]));
+    const [group] = projectPriceGroups([{ type: "single", item: old }], book);
+    const markup = renderToStaticMarkup(<DiscoverCard groupedItem={group} />);
+    expect(markup).toContain("No recent probability");
+    expect(markup).not.toContain("Limited probability coverage");
+    expect(markup).not.toContain("Philadelphia Waterdogs");
+    expect(feedExpandedContext(group.item!)).toBe("");
+  },
+);
 
 /**
  * The card's value cells, in render order.

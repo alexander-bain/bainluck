@@ -1023,6 +1023,12 @@ extension FeedEventData {
 nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     var fullFieldRendered: Bool? = nil
     var fieldPriceCoverageIncomplete: Bool? = nil
+
+    var withdrawnProbabilityNotice: String? {
+        guard status == "open", fieldPriceCoverageIncomplete == true else { return nil }
+        return EventAtlasStates11666.noRecentPrice
+    }
+
     let id: Int
     /// Fresh leaf identity; older cached feed bodies may omit it.
     var externalId: String? = nil

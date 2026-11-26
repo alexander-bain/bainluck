@@ -88,8 +88,8 @@ struct FuturesCardView: View {
                 }
             }
 
-            if futures.status == "open", futures.fieldPriceCoverageIncomplete == true {
-                Text("Limited probability coverage")
+            if let notice = futures.withdrawnProbabilityNotice {
+                Text(notice)
                     .font(.caption2)
                     .foregroundStyle(DS.textSecondaryReadable)
             } else if let total = futures.outcomeCount,
