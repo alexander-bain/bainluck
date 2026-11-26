@@ -1,234 +1,1289 @@
 {
   "base_url": "https://api.bainluck.com",
   "date": "2026-11-26",
-  "generated_at": "2026-11-26T11:40:39.570134+00:00",
+  "generated_at": "2026-11-26T18:59:01.124113+00:00",
   "http_errors": [],
   "http_errors_count": 0,
   "list_vs_page": {
     "disagreements": [
       {
-        "detail_value": 15,
-        "event_id": 15353364,
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:01.588843+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 0s (fresh), read ?"
+        },
+        "detail_value": 77,
+        "event_id": 15343253,
+        "fetch_gap_seconds": 41.4,
         "field": "headline_percent",
-        "matchup": "China @ Saudi Arabia",
-        "sport_key": "basketball_other",
-        "surface": "GET /api/leagues/basketball_other",
-        "surface_value": 13
+        "matchup": "AC Milan @ Olympiakos Piraeus",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:00:20.227334+00:00",
+          "reading_age_seconds": 26.1,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:50.912663+00:00",
+          "summary": "copy ? (miss), read 26s"
+        },
+        "surface_value": 87
       },
       {
-        "detail_value": 15,
-        "event_id": 15353364,
-        "field": "source.polymarket",
-        "matchup": "China @ Saudi Arabia",
-        "sport_key": "basketball_other",
-        "surface": "GET /api/leagues/basketball_other",
-        "surface_value": 13
-      },
-      {
-        "detail_value": 76,
-        "event_id": 15352142,
-        "field": "headline_percent",
-        "matchup": "Melbourne Demons @ North Melbourne Kangaroos",
-        "sport_key": "aussierules_aflw",
-        "surface": "GET /api/leagues/aussierules_aflw",
-        "surface_value": 77
-      },
-      {
-        "detail_value": 0,
-        "event_id": 15353799,
-        "field": "headline_percent",
-        "matchup": "Unsettled Resentment @ Any Questions Gaming",
-        "sport_key": "esports",
-        "surface": "GET /api/events?status=live",
-        "surface_value": 1
-      },
-      {
-        "detail_value": [
-          "polymarket"
-        ],
-        "event_id": 15353799,
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:01.588843+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 0s (fresh), read ?"
+        },
+        "detail_value": [],
+        "event_id": 15343253,
+        "fetch_gap_seconds": 41.4,
         "field": "source_keys",
-        "matchup": "Unsettled Resentment @ Any Questions Gaming",
-        "sport_key": "esports",
-        "surface": "GET /api/events?status=live",
+        "matchup": "AC Milan @ Olympiakos Piraeus",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:00:20.227334+00:00",
+          "reading_age_seconds": 26.1,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:50.912663+00:00",
+          "summary": "copy ? (miss), read 26s"
+        },
         "surface_value": [
-          "kalshi",
-          "polymarket"
+          "betting"
         ]
       },
       {
-        "detail_value": 3,
-        "event_id": 15354400,
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:01.588843+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 0s (fresh), read ?"
+        },
+        "detail_value": 77,
+        "event_id": 15343253,
+        "fetch_gap_seconds": 112.7,
         "field": "headline_percent",
-        "matchup": "Kirkin @ Maute",
-        "sport_key": "tennis_atp",
+        "matchup": "AC Milan @ Olympiakos Piraeus",
+        "sport_key": "soccer_uefa_europa_league",
         "surface": "GET /api/events?status=live",
-        "surface_value": 2
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 22.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:46.031175+00:00",
+          "summary": "copy ?, read 22s"
+        },
+        "surface_value": 87
       },
       {
-        "detail_value": 3,
-        "event_id": 15354400,
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:01.588843+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 0s (fresh), read ?"
+        },
+        "detail_value": [],
+        "event_id": 15343253,
+        "fetch_gap_seconds": 112.7,
+        "field": "source_keys",
+        "matchup": "AC Milan @ Olympiakos Piraeus",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 22.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:46.031175+00:00",
+          "summary": "copy ?, read 22s"
+        },
+        "surface_value": [
+          "betting"
+        ]
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:01.588843+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 0s (fresh), read ?"
+        },
+        "detail_value": 5,
+        "event_id": 15343253,
+        "fetch_gap_seconds": 112.7,
+        "field": "bookmaker_count",
+        "matchup": "AC Milan @ Olympiakos Piraeus",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 22.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:46.031175+00:00",
+          "summary": "copy ?, read 22s"
+        },
+        "surface_value": 6
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:01.588843+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 0s (fresh), read ?"
+        },
+        "detail_value": 77,
+        "event_id": 15343253,
+        "fetch_gap_seconds": 109.4,
+        "field": "headline_percent",
+        "matchup": "AC Milan @ Olympiakos Piraeus",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 25.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:46.031175+00:00",
+          "summary": "copy 16s (miss), read 25s"
+        },
+        "surface_value": 87
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:01.588843+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 0s (fresh), read ?"
+        },
+        "detail_value": [],
+        "event_id": 15343253,
+        "fetch_gap_seconds": 109.4,
+        "field": "source_keys",
+        "matchup": "AC Milan @ Olympiakos Piraeus",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 25.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:46.031175+00:00",
+          "summary": "copy 16s (miss), read 25s"
+        },
+        "surface_value": [
+          "betting"
+        ]
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:01.588843+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 0s (fresh), read ?"
+        },
+        "detail_value": 5,
+        "event_id": 15343253,
+        "fetch_gap_seconds": 109.4,
+        "field": "bookmaker_count",
+        "matchup": "AC Milan @ Olympiakos Piraeus",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 25.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:46.031175+00:00",
+          "summary": "copy 16s (miss), read 25s"
+        },
+        "surface_value": 6
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 5.9,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:12.262571+00:00",
+          "reading_age_seconds": 9.0,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:01:02.046928+00:00",
+          "summary": "copy 6s (cached), read 9s"
+        },
+        "detail_value": 38,
+        "event_id": 15354570,
+        "fetch_gap_seconds": 3.2,
+        "field": "headline_percent",
+        "matchup": "Genaro Alberto Olivieri @ Joaquin Aguilar",
+        "sport_key": "tennis_other",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:01:09.080345+00:00",
+          "reading_age_seconds": 47.8,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T19:00:20.159632+00:00",
+          "summary": "copy ? (hit), read 48s"
+        },
+        "surface_value": 36
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 5.9,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:12.262571+00:00",
+          "reading_age_seconds": 9.0,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:01:02.046928+00:00",
+          "summary": "copy 6s (cached), read 9s"
+        },
+        "detail_value": 38,
+        "event_id": 15354570,
+        "fetch_gap_seconds": 3.2,
         "field": "source.polymarket",
-        "matchup": "Kirkin @ Maute",
-        "sport_key": "tennis_atp",
-        "surface": "GET /api/events?status=live",
-        "surface_value": 2
+        "matchup": "Genaro Alberto Olivieri @ Joaquin Aguilar",
+        "sport_key": "tennis_other",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:01:09.080345+00:00",
+          "reading_age_seconds": 47.8,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T19:00:20.159632+00:00",
+          "summary": "copy ? (hit), read 48s"
+        },
+        "surface_value": 36
       },
       {
-        "detail_value": 40,
-        "event_id": 15353386,
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:26.663387+00:00",
+          "reading_age_seconds": 6.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:01:19.421557+00:00",
+          "summary": "copy 6s (cached), read 7s"
+        },
+        "detail_value": 83,
+        "event_id": 15354439,
+        "fetch_gap_seconds": 3.1,
         "field": "headline_percent",
-        "matchup": "South Korea @ Qatar",
-        "sport_key": "basketball_other",
-        "surface": "GET /api/leagues/basketball_other",
-        "surface_value": 39
+        "matchup": "Bar\u00e7a eSports @ NAVI Junior",
+        "sport_key": "esports_other",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:01:23.528679+00:00",
+          "reading_age_seconds": 55.3,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T19:00:26.683404+00:00",
+          "summary": "copy ? (hit), read 55s"
+        },
+        "surface_value": 80
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:26.663387+00:00",
+          "reading_age_seconds": 6.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:01:19.421557+00:00",
+          "summary": "copy 6s (cached), read 7s"
+        },
+        "detail_value": 85,
+        "event_id": 15354439,
+        "fetch_gap_seconds": 3.1,
+        "field": "source.kalshi",
+        "matchup": "Bar\u00e7a eSports @ NAVI Junior",
+        "sport_key": "esports_other",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:01:23.528679+00:00",
+          "reading_age_seconds": 55.3,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T19:00:26.683404+00:00",
+          "summary": "copy ? (hit), read 55s"
+        },
+        "surface_value": 80
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:26.663387+00:00",
+          "reading_age_seconds": 6.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:01:19.421557+00:00",
+          "summary": "copy 6s (cached), read 7s"
+        },
+        "detail_value": 82,
+        "event_id": 15354439,
+        "fetch_gap_seconds": 3.1,
+        "field": "source.polymarket",
+        "matchup": "Bar\u00e7a eSports @ NAVI Junior",
+        "sport_key": "esports_other",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:01:23.528679+00:00",
+          "reading_age_seconds": 55.3,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T19:00:26.683404+00:00",
+          "summary": "copy ? (hit), read 55s"
+        },
+        "surface_value": 80
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.3,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:02:09.866514+00:00",
+          "reading_age_seconds": 45.7,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:01:23.333427+00:00",
+          "summary": "copy 6s (cached), read 46s"
+        },
+        "detail_value": 60,
+        "event_id": 15197566,
+        "fetch_gap_seconds": 3.5,
+        "field": "headline_percent",
+        "matchup": "Miami Heat @ New York Knicks",
+        "sport_key": "basketball_nba",
+        "surface": "GET /api/leagues/basketball_nba",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": 159.1,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T19:02:06.347515+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 2.7m, read ?"
+        },
+        "surface_value": 61
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:42.650281+00:00",
+          "reading_age_seconds": 13.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:27.427855+00:00",
+          "summary": "copy 0s (fresh), read 14s"
+        },
+        "detail_value": 1,
+        "event_id": 15347245,
+        "fetch_gap_seconds": 333.7,
+        "field": "headline_percent",
+        "matchup": "AGF Aarhus @ SK Brann",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 2.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:05.384691+00:00",
+          "summary": "copy ?, read 3s"
+        },
+        "surface_value": 7
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:42.650281+00:00",
+          "reading_age_seconds": 13.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:27.427855+00:00",
+          "summary": "copy 0s (fresh), read 14s"
+        },
+        "detail_value": 2,
+        "event_id": 15347245,
+        "fetch_gap_seconds": 333.7,
+        "field": "source.betting",
+        "matchup": "AGF Aarhus @ SK Brann",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 2.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:05.384691+00:00",
+          "summary": "copy ?, read 3s"
+        },
+        "surface_value": 14
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:42.650281+00:00",
+          "reading_age_seconds": 13.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:27.427855+00:00",
+          "summary": "copy 0s (fresh), read 14s"
+        },
+        "detail_value": 1,
+        "event_id": 15347245,
+        "fetch_gap_seconds": 333.7,
+        "field": "source.kalshi",
+        "matchup": "AGF Aarhus @ SK Brann",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 2.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:05.384691+00:00",
+          "summary": "copy ?, read 3s"
+        },
+        "surface_value": 4
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:42.650281+00:00",
+          "reading_age_seconds": 13.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:27.427855+00:00",
+          "summary": "copy 0s (fresh), read 14s"
+        },
+        "detail_value": 0,
+        "event_id": 15347245,
+        "fetch_gap_seconds": 333.7,
+        "field": "source.polymarket",
+        "matchup": "AGF Aarhus @ SK Brann",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 2.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:05.384691+00:00",
+          "summary": "copy ?, read 3s"
+        },
+        "surface_value": 4
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:42.650281+00:00",
+          "reading_age_seconds": 13.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:27.427855+00:00",
+          "summary": "copy 0s (fresh), read 14s"
+        },
+        "detail_value": 4,
+        "event_id": 15347245,
+        "fetch_gap_seconds": 333.7,
+        "field": "bookmaker_count",
+        "matchup": "AGF Aarhus @ SK Brann",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 2.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:05.384691+00:00",
+          "summary": "copy ?, read 3s"
+        },
+        "surface_value": 3
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:42.650281+00:00",
+          "reading_age_seconds": 13.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:27.427855+00:00",
+          "summary": "copy 0s (fresh), read 14s"
+        },
+        "detail_value": 1,
+        "event_id": 15347245,
+        "fetch_gap_seconds": 330.4,
+        "field": "headline_percent",
+        "matchup": "AGF Aarhus @ SK Brann",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 21.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:50.037265+00:00",
+          "summary": "copy 16s (miss), read 21s"
+        },
+        "surface_value": 8
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:42.650281+00:00",
+          "reading_age_seconds": 13.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:27.427855+00:00",
+          "summary": "copy 0s (fresh), read 14s"
+        },
+        "detail_value": 2,
+        "event_id": 15347245,
+        "fetch_gap_seconds": 330.4,
+        "field": "source.betting",
+        "matchup": "AGF Aarhus @ SK Brann",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 21.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:50.037265+00:00",
+          "summary": "copy 16s (miss), read 21s"
+        },
+        "surface_value": 14
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:42.650281+00:00",
+          "reading_age_seconds": 13.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:27.427855+00:00",
+          "summary": "copy 0s (fresh), read 14s"
+        },
+        "detail_value": 1,
+        "event_id": 15347245,
+        "fetch_gap_seconds": 330.4,
+        "field": "source.kalshi",
+        "matchup": "AGF Aarhus @ SK Brann",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 21.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:50.037265+00:00",
+          "summary": "copy 16s (miss), read 21s"
+        },
+        "surface_value": 6
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:42.650281+00:00",
+          "reading_age_seconds": 13.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:27.427855+00:00",
+          "summary": "copy 0s (fresh), read 14s"
+        },
+        "detail_value": 0,
+        "event_id": 15347245,
+        "fetch_gap_seconds": 330.4,
+        "field": "source.polymarket",
+        "matchup": "AGF Aarhus @ SK Brann",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 21.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:50.037265+00:00",
+          "summary": "copy 16s (miss), read 21s"
+        },
+        "surface_value": 6
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:42.650281+00:00",
+          "reading_age_seconds": 13.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:27.427855+00:00",
+          "summary": "copy 0s (fresh), read 14s"
+        },
+        "detail_value": 4,
+        "event_id": 15347245,
+        "fetch_gap_seconds": 330.4,
+        "field": "bookmaker_count",
+        "matchup": "AGF Aarhus @ SK Brann",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 21.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:50.037265+00:00",
+          "summary": "copy 16s (miss), read 21s"
+        },
+        "surface_value": 3
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:49.817316+00:00",
+          "reading_age_seconds": 0.0,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:49.423820+00:00",
+          "summary": "copy 0s (fresh), read 0s"
+        },
+        "detail_value": 98,
+        "event_id": 15343255,
+        "fetch_gap_seconds": 340.9,
+        "field": "headline_percent",
+        "matchup": "Benfica @ Viktoria Plze\u0148",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 2.7,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:05.326218+00:00",
+          "summary": "copy ?, read 3s"
+        },
+        "surface_value": 97
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:49.817316+00:00",
+          "reading_age_seconds": 0.0,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:49.423820+00:00",
+          "summary": "copy 0s (fresh), read 0s"
+        },
+        "detail_value": 97,
+        "event_id": 15343255,
+        "fetch_gap_seconds": 340.9,
+        "field": "source.betting",
+        "matchup": "Benfica @ Viktoria Plze\u0148",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 2.7,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:05.326218+00:00",
+          "summary": "copy ?, read 3s"
+        },
+        "surface_value": 96
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:49.817316+00:00",
+          "reading_age_seconds": 0.0,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:49.423820+00:00",
+          "summary": "copy 0s (fresh), read 0s"
+        },
+        "detail_value": 4,
+        "event_id": 15343255,
+        "fetch_gap_seconds": 340.9,
+        "field": "bookmaker_count",
+        "matchup": "Benfica @ Viktoria Plze\u0148",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 2.7,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:05.326218+00:00",
+          "summary": "copy ?, read 3s"
+        },
+        "surface_value": 6
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:49.817316+00:00",
+          "reading_age_seconds": 0.0,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:49.423820+00:00",
+          "summary": "copy 0s (fresh), read 0s"
+        },
+        "detail_value": 98,
+        "event_id": 15343255,
+        "fetch_gap_seconds": 337.6,
+        "field": "headline_percent",
+        "matchup": "Benfica @ Viktoria Plze\u0148",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 24.9,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:46.073250+00:00",
+          "summary": "copy 16s (miss), read 25s"
+        },
+        "surface_value": 97
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:49.817316+00:00",
+          "reading_age_seconds": 0.0,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:49.423820+00:00",
+          "summary": "copy 0s (fresh), read 0s"
+        },
+        "detail_value": 97,
+        "event_id": 15343255,
+        "fetch_gap_seconds": 337.6,
+        "field": "source.betting",
+        "matchup": "Benfica @ Viktoria Plze\u0148",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 24.9,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:46.073250+00:00",
+          "summary": "copy 16s (miss), read 25s"
+        },
+        "surface_value": 96
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:49.817316+00:00",
+          "reading_age_seconds": 0.0,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:04:49.423820+00:00",
+          "summary": "copy 0s (fresh), read 0s"
+        },
+        "detail_value": 4,
+        "event_id": 15343255,
+        "fetch_gap_seconds": 337.6,
+        "field": "bookmaker_count",
+        "matchup": "Benfica @ Viktoria Plze\u0148",
+        "sport_key": "soccer_uefa_europa_league",
+        "surface": "GET /api/feed?mode=sports",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": 16.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T18:59:12.231501+00:00",
+          "reading_age_seconds": 24.9,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:58:46.073250+00:00",
+          "summary": "copy 16s (miss), read 25s"
+        },
+        "surface_value": 6
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 9.4,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:05:11.338489+00:00",
+          "reading_age_seconds": 9.9,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:05:00.057674+00:00",
+          "summary": "copy 9s (cached), read 10s"
+        },
+        "detail_value": 35,
+        "event_id": 15354440,
+        "fetch_gap_seconds": 3.6,
+        "field": "headline_percent",
+        "matchup": "UCAM Esports Club @ Enterprise Esports",
+        "sport_key": "esports_other",
+        "surface": "GET /api/leagues/esports_other",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": 311.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T19:05:07.748950+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 5.2m, read ?"
+        },
+        "surface_value": 27
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 9.4,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:05:11.338489+00:00",
+          "reading_age_seconds": 9.9,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:05:00.057674+00:00",
+          "summary": "copy 9s (cached), read 10s"
+        },
+        "detail_value": 28,
+        "event_id": 15354440,
+        "fetch_gap_seconds": 3.6,
+        "field": "source.kalshi",
+        "matchup": "UCAM Esports Club @ Enterprise Esports",
+        "sport_key": "esports_other",
+        "surface": "GET /api/leagues/esports_other",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": 311.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T19:05:07.748950+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 5.2m, read ?"
+        },
+        "surface_value": 26
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 9.4,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:05:11.338489+00:00",
+          "reading_age_seconds": 9.9,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:05:00.057674+00:00",
+          "summary": "copy 9s (cached), read 10s"
+        },
+        "detail_value": 43,
+        "event_id": 15354440,
+        "fetch_gap_seconds": 3.6,
+        "field": "source.polymarket",
+        "matchup": "UCAM Esports Club @ Enterprise Esports",
+        "sport_key": "esports_other",
+        "surface": "GET /api/leagues/esports_other",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": 311.3,
+          "copy_age_source": "envelope_built_at",
+          "fetched_at": "2026-11-26T19:05:07.748950+00:00",
+          "reading_age_seconds": null,
+          "reading_age_source": null,
+          "reading_observed_at": null,
+          "summary": "copy 5.2m, read ?"
+        },
+        "surface_value": 28
       }
     ],
-    "disagreements_count": 8,
+    "disagreements_count": 33,
     "games_selected": 60,
     "games_verified": 60,
     "live_tick_drifts": [
       {
-        "event_id": 15353604,
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 5.8,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:00:54.263054+00:00",
+          "reading_age_seconds": 62.9,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T18:59:50.075833+00:00",
+          "summary": "copy 6s (cached), read 63s"
+        },
+        "event_id": 15345706,
+        "fetch_gap_seconds": 3.3,
         "initial_diffs": [
           {
-            "detail_value": 60,
-            "event_id": 15353604,
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:00:47.546935+00:00",
+              "reading_age_seconds": 55.9,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T18:59:50.075833+00:00",
+              "summary": "copy 0s (fresh), read 56s"
+            },
+            "detail_value": 20,
+            "event_id": 15345706,
+            "fetch_gap_seconds": 98.6,
             "field": "headline_percent",
-            "matchup": "NAVI Junior @ STATE",
-            "sport_key": "esports",
+            "matchup": "AS Monaco @ Hearts",
+            "sport_key": "soccer_uefa_europa_conference_league",
             "surface": "GET /api/events?status=live",
-            "surface_value": 66
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+              "reading_age_seconds": 22.7,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T18:58:45.338416+00:00",
+              "summary": "copy ?, read 23s"
+            },
+            "surface_value": 19
           },
           {
-            "detail_value": 62,
-            "event_id": 15353604,
-            "field": "source.kalshi",
-            "matchup": "NAVI Junior @ STATE",
-            "sport_key": "esports",
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:00:47.546935+00:00",
+              "reading_age_seconds": 55.9,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T18:59:50.075833+00:00",
+              "summary": "copy 0s (fresh), read 56s"
+            },
+            "detail_value": 20,
+            "event_id": 15345706,
+            "fetch_gap_seconds": 98.6,
+            "field": "source.betting",
+            "matchup": "AS Monaco @ Hearts",
+            "sport_key": "soccer_uefa_europa_conference_league",
             "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+              "reading_age_seconds": 22.7,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T18:58:45.338416+00:00",
+              "summary": "copy ?, read 23s"
+            },
+            "surface_value": 19
+          }
+        ],
+        "is_live": true,
+        "matchup": "AS Monaco @ Hearts",
+        "sport_key": "soccer_uefa_europa_conference_league",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:00:50.941951+00:00",
+          "reading_age_seconds": 59.9,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:50.075833+00:00",
+          "summary": "copy ?, read 60s"
+        }
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:01.469355+00:00",
+          "reading_age_seconds": 1539.4,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T18:38:21.598694+00:00",
+          "summary": "copy 7s (cached), read 25.7m"
+        },
+        "event_id": 15350436,
+        "fetch_gap_seconds": 3.3,
+        "initial_diffs": [
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:03:54.350486+00:00",
+              "reading_age_seconds": 1531.4,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T18:38:21.598694+00:00",
+              "summary": "copy 0s (fresh), read 25.5m"
+            },
+            "detail_value": 68,
+            "event_id": 15350436,
+            "fetch_gap_seconds": 286.4,
+            "field": "source.polymarket",
+            "matchup": "Willem II @ Groningen",
+            "sport_key": "soccer_netherlands_eredivisie",
+            "surface": "GET /api/events?status=scheduled",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T18:59:07.989010+00:00",
+              "reading_age_seconds": 1241.4,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T18:38:21.598694+00:00",
+              "summary": "copy ?, read 20.7m"
+            },
             "surface_value": 69
-          },
-          {
-            "detail_value": 58,
-            "event_id": 15353604,
-            "field": "source.polymarket",
-            "matchup": "NAVI Junior @ STATE",
-            "sport_key": "esports",
-            "surface": "GET /api/events?status=live",
-            "surface_value": 64
-          }
-        ],
-        "is_live": true,
-        "matchup": "NAVI Junior @ STATE",
-        "sport_key": "esports",
-        "surface": "GET /api/events?status=live"
-      },
-      {
-        "event_id": 15354273,
-        "initial_diffs": [
-          {
-            "detail_value": 28,
-            "event_id": 15354273,
-            "field": "headline_percent",
-            "matchup": "Bianchi/Sheehy @ Matuszewski/Werblinski",
-            "sport_key": "tennis_other",
-            "surface": "GET /api/events?status=live",
-            "surface_value": 32
-          },
-          {
-            "detail_value": 28,
-            "event_id": 15354273,
-            "field": "source.polymarket",
-            "matchup": "Bianchi/Sheehy @ Matuszewski/Werblinski",
-            "sport_key": "tennis_other",
-            "surface": "GET /api/events?status=live",
-            "surface_value": 32
-          }
-        ],
-        "is_live": true,
-        "matchup": "Bianchi/Sheehy @ Matuszewski/Werblinski",
-        "sport_key": "tennis_other",
-        "surface": "GET /api/events?status=live"
-      },
-      {
-        "event_id": 15353364,
-        "initial_diffs": [
-          {
-            "detail_value": 15,
-            "event_id": 15353364,
-            "field": "headline_percent",
-            "matchup": "China @ Saudi Arabia",
-            "sport_key": "basketball_other",
-            "surface": "GET /api/events?status=scheduled",
-            "surface_value": 13
-          },
-          {
-            "detail_value": 15,
-            "event_id": 15353364,
-            "field": "source.polymarket",
-            "matchup": "China @ Saudi Arabia",
-            "sport_key": "basketball_other",
-            "surface": "GET /api/events?status=scheduled",
-            "surface_value": 13
           }
         ],
         "is_live": false,
-        "matchup": "China @ Saudi Arabia",
-        "sport_key": "basketball_other",
-        "surface": "GET /api/events?status=scheduled"
+        "matchup": "Willem II @ Groningen",
+        "sport_key": "soccer_netherlands_eredivisie",
+        "surface": "GET /api/events?status=scheduled",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:03:58.172360+00:00",
+          "reading_age_seconds": 1535.4,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:38:21.598694+00:00",
+          "summary": "copy ?, read 25.6m"
+        }
       },
       {
-        "event_id": 15354264,
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 7.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:28.136514+00:00",
+          "reading_age_seconds": 28.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:03:58.389659+00:00",
+          "summary": "copy 8s (cached), read 29s"
+        },
+        "event_id": 15347415,
+        "fetch_gap_seconds": 0.0,
         "initial_diffs": [
           {
-            "detail_value": 28,
-            "event_id": 15354264,
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:04:19.867172+00:00",
+              "reading_age_seconds": 19.6,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T19:03:58.389659+00:00",
+              "summary": "copy 0s (fresh), read 20s"
+            },
+            "detail_value": 99,
+            "event_id": 15347415,
+            "fetch_gap_seconds": 253.8,
             "field": "source.polymarket",
-            "matchup": "Kitchee @ Gangwon FC",
+            "matchup": "Ararat-Armenia FA @ FC Red Bull Salzburg",
+            "sport_key": "soccer_other",
+            "surface": "GET /api/events/search",
+            "surface_copy_age": {
+              "cache_status": "miss",
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T19:00:06.020976+00:00",
+              "reading_age_seconds": 0.4,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T19:00:00.604472+00:00",
+              "summary": "copy ? (miss), read 0s"
+            },
+            "surface_value": 98
+          }
+        ],
+        "is_live": true,
+        "matchup": "Ararat-Armenia FA @ FC Red Bull Salzburg",
+        "sport_key": "soccer_other",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "miss",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:04:28.129529+00:00",
+          "reading_age_seconds": 23.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T19:03:58.389659+00:00",
+          "summary": "copy ? (miss), read 24s"
+        }
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 14.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:04:35.337844+00:00",
+          "reading_age_seconds": 35.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:03:58.389659+00:00",
+          "summary": "copy 14s (cached), read 36s"
+        },
+        "event_id": 15347415,
+        "fetch_gap_seconds": 3.4,
+        "initial_diffs": [
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:04:19.867172+00:00",
+              "reading_age_seconds": 19.6,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T19:03:58.389659+00:00",
+              "summary": "copy 0s (fresh), read 20s"
+            },
+            "detail_value": 99,
+            "event_id": 15347415,
+            "fetch_gap_seconds": 310.9,
+            "field": "source.polymarket",
+            "matchup": "Ararat-Armenia FA @ FC Red Bull Salzburg",
             "sport_key": "soccer_other",
             "surface": "GET /api/events?status=live",
-            "surface_value": 34
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+              "reading_age_seconds": 0.8,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T18:59:07.212564+00:00",
+              "summary": "copy ?, read 1s"
+            },
+            "surface_value": 98
           }
         ],
         "is_live": true,
-        "matchup": "Kitchee @ Gangwon FC",
+        "matchup": "Ararat-Armenia FA @ FC Red Bull Salzburg",
         "sport_key": "soccer_other",
-        "surface": "GET /api/events?status=live"
-      },
-      {
-        "event_id": 15354247,
-        "initial_diffs": [
-          {
-            "detail_value": 65,
-            "event_id": 15354247,
-            "field": "headline_percent",
-            "matchup": "Morillo/Mazdrashki @ Kravchenko/Quilez",
-            "sport_key": "tennis_other",
-            "surface": "GET /api/events?status=live",
-            "surface_value": 67
-          },
-          {
-            "detail_value": 65,
-            "event_id": 15354247,
-            "field": "source.polymarket",
-            "matchup": "Morillo/Mazdrashki @ Kravchenko/Quilez",
-            "sport_key": "tennis_other",
-            "surface": "GET /api/events?status=live",
-            "surface_value": 67
-          }
-        ],
-        "is_live": true,
-        "matchup": "Morillo/Mazdrashki @ Kravchenko/Quilez",
-        "sport_key": "tennis_other",
-        "surface": "GET /api/events?status=live"
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T19:04:31.902812+00:00",
+          "reading_age_seconds": 32.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T19:03:58.389659+00:00",
+          "summary": "copy ?, read 33s"
+        }
       }
     ],
-    "live_tick_drifts_count": 5,
+    "live_tick_drifts_count": 4,
     "sports_covered": [
       "americanfootball_ncaaf",
       "americanfootball_nfl",
       "aussierules_aflw",
+      "basketball_nba",
       "basketball_ncaab",
       "basketball_other",
       "basketball_wncaab",
@@ -243,7 +1298,6 @@
       "icehockey_mestis",
       "icehockey_nhl",
       "icehockey_sweden_allsvenskan",
-      "icehockey_sweden_hockey_league",
       "mma_mixed_martial_arts",
       "soccer_australia_aleague",
       "soccer_austria_bundesliga",
@@ -259,6 +1313,8 @@
       "soccer_germany_bundesliga2",
       "soccer_germany_liga3",
       "soccer_italy_serie_a",
+      "soccer_japan_j_league",
+      "soccer_korea_kleague1",
       "soccer_mexico_ligamx",
       "soccer_netherlands_eredivisie",
       "soccer_other",
@@ -270,25 +1326,286 @@
       "soccer_turkey_super_league",
       "soccer_uefa_europa_conference_league",
       "soccer_uefa_europa_league",
+      "soccer_usa_mls",
       "tennis_atp",
       "tennis_other",
       "tennis_wta"
     ],
-    "surface_comparisons": 86,
-    "unconfirmed_disagreements": [],
-    "unconfirmed_disagreements_count": 0
+    "surface_comparisons": 87,
+    "unconfirmed_disagreements": [
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:01:19.538983+00:00",
+          "reading_age_seconds": 0.0,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:01:19.421557+00:00",
+          "summary": "copy 0s (fresh), read 0s"
+        },
+        "event_id": 15354439,
+        "initial_diffs": [
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:01:19.538983+00:00",
+              "reading_age_seconds": 0.0,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T19:01:19.421557+00:00",
+              "summary": "copy 0s (fresh), read 0s"
+            },
+            "detail_value": 83,
+            "event_id": 15354439,
+            "fetch_gap_seconds": 130.6,
+            "field": "headline_percent",
+            "matchup": "Bar\u00e7a eSports @ NAVI Junior",
+            "sport_key": "esports_other",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+              "reading_age_seconds": 0.0,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T18:59:08.222946+00:00",
+              "summary": "copy ?, read 0s"
+            },
+            "surface_value": 80
+          },
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:01:19.538983+00:00",
+              "reading_age_seconds": 0.0,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T19:01:19.421557+00:00",
+              "summary": "copy 0s (fresh), read 0s"
+            },
+            "detail_value": 85,
+            "event_id": 15354439,
+            "fetch_gap_seconds": 130.6,
+            "field": "source.kalshi",
+            "matchup": "Bar\u00e7a eSports @ NAVI Junior",
+            "sport_key": "esports_other",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+              "reading_age_seconds": 0.0,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T18:59:08.222946+00:00",
+              "summary": "copy ?, read 0s"
+            },
+            "surface_value": 81
+          },
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:01:19.538983+00:00",
+              "reading_age_seconds": 0.0,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T19:01:19.421557+00:00",
+              "summary": "copy 0s (fresh), read 0s"
+            },
+            "detail_value": 82,
+            "event_id": 15354439,
+            "fetch_gap_seconds": 130.6,
+            "field": "source.polymarket",
+            "matchup": "Bar\u00e7a eSports @ NAVI Junior",
+            "sport_key": "esports_other",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+              "reading_age_seconds": 0.0,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T18:59:08.222946+00:00",
+              "summary": "copy ?, read 0s"
+            },
+            "surface_value": 79
+          }
+        ],
+        "is_live": false,
+        "matchup": "Bar\u00e7a eSports @ NAVI Junior",
+        "reason": "list_reread_failed",
+        "sport_key": "esports_other",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 0.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:08.222946+00:00",
+          "summary": "copy ?, read 0s"
+        }
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "fresh",
+          "copy_age_seconds": 0.0,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-26T19:05:00.601203+00:00",
+          "reading_age_seconds": 0.0,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-26T19:05:00.057674+00:00",
+          "summary": "copy 0s (fresh), read 0s"
+        },
+        "event_id": 15354440,
+        "initial_diffs": [
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:05:00.601203+00:00",
+              "reading_age_seconds": 0.0,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T19:05:00.057674+00:00",
+              "summary": "copy 0s (fresh), read 0s"
+            },
+            "detail_value": 35,
+            "event_id": 15354440,
+            "fetch_gap_seconds": 351.7,
+            "field": "headline_percent",
+            "matchup": "UCAM Esports Club @ Enterprise Esports",
+            "sport_key": "esports_other",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+              "reading_age_seconds": 0.5,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T18:59:07.491832+00:00",
+              "summary": "copy ?, read 0s"
+            },
+            "surface_value": 26
+          },
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:05:00.601203+00:00",
+              "reading_age_seconds": 0.0,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T19:05:00.057674+00:00",
+              "summary": "copy 0s (fresh), read 0s"
+            },
+            "detail_value": 28,
+            "event_id": 15354440,
+            "fetch_gap_seconds": 351.7,
+            "field": "source.kalshi",
+            "matchup": "UCAM Esports Club @ Enterprise Esports",
+            "sport_key": "esports_other",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+              "reading_age_seconds": 0.5,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T18:59:07.491832+00:00",
+              "summary": "copy ?, read 0s"
+            },
+            "surface_value": 26
+          },
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-26T19:05:00.601203+00:00",
+              "reading_age_seconds": 0.0,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-26T19:05:00.057674+00:00",
+              "summary": "copy 0s (fresh), read 0s"
+            },
+            "detail_value": 43,
+            "event_id": 15354440,
+            "fetch_gap_seconds": 351.7,
+            "field": "source.polymarket",
+            "matchup": "UCAM Esports Club @ Enterprise Esports",
+            "sport_key": "esports_other",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+              "reading_age_seconds": 0.5,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-26T18:59:07.491832+00:00",
+              "summary": "copy ?, read 0s"
+            },
+            "surface_value": 26
+          }
+        ],
+        "is_live": false,
+        "matchup": "UCAM Esports Club @ Enterprise Esports",
+        "reason": "list_reread_failed",
+        "sport_key": "esports_other",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-26T18:59:08.924967+00:00",
+          "reading_age_seconds": 0.5,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-26T18:59:07.491832+00:00",
+          "summary": "copy ?, read 0s"
+        }
+      }
+    ],
+    "unconfirmed_disagreements_count": 2
   },
-  "live_commit": "712f23be",
+  "live_commit": "becb7053",
   "overall_status": "FAIL",
   "pace_seconds": 3.6,
   "requests_made": 104,
   "schema_version": 1,
   "stale_sportsbook_census": {
-    "scheduled_total": 467,
-    "scheduled_with_betting": 114,
-    "stale_games": [],
-    "stale_over_threshold_count": 0,
+    "scheduled_total": 471,
+    "scheduled_with_betting": 126,
+    "stale_games": [
+      {
+        "age_hours": 72.36,
+        "betting_updated_at": "2026-11-23T18:37:39.571123+00:00",
+        "bookmaker_count": 6,
+        "commence_time": "2026-11-25T00:00:00+00:00",
+        "id": 15353293,
+        "matchup": "Cruz Azul @ Le\u00f3n",
+        "sport_key": "soccer_mexico_ligamx"
+      },
+      {
+        "age_hours": 72.36,
+        "betting_updated_at": "2026-11-23T18:37:39.601914+00:00",
+        "bookmaker_count": 6,
+        "commence_time": "2026-11-25T00:00:00+00:00",
+        "id": 15353294,
+        "matchup": "Guadalajara @ Pachuca",
+        "sport_key": "soccer_mexico_ligamx"
+      }
+    ],
+    "stale_over_threshold_count": 2,
     "stale_threshold_hours": 72.0
   },
-  "status_summary": "8 list-vs-page disagreement(s) across 60 game(s) read."
+  "status_summary": "33 list-vs-page disagreement(s); 2 scheduled game(s) over 72h stale; 2 re-read(s) unconfirmed across 60 game(s) read."
 }
