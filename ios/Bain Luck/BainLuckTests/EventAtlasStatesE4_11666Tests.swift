@@ -354,6 +354,10 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
             contentsOf: root.appendingPathComponent("Views/EventDetailView.swift"),
             encoding: .utf8
         )
+        let statesSrc = try String(
+            contentsOf: root.appendingPathComponent("Components/EventAtlasStates11666.swift"),
+            encoding: .utf8
+        )
         let catalogSrc = try String(
             contentsOf: root.appendingPathComponent("Components/AllMarketsCatalogView9483.swift"),
             encoding: .utf8
@@ -364,8 +368,8 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
         )
 
         XCTAssertTrue(detailSrc.contains("ProgressView(EventAtlasStates11666.loading)"))
-        XCTAssertTrue(detailSrc.contains("EventAtlasStates11666.heroStateLabel("))
-        XCTAssertTrue(detailSrc.contains("EventAtlasHeroStateLabelView11666(label: stateLabel)"))
+        XCTAssertTrue(statesSrc.contains("static func heroStateLabel("))
+        XCTAssertTrue(statesSrc.contains("struct EventAtlasHeroStateLabelView11666: View"))
         XCTAssertTrue(catalogSrc.contains("case .stale: return atlasEnabled ? EventAtlasStates11666.noRecentPrice : noRecentPrice"))
         XCTAssertTrue(specialSrc.contains("EventAtlasStates11666.verdictDisplay(verdicts: allVerdicts, atlasEnabled: true)"))
         XCTAssertTrue(specialSrc.contains("resolvedVerdictText(for: o, verdict: v"))
