@@ -3087,7 +3087,11 @@ struct DiscoverView: View {
             await refreshFeed()
         }
         .sheet(isPresented: $showOnboarding) {
-            FirstRunChecklistRootView364A(arrivedHeadline: FirstRunLinkHandoffBridge212A.currentHeadline()) {
+            let arrivedHeadline = FirstRunLinkHandoffBridge212A.currentHeadline()
+            FirstRunChecklistRootView364A(
+                arrivedHeadline: arrivedHeadline,
+                entryPoint: arrivedHeadline == nil ? "first_launch" : "shared_link"
+            ) {
                 firstRunPreferences = FirstRunPreferences212A.load()
                 firstRunPrefsVersion &+= 1
                 pullEpoch &+= 1
