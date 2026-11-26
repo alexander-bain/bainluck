@@ -1,0 +1,294 @@
+{
+  "base_url": "https://api.bainluck.com",
+  "date": "2026-11-26",
+  "generated_at": "2026-11-26T11:40:39.570134+00:00",
+  "http_errors": [],
+  "http_errors_count": 0,
+  "list_vs_page": {
+    "disagreements": [
+      {
+        "detail_value": 15,
+        "event_id": 15353364,
+        "field": "headline_percent",
+        "matchup": "China @ Saudi Arabia",
+        "sport_key": "basketball_other",
+        "surface": "GET /api/leagues/basketball_other",
+        "surface_value": 13
+      },
+      {
+        "detail_value": 15,
+        "event_id": 15353364,
+        "field": "source.polymarket",
+        "matchup": "China @ Saudi Arabia",
+        "sport_key": "basketball_other",
+        "surface": "GET /api/leagues/basketball_other",
+        "surface_value": 13
+      },
+      {
+        "detail_value": 76,
+        "event_id": 15352142,
+        "field": "headline_percent",
+        "matchup": "Melbourne Demons @ North Melbourne Kangaroos",
+        "sport_key": "aussierules_aflw",
+        "surface": "GET /api/leagues/aussierules_aflw",
+        "surface_value": 77
+      },
+      {
+        "detail_value": 0,
+        "event_id": 15353799,
+        "field": "headline_percent",
+        "matchup": "Unsettled Resentment @ Any Questions Gaming",
+        "sport_key": "esports",
+        "surface": "GET /api/events?status=live",
+        "surface_value": 1
+      },
+      {
+        "detail_value": [
+          "polymarket"
+        ],
+        "event_id": 15353799,
+        "field": "source_keys",
+        "matchup": "Unsettled Resentment @ Any Questions Gaming",
+        "sport_key": "esports",
+        "surface": "GET /api/events?status=live",
+        "surface_value": [
+          "kalshi",
+          "polymarket"
+        ]
+      },
+      {
+        "detail_value": 3,
+        "event_id": 15354400,
+        "field": "headline_percent",
+        "matchup": "Kirkin @ Maute",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events?status=live",
+        "surface_value": 2
+      },
+      {
+        "detail_value": 3,
+        "event_id": 15354400,
+        "field": "source.polymarket",
+        "matchup": "Kirkin @ Maute",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events?status=live",
+        "surface_value": 2
+      },
+      {
+        "detail_value": 40,
+        "event_id": 15353386,
+        "field": "headline_percent",
+        "matchup": "South Korea @ Qatar",
+        "sport_key": "basketball_other",
+        "surface": "GET /api/leagues/basketball_other",
+        "surface_value": 39
+      }
+    ],
+    "disagreements_count": 8,
+    "games_selected": 60,
+    "games_verified": 60,
+    "live_tick_drifts": [
+      {
+        "event_id": 15353604,
+        "initial_diffs": [
+          {
+            "detail_value": 60,
+            "event_id": 15353604,
+            "field": "headline_percent",
+            "matchup": "NAVI Junior @ STATE",
+            "sport_key": "esports",
+            "surface": "GET /api/events?status=live",
+            "surface_value": 66
+          },
+          {
+            "detail_value": 62,
+            "event_id": 15353604,
+            "field": "source.kalshi",
+            "matchup": "NAVI Junior @ STATE",
+            "sport_key": "esports",
+            "surface": "GET /api/events?status=live",
+            "surface_value": 69
+          },
+          {
+            "detail_value": 58,
+            "event_id": 15353604,
+            "field": "source.polymarket",
+            "matchup": "NAVI Junior @ STATE",
+            "sport_key": "esports",
+            "surface": "GET /api/events?status=live",
+            "surface_value": 64
+          }
+        ],
+        "is_live": true,
+        "matchup": "NAVI Junior @ STATE",
+        "sport_key": "esports",
+        "surface": "GET /api/events?status=live"
+      },
+      {
+        "event_id": 15354273,
+        "initial_diffs": [
+          {
+            "detail_value": 28,
+            "event_id": 15354273,
+            "field": "headline_percent",
+            "matchup": "Bianchi/Sheehy @ Matuszewski/Werblinski",
+            "sport_key": "tennis_other",
+            "surface": "GET /api/events?status=live",
+            "surface_value": 32
+          },
+          {
+            "detail_value": 28,
+            "event_id": 15354273,
+            "field": "source.polymarket",
+            "matchup": "Bianchi/Sheehy @ Matuszewski/Werblinski",
+            "sport_key": "tennis_other",
+            "surface": "GET /api/events?status=live",
+            "surface_value": 32
+          }
+        ],
+        "is_live": true,
+        "matchup": "Bianchi/Sheehy @ Matuszewski/Werblinski",
+        "sport_key": "tennis_other",
+        "surface": "GET /api/events?status=live"
+      },
+      {
+        "event_id": 15353364,
+        "initial_diffs": [
+          {
+            "detail_value": 15,
+            "event_id": 15353364,
+            "field": "headline_percent",
+            "matchup": "China @ Saudi Arabia",
+            "sport_key": "basketball_other",
+            "surface": "GET /api/events?status=scheduled",
+            "surface_value": 13
+          },
+          {
+            "detail_value": 15,
+            "event_id": 15353364,
+            "field": "source.polymarket",
+            "matchup": "China @ Saudi Arabia",
+            "sport_key": "basketball_other",
+            "surface": "GET /api/events?status=scheduled",
+            "surface_value": 13
+          }
+        ],
+        "is_live": false,
+        "matchup": "China @ Saudi Arabia",
+        "sport_key": "basketball_other",
+        "surface": "GET /api/events?status=scheduled"
+      },
+      {
+        "event_id": 15354264,
+        "initial_diffs": [
+          {
+            "detail_value": 28,
+            "event_id": 15354264,
+            "field": "source.polymarket",
+            "matchup": "Kitchee @ Gangwon FC",
+            "sport_key": "soccer_other",
+            "surface": "GET /api/events?status=live",
+            "surface_value": 34
+          }
+        ],
+        "is_live": true,
+        "matchup": "Kitchee @ Gangwon FC",
+        "sport_key": "soccer_other",
+        "surface": "GET /api/events?status=live"
+      },
+      {
+        "event_id": 15354247,
+        "initial_diffs": [
+          {
+            "detail_value": 65,
+            "event_id": 15354247,
+            "field": "headline_percent",
+            "matchup": "Morillo/Mazdrashki @ Kravchenko/Quilez",
+            "sport_key": "tennis_other",
+            "surface": "GET /api/events?status=live",
+            "surface_value": 67
+          },
+          {
+            "detail_value": 65,
+            "event_id": 15354247,
+            "field": "source.polymarket",
+            "matchup": "Morillo/Mazdrashki @ Kravchenko/Quilez",
+            "sport_key": "tennis_other",
+            "surface": "GET /api/events?status=live",
+            "surface_value": 67
+          }
+        ],
+        "is_live": true,
+        "matchup": "Morillo/Mazdrashki @ Kravchenko/Quilez",
+        "sport_key": "tennis_other",
+        "surface": "GET /api/events?status=live"
+      }
+    ],
+    "live_tick_drifts_count": 5,
+    "sports_covered": [
+      "americanfootball_ncaaf",
+      "americanfootball_nfl",
+      "aussierules_aflw",
+      "basketball_ncaab",
+      "basketball_other",
+      "basketball_wncaab",
+      "boxing_boxing",
+      "cricket_international_t20",
+      "cricket_test_match",
+      "esports",
+      "esports_other",
+      "handball_germany_bundesliga",
+      "icehockey_ahl",
+      "icehockey_liiga",
+      "icehockey_mestis",
+      "icehockey_nhl",
+      "icehockey_sweden_allsvenskan",
+      "icehockey_sweden_hockey_league",
+      "mma_mixed_martial_arts",
+      "soccer_australia_aleague",
+      "soccer_austria_bundesliga",
+      "soccer_belgium_first_div",
+      "soccer_brazil_campeonato",
+      "soccer_brazil_serie_b",
+      "soccer_denmark_superliga",
+      "soccer_efl_champ",
+      "soccer_england_league1",
+      "soccer_epl",
+      "soccer_france_ligue_one",
+      "soccer_germany_bundesliga",
+      "soccer_germany_bundesliga2",
+      "soccer_germany_liga3",
+      "soccer_italy_serie_a",
+      "soccer_mexico_ligamx",
+      "soccer_netherlands_eredivisie",
+      "soccer_other",
+      "soccer_poland_ekstraklasa",
+      "soccer_portugal_primeira_liga",
+      "soccer_saudi_arabia_pro_league",
+      "soccer_spain_la_liga",
+      "soccer_spain_segunda_division",
+      "soccer_turkey_super_league",
+      "soccer_uefa_europa_conference_league",
+      "soccer_uefa_europa_league",
+      "tennis_atp",
+      "tennis_other",
+      "tennis_wta"
+    ],
+    "surface_comparisons": 86,
+    "unconfirmed_disagreements": [],
+    "unconfirmed_disagreements_count": 0
+  },
+  "live_commit": "712f23be",
+  "overall_status": "FAIL",
+  "pace_seconds": 3.6,
+  "requests_made": 104,
+  "schema_version": 1,
+  "stale_sportsbook_census": {
+    "scheduled_total": 467,
+    "scheduled_with_betting": 114,
+    "stale_games": [],
+    "stale_over_threshold_count": 0,
+    "stale_threshold_hours": 72.0
+  },
+  "status_summary": "8 list-vs-page disagreement(s) across 60 game(s) read."
+}
