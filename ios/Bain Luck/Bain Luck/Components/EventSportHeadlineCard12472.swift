@@ -50,7 +50,8 @@ struct EventSportHeadlineCard12472: View {
             nowFontSize: nowScaledSize,
             secondProminentFontSize: secondProminentScaledSize,
             secondRegularFontSize: secondRegularScaledSize,
-            headerFontSize: headerScaledSize
+            headerFontSize: headerScaledSize,
+            quietFontSize: baseQuietSize
         )
     }
 
@@ -623,6 +624,17 @@ struct EventSportHeadlineCard12472: View {
         case .now, .chance:
             if text.isEmpty {
                 Color.clear.frame(height: 1)
+            } else if row.quietNoticeColumns.contains(columnIndex) {
+                let quietSize = min(baseQuietSize, stacksRowsVertically ? 18 : 13)
+                let noticeInk = colorScheme == .dark ? DS.textSecondaryReadable : HeadlineStyleTable199.quietInk
+                Text(text)
+                    .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: false, scaledSize: quietSize))
+                    .foregroundStyle(noticeInk)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 0.90 : 0.85)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("\(column.header.isEmpty ? "Chance" : column.header) \(text)")
             } else {
                 Text(text)
                     .font(HeadlineStyleTable199.now(.page, scaledSize: effectiveNowSize))
