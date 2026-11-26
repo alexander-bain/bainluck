@@ -49,7 +49,10 @@ function hourLabel(hour: number) {
   return `${hour % 12 || 12} ${hour < 12 ? "AM" : "PM"}`;
 }
 
-export default function CrewCard({ identity, name, pose, clockedIn, station, change, post, update, voice, habits, now, titleId }: {
+export default function CrewCard({
+  identity, name, pose, clockedIn, station, change, post, update, voice, habits, now, titleId,
+  checkInIssue = 12779, // The source for snapshots from before the NOW cutover.
+}: {
   identity: CrewIdentity;
   name: string;
   pose: WorkerState;
@@ -57,6 +60,7 @@ export default function CrewCard({ identity, name, pose, clockedIn, station, cha
   station?: Station;
   change?: Change;
   post?: CrewPost;
+  checkInIssue?: number;
   update?: LaneUpdate;
   voice?: LaneSpeech;
   habits?: CrewHabits;
@@ -66,6 +70,9 @@ export default function CrewCard({ identity, name, pose, clockedIn, station, cha
   const longest = habits?.longest;
   const recentPost = post && recentlyActive(post.at, now) ? post : undefined;
   const checkIn = post ? `Posted on NOW at ${time(post.at)} PT` : undefined;
+  const checkInHref = post?.comment_id && Number.isSafeInteger(checkInIssue) && checkInIssue > 0
+    ? `https://github.com/alexander-bain/bainluck/issues/${checkInIssue}#issuecomment-${post.comment_id}`
+    : undefined;
   const detail = stationDetail(change);
   return (
     <div className={styles.builderCard} data-crew={identity} data-pose={pose}>
@@ -90,8 +97,8 @@ export default function CrewCard({ identity, name, pose, clockedIn, station, cha
         </>
       ) : checkIn ? (
         <p className={styles.crewSpeech} data-source="check-in">
-          {post?.comment_id ? (
-            <a href={`https://github.com/alexander-bain/bainluck/issues/12779#issuecomment-${post.comment_id}`}
+          {checkInHref ? (
+            <a href={checkInHref}
               target="_blank" rel="noreferrer">{checkIn}</a>
           ) : checkIn}
         </p>
