@@ -107,6 +107,21 @@ def classify_heroku_push(
     return 0, "Heroku push exited 0 with no failure signatures."
 
 
+def is_missing_release_done_only(log_text: str, push_exit: int) -> bool:
+    """Return True iff the only failure is omitted ``Waiting for release.... done.`` on exit 0."""
+    unstrict_code, _ = classify_heroku_push(
+        log_text,
+        push_exit,
+        require_release_done=False,
+    )
+    strict_code, _ = classify_heroku_push(
+        log_text,
+        push_exit,
+        require_release_done=True,
+    )
+    return unstrict_code == 0 and strict_code == 1
+
+
 def _heroku_get(
     path: str,
     token: str,
@@ -256,8 +271,19 @@ def main(argv: list[str] | None = None) -> int:
         require_release_done=args.require_release_done,
     )
     if code != 0:
-        print(f"HEROKU_PUSH_CHECK[{code}]: {reason}", file=sys.stderr)
-        return code
+        if (
+            args.require_release_done
+            and args.verify_api
+            and os.environ.get("HEROKU_SKIP_API_VERIFY") != "1"
+            and is_missing_release_done_only(log_text, args.push_exit)
+        ):
+            print(
+                f"HEROKU_PUSH_CHECK: {reason} Falling back to Heroku Releases API verification.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"HEROKU_PUSH_CHECK[{code}]: {reason}", file=sys.stderr)
+            return code
 
     if args.verify_api and os.environ.get("HEROKU_SKIP_API_VERIFY") != "1":
         token = (
