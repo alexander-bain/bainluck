@@ -569,7 +569,7 @@ def _bundle_subtitle(measure: str, count: int) -> str:
     :func:`_measure_key` is what makes each sentence true of every member under it.
     """
     if measure == "ipo_valuation":
-        return "Which of these companies is valued highest to list?"
+        return "Which of these companies lists at the highest valuation?"
     if measure == "commodity_ranges":
         return "Where do these commodity prices land?"
     if measure == "rotten_tomatoes_scores":

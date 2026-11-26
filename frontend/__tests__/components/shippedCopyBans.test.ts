@@ -1596,7 +1596,9 @@ describe("Item 6 / #13844 follow-up — reader lines written in code carry no ba
     return out;
   }
 
-  it("pins all retired code-written reader lines under price-family", () => {
+  const UNAVAILABLE_WORDING_RE = /\b(?:probability|price)\s+unavailable\b/i;
+
+  it("pins all retired code-written reader lines under price-family and unavailable wording guard", () => {
     const retired = [
       "Which of these companies is priced highest to list?",
       "Who goes public, and at what price?",
@@ -1610,6 +1612,15 @@ describe("Item 6 / #13844 follow-up — reader lines written in code carry no ba
     ];
     for (const sentence of retired) {
       expect(findBannedCopy(sentence, ALL_COPY_BANS).map((h) => h.ban.id)).toContain("price-family");
+    }
+    const unavailableRetired = [
+      "Price unavailable · Dec 31",
+      "Will X happen? — price unavailable",
+      "Probability unavailable · Dec 31",
+      "Will X happen? — probability unavailable",
+    ];
+    for (const sentence of unavailableRetired) {
+      expect(sentence).toMatch(UNAVAILABLE_WORDING_RE);
     }
     expect("Shaded cells show served chances across both title races.").toMatch(/\bserved chances\b/i);
   });
@@ -1653,6 +1664,9 @@ describe("Item 6 / #13844 follow-up — reader lines written in code carry no ba
       }
       if (/\bserved chances\b/i.test(text)) {
         failures.push(`${loc} [served-chances]: ${JSON.stringify(text)}`);
+      }
+      if (UNAVAILABLE_WORDING_RE.test(text)) {
+        failures.push(`${loc} [unavailable-wording]: ${JSON.stringify(text)}`);
       }
     }
     expect(failures).toEqual([]);
@@ -1703,6 +1717,9 @@ describe("Item 6 / #13844 follow-up — reader lines written in code carry no ba
         }
         if (/\bserved chances\b/i.test(literal)) {
           failures.push(`${rel} [served-chances]: ${JSON.stringify(literal)}`);
+        }
+        if (UNAVAILABLE_WORDING_RE.test(literal)) {
+          failures.push(`${rel} [unavailable-wording]: ${JSON.stringify(literal)}`);
         }
       }
     }
