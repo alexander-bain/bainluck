@@ -621,6 +621,9 @@ final class FirstRunViewModel212A: ObservableObject {
             }
             isFinishing = false
         }
+        if defaults === UserDefaults.standard {
+            AnonymousLifecycleCounts424A.shared.recordFirstRunFinished()
+        }
         onDismiss()
     }
 }

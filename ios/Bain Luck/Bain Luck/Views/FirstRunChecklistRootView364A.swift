@@ -390,6 +390,7 @@ struct FirstRunChecklistRootView364A: View {
         UserDefaults.standard.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
         checklistStore.syncFollowCount(followManager.subjects.count)
         persistMergedDiscoverPreferences()
+        AnonymousLifecycleCounts424A.shared.recordFirstRunFinished()
         followVM.finish(
             followManager: followManager,
             pinManager: pinManager,
