@@ -174,7 +174,8 @@ final class PercentPillPlainRows13551Tests: XCTestCase {
         let themeItems = try themeGroupItems()
         let comparisonItems = try comparisonGroupItems()
 
-        let outDir = ProcessInfo.processInfo.environment["BUILDER_C_RENDER_13551_PILL_DIR"]
+        let outDir = ProcessInfo.processInfo.environment["TEST_RUNNER_BUILDER_C_RENDER_13551_PILL_DIR"]
+            ?? ProcessInfo.processInfo.environment["BUILDER_C_RENDER_13551_PILL_DIR"]
         if let outDir, !outDir.isEmpty {
             try FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
         }

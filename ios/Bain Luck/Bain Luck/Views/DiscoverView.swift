@@ -4276,10 +4276,8 @@ private struct NativeCompactFuturesRow: View {
                 }
                 Spacer()
                 if let leader = data.topOutcomes?.first {
-                    DiscoverPlainRowPercentPill13551(
-                        label: formatProbability(leader.probability ?? 0, renderedPercent: leader.renderedPercent),
-                        compact: true
-                    )
+                    Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
+                        .font(.subheadline.weight(.black).monospacedDigit())
                     MovementBadge(movement: leader.movement)
                 }
             }
@@ -5098,7 +5096,6 @@ private struct ShareSheet: View {
 
 struct DiscoverPlainRowPercentPill13551: View {
     let label: String
-    var compact: Bool = false
     @Environment(\.colorScheme) private var colorScheme
 
     private var isDark: Bool {
@@ -5107,7 +5104,7 @@ struct DiscoverPlainRowPercentPill13551: View {
 
     var body: some View {
         Text(label)
-            .font((compact ? Font.subheadline : Font.callout).weight(.bold).monospacedDigit())
+            .font(Font.callout.weight(.bold).monospacedDigit())
             .foregroundStyle(isDark ? Color.primary : DS.textPrimary)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
