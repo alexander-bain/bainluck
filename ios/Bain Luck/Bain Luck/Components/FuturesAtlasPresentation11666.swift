@@ -1273,7 +1273,7 @@ struct FuturesAtlasHeadlineCard192A: View {
             }
             .padding(.top, 2)
 
-            NoRecentProbabilityOutcomes(names: foldedNames)
+            NoRecentProbabilityOutcomes(names: foldedNames, hasListedOutcomes: !headlineRows.isEmpty)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -2236,7 +2236,7 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    NoRecentProbabilityOutcomes(names: foldedNames)
+                    NoRecentProbabilityOutcomes(names: foldedNames, hasListedOutcomes: !listed.isEmpty)
                 }
             }
             .searchable(text: $searchText, prompt: "Search outcomes")
@@ -2255,7 +2255,14 @@ struct FuturesAtlasFullFieldSheetView11666: View {
 
 struct NoRecentProbabilityOutcomes: View {
     let names: [String]
+    let hasListedOutcomes: Bool
     @State private var isExpanded = false
+
+    var summary: String {
+        guard hasListedOutcomes else { return EventAtlasStates11666.noRecentPrice }
+        let others = names.count == 1 ? "1 other" : "\(names.count) others"
+        return "\(others): no recent probability"
+    }
 
     var body: some View {
         if !names.isEmpty {
@@ -2270,7 +2277,7 @@ struct NoRecentProbabilityOutcomes: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 8)
             } label: {
-                Text("\(names.count) others: no recent probability")
+                Text(summary)
                     .font(.subheadline)
                     .foregroundStyle(DS.textSecondary)
             }

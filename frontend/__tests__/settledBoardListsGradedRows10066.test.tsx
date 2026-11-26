@@ -174,7 +174,7 @@ describe("#10066 settled board lists its graded rows", () => {
       ]),
       "60544002",
     );
-    expect(html).toContain("2 others: no recent probability");
+    expect(html).toMatch(/<summary[^>]*>No recent probability<\/summary>/);
     expect(html).toContain(FOLD_MARKER);
     expect(html).not.toContain(VERDICT);
   });

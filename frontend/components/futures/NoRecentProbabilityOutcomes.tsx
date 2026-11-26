@@ -1,4 +1,5 @@
 import React from "react";
+import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 
 interface Props {
   outcomes: readonly {
@@ -6,16 +7,22 @@ interface Props {
     name: string;
     history?: { selected: boolean; toggle: () => void };
   }[];
+  hasListedOutcomes: boolean;
   testId: string;
   className?: string;
   resolved?: boolean;
 }
 
-export function NoRecentProbabilityOutcomes({ outcomes, testId, className, resolved = false }: Props) {
+export function NoRecentProbabilityOutcomes({
+  outcomes, hasListedOutcomes, testId, className, resolved = false,
+}: Props) {
   if (outcomes.length === 0) return null;
+  const others = outcomes.length === 1 ? "1 other" : `${outcomes.length} others`;
   const summary = resolved
     ? `More outcomes (${outcomes.length})`
-    : `${outcomes.length} others: no recent probability`;
+    : hasListedOutcomes
+      ? `${others}: no recent probability`
+      : ATLAS_STATE_COPY.noRecentPrice;
   return (
     <details data-testid={testId} className={className}>
       <summary className="cursor-pointer select-none py-3 text-sm font-medium text-text-secondary">

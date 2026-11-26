@@ -227,6 +227,14 @@ describe("#4568 — the ALL OUTCOMES ladder on /futures/114175", () => {
     expect(html).toContain("5 others: no recent probability");
   });
 
+  it("uses the singular when one name is folded below the supported list", () => {
+    const market = ufcHeavyweight();
+    market.outcomes = market.outcomes.filter((row) => row.probability != null || row.name === "Fighter E");
+    const { insideFold } = splitAtFold(render(market, "114175"));
+    expect(insideFold).toMatch(/<summary[^>]*>1 other: no recent probability<\/summary>/);
+    expect(insideFold).toContain("<li>Fighter E</li>");
+  });
+
   it("puts every numberless row BEHIND the disclosure, not in the open list", () => {
     const { beforeFold, insideFold } = splitAtFold(
       render(ufcHeavyweight(), "114175"),
@@ -495,7 +503,8 @@ it("shows only the disclosure in the Atlas outcomes section when the whole field
   const market = ufcHeavyweight();
   market.outcomes = market.outcomes.map((row) => ({ ...row, probability: null }));
   const html = render(market, "114175", null, true);
-  expect(html).toContain("19 others: no recent probability");
+  expect(splitAtFold(html).insideFold).toMatch(/<summary[^>]*>No recent probability<\/summary>/);
+  expect(html).not.toContain('data-testid="atlas-no-recent-price"');
   expect(html).not.toContain('data-testid="atlas-field-top-three"');
   expect(splitAtFold(html).beforeFold).not.toContain("Ciryl Gane");
 });

@@ -833,7 +833,7 @@ struct FuturesDetailView: View {
                 )
             }
 
-            NoRecentProbabilityOutcomes(names: folded.map(\.name))
+            NoRecentProbabilityOutcomes(names: folded.map(\.name), hasListedOutcomes: !listed.isEmpty)
         }
         .padding(16)
         .background(DS.cardBg)

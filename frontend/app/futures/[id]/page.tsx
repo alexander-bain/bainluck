@@ -1357,6 +1357,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         resolvedLost={settledSingleLostOutcome !== null}
         resultUnknown={resultCertainty === "all"}
         atlas={atlasEnabled}
+        showMissingProbability={pricedOutcomes.length > 0 || foldedOutcomes.length === 0}
         openingProbability={atlasOpeningProbability}
         renderedOpening={atlasRenderedOpening}
         scheduledResolutionLabel={atlasScheduledResolution}
@@ -1785,6 +1786,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         {atlasOwnsOutcomes && !isResolved && (
           <NoRecentProbabilityOutcomes
             outcomes={foldedOutcomes}
+            hasListedOutcomes={pricedOutcomes.length > 0}
             testId="futures-more-outcomes"
             className="px-6"
           />
@@ -1870,6 +1872,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           )}
           <NoRecentProbabilityOutcomes
             outcomes={numberlessRungs.map((rung) => ({ key: rung.key, name: rung.label }))}
+            hasListedOutcomes={pricedRungs.length > 0}
             testId="futures-more-rungs"
             className="px-6"
             resolved={isResolved}
@@ -2084,6 +2087,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
         <NoRecentProbabilityOutcomes
           outcomes={foldedOutcomes}
+          hasListedOutcomes={pricedOutcomes.length > 0}
           testId="futures-more-outcomes"
           className="mt-4"
           resolved={isResolved}

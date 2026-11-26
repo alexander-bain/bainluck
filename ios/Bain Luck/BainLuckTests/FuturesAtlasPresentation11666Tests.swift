@@ -117,6 +117,18 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
         XCTAssertEqual(emptyPage.body.foldedNames.count, 46)
     }
 
+    @MainActor
+    func testDisclosureUsesSingularAndNamesAnEntirelyUnpricedField() {
+        XCTAssertEqual(
+            NoRecentProbabilityOutcomes(names: ["One player"], hasListedOutcomes: true).summary,
+            "1 other: no recent probability"
+        )
+        XCTAssertEqual(
+            NoRecentProbabilityOutcomes(names: ["Player A", "Player B"], hasListedOutcomes: false).summary,
+            "No recent probability"
+        )
+    }
+
     // MARK: - 1. Multi-Outcome Mutually-Exclusive Field (108629 — Closest Governor Race)
 
     func testMutuallyExclusiveFieldBuildsTopThreeLeadersAndFullFieldSheet() {

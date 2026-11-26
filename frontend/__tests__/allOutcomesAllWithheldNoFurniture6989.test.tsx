@@ -223,7 +223,7 @@ describe("/futures/109681 — all 16 legs withheld", () => {
   it("uses the disclosure as the empty state", () => {
     const { beforeFold } = splitAtFold(html());
     expect(beforeFold).not.toContain(NOTE);
-    expect(html()).toContain("16 others: no recent probability");
+    expect(splitAtFold(html()).insideFold).toMatch(/<summary[^>]*>No recent probability<\/summary>/);
   });
 
   it("draws no sort toolbar — there is nothing to order", () => {
@@ -251,7 +251,7 @@ describe("/futures/109681 — all 16 legs withheld", () => {
     const out = html();
     expect(out).toContain("All Outcomes");
     expect(out).toContain(FOLD_MARKER);
-    expect(out).toContain("16 others: no recent probability");
+    expect(splitAtFold(out).insideFold).toMatch(/<summary[^>]*>No recent probability<\/summary>/);
   });
 
   it("keeps all 16 rows, folded, and invents no price for any of them", () => {
