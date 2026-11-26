@@ -798,6 +798,7 @@ celery_app.conf.task_routes = {
     # heavy task (main app, not `bainluck-heavy`).
     "app.tasks.assemble_theme_collections": {"queue": "background"},
     "app.tasks.rebuild_theme_snapshot": {"queue": "background"},
+    "app.tasks.refresh_kit_v1_real_sets_preview": {"queue": "background"},
     "app.tasks.refresh_awards_occasions": {"queue": "background"},
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
@@ -5983,12 +5984,12 @@ def grid_sentinel(self, file_issues=True):
 
 
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.grouping_sentinel")
-def grouping_sentinel(self, post=True, file_issues=True):
+def grouping_sentinel(self, post=True, file_issues=False):
     """Grouping Sentinel (#12231): count the market families no grouping covers
     (five or more open, priced markets alive 48 h), new venue series, unshaped
     markets and frames written, and post the counts on #12221 once a week
-    through the rail's report path. Report-only (72-A): it files nothing until
-    Thu Nov 26, then at most five issues a run through ``reconcile_issue``.
+    through the rail's report path. Report-only per decision 386: A (replaces
+    72-A): it never files issues.
     Read-only against market data. The 840s soft limit (under the 900s hard
     limit) sits above the run's 600s definitions deadline plus its paged reads,
     so a slow run ends tracked, never SIGKILLed (#966)."""
@@ -6017,6 +6018,42 @@ def discover_fun_scout(self, force=False):
         "discover_fun_scout",
         _run_discover_fun_scout(force=force),
     )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=180,
+    time_limit=240,
+    name="app.tasks.refresh_kit_v1_real_sets_preview",
+)
+def refresh_kit_v1_real_sets_preview(self):
+    """Build the #13551 Kit v1 real-sets audit off-web and save to Redis."""
+
+    async def _build() -> dict:
+        import time as _time
+        from app.routes.containers import _build_live_real_sets_audit_report
+        from app.tasks.base import get_task_session
+
+        t0 = _time.monotonic()
+        async with get_task_session() as db:
+            report = await _build_live_real_sets_audit_report(db, request=None)
+        payload = dict(report)
+        payload["build_elapsed_s"] = round(_time.monotonic() - t0, 3)
+        payload["status"] = "ready"
+        payload["served_from"] = "worker_redis"
+        return payload
+
+    from app.routes.containers import write_saved_kit_v1_real_sets_preview_sync
+
+    report = _tracked_run("refresh_kit_v1_real_sets_preview", _build())
+    saved = write_saved_kit_v1_real_sets_preview_sync(report)
+    return {
+        "status": "ready" if saved else "redis_write_failed",
+        "saved": saved,
+        "total_sets": report.get("total_sets", 0),
+        "fitting_count": report.get("fitting_count", 0),
+        "build_elapsed_s": report.get("build_elapsed_s"),
+    }
 
 
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900,
@@ -9557,11 +9594,11 @@ celery_app.conf.beat_schedule = {
         "options": {"queue": "heavy"},
     },
     "grouping-sentinel-weekly": {
-        # #12231: the weekly count of market families no grouping covers, posted
-        # on #12221 (report-only until Thu Nov 26, 72-A). Thursday 16:00 UTC
-        # (8 AM PT) on background, as Fable answered on #12231 (Nov 6, 9:28 PM):
-        # a weekly, rules-only read with no reader waiting on it, so it is not
-        # one of #233's morning alarms that need a guaranteed heavy slot.
+        # #12231 / #12221: weekly count of uncovered market families posted on
+        # #12221 (report-only per decision 386: A, which replaces 72-A).
+        # Thursday 16:00 UTC (8 AM PT) on background, as Fable answered on #12231
+        # (Nov 6, 9:28 PM): a weekly, rules-only read with no reader waiting on
+        # it, so it is not one of #233's morning alarms needing heavy.
         "task": "app.tasks.grouping_sentinel",
         "schedule": crontab(minute=0, hour=16, day_of_week=4),  # Weekly Thursday 16:00 UTC
         "options": {"queue": "background"},

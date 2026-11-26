@@ -1961,6 +1961,8 @@ export interface FeedFuturesData {
    * null for an undatable stamp rather than inventing "just now".
    */
   price_observed_at?: string | null;
+  /** The full screened field lacks enough price coverage to name a leader. */
+  field_price_coverage_incomplete?: boolean;
   top_outcomes: FeedFuturesOutcome[];
   /** #11995: whole percentages were allocated over the complete one-winner field. */
   full_field_rendered?: boolean;
@@ -2322,10 +2324,12 @@ export type FeedRoundupRow = {
   probability: number;
   /** The server's whole-percent rendering of `probability`, when it sent one. */
   rendered_percent?: number | null;
+  unfloored_percent?: number | null;
   /** Optional second bar probability in [0, 1] for two-bar awards rows (e.g. nomination %). */
   secondary_probability?: number | null;
   /** The server's whole-percent rendering of `secondary_probability`, when it sent one. */
   secondary_rendered_percent?: number | null;
+  secondary_unfloored_percent?: number | null;
   /** Optional short label for the primary bar when a second bar is present (e.g. "Wins"). */
   primary_bar_label?: string | null;
   /** Optional short label for the secondary bar when present (e.g. "Nominated"). */

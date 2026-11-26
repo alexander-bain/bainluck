@@ -1,11 +1,31 @@
 import Combine
 import Foundation
+import UserNotifications
 import os
 #if canImport(UIKit)
 import UIKit
 #endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "pins")
+
+/// #13084 — identifies one contextual prompt presentation when a reader pins their first game.
+struct GameAlertsPinPromptPresentation13084: Identifiable, Equatable {
+    let id = UUID()
+    let eventID: Int
+}
+
+/// #13084 — injectable dependencies for the contextual game-alerts prompt.
+struct GameAlertsPromptConfig13084 {
+    let preference: GameAlertsPreference13083?
+    let authorizationStatus: (@MainActor () async -> UNAuthorizationStatus)?
+    let requestPermission: (@MainActor () async -> UNAuthorizationStatus)?
+
+    static let live = GameAlertsPromptConfig13084(
+        preference: nil,
+        authorizationStatus: nil,
+        requestPermission: nil
+    )
+}
 
 struct PinActionFeedback: Identifiable, Equatable {
     let id = UUID()
@@ -31,6 +51,8 @@ final class PinManager: ObservableObject {
     @Published private(set) var loadState: PinLoadState = .local
     @Published private(set) var identityGeneration = UUID()
     @Published var managementPresentation: PinManagementRequest?
+    @Published var gameAlertsOptInPresentation: GameAlertsPinPromptPresentation13084?
+    var pendingGameAlertsPromptTask: Task<Void, Never>?
     private var pendingRemovals: Set<SavedPin> = []
     private var binding = PinAccountBinding(userID: nil, authenticated: false)
     private var usesAccountStorage = false
@@ -93,6 +115,9 @@ final class PinManager: ObservableObject {
         mutations.removeAll()
         feedback = nil
         managementPresentation = nil
+        pendingGameAlertsPromptTask?.cancel()
+        pendingGameAlertsPromptTask = nil
+        gameAlertsOptInPresentation = nil
         loadFromDefaults()
         loadState = next.userID == nil ? .local : .loading
     }
@@ -111,6 +136,7 @@ final class PinManager: ObservableObject {
     private let defaults: UserDefaults
     private let serverSync: ServerSync
     private let serverLoad: () async throws -> PinsResponse
+    private let gameAlertsConfig: GameAlertsPromptConfig13084
 
     /// Whether the user is authenticated (set externally).
     private(set) var isAuthenticated = false
@@ -119,9 +145,34 @@ final class PinManager: ObservableObject {
     /// (the Spotlight index) can refuse a previous account's set mid-switch.
     var boundUserID: String? { binding.userID }
 
-    init(defaults: UserDefaults = .standard, allowLegacyGuestPins: Bool = true, initialBinding: PinAccountBinding? = nil, serverLoad: (() async throws -> PinsResponse)? = nil, serverSync: ServerSync? = nil) {
+    convenience init(
+        defaults: UserDefaults = .standard,
+        allowLegacyGuestPins: Bool = true,
+        initialBinding: PinAccountBinding? = nil,
+        serverLoad: (() async throws -> PinsResponse)? = nil,
+        serverSync: ServerSync? = nil
+    ) {
+        self.init(
+            defaults: defaults,
+            allowLegacyGuestPins: allowLegacyGuestPins,
+            initialBinding: initialBinding,
+            serverLoad: serverLoad,
+            serverSync: serverSync,
+            gameAlertsConfig: .live
+        )
+    }
+
+    init(
+        defaults: UserDefaults = .standard,
+        allowLegacyGuestPins: Bool = true,
+        initialBinding: PinAccountBinding? = nil,
+        serverLoad: (() async throws -> PinsResponse)? = nil,
+        serverSync: ServerSync? = nil,
+        gameAlertsConfig: GameAlertsPromptConfig13084
+    ) {
         self.defaults = defaults
         self.serverLoad = serverLoad ?? { try await APIClient.shared.fetchPins() }
+        self.gameAlertsConfig = gameAlertsConfig
         // Build 32 shared these keys between guests and accounts. Import only
         // on a device with no remembered account; account pins come from server.
         if !defaults.bool(forKey: "bainluck_pins.guestMigrationDone") {
@@ -231,8 +282,18 @@ final class PinManager: ObservableObject {
         if isAuthenticated, alreadyPinned { pendingRemovals.insert(SavedPin(type: type, value: id)) }
         saveToDefaults()
 
+        let surface = FirstWeekTelemetry13261.currentSurface
         guard isAuthenticated else {
             feedback = Self.confirmed(removed: alreadyPinned)
+            if type == "event", !alreadyPinned {
+                enqueueGameAlertsOptInPromptIfEligible(eventID: id, generation: generation)
+            }
+            AnalyticsService.trackPinItem(
+                action: alreadyPinned ? "unpin" : "pin",
+                itemType: type,
+                itemId: id,
+                surface: surface
+            )
             return nil
         }
 
@@ -250,6 +311,15 @@ final class PinManager: ObservableObject {
                 try await serverSync(type, id, !alreadyPinned)
                 guard identityGeneration == generation else { return }
                 feedback = Self.confirmed(removed: alreadyPinned)
+                if type == "event", !alreadyPinned {
+                    await offerGameAlertsOptInPromptIfEligible(eventID: id, generation: generation)
+                }
+                AnalyticsService.trackPinItem(
+                    action: alreadyPinned ? "unpin" : "pin",
+                    itemType: type,
+                    itemId: id,
+                    surface: surface
+                )
             } catch {
                 guard identityGeneration == generation else { return }
                 logger.error("Failed to sync pin to server: \(error)")
@@ -274,6 +344,51 @@ final class PinManager: ObservableObject {
             mutations[SavedPin(type: type, value: id)] = (mutationRevision, isPinned(type: type, id: id))
             savingKeys.remove(key)
         }
+    }
+
+    /// #13084 (Rulings 212: A, 261: A, 262: A) — contextual opt-in ask shown on
+    /// first game pin when notifications have not yet been decided.
+    @MainActor
+    @discardableResult
+    func acceptGameAlertsOptInPrompt() async -> UNAuthorizationStatus {
+        gameAlertsOptInPresentation = nil
+        let pref = gameAlertsConfig.preference ?? GameAlertsPreference13083.shared
+        if let requester = gameAlertsConfig.requestPermission {
+            return await pref.optInAndRequestPermission(requestPermission: requester)
+        }
+        return await pref.optInAndRequestPermission()
+    }
+
+    @MainActor
+    func declineGameAlertsOptInPrompt() {
+        gameAlertsOptInPresentation = nil
+        let pref = gameAlertsConfig.preference ?? GameAlertsPreference13083.shared
+        pref.declinePinPrompt()
+    }
+
+    private func enqueueGameAlertsOptInPromptIfEligible(eventID: Int, generation: UUID) {
+        pendingGameAlertsPromptTask?.cancel()
+        pendingGameAlertsPromptTask = Task { @MainActor [weak self] in
+            await self?.offerGameAlertsOptInPromptIfEligible(eventID: eventID, generation: generation)
+        }
+    }
+
+    @MainActor
+    private func offerGameAlertsOptInPromptIfEligible(eventID: Int, generation: UUID) async {
+        let pref = gameAlertsConfig.preference ?? GameAlertsPreference13083.shared
+        guard identityGeneration == generation,
+              pref.shouldOfferPinPrompt,
+              gameAlertsOptInPresentation == nil else { return }
+        let checkStatus = gameAlertsConfig.authorizationStatus ?? {
+            await NotificationManager.shared.notificationAuthorizationStatus()
+        }
+        let status = await checkStatus()
+        guard !Task.isCancelled,
+              identityGeneration == generation,
+              pref.shouldOfferPinPrompt,
+              gameAlertsOptInPresentation == nil,
+              status == .notDetermined else { return }
+        gameAlertsOptInPresentation = GameAlertsPinPromptPresentation13084(eventID: eventID)
     }
 
     static func limitMessage(type: String, count: Int = maxPinsPerType) -> String {

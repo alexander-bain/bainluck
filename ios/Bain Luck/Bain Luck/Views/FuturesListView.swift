@@ -67,6 +67,7 @@ struct FuturesListView: View {
                 actionTitle: "Try Again",
                 action: { Task { await viewModel.load() } }
             )
+            .noteReviewPromptTrouble12304()
         } else if viewModel.markets.isEmpty {
             FuturesBrowseStateView(
                 title: noResultsTitle,
@@ -160,6 +161,7 @@ struct FuturesListView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
+                    .noteReviewPromptTrouble12304()
                 }
                 .listRowBackground(Color.clear)
             } else if viewModel.hasMore {

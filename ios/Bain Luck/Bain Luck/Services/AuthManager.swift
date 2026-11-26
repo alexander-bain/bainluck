@@ -30,10 +30,16 @@ final class AuthManager: ObservableObject {
         didSet {
             GroupingMachineryGate12288.setActiveUser(user)
             #if os(iOS) && canImport(ActivityKit)
+            let sessionBearer = KeychainHelper.load(key: keychainTokenKey)
+                .flatMap { String(data: $0, encoding: .utf8) }
             GameActivityRegistrationCoordinator.shared.setSession(
                 owner: user?.id,
-                bearer: KeychainHelper.load(key: keychainTokenKey)
-                    .flatMap { String(data: $0, encoding: .utf8) })
+                bearer: sessionBearer)
+            Task {
+                await LiveActivityPushStartCoordinator254A.shared.updateSession(
+                    bearer: user != nil ? sessionBearer : nil
+                )
+            }
             #endif
             let userId = user.map { String($0.id) }
             activeFeedUserId = userId
@@ -54,8 +60,29 @@ final class AuthManager: ObservableObject {
     @Published var isLoading = true
     /// Last user-facing sign-in error for auth screens to present.
     @Published var error: String?
+    /// True while an interactive Apple or Google sign-in attempt is in flight.
+    @Published private(set) var isSigningIn = false
+    /// Non-PII structured diagnostic for the most recent auth failure (#13516).
+    @Published private(set) var lastAuthErrorDiagnostic: String?
 
     private var appleSignInCoordinator: AppleSignInCoordinator?
+
+    static let googleFreshInstallPurgedDefaultsKey = "bainluck_gid_fresh_install_purged"
+    static let googleSignInErrorDomain = GIDSignInError.errorDomain
+
+    enum AuthFailureStage: String, Sendable {
+        case networkCheck = "network_check"
+        case googleConfig = "google_config"
+        case presentingViewController = "presenting_vc"
+        case googleSDK = "google_sdk"
+        case appleSDK = "apple_sdk"
+        case backendExchange = "backend_exchange"
+        case sessionSave = "session_save"
+    }
+
+    struct GoogleSignInTokenPayload: Sendable {
+        let accessToken: String
+    }
 
     /// True when a backend session has been restored or established.
     var isAuthenticated: Bool { user != nil }
@@ -82,9 +109,41 @@ final class AuthManager: ObservableObject {
         GroupingMachineryGate12288.isOwnerUser(user)
     }
 
-    init() {
+    init(restoreOnInit: Bool = true) {
+        guard restoreOnInit else {
+            isLoading = false
+            return
+        }
         Task {
             await restoreSession()
+        }
+    }
+
+    /// #13516 — Pre-configures `GIDSignIn.sharedInstance` at launch and purges
+    /// any Keychain entry left over from an earlier install once `_keychainStore`
+    /// is initialized. (`GIDSignIn.initWithKeychainStore:` v8.0.0 calls
+    /// `removeAllKeychainEntries` before assigning `_keychainStore`, so its own
+    /// fresh-install purge is a no-op against `nil`.) Never invokes App Check.
+    static func prepareGoogleSignIn(
+        defaults: UserDefaults = .standard,
+        hasStoredSession: (() -> Bool)? = nil,
+        clientIDProvider: (() -> String?)? = nil,
+        configureClient: ((String) -> Void)? = nil,
+        purgeGoogleKeychain: (() -> Void)? = nil
+    ) {
+        let resolveClientID = clientIDProvider ?? { Self.bundleGoogleClientID() }
+        let applyConfig = configureClient ?? { GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: $0) }
+        let checkSession = hasStoredSession ?? { KeychainHelper.load(key: keychainTokenKey) != nil }
+        let purgeKeychain = purgeGoogleKeychain ?? { GIDSignIn.sharedInstance.signOut() }
+
+        if let clientID = resolveClientID() {
+            applyConfig(clientID)
+        }
+        if !defaults.bool(forKey: googleFreshInstallPurgedDefaultsKey) {
+            if !checkSession() {
+                purgeKeychain()
+            }
+            defaults.set(true, forKey: googleFreshInstallPurgedDefaultsKey)
         }
     }
 
@@ -143,15 +202,38 @@ final class AuthManager: ObservableObject {
     /// Starts native Apple Sign-In and exchanges the Apple identity token with
     /// the backend for a Bain Luck session token.
     func signInWithApple() {
+        guard !isSigningIn else { return }
+        isSigningIn = true
+        lastAuthErrorDiagnostic = nil
         Task {
             guard await checkNetworkAvailable() else {
+                let diagnostic = "stage=\(AuthFailureStage.networkCheck.rawValue) unavailable"
+                self.lastAuthErrorDiagnostic = diagnostic
                 self.error = "No internet connection. Connect to Wi-Fi or cellular and try again."
+                self.isSigningIn = false
+                AnalyticsService.trackAuthSignInFailed(
+                    method: "apple",
+                    stage: AuthFailureStage.networkCheck.rawValue,
+                    errorDomain: "NWPathMonitor",
+                    errorCode: 0
+                )
+                logger.error("Apple sign-in failed: \(diagnostic, privacy: .public)")
                 return
             }
 
             #if os(iOS)
             guard Self.findRootViewController() != nil else {
+                let diagnostic = "stage=\(AuthFailureStage.presentingViewController.rawValue) nil_root_vc"
+                self.lastAuthErrorDiagnostic = diagnostic
                 self.error = "Cannot present sign-in. Please try again."
+                self.isSigningIn = false
+                AnalyticsService.trackAuthSignInFailed(
+                    method: "apple",
+                    stage: AuthFailureStage.presentingViewController.rawValue,
+                    errorDomain: "presenting_vc",
+                    errorCode: 0
+                )
+                logger.error("Apple sign-in failed: \(diagnostic, privacy: .public)")
                 return
             }
             #endif
@@ -162,9 +244,17 @@ final class AuthManager: ObservableObject {
                     switch result {
                     case .success(let credential):
                         await self.handleAppleCredential(credential)
+                        self.isSigningIn = false
                     case .failure(let error):
+                        defer { self.isSigningIn = false }
+                        if let authError = error as? ASAuthorizationError, authError.code == .canceled {
+                            return
+                        }
+                        Self.handleAppleSDKFailureTelemetry(error)
+                        let diagnostic = Self.describeErrorForLog(error, stage: .appleSDK)
+                        self.lastAuthErrorDiagnostic = diagnostic
                         self.error = Self.userFacingAuthError(error)
-                        logger.error("Apple sign-in error: \(error)")
+                        logger.error("Apple sign-in failed: \(diagnostic, privacy: .public)")
                     }
                 }
             }
@@ -178,6 +268,7 @@ final class AuthManager: ObservableObject {
     /// Starts Google Sign-In and exchanges the Google access token with the
     /// backend for a Bain Luck session token.
     func signInWithGoogle() {
+        guard !isSigningIn else { return }
         Task {
             await handleGoogleSignIn()
         }
@@ -206,6 +297,9 @@ final class AuthManager: ObservableObject {
 
     /// Clears local session state, provider state, and analytics identity.
     func signOut() {
+        let signOutToken = KeychainHelper.load(key: keychainTokenKey)
+            .flatMap { String(data: $0, encoding: .utf8) }
+        NotificationManager.shared.detachAllTokensForSignOut(authToken: signOutToken)
         clearStoredAuth()
         GIDSignIn.sharedInstance.signOut()
         user = nil
@@ -221,11 +315,22 @@ final class AuthManager: ObservableObject {
     /// Call when app returns to foreground. If a stored token exists but user is nil
     /// (e.g., network failed on initial launch), retry session restore.
     func retrySessionIfNeeded() {
-        guard !isAuthenticated,
-              KeychainHelper.load(key: keychainTokenKey) != nil else { return }
+        retrySessionIfNeeded(
+            hasStoredToken: { KeychainHelper.load(key: keychainTokenKey) != nil },
+            startRestore: { await self.restoreSession() }
+        )
+    }
+
+    @discardableResult
+    func retrySessionIfNeeded(
+        hasStoredToken: () -> Bool,
+        startRestore: @escaping @MainActor () async -> Void
+    ) -> Bool {
+        guard !isAuthenticated, !isSigningIn, hasStoredToken() else { return false }
         Task {
-            await restoreSession()
+            await startRestore()
         }
+        return true
     }
 
     // MARK: - Refresh Profile
@@ -298,12 +403,20 @@ final class AuthManager: ObservableObject {
     }
 
     private func checkNetworkAvailable() async -> Bool {
-        await withCheckedContinuation { continuation in
+        let resumed = OSAllocatedUnfairLock(initialState: false)
+        return await withCheckedContinuation { continuation in
             let monitor = NWPathMonitor()
             let queue = DispatchQueue(label: "com.bainluck.auth-network-check")
             monitor.pathUpdateHandler = { path in
+                let shouldResume = resumed.withLock { alreadyResumed -> Bool in
+                    guard !alreadyResumed else { return false }
+                    alreadyResumed = true
+                    return true
+                }
                 monitor.cancel()
-                continuation.resume(returning: path.status == .satisfied)
+                if shouldResume {
+                    continuation.resume(returning: path.status == .satisfied)
+                }
             }
             monitor.start(queue: queue)
         }
@@ -337,6 +450,7 @@ final class AuthManager: ObservableObject {
         #if os(iOS) && canImport(ActivityKit)
         // This also covers rejected cold restore, where user was never published.
         GameActivityRegistrationCoordinator.shared.invalidateSession()
+        Task { await LiveActivityPushStartCoordinator254A.shared.updateSession(bearer: nil) }
         #endif
         KeychainHelper.delete(key: keychainTokenKey)
         KeychainHelper.delete(key: keychainAppleUserIdKey)
@@ -357,6 +471,12 @@ final class AuthManager: ObservableObject {
         guard let identityTokenData = credential.identityToken,
               let identityToken = String(data: identityTokenData, encoding: .utf8) else {
             error = "Apple Sign-In failed: no identity token"
+            AnalyticsService.trackAuthSignInFailed(
+                method: "apple",
+                stage: AuthFailureStage.appleSDK.rawValue,
+                errorDomain: "apple_credential",
+                errorCode: 0
+            )
             logger.error("No identity token in Apple credential")
             return
         }
@@ -377,6 +497,12 @@ final class AuthManager: ObservableObject {
 
             guard let tokenData = response.idToken.data(using: .utf8) else {
                 error = "Failed to encode session token"
+                AnalyticsService.trackAuthSignInFailed(
+                    method: "apple",
+                    stage: AuthFailureStage.sessionSave.rawValue,
+                    errorDomain: "session_encode",
+                    errorCode: 0
+                )
                 return
             }
             _ = KeychainHelper.save(key: keychainTokenKey, data: tokenData)
@@ -387,75 +513,213 @@ final class AuthManager: ObservableObject {
 
             self.user = response.user
             self.error = nil
+            self.lastAuthErrorDiagnostic = nil
             AnalyticsService.trackLogin(method: "apple")
             AnalyticsService.setUserId(String(response.user.id))
             AnalyticsService.setUserProperty("logged_in", forName: "login_status")
             logger.info("Apple sign-in successful: user \(response.user.id)")
         } catch {
+            let metrics = Self.extractAuthFailureMetrics(from: error)
+            AnalyticsService.trackAuthSignInFailed(
+                method: "apple",
+                stage: AuthFailureStage.backendExchange.rawValue,
+                errorDomain: metrics.domain,
+                errorCode: metrics.code,
+                underlyingDomain: metrics.underlyingDomain,
+                underlyingCode: metrics.underlyingCode
+            )
+            let diagnostic = Self.describeErrorForLog(error, stage: .backendExchange)
+            self.lastAuthErrorDiagnostic = diagnostic
             self.error = Self.userFacingAuthError(error)
-            logger.error("Apple sign-in backend call failed: \(error)")
+            logger.error("Apple sign-in failed: \(diagnostic, privacy: .public)")
         }
     }
 
     private func handleGoogleSignIn() async {
-        guard await checkNetworkAvailable() else {
+        await performGoogleSignInFlow(
+            checkNetwork: { await self.checkNetworkAvailable() },
+            clientIDProvider: { Self.bundleGoogleClientID() },
+            configureClient: { clientID in
+                GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+            },
+            presentGoogleSignIn: {
+                #if os(iOS)
+                guard let rootViewController = Self.findRootViewController() else {
+                    return nil
+                }
+                let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController)
+                return GoogleSignInTokenPayload(accessToken: result.user.accessToken.tokenString)
+                #elseif os(macOS)
+                guard let window = NSApplication.shared.keyWindow else {
+                    return nil
+                }
+                let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: window)
+                return GoogleSignInTokenPayload(accessToken: result.user.accessToken.tokenString)
+                #endif
+            },
+            exchangeToken: { accessToken in
+                try await APIClient.shared.signInWithGoogle(accessToken: accessToken)
+            },
+            saveSessionToken: { data in
+                KeychainHelper.save(key: keychainTokenKey, data: data)
+            },
+            bindAuthTokenProvider: {
+                await APIClient.shared.setAuthTokenProvider {
+                    KeychainHelper.load(key: keychainTokenKey).flatMap { String(data: $0, encoding: .utf8) }
+                }
+            },
+            onSuccessAnalytics: { userId in
+                AnalyticsService.trackLogin(method: "google")
+                AnalyticsService.setUserId(String(userId))
+                AnalyticsService.setUserProperty("logged_in", forName: "login_status")
+            }
+        )
+    }
+
+    /// Testable end-to-end Google Sign-In state machine (#13516).
+    /// `presentGoogleSignIn` returns `nil` only when no presenting window/VC exists.
+    func performGoogleSignInFlow(
+        checkNetwork: () async -> Bool,
+        clientIDProvider: () -> String?,
+        configureClient: (String) -> Void,
+        presentGoogleSignIn: () async throws -> GoogleSignInTokenPayload?,
+        exchangeToken: (String) async throws -> AppleAuthResponse,
+        saveSessionToken: (Data) -> Bool,
+        bindAuthTokenProvider: () async -> Void,
+        sleepNanoseconds: (UInt64) async -> Void = { ns in try? await Task.sleep(nanoseconds: ns) },
+        onSuccessAnalytics: (Int) -> Void
+    ) async {
+        guard !isSigningIn else { return }
+        isSigningIn = true
+        defer { isSigningIn = false }
+
+        lastAuthErrorDiagnostic = nil
+
+        guard await checkNetwork() else {
+            let diagnostic = "stage=\(AuthFailureStage.networkCheck.rawValue) unavailable"
+            lastAuthErrorDiagnostic = diagnostic
             error = "No internet connection. Connect to Wi-Fi or cellular and try again."
+            AnalyticsService.trackAuthSignInFailed(
+                method: "google",
+                stage: AuthFailureStage.networkCheck.rawValue,
+                errorDomain: "NWPathMonitor",
+                errorCode: 0
+            )
+            logger.error("Google sign-in failed: \(diagnostic, privacy: .public)")
             return
         }
 
-        guard let clientID = googleClientID() else {
+        guard let clientID = clientIDProvider() else {
+            let diagnostic = "stage=\(AuthFailureStage.googleConfig.rawValue) missing_client_id"
+            lastAuthErrorDiagnostic = diagnostic
             error = "Google Sign-In not configured"
-            logger.error("GoogleService-Info.plist missing or has no CLIENT_ID")
+            AnalyticsService.trackAuthSignInFailed(
+                method: "google",
+                stage: AuthFailureStage.googleConfig.rawValue,
+                errorDomain: "google_config",
+                errorCode: 0
+            )
+            logger.error("Google sign-in failed: \(diagnostic, privacy: .public)")
             return
         }
 
-        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+        configureClient(clientID)
 
+        let payload: GoogleSignInTokenPayload
         do {
-            #if os(iOS)
-            guard let rootViewController = Self.findRootViewController() else {
+            guard let presentedPayload = try await presentGoogleSignIn() else {
+                let diagnostic = "stage=\(AuthFailureStage.presentingViewController.rawValue) nil_presenter"
+                lastAuthErrorDiagnostic = diagnostic
                 error = "Cannot present sign-in"
-                logger.error("No root view controller found for Google sign-in")
+                AnalyticsService.trackAuthSignInFailed(
+                    method: "google",
+                    stage: AuthFailureStage.presentingViewController.rawValue,
+                    errorDomain: "presenting_vc",
+                    errorCode: 0
+                )
+                logger.error("Google sign-in failed: \(diagnostic, privacy: .public)")
                 return
             }
-            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController)
-            #elseif os(macOS)
-            guard let window = NSApplication.shared.keyWindow else {
-                error = "Cannot present sign-in"
-                return
-            }
-            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: window)
-            #endif
-            let accessToken = result.user.accessToken.tokenString
-
-            let response = try await APIClient.shared.signInWithGoogle(accessToken: accessToken)
-
-            guard let tokenData = response.idToken.data(using: .utf8) else {
-                error = "Failed to encode session token"
-                return
-            }
-            _ = KeychainHelper.save(key: keychainTokenKey, data: tokenData)
-
-            await APIClient.shared.setAuthTokenProvider {
-                KeychainHelper.load(key: keychainTokenKey).flatMap { String(data: $0, encoding: .utf8) }
-            }
-
-            self.user = response.user
-            self.error = nil
-            AnalyticsService.trackLogin(method: "google")
-            AnalyticsService.setUserId(String(response.user.id))
-            AnalyticsService.setUserProperty("logged_in", forName: "login_status")
-            logger.info("Google sign-in successful: user \(response.user.id)")
+            payload = presentedPayload
         } catch {
-            if (error as NSError).code == -5 {
+            if Self.isGoogleSignInCanceled(error) {
                 return
             }
+            let metrics = Self.extractAuthFailureMetrics(from: error)
+            AnalyticsService.trackAuthSignInFailed(
+                method: "google",
+                stage: AuthFailureStage.googleSDK.rawValue,
+                errorDomain: metrics.domain,
+                errorCode: metrics.code,
+                underlyingDomain: metrics.underlyingDomain,
+                underlyingCode: metrics.underlyingCode
+            )
+            let diagnostic = Self.describeErrorForLog(error, stage: .googleSDK)
+            lastAuthErrorDiagnostic = diagnostic
             self.error = Self.userFacingAuthError(error)
-            logger.error("Google sign-in error: \(error)")
+            logger.error("Google sign-in failed: \(diagnostic, privacy: .public)")
+            return
+        }
+
+        let response: AppleAuthResponse
+        do {
+            response = try await Self.exchangeWithTransientRetry(sleepNanoseconds: sleepNanoseconds) {
+                try await exchangeToken(payload.accessToken)
+            }
+        } catch {
+            let metrics = Self.extractAuthFailureMetrics(from: error)
+            AnalyticsService.trackAuthSignInFailed(
+                method: "google",
+                stage: AuthFailureStage.backendExchange.rawValue,
+                errorDomain: metrics.domain,
+                errorCode: metrics.code,
+                underlyingDomain: metrics.underlyingDomain,
+                underlyingCode: metrics.underlyingCode
+            )
+            let diagnostic = Self.describeErrorForLog(error, stage: .backendExchange)
+            lastAuthErrorDiagnostic = diagnostic
+            self.error = Self.userFacingAuthError(error)
+            logger.error("Google sign-in failed: \(diagnostic, privacy: .public)")
+            return
+        }
+
+        guard let tokenData = response.idToken.data(using: .utf8), saveSessionToken(tokenData) else {
+            let diagnostic = "stage=\(AuthFailureStage.sessionSave.rawValue) keychain_save_failed"
+            lastAuthErrorDiagnostic = diagnostic
+            error = "Sign-in failed. Please try again."
+            AnalyticsService.trackAuthSignInFailed(
+                method: "google",
+                stage: AuthFailureStage.sessionSave.rawValue,
+                errorDomain: "keychain_save",
+                errorCode: 0
+            )
+            logger.error("Google sign-in failed: \(diagnostic, privacy: .public)")
+            return
+        }
+
+        await bindAuthTokenProvider()
+
+        self.user = response.user
+        self.error = nil
+        self.lastAuthErrorDiagnostic = nil
+        onSuccessAnalytics(response.user.id)
+        logger.info("Google sign-in successful: user \(response.user.id)")
+    }
+
+    private static func exchangeWithTransientRetry(
+        sleepNanoseconds: (UInt64) async -> Void,
+        operation: () async throws -> AppleAuthResponse
+    ) async throws -> AppleAuthResponse {
+        do {
+            return try await operation()
+        } catch let apiError as APIError {
+            guard case .networkError = apiError else { throw apiError }
+            await sleepNanoseconds(300_000_000)
+            return try await operation()
         }
     }
 
-    private func googleClientID() -> String? {
+    static func bundleGoogleClientID() -> String? {
         guard let path = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"),
               let dict = NSDictionary(contentsOfFile: path),
               let clientID = dict["CLIENT_ID"] as? String else {
@@ -467,8 +731,8 @@ final class AuthManager: ObservableObject {
     // MARK: - Shared Helpers
 
     #if os(iOS)
-    /// Returns the foreground scene's root view controller for native auth UI
-    /// presentation, preferring the key window under iPad multi-window modes.
+    /// Returns the foreground scene's active topmost view controller for native
+    /// auth UI presentation, walking presented sheets and preferring the key window.
     @MainActor
     static func findRootViewController() -> UIViewController? {
         let scene = UIApplication.shared.connectedScenes
@@ -477,10 +741,89 @@ final class AuthManager: ObservableObject {
             ?? UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
                 .first
-        return scene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
+        var top = scene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
             ?? scene?.windows.first?.rootViewController
+        while let presented = top?.presentedViewController {
+            top = presented
+        }
+        return top
     }
     #endif
+
+    static func isGoogleSignInCanceled(_ error: Error) -> Bool {
+        if let gidError = error as? GIDSignInError {
+            return gidError.code == .canceled
+        }
+        let nsError = error as NSError
+        return nsError.domain == googleSignInErrorDomain && nsError.code == GIDSignInError.canceled.rawValue
+    }
+
+    static func extractAuthFailureMetrics(
+        from error: Error
+    ) -> (domain: String, code: Int, underlyingDomain: String?, underlyingCode: Int?) {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .networkError(let underlying):
+                let ns = underlying as NSError
+                return ("apiError.networkError", ns.code, ns.domain, ns.code)
+            case .httpError(let statusCode, _):
+                return ("apiError.httpError", statusCode, nil, nil)
+            case .decodingError(let underlying):
+                let ns = underlying as NSError
+                return ("apiError.decodingError", ns.code, ns.domain, ns.code)
+            case .invalidURL:
+                return ("apiError.invalidURL", 0, nil, nil)
+            }
+        }
+        let nsError = error as NSError
+        let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        return (nsError.domain, nsError.code, underlying?.domain, underlying?.code)
+    }
+
+    static func handleAppleSDKFailureTelemetry(_ error: Error) {
+        if let authError = error as? ASAuthorizationError, authError.code == .canceled {
+            return
+        }
+        let metrics = extractAuthFailureMetrics(from: error)
+        AnalyticsService.trackAuthSignInFailed(
+            method: "apple",
+            stage: AuthFailureStage.appleSDK.rawValue,
+            errorDomain: metrics.domain,
+            errorCode: metrics.code,
+            underlyingDomain: metrics.underlyingDomain,
+            underlyingCode: metrics.underlyingCode
+        )
+    }
+
+    /// Formats non-PII auth error details (stage, domain, code, and underlying chain)
+    /// so release logs never collapse the reason into `<private>` (#13516).
+    static func describeErrorForLog(_ error: Error, stage: AuthFailureStage) -> String {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .networkError(let underlying):
+                let ns = underlying as NSError
+                return "stage=\(stage.rawValue) apiError=networkError domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription)"
+            case .httpError(let statusCode, _):
+                return "stage=\(stage.rawValue) apiError=httpError code=\(statusCode)"
+            case .decodingError(let underlying):
+                let ns = underlying as NSError
+                return "stage=\(stage.rawValue) apiError=decodingError domain=\(ns.domain) code=\(ns.code)"
+            case .invalidURL:
+                return "stage=\(stage.rawValue) apiError=invalidURL"
+            }
+        }
+        let nsError = error as NSError
+        var parts = [
+            "stage=\(stage.rawValue)",
+            "domain=\(nsError.domain)",
+            "code=\(nsError.code)",
+            "desc=\(nsError.localizedDescription)",
+        ]
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            parts.append("underlying=\(underlying.domain)(\(underlying.code)): \(underlying.localizedDescription)")
+        }
+        return parts.joined(separator: " ")
+    }
 
     /// Maps low-level auth and API failures to short messages safe for display.
     static func userFacingAuthError(_ error: Error) -> String {
@@ -499,8 +842,16 @@ final class AuthManager: ObservableObject {
             }
         }
         let nsError = error as NSError
-        if nsError.domain == NSURLErrorDomain {
-            switch nsError.code {
+        let urlError: NSError? = if nsError.domain == NSURLErrorDomain {
+            nsError
+        } else if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
+                  underlying.domain == NSURLErrorDomain {
+            underlying
+        } else {
+            nil
+        }
+        if let urlError {
+            switch urlError.code {
             case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost:
                 return "No internet connection. Connect to Wi-Fi or cellular and try again."
             case NSURLErrorTimedOut:
@@ -508,7 +859,7 @@ final class AuthManager: ObservableObject {
             case NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost, NSURLErrorDNSLookupFailed:
                 return "Cannot reach sign-in servers. Check your network and try again."
             default:
-                break
+                return "Connection failed. Check your network and try again."
             }
         }
 
@@ -544,9 +895,6 @@ private class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDelegat
     }
 
     func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        if let authError = error as? ASAuthorizationError, authError.code == .canceled {
-            return
-        }
         completion(.failure(error))
     }
 

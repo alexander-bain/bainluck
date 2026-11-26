@@ -308,7 +308,7 @@ final class EvenCardTeamNames13013Tests: XCTestCase {
 
         // Matches FeedView `.insetGrouped` geometry on a 390 pt iPhone:
         // 20 pt outer horizontal margin -> 350 pt grouped section -> 16 pt inner padding -> 318 pt EventCardView width.
-        let root = VStack(alignment: .leading, spacing: 10) {
+        let stackBody = VStack(alignment: .leading, spacing: 10) {
             Text("Sports Tab · Even Team Names Across Every Card")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -326,11 +326,24 @@ final class EvenCardTeamNames13013Tests: XCTestCase {
             }
             .background(cardBg)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
-        .frame(width: 390, height: height, alignment: .topLeading)
+        .padding(.bottom, 12)
+        .frame(width: 390, alignment: .topLeading)
+        .background(bg)
+        .environment(\.colorScheme, scheme)
+        .environmentObject(PinManager())
+
+        let measureHost = hostForMeasurement(stackBody, at: typeSize)
+        measureHost.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
+        let measuredHeight = ceil(measureHost.sizeThatFits(in: CGSize(width: 390, height: 4000)).height)
+        let resolvedHeight = max(height, measuredHeight)
+
+        let root = VStack(alignment: .leading, spacing: 0) {
+            stackBody
+            Spacer(minLength: 0)
+        }
+        .frame(width: 390, height: resolvedHeight, alignment: .topLeading)
         .background(bg)
         .environment(\.colorScheme, scheme)
         .environmentObject(PinManager())
@@ -338,8 +351,8 @@ final class EvenCardTeamNames13013Tests: XCTestCase {
         let host = hostForMeasurement(root, at: typeSize)
         host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
         let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
-        let window: UIWindow = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: height))
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: height)
+        let window: UIWindow = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: resolvedHeight))
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: resolvedHeight)
         host.view.frame = window.bounds
         window.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
         window.rootViewController = host
@@ -357,7 +370,7 @@ final class EvenCardTeamNames13013Tests: XCTestCase {
         let fmt = UIGraphicsImageRendererFormat()
         fmt.scale = 3.0
         fmt.opaque = true
-        return UIGraphicsImageRenderer(size: CGSize(width: 390, height: height), format: fmt).image { _ in
+        return UIGraphicsImageRenderer(size: CGSize(width: 390, height: resolvedHeight), format: fmt).image { _ in
             _ = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
         }
     }

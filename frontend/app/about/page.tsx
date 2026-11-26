@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import EmbedAwareLink from "@/components/EmbedAwareLink";
+import BainLuckMark from "@/components/BainLuckMark";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchCalibration } from "@/lib/api";
 import { compactOutcomeCount, proofCohortFigures } from "@/lib/calibrationProofFigures";
@@ -119,7 +120,9 @@ export default function AboutPage() {
       {/* ── 1. THE ONE-LINER ── */}
       <RevealSection>
         <div className="text-center space-y-6 pt-2 pb-10 border-b border-surface-border">
-          <div className="text-6xl sm:text-7xl">🍀</div>
+          <div className="flex justify-center">
+            <BainLuckMark size={64} alt="Bain Luck" />
+          </div>
           <h1 className="text-display text-text-primary">Bain Luck</h1>
           <p className="text-body text-text-secondary max-w-xl mx-auto leading-relaxed">
             {STORY_ONE_LINER}
@@ -335,6 +338,31 @@ export default function AboutPage() {
               </EmbedAwareLink>
             </p>
           </div>
+
+          <div
+            data-testid="tmdb-attribution-block"
+            className="rounded-xl border border-surface-border bg-surface-card px-4 py-3 flex flex-wrap items-center gap-3 text-caption text-text-secondary"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/tmdb-blue-short.svg"
+              alt="TMDB"
+              className="h-3.5 w-auto shrink-0"
+            />
+            <p className="leading-snug">
+              Film posters and screen contender portraits are provided by{" "}
+              <a
+                href="https://www.themoviedb.org/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent-brand hover:underline font-medium"
+              >
+                TMDB
+              </a>
+              . This product uses the TMDB API but is not endorsed or certified by
+              TMDB.
+            </p>
+          </div>
         </section>
       </RevealSection>
 
@@ -345,7 +373,8 @@ export default function AboutPage() {
             href="/discover"
             className="inline-flex items-center gap-2.5 bg-text-primary text-surface-deep px-8 py-3.5 rounded-full text-body-strong hover:bg-text-primary/90 hover:shadow-glow hover:scale-[1.02] transition-all duration-300"
           >
-            🍀 Start Exploring
+            <BainLuckMark size={20} />
+            Start Exploring
           </EmbedAwareLink>
         </div>
       </RevealSection>

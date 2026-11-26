@@ -482,6 +482,36 @@ class TestTaskResumeBisectionAndIsolation:
         assert all(pub["horizons"][label]["skipped"] is True for label, _ in pc._HORIZONS)
         assert all(pub["horizons"][label]["total_outcomes"] == 0 for label, _ in pc._HORIZONS)
 
+    def test_horizon_unit_buckets_4096_and_invalidates_prior_256_wip(self):
+        assert pc._HORIZON_UNIT_BUCKETS == 4096
+
+        # A WIP snapshot serialized under buckets=256 is safely ignored under 4096.
+        stale_wip = pc._serialize_horizon_in_progress(
+            "T-30",
+            256,
+            {"256:0"},
+            {},
+            pc._empty_horizon_diag(),
+            {"256:0": "abc"},
+        )
+        assert (
+            pc._deserialize_horizon_in_progress(
+                stale_wip, label="T-30", buckets=pc._HORIZON_UNIT_BUCKETS
+            )
+            is None
+        )
+
+        # Synthetic 40,960-row roster partitions ~16x finer at 4096 vs 256.
+        roster = [
+            RosterRow(market_id=i, source="kalshi", vm_id=f"m:{i}", is_grouped=False)
+            for i in range(1, 40961)
+        ]
+        units_256, _ = pc._plan_horizon_units(roster, buckets=256)
+        units_4096, _ = pc._plan_horizon_units(roster, buckets=pc._HORIZON_UNIT_BUCKETS)
+        max_256 = max(len(u.market_ids) for u in units_256)
+        max_4096 = max(len(u.market_ids) for u in units_4096)
+        assert max_4096 < max_256 / 8
+
 
 # ---------------------------------------------------------------------------
 # REAL POSTGRES EQUIVALENCE TESTS (#13518, wired into ci.yml #12612 cal gate)

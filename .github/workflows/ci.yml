@@ -18,8 +18,10 @@ on:
   # after `opened` no longer cancels that first run (#12235's skip still holds
   # for every later event; the Tier-B policy still blocks the merge).
   # Guarded by backend/tests/test_ci_triggers_12252.py.
+  # #412: D adds `ready_for_review` so heavy CI jobs skipped on draft PRs run the
+  # moment a PR is marked ready, plus on every subsequent synchronize push.
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [master, 'integrator/compose-**']
 
@@ -256,7 +258,7 @@ jobs:
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
       CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
       - name: Require this run's change-scope attempt
         if: needs.change-scope.outputs.live == 'true'
@@ -275,12 +277,15 @@ jobs:
         run: echo "Full CI validates this candidate; no live-path gate is selected."
 
       - uses: actions/checkout@v6
+        with:
+          # test_mutation_guard and deploy-base guards diff git history.
+          fetch-depth: 0
+          filter: blob:none
       - name: Check call keywords across backend/app (#13281)
         run: python3 .github/scripts/check_call_keywords.py backend/app
       - name: Post-deploy smoke rollback stand-in 500 dry-run (#13283)
         run: python3 .github/scripts/post_deploy_smoke_rollback.py --self-test-500
       - uses: actions/setup-python@v7
-        if: needs.change-scope.outputs.live == 'true'
         with:
           python-version: "3.11"
           cache: pip
@@ -295,8 +300,9 @@ jobs:
         run: python3 tools/release/verify_fast.py
 
       - name: Install dependencies
-        if: needs.change-scope.outputs.live == 'true'
         run: pip install -r backend/requirements.txt
+      - name: "Run housekeeping guard tests (412: D)"
+        run: python3 .github/scripts/run_fast_gate_housekeeping.py
       - name: Python 3.11 syntax, smoke test and change-scope selected tests
         if: needs.change-scope.outputs.live == 'true'
         env:
@@ -324,7 +330,7 @@ jobs:
     # itself needs change-scope). It never reads the scope, so the matrix always
     # expands and the per-leg contexts always exist.
     needs: [change-scope, fast-gate, native-backend-readers]
-    if: ${{ !cancelled() && needs.fast-gate.result == 'success' }}
+    if: ${{ !cancelled() && needs.fast-gate.result == 'success' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
@@ -463,7 +469,7 @@ jobs:
     # Return to full: change `native)` in change-scope's decide step to set
     # SCOPE=full (or revert this PR) — every other job then runs as before.
     needs: [change-scope, fast-gate]
-    if: needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
@@ -522,7 +528,7 @@ jobs:
     # #5007 — this proves the SHARD PARTITION is complete, so it is meaningful
     # only when the shards run. Skipped with them, never independently.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -625,7 +631,7 @@ jobs:
     # #5007 — the recall rail exercises backend search. A candidate confined to
     # `frontend/` and touching no cross-tier path cannot change what it measures.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -777,8 +783,8 @@ jobs:
             exit 1
           }
           cat /tmp/onboarding13338.txt
-          grep -qE "[^0-9]17 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
-            echo "::error::#13338 onboarding gate did not run all seventeen cases"
+          grep -qE "[^0-9]18 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
+            echo "::error::#13338 onboarding gate did not run all eighteen cases"
             exit 1
           }
       - name: "#12519 team-merge dedup keeps distinct names (real Postgres)"
@@ -828,7 +834,7 @@ jobs:
       - name: "#5821 and #10520 real-Postgres gates"
         id: db_12612_shared_5821_10520
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
-        run: bash ../.github/scripts/run-12612-pg-gates.sh shared tests/test_polymarket_container_sibling_5821.py tests/test_repair_10520_keeper_current_anchor.py tests/integration/test_stale_betting_e2e_13496_pg.py
+        run: bash ../.github/scripts/run-12612-pg-gates.sh shared tests/test_polymarket_container_sibling_5821.py tests/test_repair_10520_keeper_current_anchor.py tests/integration/test_stale_betting_e2e_13496_pg.py tests/integration/test_unified_game_chance_parity_13508_pg.py
       - name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
         id: db_010_typeahead_next_fixture_contracts_or_next
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
@@ -5035,7 +5041,7 @@ jobs:
         id: db_308_12288_grouping_preview_loads_every_candid
         # Random disposable schema; runs _load_snapshot_from_db and preview error logging over every candidate definition.
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "python -m pytest tests/integration/test_container_machinery_snapshot_12288_pg.py -v -rs > /tmp/machinerysnapshot12288.txt 2>&1 || {\n  cat /tmp/machinerysnapshot12288.txt\n  exit 1\n}\ncat /tmp/machinerysnapshot12288.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/machinerysnapshot12288.txt; then\n  echo \"::error::#12288 machinery snapshot gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]5 passed([,[:space:]]|$)\" /tmp/machinerysnapshot12288.txt || {\n  echo \"::error::#12288 machinery snapshot gate did not run all five cases\"\n  exit 1\n}\n"
+        run: "python -m pytest tests/integration/test_container_machinery_snapshot_12288_pg.py -v -rs > /tmp/machinerysnapshot12288.txt 2>&1 || {\n  cat /tmp/machinerysnapshot12288.txt\n  exit 1\n}\ncat /tmp/machinerysnapshot12288.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/machinerysnapshot12288.txt; then\n  echo \"::error::#12288 machinery snapshot gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]6 passed([,[:space:]]|$)\" /tmp/machinerysnapshot12288.txt || {\n  echo \"::error::#12288 machinery snapshot gate did not run all six cases\"\n  exit 1\n}\n"
       - name: "#12612 feed static tag filter (real Postgres)"
         id: db_12612_feed_static_tag_filter
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
@@ -5050,6 +5056,14 @@ jobs:
         id: db_13606_history_since_start_pushdown
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
         run: "set -o pipefail\npython -m pytest tests/integration/test_history_since_start_pushdown_13606_pg.py \\\n  -v -rs 2>&1 | tee /tmp/historysince13606.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/historysince13606.txt; then\n  echo \"::error::#13606 history since_start gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\ngrep -qE \"[^0-9]5 passed([,[:space:]]|$)\" /tmp/historysince13606.txt || {\n  echo \"::error::#13606 history since_start gate did not run all five cases\"\n  exit 1\n}\n"
+      - name: "#13573 team futures Q1 rewrite equivalence (real Postgres)"
+        id: db_13573_team_futures_q1_pg
+        if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+        run: "python -m pytest tests/integration/test_team_futures_q1_pg_13573.py -v -rs > /tmp/teamfuturesq113573.txt 2>&1 || {\n  cat /tmp/teamfuturesq113573.txt\n  exit 1\n}\ncat /tmp/teamfuturesq113573.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/teamfuturesq113573.txt; then\n  echo \"::error::#13573 team futures Q1 gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]1 passed([,[:space:]]|$)\" /tmp/teamfuturesq113573.txt || {\n  echo \"::error::#13573 team futures Q1 gate did not execute its case\"\n  exit 1\n}\n"
+      - name: "#12818 search untraded 60-row window guard (real Postgres)"
+        id: db_12818_search_untraded_window_guard
+        if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+        run: bash ../.github/scripts/run-12612-pg-gates.sh search12818 tests/test_search_untraded_window_guard_12818.py
   # The existing required context stays non-matrix. A failed, cancelled or
   # unexpectedly skipped worker must never satisfy branch protection as green.
   # Frontend-only candidates retain the original intentional job-level skip.
@@ -5085,7 +5099,7 @@ jobs:
   # or turns a run red. Skipped when nothing is quarantined.
   flaky-canary:
     needs: change-scope
-    if: ${{ !cancelled() && needs.change-scope.result == 'success' && needs.change-scope.outputs.quarantine != '[]' && needs.change-scope.outputs.quarantine != '' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
+    if: ${{ !cancelled() && needs.change-scope.result == 'success' && needs.change-scope.outputs.quarantine != '[]' && needs.change-scope.outputs.quarantine != '' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -5132,7 +5146,7 @@ jobs:
         run: bash ../.github/scripts/flaky-canary.sh
   search-recall:
     needs: [change-scope, database-integration, backend-tests]
-    if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
+    if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     steps:
       - name: Every database integration group passed
@@ -5159,7 +5173,7 @@ jobs:
   frontend-build:
     needs: [change-scope, fast-gate]
     # #10708: a pure-ios/ candidate cannot reach the frontend build.
-    if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'native'
+    if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'native' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
     defaults:
       run:

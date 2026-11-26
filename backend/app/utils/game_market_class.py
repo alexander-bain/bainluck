@@ -34,6 +34,7 @@ bare-matchup leak.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Iterable, Optional
 
 # A leading league tag like "MLB: ", "NBA:", "NCAAB - " that Kalshi/Polymarket
@@ -755,6 +756,85 @@ def _kalshi_goal_series(external_id: Optional[str]) -> bool:
     return series.startswith("KX") and series.endswith("GOAL")
 
 
+_OU_RE = re.compile(r"\bo/u\b", re.IGNORECASE)
+_OU_SPLIT_SIDES_RE = re.compile(r"\s+(?:vs\.?|v\.?|at|@)\s+", re.IGNORECASE)
+OU_NON_TEAM_SUBJECT_RE = re.compile(
+    r"\b(?:total|goals?|points?|runs?|games?|maps?|sets?|corners?|cards?|shots?|"
+    r"half|quarter|inning|innings|period|combined|full|match|regular|regulation|"
+    r"1st|2nd|3rd|4th|1h|2h|1q|2q|3q|4q|f5)\b",
+    re.IGNORECASE,
+)
+_GENERIC_CLUB_TOKENS = frozenset({
+    "fc", "cf", "fk", "sk", "kv", "sc", "as", "osc", "cp", "vfb", "sv",
+    "ac", "bc", "cd", "ud", "ss", "afc", "rc", "club", "de", "la", "el",
+    "the", "of",
+})
+
+
+def fold_ascii(text: str) -> str:
+    """Fold Unicode accents/diacritics to ASCII lowercase for club matching."""
+    return "".join(
+        ch
+        for ch in unicodedata.normalize("NFKD", text)
+        if unicodedata.category(ch) != "Mn"
+    ).lower()
+
+
+def extract_ou_subject(name: Optional[str]) -> Optional[str]:
+    """Return the subject immediately before ``O/U`` after the last colon."""
+    if not name:
+        return None
+    m = _OU_RE.search(name)
+    if not m:
+        return None
+    prefix = name[: m.start()]
+    if ":" in prefix:
+        prefix = prefix.rsplit(":", 1)[1]
+    subj = prefix.strip(" -–—:\t\n")
+    return subj or None
+
+
+def _club_distinctive_tokens(text: str) -> set[str]:
+    tokens = set(re.findall(r"[a-z0-9]{3,}", fold_ascii(text)))
+    return tokens - _GENERIC_CLUB_TOKENS
+
+
+def _match_side_tokens(subject: str, side: str, other_side: str) -> bool:
+    subj_f = fold_ascii(subject).strip()
+    side_f = fold_ascii(side).strip()
+    if subj_f and subj_f == side_f:
+        return True
+    subj_toks = _club_distinctive_tokens(subject)
+    side_toks = _club_distinctive_tokens(side) - _club_distinctive_tokens(other_side)
+    return bool(subj_toks & side_toks)
+
+
+def is_named_team_ou_market(name: str) -> bool:
+    """True for ``A vs. B: Team O/U N`` titles that name one side before O/U."""
+    if not name:
+        return False
+    m = _OU_RE.search(name)
+    if not m:
+        return False
+    prefix = name[: m.start()]
+    if ":" not in prefix:
+        return False
+    matchup_part, raw_subj = prefix.rsplit(":", 1)
+    subj = raw_subj.strip(" -–—:\t\n")
+    if not subj or OU_NON_TEAM_SUBJECT_RE.search(subj):
+        return False
+    matchup_clean = _LEAGUE_TAG_RE.sub("", matchup_part.strip())
+    sides = _OU_SPLIT_SIDES_RE.split(matchup_clean, maxsplit=1)
+    if len(sides) != 2:
+        return False
+    side_a, side_b = sides[0].strip(), sides[1].strip()
+    if not side_a or not side_b:
+        return False
+    return _match_side_tokens(subj, side_a, side_b) != _match_side_tokens(
+        subj, side_b, side_a
+    )
+
+
 def classify_game_market_class(
     name: str,
     external_id: Optional[str] = None,
@@ -773,9 +853,10 @@ def classify_game_market_class(
     name = name or ""
     lower = name.lower()
 
-    # Team-scoped derivatives first ("team total", first-to-score, NRFI …) so a
-    # "team total" is not swallowed by the totals branch.
-    if _TEAM_PROP_RE.search(name):
+    # Team-scoped derivatives first ("team total", first-to-score, NRFI …) and
+    # named-team O/U titles ("A vs. B: Team O/U N") so neither is swallowed by
+    # the game-totals branch (#13754).
+    if _TEAM_PROP_RE.search(name) or is_named_team_ou_market(name):
         return "team_prop"
     # Totals before player props: "Total Points" is a game total, not a prop
     # (mirrors routes/events.py ordering). "Total bases" is NOT a total (no

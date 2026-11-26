@@ -127,6 +127,7 @@ private let categoryLinks: [CategoryLink] = [
 struct LeaguesView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var path = NavigationPath()
 
     var body: some View {
@@ -221,14 +222,8 @@ struct LeaguesView: View {
                     route: .dailyChallenge
                 )
             }
-            // A hub whose edition is over, or that nobody dated. It sits below
-            // the destinations that are useful in any week and above "About",
-            // which is the grid's footer rather than a place to go — a finished
-            // tournament's results and title odds are still content, so last
-            // place would be a demotion further than the defect warranted.
-            ForEach(hubs.trailing) { tournament in
-                featuredHubCard(tournament, asOf: now)
-            }
+            // Finished featured hubs (`hubs.trailing`, e.g. finished US Open) are no longer
+            // promoted on Browse (#13662 item 8 / #13671); only live/active hubs appear above.
             BrowseFeatureCard(
                 title: "About Bain Luck",
                 subtitle: "Sources and methodology",
@@ -294,7 +289,10 @@ struct LeaguesView: View {
     /// extra width on more columns and draws each tile NARROWER than the phone
     /// does. `BrowseGridMetrics` carries the numbers and the measurements.
     private func adaptiveColumns(_ grid: BrowseGridMetrics.Grid) -> [GridItem] {
-        [GridItem(
+        if dynamicTypeSize.isAccessibilitySize {
+            return [GridItem(.flexible())]
+        }
+        return [GridItem(
             .adaptive(
                 minimum: BrowseGridMetrics.minimumTileWidth(grid, regularWidth: isRegularWidth),
                 maximum: BrowseGridMetrics.maximumTileWidth
@@ -339,31 +337,65 @@ private struct BrowseFeatureCard: View {
     let icon: String
     let color: Color
     let route: Route
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         NavigationLink(value: route) {
-            HStack(spacing: 13) {
-                Image(systemName: icon)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(color.gradient, in: RoundedRectangle(cornerRadius: 10))
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Image(systemName: icon)
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(color.gradient, in: RoundedRectangle(cornerRadius: 10))
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(title)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(nil)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(nil)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack(spacing: 13) {
+                        Image(systemName: icon)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(color.gradient, in: RoundedRectangle(cornerRadius: 10))
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(title)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.primary)
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 4)
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.tertiary)
             }
             .padding(14)
             .frame(minHeight: 76)
@@ -415,44 +447,87 @@ private struct BrowseTopicCard: View {
 private struct BrowseLeagueTile: View {
     let league: LeagueInfo
     let color: Color
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         NavigationLink(value: league.route ?? Route.leagueGrid(slug: league.slug)) {
-            HStack(spacing: 10) {
-                Image(systemName: league.icon)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(color)
-                    .frame(width: 34, height: 34)
-                    .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Image(systemName: league.icon)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(color)
+                            Text(league.label)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(nil)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                        Text(league.fullName)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(nil)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    HStack(spacing: 10) {
+                        Image(systemName: league.icon)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(color)
+                            .frame(width: 34, height: 34)
+                            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(league.label)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    // #5788 — two lines, not one. The strings above are short
-                    // enough to fit on one at the default text size; this is
-                    // the net under the larger accessibility sizes and under
-                    // the iPad, where `.adaptive` buys COLUMNS rather than
-                    // width and a tile can be NARROWER than the iPhone's.
-                    // Truncating here is the failure mode, not wrapping.
-                    Text(league.fullName)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(league.label)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            // #5788 — two lines, not one.
+                            Text(league.fullName)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
                 }
-
-                Spacer(minLength: 0)
             }
             .padding(11)
-            // `maxHeight: .infinity` (#5788) so the two tiles in a row are the
-            // same height when one of them wraps to a second line — without it
-            // WNCAAB's "Women's basketball" grew its own card and left NCAAB
-            // beside it visibly shorter.
             .frame(maxWidth: .infinity, minHeight: 58, maxHeight: .infinity, alignment: .leading)
             .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.barTrack.opacity(0.25), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
+    }
+}
+
+extension LeaguesView {
+    static func leagueTilesSampleForTest() -> AnyView {
+        let sampleSlugs = Set(["nba", "mlb", "nhl", "ncaa-women-basketball", "champions-league"])
+        let picks = allLeagues.filter { sampleSlugs.contains($0.slug) }
+        return AnyView(
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("LEAGUES")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    LazyVGrid(columns: [GridItem(.flexible())], spacing: 10) {
+                        ForEach(picks) { league in
+                            BrowseLeagueTile(
+                                league: league,
+                                color: DS.emerald
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
+            }
+        )
     }
 }

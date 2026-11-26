@@ -114,12 +114,32 @@ nonisolated enum WatchComplicationProjection {
     /// Direction 217: what the Matchup look needs beyond the rectangular reading.
     static func matchupFacts(_ game: WatchSelectedGame) -> WatchMatchupFacts217 {
         let pregame = game.pregameRenderedPercents
+        let drawSport = game.sportKey.map { DrawPricedWinner.sportPricesADraw($0) } ?? false
+        let isThreeWay = drawSport || game.drawProbability != nil || game.prematchDrawProbability != nil
+        let threeWayCurrent: (draw: Int?, away: Int?) = {
+            guard game.drawProbability != nil else { return (nil, nil) }
+            if let h = game.homeProbability, let d = game.drawProbability, let a = game.awayProbability,
+               h.isFinite, d.isFinite, a.isFinite {
+                let percents = renderedCardPercents([h, d, a])
+                return (
+                    percents.count > 1 ? percents[1] : renderedPercent(d),
+                    percents.count > 2 ? percents[2] : renderedPercent(a)
+                )
+            }
+            return (renderedPercent(game.drawProbability), renderedPercent(game.awayProbability))
+        }()
+        let pregameDraw = renderedPercent(game.prematchDrawProbability)
         return WatchMatchupFacts217(
             homePrimary: game.homePrimaryColor, homeSecondary: game.homeSecondaryColor,
             awayPrimary: game.awayPrimaryColor, awaySecondary: game.awaySecondaryColor,
             homeLogo: game.homeLogoURL, awayLogo: game.awayLogoURL,
             pregameHomePercent: pregame.home, pregameAwayPercent: pregame.away,
-            clock: game.isLive ? game.liveClockText : nil)
+            clock: game.isLive ? game.liveClockText : nil,
+            drawPercent: threeWayCurrent.draw,
+            awayPercent: threeWayCurrent.away,
+            pregameDrawPercent: pregameDraw,
+            isThreeWay: isThreeWay ? true : nil
+        )
     }
 
     /// #12640 — projects a pinned market outcome onto the rectangular Watch face slot ("Newsom 23%").

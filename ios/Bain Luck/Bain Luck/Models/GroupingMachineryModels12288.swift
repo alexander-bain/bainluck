@@ -50,23 +50,27 @@ nonisolated enum MachineryFormId: String, Codable, CaseIterable, Equatable, Send
 }
 
 /// Verified subject art (`team_logo`, `tmdb_poster`, `tmdb_headshot`, `person`, etc.).
-/// When `verifiedURL` is `nil`, views draw NO avatar/placeholder letters ("real art or nothing").
+/// When `verifiedURL` is `nil`, rows with an illustrated sibling render deterministic
+/// initials inside the same circle (`387: A`), while all-text cards draw no icon.
 nonisolated struct MachinerySubjectArt: Decodable, Equatable, Sendable {
     let url: String?
     let kind: String
     let detail: String
     let accentColor: String
+    let initials: String?
 
     init(
         url: String? = nil,
         kind: String = "none",
         detail: String = "",
-        accentColor: String = ""
+        accentColor: String = "",
+        initials: String? = nil
     ) {
         self.url = url
         self.kind = kind
         self.detail = detail
         self.accentColor = accentColor
+        self.initials = initials
     }
 
     init(from decoder: Decoder) throws {
@@ -76,6 +80,8 @@ nonisolated struct MachinerySubjectArt: Decodable, Equatable, Sendable {
         self.kind = c.decodeFirst(String.self, keys: ["kind"]) ?? "none"
         self.detail = c.decodeFirst(String.self, keys: ["detail"]) ?? ""
         self.accentColor = c.decodeFirst(String.self, keys: ["accentColor", "accent_color"]) ?? ""
+        let rawInitials = c.decodeFirst(String.self, keys: ["initials"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.initials = (rawInitials?.isEmpty == false) ? rawInitials : nil
     }
 
     var verifiedURL: URL? {
@@ -105,10 +111,20 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
     let name: String
     let probability: Double
     let renderedPercent: Int
+    let unflooredPercent: Int?
     let art: MachinerySubjectArt?
     let sourceMark: SourceMark?
 
     var id: String { "\(marketId ?? 0):\(outcomeId):\(name)" }
+
+    var probabilityLabel: String {
+        if probability == 0 && unflooredPercent == nil {
+            return "\(renderedPercent)%"
+        }
+        return DiscoverRoundupCardModel.probabilityText(
+            probability: probability, renderedPercent: unflooredPercent ?? renderedPercent
+        )
+    }
 
     init(
         outcomeId: Int,
@@ -116,6 +132,7 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
         name: String,
         probability: Double,
         renderedPercent: Int,
+        unflooredPercent: Int? = nil,
         art: MachinerySubjectArt? = nil,
         sourceMark: SourceMark? = nil
     ) {
@@ -124,6 +141,7 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
         self.name = name
         self.probability = probability
         self.renderedPercent = renderedPercent
+        self.unflooredPercent = unflooredPercent
         self.art = art
         self.sourceMark = sourceMark
     }
@@ -140,6 +158,7 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
         } else {
             self.renderedPercent = Int((prob * 100.0).rounded())
         }
+        self.unflooredPercent = c.decodeFirst(Int.self, keys: ["unflooredPercent", "unfloored_percent"])
         self.art = c.decodeFirst(MachinerySubjectArt.self, keys: ["art"])
         self.sourceMark = c.decodeFirst(SourceMark.self, keys: ["sourceMark", "source_mark"])
     }

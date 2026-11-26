@@ -102,6 +102,14 @@ const ANTHROPIC_IPO = [
 ];
 
 describe("#9642 — a group row prints its card's ladder rung", () => {
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-09-30T13:00:00Z"));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("date ladder: the row names the earliest date over even, as the card marks it", () => {
     const data = ladderData("Anthropic IPO?", ANTHROPIC_IPO);
     expect(cardMarkedRung(data)).toBe("November 30, 2026");

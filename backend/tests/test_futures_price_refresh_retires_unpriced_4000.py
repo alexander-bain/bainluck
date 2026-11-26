@@ -289,9 +289,19 @@ class _RetirementHarness:
                      (13, "0xperson_bg"), (14, "0xperson_cq")]
                 )
             if sql.lstrip().upper().startswith("INSERT INTO FUTURES_ODDS_SNAPSHOTS"):
-                self.outer.priced_writes.append(
-                    float(statement.compile().params["probability"])
-                )
+                multi = getattr(statement, "_multi_values", None)
+                if multi:
+                    for chunk in multi:
+                        for row in chunk:
+                            prob = next(
+                                v for k, v in row.items()
+                                if getattr(k, "key", str(k)) == "probability"
+                            )
+                            self.outer.priced_writes.append(float(prob))
+                else:
+                    self.outer.priced_writes.append(
+                        float(statement.compile().params["probability"])
+                    )
                 return _Result()
             if sql.lstrip().upper().startswith("UPDATE FUTURES_OUTCOMES"):
                 params_ = statement.compile().params

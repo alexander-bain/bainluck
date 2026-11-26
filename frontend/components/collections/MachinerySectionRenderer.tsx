@@ -12,6 +12,8 @@ import type {
   MachineryVisualBlock,
 } from "@/lib/collections";
 import type { Event } from "@/lib/types";
+import { formatGroupedProbability } from "@/lib/probabilityDisplay";
+import { renderedPercent } from "@/lib/renderedPercent";
 
 export function isMachinerySlice1Enabled(): boolean {
   return process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 === "true";
@@ -108,11 +110,25 @@ export function resolveDistinctChartSeries(
   });
 }
 
+function initialsForSubject(label: string, provided?: string | null): string {
+  const cleanProvided = (provided ?? "").trim();
+  if (cleanProvided) return cleanProvided.slice(0, 3).toUpperCase();
+  const tokens = label
+    .replace(/[^A-Za-z0-9\s]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const nonYear = tokens.filter((t) => !/^(19|20)\d{2}$/.test(t));
+  const picked = nonYear.length > 0 ? nonYear : tokens;
+  if (picked.length === 0) return "?";
+  if (picked.length === 1) return picked[0].slice(0, 2).toUpperCase();
+  return `${picked[0][0] ?? ""}${picked[1][0] ?? ""}`.toUpperCase();
+}
+
 function SubjectAvatar({
   art,
   label,
   sizeClass = "h-9 w-9",
-  widthClass,
   poster = false,
   reserveSlotWhenMissing = false,
 }: {
@@ -126,12 +142,15 @@ function SubjectAvatar({
   const url = art?.url;
   if (!url) {
     if (!reserveSlotWhenMissing) return null;
+    const initials = initialsForSubject(label, art?.initials);
     return (
       <span
         aria-hidden="true"
-        data-testid="machinery-avatar-spacer"
-        className={`inline-block shrink-0 ${widthClass ?? sizeClass}`}
-      />
+        data-testid="machinery-avatar-initials"
+        className={`inline-flex shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[10px] font-bold uppercase leading-none tracking-tight text-text-secondary select-none ${sizeClass}`}
+      >
+        {initials}
+      </span>
     );
   }
   const kind = art?.kind ?? "person";
@@ -330,28 +349,46 @@ function MatchupSlateBlock({
   );
 }
 
-function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
-  const lead = items[0];
-  if (!lead) return null;
-  const outcomes = (lead.outcomes as MachineryOutcomeVisual[] | undefined) ?? [];
+function DuelBarVisual({
+  outcomes,
+  compact = false,
+}: {
+  outcomes: readonly MachineryOutcomeVisual[];
+  compact?: boolean;
+}) {
   if (outcomes.length < 2) return null;
-  const left = outcomes[0];
-  const right = outcomes[1];
-  const href = String(lead.href ?? "/discover");
+  const drawIdx =
+    outcomes.length >= 3
+      ? outcomes.findIndex((o) => /^(?:tie|draw)$/i.test(String(o.name ?? "").trim()))
+      : -1;
+  const nonDraw = drawIdx >= 0 ? outcomes.filter((_, i) => i !== drawIdx) : outcomes;
+  if (nonDraw.length < 2) return null;
+  const left = nonDraw[0];
+  const right = nonDraw[1];
+  const draw = drawIdx >= 0 ? outcomes[drawIdx] : undefined;
+  const drawPct = draw ? Math.max(2, Math.min(40, draw.rendered_percent)) : 0;
+  const leftPct = draw
+    ? Math.max(6, Math.min(92 - drawPct, left.rendered_percent))
+    : Math.max(6, Math.min(94, left.rendered_percent));
+  const anyDuelArt = Boolean(left.art?.url || right.art?.url);
+  const avatarSize = compact ? "h-8 w-8" : "h-10 w-10";
+  const pctClass = compact ? "text-base font-extrabold tabular-nums text-text-primary" : "text-xl font-extrabold tabular-nums text-text-primary";
+
   return (
-    <Link
-      href={href}
-      data-machinery-form="duel_bar"
-      className="block rounded-card border border-surface-border bg-surface-card p-4 transition-colors hover:bg-surface-elevated"
-    >
+    <>
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          {left.art?.url ? (
-            <SubjectAvatar art={left.art} label={left.name} sizeClass="h-10 w-10" />
+          {anyDuelArt ? (
+            <SubjectAvatar
+              art={left.art}
+              label={left.name}
+              sizeClass={avatarSize}
+              reserveSlotWhenMissing
+            />
           ) : null}
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-text-primary">
-              {!left.art?.url && (
+              {!anyDuelArt && (
                 <span
                   className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-accent-brand"
                   style={{ backgroundColor: left.art?.accent_color || undefined }}
@@ -359,44 +396,83 @@ function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
               )}
               <span>{left.name}</span>
             </div>
-            <div className="text-xl font-extrabold tabular-nums text-text-primary">
-              {left.rendered_percent}%
-            </div>
+            <div className={pctClass}>{formatGroupedProbability(left)}</div>
           </div>
         </div>
         <div className="flex min-w-0 items-center gap-2.5 text-right">
           <div className="min-w-0">
             <div className="flex items-center justify-end gap-1.5 text-sm font-semibold text-text-primary">
               <span>{right.name}</span>
-              {!right.art?.url && (
+              {!anyDuelArt && (
                 <span
                   className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-slate-400"
                   style={{ backgroundColor: right.art?.accent_color || undefined }}
                 />
               )}
             </div>
-            <div className="text-xl font-extrabold tabular-nums text-text-primary">
-              {right.rendered_percent}%
-            </div>
+            <div className={pctClass}>{formatGroupedProbability(right)}</div>
           </div>
-          {right.art?.url ? (
-            <SubjectAvatar art={right.art} label={right.name} sizeClass="h-10 w-10" />
+          {anyDuelArt ? (
+            <SubjectAvatar
+              art={right.art}
+              label={right.name}
+              sizeClass={avatarSize}
+              reserveSlotWhenMissing
+            />
           ) : null}
         </div>
       </div>
+      {draw ? (
+        <div className="mt-2 flex items-center justify-center gap-1.5 text-xs font-medium text-text-secondary">
+          <span
+            className="inline-block h-2 w-2 shrink-0 rounded-full bg-slate-300"
+            style={{ backgroundColor: draw.art?.accent_color || undefined }}
+          />
+          <span>{draw.name}</span>
+          <span className="font-bold tabular-nums text-text-primary">
+            {draw.rendered_percent}%
+          </span>
+        </div>
+      ) : null}
       <div className="mt-3 flex h-3 w-full overflow-hidden rounded-full bg-surface-elevated">
         <div
           className="h-full bg-accent-brand"
           style={{
-            width: `${Math.max(6, Math.min(94, left.rendered_percent))}%`,
+            width: `${leftPct}%`,
             backgroundColor: left.art?.accent_color || undefined,
           }}
         />
+        {draw ? (
+          <div
+            className="h-full bg-slate-300"
+            style={{
+              width: `${drawPct}%`,
+              backgroundColor: draw.art?.accent_color || undefined,
+            }}
+          />
+        ) : null}
         <div
           className="h-full flex-1 bg-slate-400"
           style={{ backgroundColor: right.art?.accent_color || undefined }}
         />
       </div>
+    </>
+  );
+}
+
+function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
+  const lead = items[0];
+  if (!lead) return null;
+  const outcomes = (lead.outcomes as MachineryOutcomeVisual[] | undefined) ?? [];
+  if (outcomes.length < 2) return null;
+  const href = String(lead.href ?? "/discover");
+  return (
+    <Link
+      href={href}
+      data-machinery-form="duel_bar"
+      className="block rounded-card border border-surface-border bg-surface-card p-4 transition-colors hover:bg-surface-elevated"
+    >
+      <DuelBarVisual outcomes={outcomes} />
     </Link>
   );
 }
@@ -448,7 +524,7 @@ function ContenderSpotlightBlock({
                         isFav ? "font-extrabold text-text-primary" : "font-semibold text-text-secondary"
                       }`}
                     >
-                      {o.rendered_percent}%
+                      {formatGroupedProbability(o)}
                     </span>
                   </div>
                   <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
@@ -493,7 +569,7 @@ function ContenderSpotlightBlock({
               <div className="mb-1.5 flex w-full items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-text-muted">
                 <span>#{idx + 1}</span>
                 <span className="text-sm font-extrabold tabular-nums text-text-primary">
-                  {o.rendered_percent}%
+                  {formatGroupedProbability(o)}
                 </span>
               </div>
               <SubjectAvatar
@@ -554,7 +630,7 @@ function ContenderSpotlightBlock({
                 </div>
               </div>
               <span className="relative text-sm font-bold tabular-nums text-text-primary">
-                {o.rendered_percent}%
+                {formatGroupedProbability(o)}
               </span>
             </Link>
           ))}
@@ -635,7 +711,7 @@ function SiblingFieldsGridBlock({
                               isFav ? "font-bold text-text-primary" : "font-semibold text-text-secondary"
                             }`}
                           >
-                            {o.rendered_percent}%
+                            {formatGroupedProbability(o)}
                           </span>
                         </div>
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
@@ -710,7 +786,7 @@ function BenchmarkStripBlock({
                 <span className="break-words text-xs font-medium leading-snug text-text-primary">{title}</span>
               </div>
               <span className="shrink-0 rounded-md bg-surface-elevated px-2 py-1 text-xs font-bold tabular-nums text-text-primary">
-                {yes.rendered_percent}%
+                {formatGroupedProbability(yes)}
               </span>
             </Link>
           );
@@ -1018,7 +1094,17 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
 
       {!card.image_url && card.mini_chart && <SingleHistoryChartCard chart={card.mini_chart} compact />}
 
-      {card.form_id === "contender_spotlight" && !isEventCard && !card.scale_ordered && card.rows.length >= 2 ? (
+      {card.form_id === "duel_bar" && !isEventCard && card.rows.length >= 2 ? (
+        <div
+          data-testid="machinery-discover-duel-bar"
+          className="mt-3 rounded-lg border border-surface-border bg-surface-elevated/40 p-3"
+        >
+          <DuelBarVisual
+            outcomes={card.rows as unknown as MachineryOutcomeVisual[]}
+            compact
+          />
+        </div>
+      ) : card.form_id === "contender_spotlight" && !isEventCard && !card.scale_ordered && card.rows.length >= 2 ? (
         (() => {
           const topThree = card.rows.slice(0, 3);
           const podiumAnyPoster = topThree.some(
@@ -1032,7 +1118,10 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
               {topThree.map((r, idx) => {
                 const oid = Number(r.outcome_id ?? idx);
                 const name = String(r.name ?? "");
-                const pct = Number(r.rendered_percent ?? 0);
+                const probability = Number(r.probability ?? NaN);
+                const pct = r.rendered_percent == null
+                  ? (renderedPercent(probability) ?? 0)
+                  : Number(r.rendered_percent);
                 const art = r.art as MachinerySubjectArt | undefined;
                 const isPoster = art?.kind === "tmdb_poster";
                 return (
@@ -1044,20 +1133,20 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                     <div className="mb-1 flex w-full items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-text-muted">
                       <span>#{idx + 1}</span>
                       <span className="text-xs font-extrabold tabular-nums text-text-primary">
-                        {pct}%
+                        {formatGroupedProbability(r)}
                       </span>
                     </div>
                     {podiumAnyArt && (
                       <SubjectAvatar
                         art={art}
                         label={name}
-                        sizeClass={podiumAnyPoster ? "h-12 w-8" : "h-10 w-10"}
+                        sizeClass={isPoster ? "h-12 w-8" : "h-10 w-10"}
                         widthClass={podiumAnyPoster ? "w-8 h-12" : "w-10 h-10"}
                         poster={isPoster}
                         reserveSlotWhenMissing
                       />
                     )}
-                    <div className="mt-1.5 line-clamp-2 break-words text-[11px] font-semibold leading-tight text-text-primary">
+                    <div className="mt-1.5 break-words text-[11px] font-semibold leading-tight text-text-primary">
                       {name}
                     </div>
                     <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
@@ -1131,7 +1220,9 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
           : card.rows.map((r) => {
               const oid = Number(r.outcome_id ?? 0);
               const name = String(r.name ?? "");
-              const pct = Number(r.rendered_percent ?? 0);
+              const probability = Number(r.probability ?? NaN);
+              const allocation = r.rendered_percent == null ? null : Number(r.rendered_percent);
+              const pct = allocation ?? renderedPercent(probability) ?? 0;
               const art = r.art as MachinerySubjectArt | undefined;
               const isFav = !card.scale_ordered || pct === maxPct;
               return (
@@ -1159,7 +1250,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                           isFav ? "font-bold text-text-primary" : "font-semibold text-text-secondary"
                         }`}
                       >
-                        {pct}%
+                        {formatGroupedProbability(r)}
                       </span>
                     </div>
                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">

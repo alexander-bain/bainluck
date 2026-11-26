@@ -1160,6 +1160,46 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             category=cat,
             outcomes=outs,
         )
+
+    # 16. #12288 Batch 9 preview groupings (Golf/Ryder Cup, UFC/Boxing, Critics/Oscars, Meteor Strikes, Grammys 2027, Tech Bankruptcies)
+    for mid, ext, name, cat, hist, outs in (
+        (114132, "PMB9-METEOR", "5kt meteor strike in 2026?", "tech", True, [("Yes", 0.13, 0.27)]),
+        (112828, "PMB9-MET30", "Will a major meteor strike hit Earth before 2030?", "tech", False, [("Yes", 0.43, 0.40)]),
+        (114131, "PMB9-MET10", "Major meteor strike (10kt+) in 2026?", "tech", False, [("Yes", 0.05, 0.04)]),
+        (114162, "PMB9-MET1", "1 megaton meteor strike in 2026?", "weather", False, [("Yes", 0.04, 0.03)]),
+        (61321725, "PMB9-CWBK", "CoreWeave announces bankruptcy by...?", "tech", False, [("December 31, 2027", 0.16, 0.15), ("December 31, 2028", 0.23, 0.22)]),
+        (61321727, "PMB9-ANTBK", "Anthropic files for bankruptcy by...?", "tech", False, [("December 31, 2027", 0.09, 0.08), ("December 31, 2028", 0.15, 0.14)]),
+        (61321742, "PMB9-OAIBK", "OpenAI files for bankruptcy by...?", "tech", False, [("December 31, 2027", 0.09, 0.08), ("December 31, 2028", 0.15, 0.14)]),
+        (61321726, "PMB9-NUBK", "NuScale announces bankruptcy by...?", "tech", False, [("December 31, 2027", 0.06, 0.05), ("December 31, 2028", 0.18, 0.17)]),
+        (65536357, "PMB9-CCDIR", "Critics Choice Awards: Best Director", "entertainment", False, [("Christopher Nolan", 0.75, 0.72), ("Denis Villeneuve", 0.12, 0.13), ("Alejandro González Iñárritu", 0.08, 0.09)]),
+        (58495125, "PMB9-OSUPM", "Oscars 2027: Best Supporting Actor Winner", "entertainment", False, [("Paul Giamatti", 0.41, 0.43), ("Andrew Garfield", 0.40, 0.30), ("Sean Penn", 0.09, 0.10)]),
+        (58492242, "PMB9-OINTL", "Oscars 2027: Best International Feature Film Winner", "entertainment", False, [("La Bola Negra", 0.83, 0.81), ("All of a Sudden", 0.05, 0.06)]),
+        (58492241, "PMB9-OSCORE", "Oscars 2027: Best Original Score Winner", "entertainment", False, [("The Odyssey", 0.69, 0.71), ("Dune: Part Three", 0.12, 0.10)]),
+        (65536307, "PMB9-CCPIC", "Critics Choice Awards: Best Picture", "entertainment", False, [("You Can See Everything", 0.66, 0.64), ("The Odyssey", 0.20, 0.21)]),
+        (58495122, "PMB9-OADAPT", "Oscars 2027: Best Adapted Screenplay Winner", "entertainment", False, [("La Bola Negra", 0.62, 0.50), ("The Invite", 0.24, 0.24)]),
+        (71652319, "PMB9-GRMSOTY", "Grammy Winner: Song Of The Year", "entertainment", False, [("Choosin' Texas", 0.50, 0.48), ("the cure", 0.30, 0.31)]),
+        (62368098, "PMB9-GRMRNB", "Grammy Winner: Best R&B Solo Performance", "entertainment", False, [("What You Need", 0.48, 0.45), ("Out The Window", 0.26, 0.27)]),
+        (71652300, "PMB9-GRMPOP", "Grammy Winner: Best Pop Vocal Album", "entertainment", False, [("The Art of Loving", 0.38, 0.36), ("you seem pretty sad for a girl so in love", 0.32, 0.31)]),
+        (71652304, "PMB9-GRMROCK", "Grammy Winner: Best Rock Album", "entertainment", False, [("Vol.II", 0.35, 0.33), ("Your Favorite Toy", 0.25, 0.26)]),
+        (3970169, "PMB9-RYDER", "2027 Ryder Cup Winner", "golf", False, [("Team Europe", 0.53, 0.51), ("Team USA", 0.40, 0.42), ("Tie", 0.07, 0.06)]),
+        (61056094, "KXB9-MASTERS", "2027 The Masters Champion", "golf", False, [("Scottie Scheffler", 0.21, 0.20), ("Rory McIlroy", 0.12, 0.12)]),
+        (11224673, "PMB9-LIV", "Will LIV Golf announce shutdown in 2026?", "golf", False, [("Yes", 0.03, 0.04)]),
+        (176, "KXB9-SLAM", "Will Scottie Scheffler win the grand slam before 2028?", "golf", False, [("Yes", 0.02, 0.03)]),
+        (58852162, "KXB9-CONOR", "UFC: Who Will Conor McGregor Fight Next?", "mma", False, [("Max Holloway", 0.30, 0.28), ("Michael Chandler", 0.21, 0.19), ("Nate Diaz", 0.14, 0.11)]),
+        (20565989, "KXB9-STRICK", "UFC: Who Will Sean Strickland Fight Next?", "mma", False, [("Nassourdine Imavov", 0.81, 0.78), ("Khamzat Chimaev", 0.07, 0.09)]),
+        (10603290, "KXB9-ULBERG", "UFC: Who will Carlos Ulberg fight next?", "mma", False, [("Magomed Ankalaev", 0.40, 0.41), ("Paulo Costa", 0.10, 0.13)]),
+        (57284647, "KXB9-ANK", "UFC: Who Will Magomed Ankalaev Fight Next?", "mma", False, [("Carlos Ulberg", 0.28, 0.35), ("Paulo Costa", 0.13, 0.12)]),
+        (10437337, "PMB9-FURYJOSH", "Tyson Fury and Anthony Joshua to Fight in 2026", "boxing", False, [("Yes", 0.04, 0.05)]),
+        (61141844, "KXB9-JSILVA", "UFC: Who Will Jean Silva Fight Next?", "mma", False, [("Lerone Murphy", 0.25, 0.23), ("Kevin Vallejos", 0.24, 0.24)]),
+    ):
+        await _add_market(
+            market_id=mid,
+            external_id=ext,
+            name=name,
+            category=cat,
+            outcomes=outs,
+            with_history=hist,
+        )
     await session.commit()
 
 
@@ -1291,6 +1331,65 @@ async def test_paired_discover_card_and_set_match_the_market_pages_allocation(pg
     assert page_row["rendered_percent"] == 42
     assert card_row["probability"] == set_row["stage_2_probability"] == page_row["probability"]
     assert card_row["rendered_percent"] == set_row["stage_2_rendered_percent"] == page_row["rendered_percent"]
+
+
+async def test_grouping_rechecks_its_minimum_after_withdrawing_a_field(pg_machinery):
+    from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
+
+    now = pg_machinery["now_dt"]
+    definition = {
+        "slug": "test-review-awards",
+        "name": "Review awards",
+        "category": "entertainment",
+        "rule": {"sections": [{
+            "key": "award_fields",
+            "title": "Award winners",
+            "atom_query": {
+                "kind": "markets",
+                "title_all_tokens": ["review", "award"],
+                "min_items": 2,
+            },
+        }]},
+    }
+    async with pg_machinery["maker"]() as db:
+        market_ids = []
+        for index, label in enumerate(("film", "song", "book")):
+            market = FuturesMarket(
+                source="kalshi", external_id=f"KXREVIEW-{label}",
+                name=f"Review Award: {label} winner", category="entertainment",
+                llm_sport_category="entertainment", market_type="field",
+                status="open", mutually_exclusive=True, volume=10_000,
+                resolution_date=now + timedelta(days=30),
+            )
+            db.add(market)
+            await db.flush()
+            market_ids.append(market.id)
+            probabilities = (0.20, 0.10, 0.08, 0.04) if index == 0 else (0.40, 0.30, 0.20, 0.10)
+            for outcome_index, (name, price) in enumerate(
+                zip(("Alice", "Beatrice", "Carmen", "Diana"), probabilities, strict=True)
+            ):
+                db.add(FuturesOutcome(
+                    market_id=market.id, external_id=f"KXREVIEW-{label}-{outcome_index}",
+                    name=name, current_probability=price, last_updated=now,
+                ))
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupMembers)
+        assert {item["id"] for item in group.members} == set(market_ids[1:])
+
+    async with pg_machinery["maker"]() as db:
+        await db.execute(
+            update(FuturesOutcome).where(FuturesOutcome.market_id == market_ids[1])
+            .values(current_probability=0.10)
+        )
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupRefusal)
+        assert ("container_machinery", "too_few_markets:award_fields") in group.reasons
 
 
 async def test_evaluate_machinery_candidates_preview_returns_all_ok_with_zero_error_logs(

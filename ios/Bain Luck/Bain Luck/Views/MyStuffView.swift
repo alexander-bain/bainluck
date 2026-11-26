@@ -10,6 +10,7 @@ struct MyStuffView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.followManager295A) private var followManager
+    @Environment(\.firstRunChecklistStore364A) private var checklistStore
     @StateObject private var vm: MyStuffViewModel
     @StateObject private var pinContent: SavedPinContentViewModel
     @StateObject private var landingVM: MyStuffLandingViewModel295A
@@ -17,6 +18,7 @@ struct MyStuffView: View {
     @State private var path: NavigationPath
     @State private var showOnboarding = false
     @State private var showPinManagement = false
+    @State private var checklistStepToOpen364A: FirstRunChecklistRowID364A? = nil
     /// Width available to the iPad card grid (#3709), kept so `DiscoverMasonry`
     /// measures the actual card-area width and never emits a multi-column layout on Split View.
     @State private var gridWidth: CGFloat = 0
@@ -104,89 +106,68 @@ struct MyStuffView: View {
         return "\(subj)|\(pins)|\(pinContent.content.count)|\(vm.items.count)|\(vm.teamFutures?.items.count ?? 0)|\(vm.error != nil)|\(vm.teamFuturesFailed)|\(vm.teamFuturesLoading)"
     }
 
+    @ViewBuilder
+    private var managePinsHeaderRow13661: some View {
+        Button {
+            showPinManagement = true
+        } label: {
+            HStack {
+                Label("Manage pins", systemImage: "bookmark.fill")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Text("\(pinManager.savedPins.count)")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.cardBackgroundDark)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+            )
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .frame(maxWidth: authManager.isAuthenticated ? Self.signedInManagePinsMaxWidth : Self.signInMaxWidth)
+        .frame(maxWidth: .infinity)
+        .accessibilityIdentifier("myStuffManagePins")
+
+        if checklistStore.state.showsInMyStuff {
+            let bannerBinding = Binding<FirstRunChecklistState364A>(
+                get: { checklistStore.state },
+                set: { checklistStore.state = $0 }
+            )
+            MyStuffChecklistBanner364A(
+                state: bannerBinding,
+                onOpenRow: { checklistStepToOpen364A = $0 },
+                onDismiss: { checklistStore.dismissFromMyStuff() }
+            )
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+        }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                if !usesLandingView295A {
-                    Button {
-                        showPinManagement = true
-                    } label: {
-                        HStack {
-                            Label("Manage pins", systemImage: "bookmark.fill")
-                                .font(.subheadline.weight(.medium))
-                            Spacer()
-                            Text("\(pinManager.savedPins.count)")
-                                .font(.subheadline.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(Color.cardBackgroundDark)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                        )
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
-                    .frame(maxWidth: authManager.isAuthenticated ? Self.signedInManagePinsMaxWidth : Self.signInMaxWidth)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("myStuffManagePins")
-                }
-                SiriProbabilityTip12315()
-                Group {
-                    if usesLandingView295A {
-                        MyStuffLandingView295A(
-                            landingVM: landingVM,
-                            path: $path,
-                            onOpenDiscover: { navCoordinator.selectedTab = .discover },
-                            onManagePins: { showPinManagement = true },
-                            onRefresh: {
-                                async let pins: Void = pinContent.load(pinManager.savedPins, refresh: true)
-                                if authManager.isAuthenticated {
-                                    await vm.startLoad()
-                                }
-                                await pins
-                                await landingVM.refresh(
-                                    followedSubjects: followManager.subjects,
-                                    savedPins: pinManager.savedPins,
-                                    pinContent: pinContent.content,
-                                    signedInItems: authManager.isAuthenticated ? vm.items : [],
-                                    signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil,
-                                    signedInTeamFeedFailed: authManager.isAuthenticated && vm.error != nil,
-                                    signedInTeamFuturesFailed: authManager.isAuthenticated && vm.teamFuturesFailed,
-                                    signedInTeamFuturesLoading: authManager.isAuthenticated && vm.teamFuturesLoading
-                                )
-                            },
-                            onRetryTeamFutures: {
-                                if authManager.isAuthenticated {
-                                    if vm.items.isEmpty && vm.error != nil {
-                                        await vm.startLoad()
-                                    } else {
-                                        await vm.retryTeamFutures()
-                                    }
-                                } else {
-                                    await landingVM.refresh(
-                                        followedSubjects: followManager.subjects,
-                                        savedPins: pinManager.savedPins,
-                                        pinContent: pinContent.content,
-                                        signedInItems: [],
-                                        signedInTeamFutures: nil
-                                    )
-                                }
+            Group {
+                if usesLandingView295A {
+                    MyStuffLandingView295A(
+                        landingVM: landingVM,
+                        path: $path,
+                        onOpenDiscover: { navCoordinator.selectedTab = .discover },
+                        onManagePins: { showPinManagement = true },
+                        onRefresh: {
+                            async let pins: Void = pinContent.load(pinManager.savedPins, refresh: true)
+                            if authManager.isAuthenticated {
+                                await vm.startLoad()
                             }
-                        )
-                        .task(id: authManager.activeFeedUserId) {
-                            guard authManager.isAuthenticated else { return }
-                            vm.viewDidStart()
-                            await vm.startLoad()
-                        }
-                        .task(id: landingRefreshKey295A) {
+                            await pins
                             await landingVM.refresh(
                                 followedSubjects: followManager.subjects,
                                 savedPins: pinManager.savedPins,
@@ -197,16 +178,63 @@ struct MyStuffView: View {
                                 signedInTeamFuturesFailed: authManager.isAuthenticated && vm.teamFuturesFailed,
                                 signedInTeamFuturesLoading: authManager.isAuthenticated && vm.teamFuturesLoading
                             )
-                        }
-                    } else if authManager.isLoading {
-                        ProgressView()
-                    } else if !authManager.isAuthenticated {
-                        signInView
-                    } else if authManager.user?.onboardingCompleted != true {
-                        onboardingPromptView
-                    } else {
-                        teamFeedView
+                        },
+                        onRetryTeamFutures: {
+                            if authManager.isAuthenticated {
+                                if vm.items.isEmpty && vm.error != nil {
+                                    await vm.startLoad()
+                                } else {
+                                    await vm.retryTeamFutures()
+                                }
+                            } else {
+                                await landingVM.refresh(
+                                    followedSubjects: followManager.subjects,
+                                    savedPins: pinManager.savedPins,
+                                    pinContent: pinContent.content,
+                                    signedInItems: [],
+                                    signedInTeamFutures: nil
+                                )
+                            }
+                        },
+                        showsEarnedSignIn212A: !authManager.isAuthenticated,
+                        onAppleSignIn212A: { authManager.signInWithApple() },
+                        onGoogleSignIn212A: { authManager.signInWithGoogle() },
+                        showsChecklistBanner364A: true,
+                        onOpenChecklistRow364A: { checklistStepToOpen364A = $0 }
+                    )
+                    .task(id: authManager.activeFeedUserId) {
+                        guard authManager.isAuthenticated else { return }
+                        vm.viewDidStart()
+                        await vm.startLoad()
                     }
+                    .task(id: landingRefreshKey295A) {
+                        await landingVM.refresh(
+                            followedSubjects: followManager.subjects,
+                            savedPins: pinManager.savedPins,
+                            pinContent: pinContent.content,
+                            signedInItems: authManager.isAuthenticated ? vm.items : [],
+                            signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil,
+                            signedInTeamFeedFailed: authManager.isAuthenticated && vm.error != nil,
+                            signedInTeamFuturesFailed: authManager.isAuthenticated && vm.teamFuturesFailed,
+                            signedInTeamFuturesLoading: authManager.isAuthenticated && vm.teamFuturesLoading
+                        )
+                    }
+                } else if authManager.isLoading {
+                    ScrollView {
+                        VStack(spacing: 16) {
+                            managePinsHeaderRow13661
+                            SiriProbabilityTip12315()
+                            ProgressView()
+                                .padding(.top, 48)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                } else if !authManager.isAuthenticated {
+                    signInView
+                } else if authManager.user?.onboardingCompleted != true {
+                    onboardingPromptView
+                } else {
+                    teamFeedView
                 }
             }
             .navigationTitle("My Stuff")
@@ -239,9 +267,19 @@ struct MyStuffView: View {
         .sheet(isPresented: $showPinManagement) {
             PinManagementView().environmentObject(pinManager)
         }
+        .sheet(item: $checklistStepToOpen364A) { row in
+            FirstRunChecklistRootView364A(initialStep: row)
+                .environmentObject(authManager)
+                .environmentObject(pinManager)
+                .environment(\.followManager295A, followManager)
+                .environment(\.firstRunChecklistStore364A, checklistStore)
+        }
         // #10011 — pinned content is read from the saved IDs themselves, so it
         // never depends on the team feed, onboarding or sign-in state.
-        .task(id: pinManager.savedPins) { await pinContent.load(pinManager.savedPins) }
+        .task(id: pinManager.savedPins) {
+            vm.setHasPins(hasPins)
+            await pinContent.load(pinManager.savedPins)
+        }
         // #10874 — saved pins it described (or found gone) reach Spotlight.
         .spotlightSavedContent10874(pinContent, pins: pinManager)
         .onChange(of: pinManager.identityGeneration) { _, _ in
@@ -249,7 +287,17 @@ struct MyStuffView: View {
             Task { await pinContent.load(pinManager.savedPins) }
         }
         .onAppear {
+            vm.setHasPins(hasPins)
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
+            checklistStore.syncFollowCount(followManager.subjects.count)
+            checklistStore.syncAuthState(isAuthenticated: authManager.isAuthenticated)
+            checklistStore.syncAlertsState(isEnabled: GameAlertsPreference13083.shared.isEnabled)
+        }
+        .onChange(of: followManager.subjects.count) { _, newCount in
+            checklistStore.syncFollowCount(newCount)
+        }
+        .onChange(of: authManager.isAuthenticated) { _, authed in
+            checklistStore.syncAuthState(isAuthenticated: authed)
         }
         .task {
             predictionStats = try? await APIClient.shared.fetchPredictionStats()
@@ -305,11 +353,14 @@ struct MyStuffView: View {
     private var signInView: some View {
         ScrollView {
             VStack(spacing: 32) {
+                VStack(spacing: 8) {
+                    managePinsHeaderRow13661
+                    SiriProbabilityTip12315()
+                }
                 pinnedStack
-                    .padding(.top, 16)
+                    .padding(.top, 8)
                 VStack(spacing: 12) {
-                    Text("🍀")
-                        .font(.system(size: 48))
+                    BainLuckMarkView(size: 48)
                     // #6501: the headline is the loudest half of the pitch, and
                     // it led with the surface `ReleaseSurfaces` switched off.
                     // The two perks below that survive the flag are teams and
@@ -354,6 +405,7 @@ struct MyStuffView: View {
                         .background(.black)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                    .disabled(authManager.isSigningIn)
 
                     Button {
                         authManager.signInWithGoogle()
@@ -369,6 +421,7 @@ struct MyStuffView: View {
                         .background(Color(red: 0.26, green: 0.52, blue: 0.96))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                    .disabled(authManager.isSigningIn)
 
                     if let error = authManager.error {
                         Text(error)
@@ -412,24 +465,20 @@ struct MyStuffView: View {
     // MARK: - State 2: Onboarding Prompt
 
     private var onboardingPromptView: some View {
-        Group {
-            if hasPins {
-                // #10011 — saved pins are shown before onboarding finishes.
-                ScrollView {
-                    VStack(spacing: 32) {
-                        pinnedStack
-                            .padding(.top, 16)
-                        onboardingPromptContent
-                            .padding(.bottom, 40)
-                    }
+        ScrollView {
+            VStack(spacing: 24) {
+                VStack(spacing: 8) {
+                    managePinsHeaderRow13661
+                    SiriProbabilityTip12315()
                 }
-            } else {
-                VStack(spacing: 20) {
-                    Spacer()
-                    onboardingPromptContent
-                    Spacer()
+                if hasPins {
+                    // #10011 — saved pins are shown before onboarding finishes.
+                    pinnedStack
                 }
+                onboardingPromptContent
+                    .padding(.vertical, 24)
             }
+            .frame(maxWidth: .infinity)
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $showOnboarding) {
@@ -491,41 +540,70 @@ struct MyStuffView: View {
                 // feed loads, fails or is empty; that state becomes a row.
                 teamFeedList
             } else if vm.loading {
-                SkeletonFeedView()
-            } else if let error = vm.error, vm.items.isEmpty {
-                ContentUnavailableView {
-                    Label("Couldn't Load Feed", systemImage: "wifi.exclamationmark")
-                } description: {
-                    Text(error)
-                } actions: {
-                    Button {
-                        Task { await vm.startLoad() }
-                    } label: {
-                        Text("Try again")
-                            .fontWeight(.semibold)
-                            .frame(minHeight: 36)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        managePinsHeaderRow13661
+                        SiriProbabilityTip12315()
+                        SkeletonFeedView()
                     }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("myStuff.retryRequiredFeed")
                 }
+            } else if let error = vm.error, vm.items.isEmpty {
+                ScrollView {
+                    VStack(spacing: 24) {
+                        VStack(spacing: 8) {
+                            managePinsHeaderRow13661
+                            SiriProbabilityTip12315()
+                        }
+                        ContentUnavailableView {
+                            Label("Couldn't Load Feed", systemImage: "wifi.exclamationmark")
+                        } description: {
+                            Text(error)
+                        } actions: {
+                            Button {
+                                Task { await vm.startLoad() }
+                            } label: {
+                                Text("Try again")
+                                    .fontWeight(.semibold)
+                                    .frame(minHeight: 36)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("myStuff.retryRequiredFeed")
+                        }
+                        .padding(.top, 32)
+                    }
+                }
+                .noteReviewPromptTrouble12304()
             } else if vm.items.isEmpty && (vm.teamFuturesFailed || vm.teamFuturesLoading) {
-                teamFuturesEmptyStateView
-            } else if vm.items.isEmpty {
-                VStack(spacing: 16) {
-                    Spacer()
-                    Image(systemName: "sportscourt")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.secondary.opacity(0.5))
-                    Text("No Games Right Now")
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                    Text("Your teams don't have any games coming up.\nPull down to refresh.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    Spacer()
+                ScrollView {
+                    VStack(spacing: 12) {
+                        VStack(spacing: 8) {
+                            managePinsHeaderRow13661
+                            SiriProbabilityTip12315()
+                        }
+                        teamFuturesEmptyStateView
+                    }
                 }
-                .padding(.horizontal, 40)
+            } else if vm.items.isEmpty {
+                ScrollView {
+                    VStack(spacing: 16) {
+                        VStack(spacing: 8) {
+                            managePinsHeaderRow13661
+                            SiriProbabilityTip12315()
+                        }
+                        Image(systemName: "sportscourt")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.secondary.opacity(0.5))
+                            .padding(.top, 48)
+                        Text("No Games Right Now")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                        Text("Your teams don't have any games coming up.\nPull down to refresh.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.horizontal, 40)
+                }
             } else {
                 teamFeedList
             }
@@ -636,6 +714,7 @@ struct MyStuffView: View {
                     Button("Retry") { Task { await pinContent.load(pinManager.savedPins, retryFailed: true) } }
                         .font(.caption)
                         .buttonStyle(.borderless)
+                        .noteReviewPromptTrouble12304()
                 default:
                     Text("Loading…").font(.caption).foregroundStyle(.secondary)
                 }
@@ -663,7 +742,7 @@ struct MyStuffView: View {
             ContentUnavailableView {
                 Label("Couldn't Load Your Teams' Futures", systemImage: "exclamationmark.triangle")
             } description: {
-                Text("Your followed teams are still saved — this read didn't finish.")
+                Text("Your teams are still saved. This part didn't load.")
             } actions: {
                 Button {
                     Task { await vm.retryTeamFutures() }
@@ -682,6 +761,7 @@ struct MyStuffView: View {
                 .accessibilityIdentifier("myStuff.retryTeamFutures")
             }
             .accessibilityIdentifier("myStuff.teamFuturesEmptyError")
+            .noteReviewPromptTrouble12304()
         } else {
             ProgressView("Loading your teams' futures…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -707,12 +787,13 @@ struct MyStuffView: View {
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("myStuff.retryStatusRowFeed")
                     }
+                    .noteReviewPromptTrouble12304()
                 } else if vm.teamFuturesFailed {
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Couldn't load your teams' futures")
                                 .font(.subheadline.weight(.semibold))
-                            Text("Your followed teams are still saved — this read didn't finish.")
+                            Text("Your teams are still saved. This part didn't load.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -731,6 +812,7 @@ struct MyStuffView: View {
                         .disabled(vm.teamFuturesLoading)
                         .accessibilityIdentifier("myStuff.retryStatusRowFutures")
                     }
+                    .noteReviewPromptTrouble12304()
                 } else if vm.teamFuturesLoading {
                     HStack(spacing: 8) {
                         ProgressView()
@@ -753,7 +835,7 @@ struct MyStuffView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Couldn't load your teams' futures")
                         .font(.subheadline.weight(.semibold))
-                    Text("Your followed teams are still saved — this read didn't finish.")
+                    Text("Your teams are still saved. This part didn't load.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -772,6 +854,7 @@ struct MyStuffView: View {
                 .disabled(vm.teamFuturesLoading)
                 .accessibilityIdentifier("myStuff.retrySectionFutures")
             }
+            .noteReviewPromptTrouble12304()
         } header: {
             Label("Futures", systemImage: "trophy.fill")
         }
@@ -787,6 +870,16 @@ struct MyStuffView: View {
                 availableWidth: innerWidth
             ) == 2
             List {
+                Section {
+                    VStack(spacing: 8) {
+                        managePinsHeaderRow13661
+                        SiriProbabilityTip12315()
+                    }
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                }
+
                 // #6445: the same unfinished experience Discover's challenge card
                 // and resolution digest promote. See `ReleaseSurfaces` — saved
                 // predictions and history are untouched, only this summary is.

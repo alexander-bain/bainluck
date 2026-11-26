@@ -39,7 +39,12 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
+from app.config.major_team_search import MAJOR_TEAM_QUERY_ALIASES
 from app.dependencies.auth import get_current_user, get_optional_user
+from app.utils.surface_rank import (
+    MY_STUFF_SURFACE_PROFILE,
+    order_my_stuff_team_buckets,
+)
 from app.models.models import (
     User,
     UserPin,
@@ -50,6 +55,7 @@ from app.models.models import (
     RetiredTeamRedirect,
     FuturesMarket,
     FuturesOutcome,
+    OpenFuturesOutcome,
     TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
@@ -71,12 +77,14 @@ from app.utils.name_normalization import names_match as _names_match
 from app.utils.sport_keys import (
     SPORT_HIERARCHY,
     SPORT_PREFIX_TO_DISPLAY_FAMILY,
+    SPORT_PREFIX_TO_LLM_CATEGORY,
     competition_gender,
     is_season_variant,
     sport_family_key,
 )
 from app.utils.statement_timeout import is_statement_timeout
 from app.utils.team_linking import given_name_before_city
+from app.utils.team_short_name import is_college_sport, school_label
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +105,7 @@ _BAY_AREA = [
     "santa cruz",
     "santa clara",
     "san jose",
+    "san josé",
 ]
 _LOS_ANGELES = ["los angeles", "la", "anaheim", "inglewood", "carson"]
 _ST_LOUIS = ["st louis", "st. louis", "saint louis"]
@@ -104,6 +113,28 @@ _TWIN_CITIES = [
     "minnesota", "minneapolis", "st. paul", "st paul", "saint paul", "twin cities"
 ]
 _DC = ["dc", "d.c.", "washington", "washington dc", "washington, dc"]
+_METRO_CLUB_LEAGUES = {
+    "americanfootball_nfl", "baseball_mlb", "basketball_nba", "basketball_wnba",
+    "icehockey_nhl", "soccer_usa_mls", "soccer_usa_nwsl",
+}
+_METRO_MAJOR_CLUBS = {
+    name.casefold(): league
+    for (league, name) in MAJOR_TEAM_QUERY_ALIASES
+    if league in _METRO_CLUB_LEAGUES
+}
+_METRO_LEAGUE_SCOPE = {
+    "boston", "new york", "los angeles", "kansas city", "bay area",
+    "las vegas", "st louis", "philadelphia", "dc", "twin cities",
+}
+_METRO_CLUB_ALIASES = {
+    "kansas city": {
+        "soccer_usa_mls": ("sporting kansas city", "sporting kc"),
+        "soccer_usa_nwsl": ("kansas city current", "kc current"),
+    },
+    "bay area": {"soccer_usa_nwsl": ("bay fc",)},
+    "dc": {"soccer_usa_nwsl": ("washington spirit",)},
+}
+_LEAGUES_CUP = "soccer_concacaf_leagues_cup"
 METRO_ALIASES: dict[str, list[str]] = {
     "golden state": _BAY_AREA,
     "new england": ["boston", "foxborough", "foxboro"],
@@ -136,6 +167,7 @@ METRO_ALIASES: dict[str, list[str]] = {
     "los angeles": _LOS_ANGELES,
     "la": _LOS_ANGELES,
     "kc": ["kansas city"],
+    "kansas city": ["kc"],
     "vegas": ["las vegas"],
     "las vegas": ["vegas", "paradise"],
     "st louis": _ST_LOUIS,
@@ -944,12 +976,18 @@ def _onboarding_name_candidates(
 async def _fold_onboarding_season_clubs(
     db: AsyncSession,
     clubs: list[tuple[Team, str, str]],
+    *,
+    mls_metro: bool = False,
 ) -> list[tuple[Team, str, str]]:
     parents = {
         key: key.removesuffix("_preseason").removesuffix("_summer_league")
         for _, key, _ in clubs
         if is_season_variant(key)
     }
+    # Only this US metro lookup can assume an MLS parent for the Leagues Cup.
+    # The existing identity check still requires the two registrations to match.
+    if mls_metro and any(key == _LEAGUES_CUP for _, key, _ in clubs):
+        parents[_LEAGUES_CUP] = "soccer_usa_mls"
     if not parents:
         return clubs
 
@@ -1147,6 +1185,8 @@ async def teams_by_location(
     from app.models.models import Sport
 
     terms = _expand_location_query(q_lower)
+    scoped_metro = _METRO_LEAGUE_SCOPE.intersection(terms)
+    college = Sport.key.regexp_match(r"_(?:w?ncaa|college)")
     location_matches = []
     brand_matches = []
     for term in terms:
@@ -1160,10 +1200,9 @@ async def teams_by_location(
             continue
         if term == "washington" and q_lower in _DC:
             # The state and its college teams share this generic label.
-            pro_league = ~Sport.key.contains("_ncaa", autoescape=True)
-            location_matches.append(and_(func.lower(Team.location) == term, pro_league))
+            location_matches.append(and_(func.lower(Team.location) == term, ~college))
             brand_matches.append(
-                and_(Team.name.istartswith(term + " ", autoescape=True), pro_league)
+                and_(Team.name.istartswith(term + " ", autoescape=True), ~college)
             )
             continue
         boundary = rf"(?i)^{re.escape(term)}(?:$|\W)"
@@ -1173,6 +1212,23 @@ async def teams_by_location(
             else Team.location.regexp_match(boundary)
         )
         brand_matches.append(Team.name.regexp_match(boundary))
+    for metro in sorted(scoped_metro):
+        for league, names in _METRO_CLUB_ALIASES.get(metro, {}).items():
+            brand_matches.append(and_(Sport.key == league, func.lower(Team.name).in_(names)))
+
+    filters = list(club_filters(include_mlb_preseason=True))
+    if scoped_metro:
+        variants = {
+            key + suffix
+            for key in _METRO_CLUB_LEAGUES
+            for suffix in ("_preseason", "_summer_league")
+        }
+        filters.append(or_(college, Sport.key.in_(sorted(_METRO_CLUB_LEAGUES | variants | {_LEAGUES_CUP}))))
+    if "bay area" in scoped_metro:
+        # College locations are sometimes an institution's abbreviated name.
+        # A bare "Oakland" cannot place an Oakland University team in California.
+        filters.append(~and_(college, func.lower(Team.location) == "oakland"))
+
     relevance = case(
         (func.lower(Team.location) == q_lower, 0),
         (Team.location.istartswith(q_lower, autoescape=True), 1),
@@ -1181,24 +1237,45 @@ async def teams_by_location(
     )
 
     result = await db.execute(
-        select(Team, Sport.key.label("sport_key"))
+        select(Team, Sport.key, Sport.name)
+        .options(_TEAM_SEARCH_COLUMNS)
         .join(Sport, Team.sport_id == Sport.id)
-        .where(or_(*location_matches, *brand_matches), *club_filters())
+        .where(or_(*location_matches, and_(~college, or_(*brand_matches))), *filters)
         .order_by(relevance, Team.name, Team.id)
-        .limit(50)
+        # A named metro has a bounded league scope. Its raw registrations
+        # can exceed the reader's cap before they fold into actual clubs.
+        .limit(None if scoped_metro else 50)
     )
     rows = result.all()
-    members = await onboarding_team_members(
-        [(team.sport_id, team.id) for team, _ in rows]
+    if not rows:
+        return []
+    folded = await _fold_onboarding_season_clubs(
+        db, [(team, key, name) for team, key, name in rows], mls_metro=bool(scoped_metro)
     )
+    clubs = await _verified_onboarding_clubs(db, folded) if folded else []
 
-    # Clubs in different leagues can share a city and still be distinct.
     seen: set[tuple[str, str]] = set()
+    seen_schools: set[str] = set()
     results: list[TeamSearchResult] = []
-    for team, sport_key in rows:
-        if members is not None and members.get((team.sport_id, team.id)) != team.id:
+    for team, sport_key, _ in clubs:
+        college_team = is_college_sport(sport_key)
+        if scoped_metro and not college_team and sport_key not in _METRO_CLUB_LEAGUES:
             continue
-        key = (sport_key, " ".join(team.name.casefold().split()))
+        name = " ".join(team.name.casefold().split())
+        if scoped_metro and _METRO_MAJOR_CLUBS.get(name, sport_key) != sport_key:
+            continue
+        key = (sport_key, name)
+        if college_team:
+            school = school_label(team.name, team.location) or team.name
+            school_key = " ".join(school.casefold().split())
+            campus = (team.location or "").casefold().split()
+            if campus and campus[-1] == "university" and school_key == "".join(word[0] for word in campus):
+                school_key = " ".join(campus)
+            key = ("college", school_key)
+            if team.espn_id:
+                if team.espn_id in seen_schools:
+                    continue
+                seen_schools.add(team.espn_id)
         if key in seen:
             continue
         seen.add(key)
@@ -1213,7 +1290,7 @@ async def teams_by_location(
             )
         )
 
-    return results
+    return results[:50]
 
 
 # =============================================================================
@@ -2318,9 +2395,44 @@ async def _query_team_futures(
 
         # ── Query 1: Team matching (team_id FK + team-name ILIKE) ──
         # #1197 (r259): split OR into separate indexed branches.
-        # #13552: on PostgreSQL, keep ILIKE ANY (ARRAY[...]) (single GIN scan instead of
-        # N-way BitmapOr) and route through #4437 `open_futures_outcomes` (~262k open rows
-        # instead of 8.8M closed+open rows) when its maintainer state is current.
+        # #13573: push sport-category scoping down into SQL (matching
+        # `_find_matched_team`: exact match or empty/NULL for name; fail-open
+        # foreign-sport denylist for FK so NON_SPORT_LLM_CATEGORIES / NULL stay
+        # eligible) and materialize candidate outcome ids BEFORE joining/probing
+        # `futures_outcomes` / `futures_markets` (`ofo_hits` filters game props
+        # on `open_futures_outcomes`, `tail_scan` scans only `id > floor` by PK
+        # so the 8.8M trigram GIN is untouched, and `fk_hits` can run Index-Only
+        # over `ix_fo_team_market_id`).
+        all_have_cat = bool(teams) and all(
+            bool(team_sport_categories.get(t.id)) for t in teams.values()
+        )
+        allowed_team_cats = (
+            sorted({team_sport_categories[t.id] for t in teams.values()})
+            if all_have_cat
+            else []
+        )
+        known_sport_cats = frozenset(SPORT_PREFIX_TO_LLM_CATEGORY.values()) | {"handball"}
+        foreign_sport_cats = (
+            sorted(known_sport_cats - set(allowed_team_cats)) if all_have_cat else []
+        )
+        name_sport_filters = []
+        if is_pg and allowed_team_cats:
+            name_sport_filters.append(
+                or_(
+                    FuturesMarket.llm_sport_category.is_(None),
+                    FuturesMarket.llm_sport_category == "",
+                    FuturesMarket.llm_sport_category.in_(allowed_team_cats),
+                )
+            )
+        fk_sport_filters = []
+        if is_pg and foreign_sport_cats:
+            fk_sport_filters.append(
+                or_(
+                    FuturesMarket.llm_sport_category.is_(None),
+                    ~FuturesMarket.llm_sport_category.in_(foreign_sport_cats),
+                )
+            )
+
         _order_by = (
             FuturesOutcome.current_probability.desc().nulls_last(),
             func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
@@ -2375,22 +2487,106 @@ async def _query_team_futures(
             return stmt
 
         _tq = time.perf_counter()
-        rows1 = list((await db.execute(_q1(FuturesOutcome.team_id.in_(team_ids)))).all())
+        if is_pg:
+            fk_hits = (
+                select(FuturesOutcome.id.label("outcome_id"))
+                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                .where(
+                    FuturesOutcome.team_id.in_(team_ids),
+                    *market_base_filters,
+                    *fk_sport_filters,
+                )
+                .cte("fk_hits")
+                .prefix_with("MATERIALIZED")
+            )
+            fk_stmt = _q1(
+                FuturesOutcome.id
+                == any_(func.array(select(fk_hits.c.outcome_id).scalar_subquery()))
+            )
+        else:
+            fk_stmt = _q1(FuturesOutcome.team_id.in_(team_ids))
+        rows1 = list((await db.execute(fk_stmt)).all())
         if team_patterns:
             if is_pg:
-                from app.utils.open_futures_outcomes import outcome_ids_named
+                from app.utils.open_futures_outcomes import open_outcomes_floor
 
                 pats = [f"%{p}%" for p in team_patterns]
-                pg_name_cond = FuturesOutcome.name.ilike(any_(literal(pats, ARRAY(Text))))
-                open_candidates = outcome_ids_named(pg_name_cond)
-                name_cond = (
-                    pg_name_cond
-                    if open_candidates is None
-                    else FuturesOutcome.id == any_(func.array(open_candidates.scalar_subquery()))
-                )
+                pats_expr = literal(pats, ARRAY(Text))
+                floor = open_outcomes_floor()
+                if floor is not None:
+                    ofo_hits = (
+                        select(OpenFuturesOutcome.outcome_id.label("outcome_id"))
+                        .join(
+                            FuturesMarket,
+                            FuturesMarket.id == OpenFuturesOutcome.market_id,
+                        )
+                        .where(
+                            OpenFuturesOutcome.name.ilike(any_(pats_expr)),
+                            *market_base_filters,
+                            *name_sport_filters,
+                        )
+                        .cte("ofo_hits")
+                        .prefix_with("MATERIALIZED")
+                    )
+                    tail_scan = (
+                        select(
+                            FuturesOutcome.id.label("outcome_id"),
+                            FuturesOutcome.market_id.label("market_id"),
+                            FuturesOutcome.name.label("name"),
+                        )
+                        .where(FuturesOutcome.id > floor)
+                        .cte("tail_scan")
+                        .prefix_with("MATERIALIZED")
+                    )
+                    tail_hits = (
+                        select(tail_scan.c.outcome_id.label("outcome_id"))
+                        .join(FuturesMarket, FuturesMarket.id == tail_scan.c.market_id)
+                        .where(
+                            tail_scan.c.name.ilike(any_(pats_expr)),
+                            *market_base_filters,
+                            *name_sport_filters,
+                        )
+                    )
+                    name_hits = (
+                        select(ofo_hits.c.outcome_id.label("outcome_id"))
+                        .union_all(tail_hits)
+                        .cte("name_hits")
+                        .prefix_with("MATERIALIZED")
+                    )
+                    name_stmt = _q1(
+                        FuturesOutcome.id
+                        == any_(
+                            func.array(select(name_hits.c.outcome_id).scalar_subquery())
+                        )
+                    )
+                else:
+                    pg_name_cond = FuturesOutcome.name.ilike(any_(pats_expr))
+                    name_stmt = (
+                        select(
+                            FuturesOutcome,
+                            FuturesMarket,
+                            Sport.key.label("market_sport_key"),
+                        )
+                        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                        .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
+                        .where(
+                            and_(
+                                *market_base_filters,
+                                *name_sport_filters,
+                                pg_name_cond,
+                            )
+                        )
+                        .order_by(*_order_by)
+                        .limit(limit * 5)
+                    )
+                    if isinstance(db, AsyncSession):
+                        name_stmt = name_stmt.options(_outcome_load_opts, _market_load_opts)
             else:
-                name_cond = or_(*[FuturesOutcome.name.ilike(f"%{p}%") for p in team_patterns])
-            name_rows = (await db.execute(_q1(name_cond))).all()
+                name_cond = or_(
+                    *[FuturesOutcome.name.ilike(f"%{p}%") for p in team_patterns]
+                )
+                name_stmt = _q1(name_cond)
+            name_rows = (await db.execute(name_stmt)).all()
             _seen_oids = {o.id for o, _m, _sk in rows1}
             rows1.extend(r for r in name_rows if r[0].id not in _seen_oids)
         if timings is not None:
@@ -2942,27 +3138,12 @@ async def _query_team_futures(
     # #237 Item 3: prefer coherent fields.
     _prefer_coherent_team_items(per_team_items)
 
-    # Round-robin fill: strongest team (by its top market) leads each round.
-    items: list[dict] = []
-    if per_team_items:
-        ordered_team_ids = sorted(
-            per_team_items.keys(),
-            key=lambda tid: (per_team_items[tid][0].get("probability") or 0),
-            reverse=True,
-        )
-        depth = 0
-        while len(items) < limit:
-            progressed = False
-            for tid in ordered_team_ids:
-                bucket = per_team_items[tid]
-                if depth < len(bucket):
-                    items.append(bucket[depth])
-                    progressed = True
-                    if len(items) >= limit:
-                        break
-            if not progressed:
-                break
-            depth += 1
+    # Round-robin fill via shared Stage 2 My Stuff surface ranker.
+    items = order_my_stuff_team_buckets(
+        per_team_items,
+        limit=limit,
+        profile=MY_STUFF_SURFACE_PROFILE,
+    )
 
     if _screen_incomplete and not items:
         raise TeamFuturesScreenUnavailableError()

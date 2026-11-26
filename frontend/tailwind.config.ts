@@ -44,6 +44,15 @@ const config: Config = {
   				DEFAULT: 'hsl(var(--accent))',
   				foreground: 'hsl(var(--accent-foreground))'
   			},
+  			kit: {
+  				primary: '#111827',
+  				secondary: '#5E6370',
+  				muted: '#59606D',
+  				accent: '#047857',
+  				warn: '#9A4D00',
+  				track: '#F3F4F6',
+  				inverse: '#FFFFFF'
+  			},
   			/* Named in-house colours. NONE of these may collide with a default
   			 * Tailwind palette name: declaring a family as a flat string REPLACES
   			 * the whole {50…950} scale, so every `bg-<fam>-500` in the tree silently
