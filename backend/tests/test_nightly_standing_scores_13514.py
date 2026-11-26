@@ -15,6 +15,8 @@ from scripts.nightly_standing_scores import (
     MIN_LIVE_PACE_SECONDS,
     compute_stale_sportsbook_census,
     effective_pace_seconds,
+    extract_copy_age,
+    format_copy_age,
     main as cli_main,
     render_markdown_report,
     run_standing_scores,
@@ -515,3 +517,103 @@ def test_read_errors_with_real_disagreement_remain_fail(tmp_path: Path, monkeypa
     assert result["list_vs_page"]["disagreements_count"] >= 1
     monkeypatch.setattr("scripts.nightly_standing_scores.run_standing_scores", lambda **_: result)
     assert cli_main(["--date", "2026-11-23", "--out-dir", str(tmp_path), "--fail-on-findings"]) == 1
+
+
+def test_extract_and_format_copy_age_across_surfaces():
+    detail_cached = {
+        "state_read_fresh": False,
+        "state_read_not_after": (NOW - timedelta(seconds=42)).isoformat(),
+        "hero_probability_observed_at": (NOW - timedelta(seconds=126)).isoformat(),
+    }
+    age_detail = extract_copy_age(detail_cached, response_meta={"fetched_at": NOW.isoformat()})
+    assert age_detail["copy_age_seconds"] == pytest.approx(42.0)
+    assert age_detail["copy_age_source"] == "state_read"
+    assert age_detail["cache_status"] == "cached"
+    assert age_detail["reading_age_seconds"] == pytest.approx(126.0)
+    assert age_detail["summary"] == "copy 42s (cached), read 2.1m"
+
+    feed_card = {
+        "hero_probability_observed_at": (NOW - timedelta(seconds=90)).isoformat(),
+    }
+    age_feed = extract_copy_age(
+        feed_card,
+        response_meta={
+            "fetched_at": NOW.isoformat(),
+            "cache_header": "hit",
+            "envelope_built_at": (NOW - timedelta(seconds=180)).isoformat(),
+        },
+    )
+    assert age_feed["copy_age_seconds"] == pytest.approx(180.0)
+    assert age_feed["copy_age_source"] == "envelope_built_at"
+    assert age_feed["cache_status"] == "hit"
+    assert age_feed["summary"] == "copy 3.0m (hit), read 90s"
+
+    search_card = _event_payload(801, betting_age_hours=3.0)
+    age_search = extract_copy_age(
+        search_card,
+        response_meta={"fetched_at": NOW.isoformat(), "cache_header": "hit", "age_header_seconds": 45.0},
+    )
+    assert age_search["copy_age_seconds"] == pytest.approx(45.0)
+    assert age_search["copy_age_source"] == "http_age_header"
+    assert age_search["summary"] == "copy 45s (hit), read 3.0h"
+
+    list_card = _event_payload(802, betting_age_hours=0.25)
+    age_list = extract_copy_age(list_card, response_meta={"fetched_at": NOW.isoformat()})
+    assert age_list["copy_age_seconds"] is None
+    assert age_list["reading_age_seconds"] == pytest.approx(900.0)
+    assert format_copy_age(age_list) == "copy ?, read 15.0m"
+
+
+def test_disagreements_include_list_and_page_copy_age_in_json_and_markdown():
+    feed_card = _event_payload(901, sport="soccer_italy_serie_a", home="Cremonese", away="Avellino", hero=0.45, books=5, betting_age_hours=0.5)
+    detail = _event_payload(901, sport="soccer_italy_serie_a", home="Cremonese", away="Avellino", hero=0.52, books=0, betting_age_hours=0.05)
+    detail["state_read_fresh"] = True
+    detail["state_read_not_after"] = NOW.isoformat()
+    detail["hero_probability_observed_at"] = (NOW - timedelta(seconds=180)).isoformat()
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/health":
+            return httpx.Response(200, json={"status": "ok", "commit": "deadbeef"})
+        if path == "/api/events":
+            qs = parse_qs(request.url.query.decode() if isinstance(request.url.query, bytes) else str(request.url.query))
+            req_status = (qs.get("status") or [None])[0]
+            return httpx.Response(200, json={"events": [feed_card] if req_status == "scheduled" else []})
+        if path == "/api/feed":
+            return httpx.Response(
+                200,
+                headers={"X-Feed-Cache": "hit"},
+                json={
+                    "cache": {"built_at": (NOW - timedelta(seconds=240)).timestamp()},
+                    "items": [{"type": "event", "data": feed_card}],
+                },
+            )
+        if path.startswith("/api/leagues/"):
+            return httpx.Response(200, json={"upcoming_games": []})
+        if path == "/api/events/search":
+            return httpx.Response(200, json={"results": []})
+        if path == "/api/events/901":
+            return httpx.Response(200, json=detail)
+        return httpx.Response(404)
+
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-26",
+        transport=httpx.MockTransport(_handler),
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "FAIL"
+    diffs = result["list_vs_page"]["disagreements"]
+    feed_books = [d for d in diffs if d["surface"] == "GET /api/feed?mode=sports" and d["field"] == "bookmaker_count"]
+    assert len(feed_books) == 1
+    row = feed_books[0]
+    assert row["surface_copy_age"]["summary"] == "copy 4.0m (hit), read 30.0m"
+    assert row["detail_copy_age"]["summary"] == "copy 0s (fresh), read 3.0m"
+    assert row["fetch_gap_seconds"] == pytest.approx(0.0)
+
+    md = render_markdown_report(result)
+    assert "| Event | Sport | Matchup | Surface | Field | Surface Val | Detail Val | List Copy Age | Page Copy Age |" in md
+    assert "`copy 4.0m (hit), read 30.0m`" in md
+    assert "`copy 0s (fresh), read 3.0m (gap 0s)`" in md
