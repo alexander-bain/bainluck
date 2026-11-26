@@ -581,15 +581,41 @@ final class FirstRunViewModel212A: ObservableObject {
     ) {
         defaults.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
 
-        if !categoryInterests.isEmpty {
-            defaults.set(categoryInterests, forKey: FirstRunStorageKeys212A.localInterestsKey)
+        var mergedInterests = (defaults.dictionary(forKey: FirstRunStorageKeys212A.localInterestsKey) as? [String: Double]) ?? [:]
+        for (cat, weight) in categoryInterests where mergedInterests[cat] == nil {
+            mergedInterests[cat] = weight
+        }
+        if !mergedInterests.isEmpty {
+            defaults.set(mergedInterests, forKey: FirstRunStorageKeys212A.localInterestsKey)
+        }
+
+        let existingPrefs = FirstRunPreferences212A.load(defaults: defaults)
+        var mergedCategories = Set(existingPrefs.boostedCategories)
+        var mergedTerms = Set(existingPrefs.boostedTerms)
+        var mergedMarketIds = Set(existingPrefs.boostedMarketIds)
+        for (cat, weight) in categoryInterests where weight > 0.5 {
+            mergedCategories.insert(cat)
+        }
+        mergedTerms.formUnion(boostedTerms)
+        mergedMarketIds.formUnion(pickedMarketIds)
+
+        let addedNewBoost = mergedCategories != Set(existingPrefs.boostedCategories)
+            || mergedTerms != Set(existingPrefs.boostedTerms)
+            || mergedMarketIds != Set(existingPrefs.boostedMarketIds)
+        let savedAtEpoch: TimeInterval?
+        if mergedCategories.isEmpty && mergedTerms.isEmpty && mergedMarketIds.isEmpty {
+            savedAtEpoch = existingPrefs.savedAtEpoch
+        } else if let priorEpoch = existingPrefs.savedAtEpoch, !addedNewBoost {
+            savedAtEpoch = priorEpoch
+        } else {
+            savedAtEpoch = Date().timeIntervalSince1970
         }
 
         let prefs = FirstRunPreferences212A(
-            boostedCategories: Array(Set(categoryInterests.filter { $0.value > 0.5 }.keys)).sorted(),
-            boostedTerms: boostedTerms,
-            boostedMarketIds: Array(pickedMarketIds).sorted(),
-            savedAtEpoch: Date().timeIntervalSince1970
+            boostedCategories: Array(mergedCategories).sorted(),
+            boostedTerms: Array(mergedTerms).sorted(),
+            boostedMarketIds: Array(mergedMarketIds).sorted(),
+            savedAtEpoch: savedAtEpoch
         )
         prefs.save(defaults: defaults)
 
