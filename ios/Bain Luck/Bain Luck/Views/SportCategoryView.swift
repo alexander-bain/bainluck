@@ -54,6 +54,7 @@ struct SportCategoryView: View {
                     Spacer()
                 }
                 .padding(.horizontal, 40)
+                .noteReviewPromptTrouble12304()
             } else if viewModel.drawsNoRows {
                 // #1471: `viewModel.items.isEmpty` used to gate this, which asks
                 // whether the PAYLOAD was empty rather than whether the page can
@@ -85,6 +86,15 @@ struct SportCategoryView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                FollowButton295A(
+                    subject: .league(slug: categoryKey, sportKey: categoryKey, name: categoryName),
+                    pageContextId: "sport-category:\(categoryKey)",
+                    compact: true
+                )
+            }
+        }
         .onAppear {
             AnalyticsService.trackScreen(name: "sport_category", type: "category")
         }
@@ -120,6 +130,12 @@ struct SportCategoryView: View {
 
     private var categoryList: some View {
         List {
+            Section {
+                GameAlertsInlinePageSlot295A(contextId: "sport-category:\(categoryKey)")
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            }
+
             if !viewModel.liveNow.isEmpty || !viewModel.leagueLiveGames.isEmpty {
                 // live/048 — the header reads the bucket. See `EventState`.
                 combinedGameSection(

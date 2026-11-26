@@ -250,17 +250,21 @@ async def test_the_survivor_keeps_the_dropped_rows_venue():
 
     Electing a winner and discarding the loser's sources would delete Kalshi's
     price for this game from the page, which is the ruling's own counter-case.
+    Since #13508 the fold is read-side (no in-place ORM mutation), so the
+    union must reach the served card without altering the stored ORM row.
     """
     rows = _production_pair()
-    await _payload(rows)
+    payload = await _payload(rows)
 
-    survivor = next(r for r in rows if r.id == ESPN_ROW)
-    assert survivor.win_probability_sources.get("kalshi") == 0.61, (
-        "the statpal row's Kalshi price did not reach the surviving card: "
-        f"{survivor.win_probability_sources}"
+    card = payload["results"][0]
+    sources = card["espn"]["probability_sources"]
+    assert sources.get("kalshi") == 0.61, (
+        f"the statpal row's Kalshi price did not reach the served card: {sources}"
     )
     # Additive only: the survivor's own readings are never overwritten.
-    assert survivor.win_probability_sources["betting"] == 0.58
+    assert sources["betting"] == 0.58
+    assert "kalshi" in card["win_probability_sources"]
+    assert "betting" in card["win_probability_sources"]
 
 
 @pytest.mark.asyncio

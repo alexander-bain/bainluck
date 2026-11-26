@@ -1,5 +1,9 @@
 import XCTest
 import Combine
+#if os(iOS)
+import SwiftUI
+import Vision
+#endif
 @testable import Bain_Luck
 
 @MainActor
@@ -97,6 +101,69 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         let result = DiscoverPriceRefresh.retainingPrices([old, try market(2)], accepted: &accepted)
         XCTAssertEqual(result[0].futures?.topOutcomes?.first?.probability, 0.8)
         XCTAssertEqual(result.map(\.id), ["futures-1", "futures-2"])
+    }
+
+    func testFieldCoverageWithdrawalClearsHeldLeaderCopy() throws {
+        let held = try decode([
+            "type": "futures", "headline": "Brooklyn Nets lead",
+            "context_summary": "Brooklyn Nets lead at 5%",
+            "data": ["id": 1, "name": "NBA Cup finalists", "source": "polymarket",
+                     "llm_sport_category": "basketball",
+                     "status": "open", "price_observed_at": "2026-09-29T00:01:00Z",
+                     "top_outcomes": [["id": 10, "name": "Brooklyn Nets", "probability": 0.0525]]],
+        ], as: FeedItem.self)
+        let fresh = try decode([
+            "type": "futures", "reason": "Limited price coverage",
+            "context_summary": "Limited price coverage",
+            "data": ["id": 1, "name": "NBA Cup finalists", "source": "polymarket",
+                     "status": "open", "field_price_coverage_incomplete": true,
+                     "top_outcomes": [] as [[String: Any]]],
+        ], as: FeedItem.self)
+        var epochs: [String: Double] = [:]
+        let response = DiscoverPriceCards(items: [fresh], dispositions: [held.id: "withheld"], builtAt: 100)
+        let shown = DiscoverPriceRefresh.apply(response, to: [held], epochs: &epochs)[0]
+        XCTAssertEqual(shown.id, held.id)
+        XCTAssertEqual(shown.futures?.topOutcomes?.count, 0)
+        XCTAssertNil(shown.headline)
+        XCTAssertEqual(shown.contextSummary, "Limited price coverage")
+
+        #if os(iOS)
+        let data = try XCTUnwrap(shown.futures)
+        let card = NativeFuturesDiscoverCard(
+            data: data,
+            feedContext: DiscoverCaption.feedCaption(
+                contextSummary: shown.contextSummary, headline: shown.headline,
+                reason: shown.reason, hookDescription: data.hookDescription
+            ),
+            expandedContext: DiscoverCaption.firstMeaningful(
+                [data.hookDescription, shown.reason, shown.headline]
+            ),
+            navigationPath: .constant(NavigationPath())
+        )
+        .environmentObject(PinManager())
+        .environment(\.colorScheme, .light)
+        .padding(16)
+        .frame(width: 390)
+        .background(Color(.systemGroupedBackground))
+        let renderer = rendererForMeasurement(card, at: .large)
+        renderer.scale = 3
+        let image = try XCTUnwrap(renderer.uiImage)
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "13699-discover-after-withdrawal-390.png"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
+        let text = (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: " ")
+        XCTAssertTrue(text.contains("NBA Cup finalists"), text)
+        XCTAssertTrue(text.contains("Limited price coverage"), text)
+        XCTAssertFalse(text.contains("Brooklyn Nets"), text)
+        XCTAssertFalse(text.contains("%"), text)
+        #endif
     }
 
     func testNewerOrdinaryFeedAdoptionAdvancesTheRetainedFence() throws {

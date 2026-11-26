@@ -21,6 +21,9 @@ def pytest_collection_finish(session):
     gc.freeze()
 
 
+_RETRIED_NODEIDS: set[str] = set()
+
+
 def rerun_annotation(report) -> str | None:
     """Decide 55-A: the GitHub annotation for a test the shared tail re-ran once.
 
@@ -34,16 +37,46 @@ def rerun_annotation(report) -> str | None:
     return f"::warning title=Retried once (55-A)::{report.nodeid} failed and was re-run once"
 
 
+def record_retry_outcome(
+    report,
+    pending: set[str] | None = None,
+    retries_file: str | None = None,
+) -> bool:
+    """Record a 55-A retry to ``FLAKY_RETRIES_FILE`` ONLY if the retry passes.
+
+    #12252: writing on initial ``outcome == 'rerun'`` logged tests that failed
+    twice in a broken/cancelled job as "passed on its 55-A retry". Instead we
+    mark ``nodeid`` pending on ``rerun``, clear and ignore it if the retry fails,
+    and append it to ``retries_file`` only when the subsequent ``call`` passes.
+    """
+    tracked = _RETRIED_NODEIDS if pending is None else pending
+    outcome = getattr(report, "outcome", None)
+    nodeid = getattr(report, "nodeid", None)
+    if not nodeid:
+        return False
+    if outcome == "rerun":
+        tracked.add(nodeid)
+        return False
+    if nodeid not in tracked:
+        return False
+    when = getattr(report, "when", None)
+    if when == "call" and outcome == "passed":
+        tracked.discard(nodeid)
+        target = os.environ.get("FLAKY_RETRIES_FILE") if retries_file is None else retries_file
+        if target:
+            with open(target, "a") as fh:
+                fh.write(nodeid + "\n")
+        return True
+    if outcome == "failed":
+        tracked.discard(nodeid)
+    return False
+
+
 def pytest_runtest_logreport(report):
     line = rerun_annotation(report)
     if line:
         print("\n" + line, flush=True)
-        # #12252 item 2: the flake sentinel reads retries from this file (uploaded as an
-        # artifact), one call per page instead of one annotation read per job.
-        path = os.environ.get("FLAKY_RETRIES_FILE")
-        if path:
-            with open(path, "a") as fh:
-                fh.write(report.nodeid + "\n")
+    record_retry_outcome(report)
 
 
 TIMING_QUARANTINE_FILE = Path(__file__).resolve().parent / "timing_quarantine.json"

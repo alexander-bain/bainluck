@@ -430,7 +430,7 @@ jobs:
             # 500 (the inspect broadcast raises and the route does not catch it).
             # An UNKNOWN is safe — it proceeds — but an instrument that is inert a
             # quarter of the time is a veto that reads as one and is not.
-            curl -fsS --max-time 45 --retry 2 --retry-delay 3 --retry-all-errors \
+            curl -fsS --max-time 10 --retry 2 --retry-delay 2 --retry-all-errors \
               -H "Authorization: Bearer ${ADMIN_TOKEN:-}" \
               -H "X-BainLuck-Origin: heavy-sync-workflow" \
               "https://api.bainluck.com/api/admin/celery/inspect" \
@@ -480,18 +480,15 @@ jobs:
             # on `-le` against a non-number, which an `if` reads as "false" —
             # i.e. as permission to sleep again (gotcha #54: read the value).
             case "${BAND_LEFT}" in ''|*[!0-9]*) BAND_LEFT=0 ;; esac
-            # 56 = `CONFIRM_SEPARATION_SECONDS`, and it is A WHOLE TURN OF THIS
+            # 35 = `CONFIRM_SEPARATION_SECONDS` (by construction from
+            # `_INSPECT_TOTAL_TIMEOUT_S = 5.0`), and it is A WHOLE TURN OF THIS
             # LOOP, not the sleep. This literal read `30` — the sleep alone —
-            # until #6283, and the difference cost a cycle in production: run
-            # 117 on 2026-09-15 read IDLE at 00:58:23Z with 36 s of band left,
-            # took the confirm branch because 36 > 30, and the turn took 55.7 s,
-            # so the band shut mid-read and the step exited `HOLD — the band
-            # closed`. Heavy sat another 60 min on `c1b52e9c3` while the main
-            # app served `f880e45da`. Any remainder the loop can SPEND but not
+            # until #6283 (and then 56 when sequential broadcasts took ~25.6 s);
+            # run 117 on 2026-09-15 showed any remainder the loop can SPEND but not
             # FINISH inside is a remainder it must not spend, because the
             # fallback here — pushing on one idle read — is the gate this job
             # shipped with and is the cheaper of the two by an hour.
-            if [ "$BAND_LEFT" -le 56 ]; then
+            if [ "$BAND_LEFT" -le 35 ]; then
               if [ "$INFLIGHT" -eq 0 ]; then
                 # An unconfirmed IDLE at the edge pushes. This is the reading
                 # the gate used before the confirm existed, so the confirm has
@@ -569,11 +566,11 @@ jobs:
 
           # THE LAST WORD IS THE CLOCK, NOT THE VERDICT THAT WAS TRUE WHEN THE
           # RUN STARTED. `decide` read the band before the fleet was read, and
-          # that read is not instant: one call to /api/admin/celery/inspect
-          # measured 25.6 s (2026-09-13 21:38-21:43Z, eight reads, five 5 s
-          # broadcasts per call), and it is retried twice, so a
-          # single attempt is bounded at 45 s and the step at ~141 s. Waiting for
-          # an idle worker widens the same gap deliberately. Either way the band
+          # that read is not instant: one call to /api/admin/celery/inspect is
+          # capped at <= 5 s by construction (parallel broadcasts, replacing
+          # the earlier 25.6 s sequential measurement), and it is retried twice
+          # with a 2 s delay, so a single attempt is bounded at 10 s and the step
+          # at ~34 s. Waiting for an idle worker widens the same gap deliberately. Either way the band
           # can close between the decision and the push, and a push outside the
           # band is precisely what the band exists to stop.
           #
@@ -643,9 +640,27 @@ jobs:
           # No --force, ever. A rejection can perfectly well mean something newer
           # is already live on heavy, and forcing then rewinds it. Let git refuse
           # the non-fast-forward and let the next run re-read and re-judge.
-          if ! git push heroku-heavy "$MAIN_LIVE:refs/heads/master"; then
+          _heavy_log="$(mktemp)"
+          exec 3>&1 4>&2 >"$_heavy_log" 2>&1
+          if git push heroku-heavy "$MAIN_LIVE:refs/heads/master"; then _heavy_rc=0; else _heavy_rc=$?; fi
+          exec 1>&3 2>&4 3>&- 4>&-
+          cat "$_heavy_log"
+          if python3 .github/scripts/check_heroku_push.py \
+            --log "$_heavy_log" --push-exit "$_heavy_rc" \
+            --require-release-done --verify-api \
+            --app bainluck-heavy --expected-sha "$MAIN_LIVE"; then
+            _heavy_check=0
+          else
+            _heavy_check=$?
+          fi
+          rm -f "$_heavy_log"
+          if [ "$_heavy_rc" -ne 0 ] && [ "$_heavy_check" -eq 2 ]; then
             echo "Push rejected. NOT retrying with --force: the next scheduled run"
             echo "re-reads both live refs and re-judges from scratch."
+            exit 1
+          fi
+          if [ "$_heavy_check" -ne 0 ]; then
+            echo "::error::Heroku refused or failed the bainluck-heavy release."
             exit 1
           fi
 

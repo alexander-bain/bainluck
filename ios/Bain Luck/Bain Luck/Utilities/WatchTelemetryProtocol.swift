@@ -6,6 +6,8 @@ import Foundation
 nonisolated enum WatchTelemetrySurface: String, Codable, CaseIterable, Sendable {
     case game = "watch_game", picker = "watch_picker"
     case discoveries = "watch_discoveries", diagnostics = "watch_diagnostics"
+    case pinsHome = "watch_pins", matchupGame = "watch_matchup"
+    case pinnedMarket = "watch_pinned_market"
 }
 
 nonisolated enum WatchTelemetryKind: String, Codable, CaseIterable, Sendable {
@@ -19,6 +21,9 @@ nonisolated enum WatchTelemetryAction: String, Codable, CaseIterable, Sendable {
     case clearGame = "clear_game", refresh, discoveries, close
     case phoneContinuation = "phone_continuation_help", dismissHelp = "dismiss_help"
     case complicationOpen = "complication_open"
+    case openPinnedGame = "open_pinned_game", openPinnedMarket = "open_pinned_market"
+    case chooseOutcome = "choose_outcome", refreshPins = "refresh_pins"
+    case clearSelection = "clear_selection"
 }
 
 nonisolated enum WatchTelemetryOutcome: String, Codable, CaseIterable, Sendable {

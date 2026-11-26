@@ -322,3 +322,21 @@ export function futuresBoardRemainderLabel(board: FuturesBoard): string | null {
     board.remainingCount === 1 ? "" : "s"
   }`;
 }
+
+/**
+ * Resolved `label -> YYYY-MM-DD` map from `discover_card.distribution_outcomes`,
+ * kept in this single module so card components never read `distribution_outcomes`
+ * directly (#8025 / #13722).
+ */
+export function futuresDistributionDatesByLabel(data: FeedFuturesData): Map<string, string> {
+  const card = (data as { discover_card?: DiscoverCardBoardFields | null }).discover_card;
+  const byLabel = new Map<string, string>();
+  for (const dist of card?.distribution_outcomes ?? []) {
+    const lbl = dist.label?.trim().toLowerCase();
+    const day = boardRowDay(dist);
+    if (lbl && day) {
+      byLabel.set(lbl, day);
+    }
+  }
+  return byLabel;
+}

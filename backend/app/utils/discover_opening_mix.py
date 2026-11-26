@@ -32,7 +32,7 @@ import copy
 import re
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from app.utils.discover_opening_seating import (
@@ -60,8 +60,143 @@ from app.utils.roundup_containers import (
 OPENING_MIX_SIZE = 10
 OPENING_MIX_GROUPED_TARGET = 9
 OPENING_MIX_SINGLE_CAP = 1
+OPENING_MIX_MAX_PER_FORM = 2
 OPENING_MIX_DEFAULT_SINGLE_SEAT = 4  # 0-based index -> seat 5
 OPENING_MIX_LIVE_SPORTS_FLAG = "opening_mix_live_sports_seat"
+
+
+def card_visual_form_id(item: Mapping[str, Any]) -> Optional[str]:
+    """Return the visual ``machinery_card.form_id`` of a Discover item, if any."""
+    if not isinstance(item, Mapping):
+        return None
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    roundup = data.get("roundup")
+    if not isinstance(roundup, Mapping):
+        return None
+    machinery_card = roundup.get("machinery_card")
+    if not isinstance(machinery_card, Mapping):
+        return None
+    form_id = machinery_card.get("form_id")
+    if isinstance(form_id, str):
+        cleaned = form_id.strip()
+        return cleaned or None
+    return None
+
+
+# #13551 Ask 1 (2026-11-24 blind forms sort, row 166): Alex's 7 visual look piles across all 14 forms.
+ALEX_LOOK_PILE_LABELS: dict[str, str] = {
+    "pile_1": "Row list with pill %",
+    "pile_2": "Headline + art/chart + thin bars",
+    "pile_3": "Game slate",
+    "pile_4": "Three cells side by side",
+    "pile_5": "Big number with a bar",
+    "pile_6": "Paired bars per row",
+    "pile_7": "One split bar",
+}
+
+FORM_TO_LOOK_PILE: dict[str, str] = {
+    # Pile 1: list of rows, each with a percent in a pill
+    "theme_compact_rows": "pile_1",
+    "comparison_compact_rows": "pile_1",
+    "party_control_bars": "pile_1",
+    # Pile 2: headline sentence, one picture or chart, then thin bars
+    "benchmark_strip": "pile_2",
+    "sibling_fields_grid": "pile_2",
+    "probability_history_chart": "pile_2",
+    # Pile 3: game slate
+    "matchup_slate": "pile_3",
+    "coin_flip_matchups": "pile_3",
+    # Pile 4: three cells side by side
+    "contender_spotlight": "pile_4",
+    "matchup_strip": "pile_4",
+    # Pile 5: big number with a bar
+    "benchmark_strip_legacy": "pile_5",
+    "deadline_ladder": "pile_5",
+    # Pile 6: paired bars per row
+    "paired_stage_bars": "pile_6",
+    # Pile 7: one bar split between two sides
+    "duel_bar": "pile_7",
+}
+
+
+def card_visual_form_or_legacy(item: Mapping[str, Any]) -> Optional[str]:
+    """Return a Discover bundle's visual form, inferring legacy form names when absent."""
+    explicit = card_visual_form_id(item)
+    if explicit:
+        return explicit
+    if not isinstance(item, Mapping) or item.get("type") != "bundle":
+        return None
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    kind = str(data.get("kind") or "").strip().lower()
+    story_key = str(data.get("story_key") or "").strip().lower()
+    if kind == "theme":
+        if "congress_control" in story_key or "party_control" in story_key:
+            return "party_control_bars"
+        return "theme_compact_rows"
+    if kind == "comparison":
+        return "comparison_compact_rows"
+    if kind == "roundup" or isinstance(data.get("roundup"), Mapping):
+        return "benchmark_strip_legacy"
+    return None
+
+
+def card_look_pile(item_or_form: Mapping[str, Any] | str | None) -> Optional[str]:
+    """Map a Discover card (or form name) to Alex's 7 visual look piles (#13551 Ask 1)."""
+    if item_or_form is None:
+        return None
+    if isinstance(item_or_form, str):
+        form_name: Optional[str] = item_or_form.strip() or None
+    else:
+        form_name = card_visual_form_or_legacy(item_or_form)
+    if not form_name:
+        return None
+    return FORM_TO_LOOK_PILE.get(form_name)
+
+
+def _summarize_window_variety(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    form_counts: Counter[str] = Counter()
+    look_counts: Counter[str] = Counter()
+    grouped_count = 0
+    for item in items:
+        form_name = card_visual_form_or_legacy(item)
+        if not form_name:
+            continue
+        grouped_count += 1
+        form_counts[form_name] += 1
+        pile = FORM_TO_LOOK_PILE.get(form_name)
+        if pile:
+            look_counts[pile] += 1
+    return {
+        "grouped_count": grouped_count,
+        "distinct_forms": len(form_counts),
+        "distinct_looks": len(look_counts),
+        "forms": dict(sorted(form_counts.items())),
+        "looks": dict(sorted(look_counts.items())),
+    }
+
+
+def summarize_discover_form_and_look_variety(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Report distinct forms and Alex's 7 distinct looks across top 10, top 20, and all items."""
+    item_list = list(items)
+    top_10 = _summarize_window_variety(item_list[:10])
+    top_20 = _summarize_window_variety(item_list[:20])
+    all_window = _summarize_window_variety(item_list)
+    summary_line = (
+        f"top10: {top_10['distinct_forms']} forms -> {top_10['distinct_looks']} distinct looks "
+        f"({top_10['grouped_count']} grouped); "
+        f"top20: {top_20['distinct_forms']} forms -> {top_20['distinct_looks']} distinct looks "
+        f"({top_20['grouped_count']} grouped)"
+    )
+    return {
+        "top_10": top_10,
+        "top_20": top_20,
+        "all": all_window,
+        "summary_line": summary_line,
+    }
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PWM_SUBTOPIC_POLITICS_WORLD = "politics_or_world"
@@ -108,11 +243,30 @@ _ODD_SLUGS: frozenset[str] = frozenset(
     {
         *_PURE_ODD_SLUGS,
         "machinery-white-christmas",
+    }
+)
+_OPENING_EXCLUDED_WEATHER_SLUGS: frozenset[str] = frozenset(
+    {
         "roundup-tomorrows-highs",
         "roundup-will-it-snow",
         "for-scale-snow-in-dc",
     }
 )
+
+
+def is_opening_weather_excluded_roundup(item: Mapping[str, Any]) -> bool:
+    """Weather forecast roundups (e.g. ``roundup-tomorrows-highs``) sit outside seats 1..10 (#13645)."""
+    if not isinstance(item, Mapping):
+        return False
+    slug = (_roundup_item_slug(item) or "").strip().lower()
+    if slug in _OPENING_EXCLUDED_WEATHER_SLUGS:
+        return True
+    data = item.get("data")
+    if isinstance(data, Mapping):
+        raw_id = str(data.get("id") or data.get("story_key") or "").strip().lower()
+        if raw_id in {"roundup:tomorrows-highs", "roundup:will-it-snow", "roundup:for-scale-snow-in-dc"}:
+            return True
+    return False
 _ENTERTAINMENT_SLUGS: frozenset[str] = frozenset(
     {
         "machinery-2026-summed-up",
@@ -1019,6 +1173,7 @@ def apply_discover_opening_mix(
         and _is_grouped_feed_card(it)
         and it.get("type") != "concept"
         and not is_same_deadline_roundup(it)
+        and not is_opening_weather_excluded_roundup(it)
         and not _contains_live_event_signal(it, now=effective_now)
         and _is_roundup_opening_eligible(it, items, now=effective_now)
     ]
@@ -1079,15 +1234,36 @@ def apply_discover_opening_mix(
             if chosen_pwm_seat10 is not None:
                 break
 
+    distinct_group_forms: set[Optional[str]] = {
+        card_visual_form_id(it) for _, it in sorted_groups
+    }
+    if chosen_live_sports_group is not None:
+        distinct_group_forms.add(card_visual_form_id(chosen_live_sports_group[1]))
+    # Ruling 353: A — when every eligible grouped card shares the exact same non-null
+    # visual form, skip the form cap so the rule does nothing rather than starving seats.
+    apply_form_cap = not (
+        len(distinct_group_forms) == 1 and next(iter(distinct_group_forms)) is not None
+    )
+
     chosen_groups: list[tuple[int, dict[str, Any]]] = []
     chosen_indices: set[int] = set()
     seen_sibling_groups: list[Mapping[str, Any]] = []
     topic_counts: Counter[str] = Counter()
+    form_counts: Counter[str] = Counter()
 
-    def _can_take_group(it: Mapping[str, Any], limit_map: Mapping[str, int]) -> bool:
+    def _can_take_group(
+        it: Mapping[str, Any],
+        limit_map: Mapping[str, int],
+        *,
+        enforce_form_cap: bool = True,
+    ) -> bool:
         t = classify_discover_opening_topic(it)
         if topic_counts[t] >= limit_map.get(t, 0):
             return False
+        if enforce_form_cap and apply_form_cap:
+            fid = card_visual_form_id(it)
+            if fid is not None and form_counts[fid] >= OPENING_MIX_MAX_PER_FORM:
+                return False
         if _is_sibling_family_bundle(it) and any(
             _is_near_identical_sibling_family(it, prev) for prev in seen_sibling_groups
         ):
@@ -1098,12 +1274,18 @@ def apply_discover_opening_mix(
         chosen_groups.append((idx, it))
         chosen_indices.add(idx)
         topic_counts[classify_discover_opening_topic(it)] += 1
+        fid = card_visual_form_id(it)
+        if fid is not None:
+            form_counts[fid] += 1
         if _is_sibling_family_bundle(it):
             seen_sibling_groups.append(it)
 
     if chosen_pwm_seat10 is not None:
         chosen_indices.add(chosen_pwm_seat10[0])
         topic_counts[TOPIC_PWM] += 1
+        fid10 = card_visual_form_id(chosen_pwm_seat10[1])
+        if fid10 is not None:
+            form_counts[fid10] += 1
         if _is_sibling_family_bundle(chosen_pwm_seat10[1]):
             seen_sibling_groups.append(chosen_pwm_seat10[1])
 
@@ -1219,10 +1401,14 @@ def apply_discover_opening_mix(
         _add_group(*best_candidate)
 
     # Sparse-deck fallback if non-PWM grouped supply fell below target.
+    # #13542 / 329: A: keep `TOPIC_SPORTS` at `TOPIC_MAX_TOTAL[TOPIC_SPORTS]` (2,
+    # including any chosen single) across both relaxed-topic and relaxed-form
+    # fallbacks so a form cap on non-sports cards never pulls a 3rd sports card
+    # into the first ten; only a genuinely sports-only empty deck may add a 3rd.
     relaxed_non_pwm_caps = {
         TOPIC_ODD: 4,
         TOPIC_ENTERTAINMENT: 4,
-        TOPIC_SPORTS: 3,
+        TOPIC_SPORTS: TOPIC_MAX_TOTAL[TOPIC_SPORTS],
         TOPIC_TECH_BUSINESS: 3,
         TOPIC_PWM: 1,
     }
@@ -1237,14 +1423,85 @@ def apply_discover_opening_mix(
             if _can_take_group(it, relaxed_non_pwm_caps):
                 _add_group(idx, it)
 
+    # Multi-form thin-supply fallback: if enforcing <= 2 per form could not fill
+    # all grouped seats, relax only the form cap while preserving topic order and mix.
+    if apply_form_cap and len(chosen_groups) < non_pwm_grouped_target:
+        for topic in NON_PWM_TOPICS:
+            target_min = TOPIC_MIN_GROUPS[topic]
+            for idx, it in sorted_groups:
+                if len(chosen_groups) >= non_pwm_grouped_target:
+                    break
+                if idx in chosen_indices or classify_discover_opening_topic(it) != topic:
+                    continue
+                if topic_counts[topic] >= target_min:
+                    break
+                if _group_conflicts_with_single(it):
+                    continue
+                if _can_take_group(it, TOPIC_MAX_TOTAL, enforce_form_cap=False):
+                    _add_group(idx, it)
+
+        for topic in (TOPIC_ODD, TOPIC_SPORTS):
+            for idx, it in sorted_groups:
+                if len(chosen_groups) >= non_pwm_grouped_target:
+                    break
+                if idx in chosen_indices or classify_discover_opening_topic(it) != topic:
+                    continue
+                if _group_conflicts_with_single(it):
+                    continue
+                if _can_take_group(it, TOPIC_MAX_TOTAL, enforce_form_cap=False):
+                    _add_group(idx, it)
+
+        while len(chosen_groups) < non_pwm_grouped_target:
+            best_fallback: Optional[tuple[int, dict[str, Any]]] = None
+            for topic in NON_PWM_TOPICS:
+                if topic_counts[topic] >= TOPIC_MAX_TOTAL[topic]:
+                    continue
+                for idx, it in sorted_groups:
+                    if idx in chosen_indices or classify_discover_opening_topic(it) != topic:
+                        continue
+                    if _group_conflicts_with_single(it):
+                        continue
+                    if _can_take_group(it, TOPIC_MAX_TOTAL, enforce_form_cap=False):
+                        if best_fallback is None or idx < best_fallback[0]:
+                            best_fallback = (idx, it)
+                        break
+            if best_fallback is None:
+                break
+            _add_group(*best_fallback)
+
+        if len(chosen_groups) < non_pwm_grouped_target:
+            for idx, it in sorted_groups:
+                if len(chosen_groups) >= non_pwm_grouped_target:
+                    break
+                if idx in chosen_indices or classify_discover_opening_topic(it) == TOPIC_PWM:
+                    continue
+                if _group_conflicts_with_single(it):
+                    continue
+                if _can_take_group(it, relaxed_non_pwm_caps, enforce_form_cap=False):
+                    _add_group(idx, it)
+
+    # Final truly-empty-non-sports fallback: allow a 3rd sports group only after all
+    # non-sports caps and form-cap relaxations are exhausted.
+    if len(chosen_groups) < non_pwm_grouped_target:
+        empty_deck_caps = {**relaxed_non_pwm_caps, TOPIC_SPORTS: 3}
+        for idx, it in sorted_groups:
+            if len(chosen_groups) >= non_pwm_grouped_target:
+                break
+            if idx in chosen_indices or classify_discover_opening_topic(it) == TOPIC_PWM:
+                continue
+            if _group_conflicts_with_single(it):
+                continue
+            if _can_take_group(it, empty_deck_caps, enforce_form_cap=False):
+                _add_group(idx, it)
+
     if chosen_pwm_seat10 is not None:
         chosen_groups.append(chosen_pwm_seat10)
 
     # If grouped supply was below `grouped_target`, fill remaining opening seats with
-    # non-PWM singles first while honoring PWM <= 1.
+    # non-PWM/cap-respecting singles first while honoring PWM <= 1.
     needed_singles = seat_count - len(chosen_groups) - len(chosen_singles)
     if needed_singles > 0:
-        for pass_non_pwm_only in (True, False):
+        for pass_mode in ("non_pwm_under_cap", "non_pwm_any", "any"):
             if needed_singles <= 0:
                 break
             for idx, it in singles_sorted:
@@ -1253,7 +1510,9 @@ def apply_discover_opening_mix(
                 if idx in chosen_indices:
                     continue
                 t = classify_discover_opening_topic(it)
-                if pass_non_pwm_only and t == TOPIC_PWM:
+                if pass_mode in ("non_pwm_under_cap", "non_pwm_any") and t == TOPIC_PWM:
+                    continue
+                if pass_mode == "non_pwm_under_cap" and topic_counts[t] >= TOPIC_MAX_TOTAL[t]:
                     continue
                 if t == TOPIC_PWM and topic_counts[TOPIC_PWM] >= TOPIC_MAX_TOTAL[TOPIC_PWM]:
                     continue
@@ -1280,22 +1539,35 @@ def apply_discover_opening_mix(
     )
     if len(opening) < seat_count:
         insert_before_pwm = max(0, len(opening) - (1 if chosen_pwm_seat10 is not None else 0))
-        for allow_same_deadline in (False, True):
+        form_cap_passes = (True, False) if apply_form_cap else (False,)
+        for enforce_form_cap in form_cap_passes:
             if len(opening) >= seat_count:
                 break
-            for idx, it in enumerate(items):
+            for allow_same_deadline in (False, True):
                 if len(opening) >= seat_count:
                     break
-                if idx in chosen_indices or it.get("type") == "concept":
-                    continue
-                if not allow_same_deadline and is_same_deadline_roundup(it):
-                    continue
-                if _contains_live_event_signal(it, now=effective_now):
-                    continue
-                chosen_indices.add(idx)
-                marked = _mark_opening_mix_card(it, anchor=anchor)
-                opening.insert(insert_before_pwm, marked)
-                insert_before_pwm += 1
+                for idx, it in enumerate(items):
+                    if len(opening) >= seat_count:
+                        break
+                    if idx in chosen_indices or it.get("type") == "concept":
+                        continue
+                    if not allow_same_deadline and is_same_deadline_roundup(it):
+                        continue
+                    if _contains_live_event_signal(it, now=effective_now):
+                        continue
+                    fid = card_visual_form_id(it)
+                    if (
+                        enforce_form_cap
+                        and fid is not None
+                        and form_counts[fid] >= OPENING_MIX_MAX_PER_FORM
+                    ):
+                        continue
+                    chosen_indices.add(idx)
+                    if fid is not None:
+                        form_counts[fid] += 1
+                    marked = _mark_opening_mix_card(it, anchor=anchor)
+                    opening.insert(insert_before_pwm, marked)
+                    insert_before_pwm += 1
 
     remainder = [
         _clear_opening_mix_marker(it) if isinstance(it, Mapping) and it.get("type") == "bundle" else it

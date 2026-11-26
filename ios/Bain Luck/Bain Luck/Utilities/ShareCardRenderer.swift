@@ -211,8 +211,7 @@ struct ShareableFuturesCardView: View {
                     Text("bainluck.com")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color(red: 0.55, green: 0.55, blue: 0.60))
-                    Text("🍀")
-                        .font(.system(size: 12))
+                    BainLuckMarkView(size: 20)
                 }
             }
             .padding(18)
@@ -264,11 +263,35 @@ struct ShareableFuturesCardView: View {
 struct ShareableEventCardView: View {
     let homeTeam: String
     let awayTeam: String
+    var awayAbbreviation: String? = nil
+    var homeAbbreviation: String? = nil
 
-    /// #3430 — the share card draws two crests side by side. Two crests reading
-    /// `TIG` is a card that travels off the app saying nothing.
+    static func crestLabels(
+        awayTeam: String,
+        homeTeam: String,
+        awayAbbreviation: String? = nil,
+        homeAbbreviation: String? = nil,
+        sportKey: String? = nil
+    ) -> (away: String, home: String) {
+        TeamShortName.abbreviationPair(
+            away: awayTeam,
+            home: homeTeam,
+            awayServed: awayAbbreviation,
+            homeServed: homeAbbreviation,
+            sportKey: sportKey
+        )
+    }
+
+    /// #3430 / #13213 — use the served team abbreviations (`PHI`, `OTT`) when provided
+    /// and fall back to the shared pair rule only when absent.
     private var crests: (away: String, home: String) {
-        TeamShortName.abbreviationPair(away: awayTeam, home: homeTeam)
+        Self.crestLabels(
+            awayTeam: awayTeam,
+            homeTeam: homeTeam,
+            awayAbbreviation: awayAbbreviation,
+            homeAbbreviation: homeAbbreviation,
+            sportKey: sportKey
+        )
     }
     let homeProbability: Double
     /// #5363 — OPTIONAL, and nil means *withheld*, not *absent*.
@@ -617,8 +640,7 @@ struct ShareableEventCardView: View {
                     Text("bainluck.com")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color(red: 0.55, green: 0.55, blue: 0.60))
-                    Text("🍀")
-                        .font(.system(size: 12))
+                    BainLuckMarkView(size: 20)
                 }
             }
             .padding(22)
@@ -669,6 +691,8 @@ enum ShareCardRenderer {
     static func renderEventCard(
         homeTeam: String,
         awayTeam: String,
+        awayAbbreviation: String? = nil,
+        homeAbbreviation: String? = nil,
         homeProbability: Double,
         /// #5363 — nil withholds the away number. No default, for the reason
         /// `commenceTime` has none: a caller that forgets it would silently
@@ -697,6 +721,8 @@ enum ShareCardRenderer {
         let view = ShareableEventCardView(
             homeTeam: homeTeam,
             awayTeam: awayTeam,
+            awayAbbreviation: awayAbbreviation,
+            homeAbbreviation: homeAbbreviation,
             homeProbability: homeProbability,
             awayProbability: awayProbability,
             awayRenderedPercent: awayRenderedPercent,

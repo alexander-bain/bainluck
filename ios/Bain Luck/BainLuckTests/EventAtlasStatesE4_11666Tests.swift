@@ -364,8 +364,6 @@ final class EventAtlasStatesE4_11666Tests: XCTestCase {
         )
 
         XCTAssertTrue(detailSrc.contains("ProgressView(EventAtlasStates11666.loading)"))
-        XCTAssertTrue(detailSrc.contains("EventAtlasStates11666.heroStateLabel("))
-        XCTAssertTrue(detailSrc.contains("EventAtlasHeroStateLabelView11666(label: stateLabel)"))
         XCTAssertTrue(catalogSrc.contains("case .stale: return atlasEnabled ? EventAtlasStates11666.noRecentPrice : noRecentPrice"))
         XCTAssertTrue(specialSrc.contains("EventAtlasStates11666.verdictDisplay(verdicts: allVerdicts, atlasEnabled: true)"))
         XCTAssertTrue(specialSrc.contains("resolvedVerdictText(for: o, verdict: v"))

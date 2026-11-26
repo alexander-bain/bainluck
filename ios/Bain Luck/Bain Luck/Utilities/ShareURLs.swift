@@ -56,3 +56,12 @@ func futuresShareURL(_ marketID: Int, style: BainLuckShareURLStyle = .plain) -> 
         return "\(base)?utm_source=share&utm_medium=native&utm_campaign=card&content_type=futures&item_id=\(marketID)"
     }
 }
+
+/// Canonical share URL for a set / collection (`bainluck.com/collections/<slug>`, #13103).
+func collectionShareURL(_ slug: String) -> String {
+    let trimmed = slug.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "https://bainluck.com" }
+    let segmentAllowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+    let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: segmentAllowed) ?? trimmed
+    return "https://bainluck.com/collections/\(encoded)"
+}

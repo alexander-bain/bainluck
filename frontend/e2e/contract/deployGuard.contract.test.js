@@ -27,6 +27,7 @@ const { execFileSync } = require("node:child_process");
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const CI_YML = path.join(REPO_ROOT, ".github", "workflows", "ci.yml");
+const HEROKU_DEPLOY_SH = path.join(REPO_ROOT, ".github", "scripts", "heroku-deploy.sh");
 
 // Fabricated 40-char SHAs. OLD is an ancestor of NEW is an ancestor of NEWEST.
 // FORK shares no ancestry with any of them: a rewritten master.
@@ -42,42 +43,33 @@ const LINEAGE = [`${OLD}:${NEW}`, `${OLD}:${NEWEST}`, `${NEW}:${NEWEST}`].join("
 const ALL_KNOWN = [OLD, NEW, NEWEST, FORK].join(" ");
 
 /**
- * Pull the `run: |` body of the deploy step out of ci.yml and dedent it.
- * Deliberately text-based: the point is to execute the bytes CI executes, not a
- * paraphrase of them.
+ * Verify both `deploy:` and `deploy-after-full:` invoke `.github/scripts/heroku-deploy.sh`,
+ * then read and return the checked-in script bytes that CI executes.
  */
 function extractDeployScript() {
   const lines = fs.readFileSync(CI_YML, "utf8").split("\n");
 
-  const jobStart = lines.indexOf("  deploy:");
-  assert.notEqual(jobStart, -1, "ci.yml has no top-level job named `deploy`.");
-  const after = lines.slice(jobStart + 1);
-  let jobEnd = after.findIndex((l) => /^ {2}\S/.test(l));
-  if (jobEnd === -1) jobEnd = after.length;
-  const job = after.slice(0, jobEnd);
+  for (const jobName of ["deploy", "deploy-after-full"]) {
+    const jobStart = lines.indexOf(`  ${jobName}:`);
+    assert.notEqual(jobStart, -1, `ci.yml has no top-level job named \`${jobName}\`.`);
+    const after = lines.slice(jobStart + 1);
+    let jobEnd = after.findIndex((l) => /^ {2}\S/.test(l));
+    if (jobEnd === -1) jobEnd = after.length;
+    const job = after.slice(0, jobEnd);
 
-  const deployStep = job.findIndex((l) => l.startsWith("      - name: Deploy to Heroku"));
-  assert.notEqual(deployStep, -1, "the named Deploy to Heroku step is missing");
-  const runIdx = job.findIndex((l, i) => i > deployStep && /^ {8}run: \|\s*$/.test(l));
-  assert.notEqual(
-    runIdx,
-    -1,
-    "the deploy job no longer has a step with a literal `run: |` block. This suite " +
-      "executes that block; if the deploy moved to an action or a checked-in script, " +
-      "point this suite at wherever the guard now lives rather than deleting it.",
-  );
-
-  const body = [];
-  for (const line of job.slice(runIdx + 1)) {
-    if (line.trim() === "") {
-      body.push("");
-      continue;
-    }
-    if (!/^ {10}/.test(line)) break;
-    body.push(line.slice(10));
+    const deployStep = job.findIndex((l) => l.startsWith("      - name: Deploy to Heroku"));
+    assert.notEqual(deployStep, -1, `${jobName} is missing the Deploy to Heroku step`);
+    const runLine = job.find((l, i) => i > deployStep && /^ {8}run:\s*bash \.github\/scripts\/heroku-deploy\.sh\s*$/.test(l));
+    assert.ok(
+      runLine,
+      `${jobName} no longer executes \`bash .github/scripts/heroku-deploy.sh\``,
+    );
   }
-  assert.ok(body.length > 0, "the deploy step's `run: |` block is empty.");
-  return body.join("\n");
+
+  assert.ok(fs.existsSync(HEROKU_DEPLOY_SH), `${HEROKU_DEPLOY_SH} is missing`);
+  const script = fs.readFileSync(HEROKU_DEPLOY_SH, "utf8");
+  assert.ok(script.trim().length > 0, "heroku-deploy.sh is empty");
+  return script;
 }
 
 /** The guard's decision logic, with comment lines removed. */
@@ -126,6 +118,13 @@ case "$1" in
     exit 1
     ;;
   push)
+    if [ -n "\${FAKE_PUSH_OUTPUT:-}" ]; then
+      printf '%s\\n' "\$FAKE_PUSH_OUTPUT"
+    fi
+    if [ -n "\${FAKE_PUSH_EXIT:-}" ]; then
+      touch "\$FAKE_GIT_LOG.pushed"
+      exit "\$FAKE_PUSH_EXIT"
+    fi
     # Only the FIRST non-force attempt is rejected, so a scenario can exercise a
     # retry. A --force attempt always lands — which is the point: the tests below
     # assert the guard does not reach one.
@@ -134,6 +133,9 @@ case "$1" in
       touch "$FAKE_GIT_LOG.pushed"
       echo "! [rejected] master -> master (non-fast-forward)" >&2
       exit 1
+    fi
+    if [ -z "\${FAKE_PUSH_OUTPUT:-}" ]; then
+      echo "remote: Waiting for release.... done."
     fi
     touch "$FAKE_GIT_LOG.pushed"
     exit 0
@@ -168,10 +170,19 @@ function runGuardIn(shellArgs, script, env) {
       "",
     ].join("\n"));
 
+    const ghScriptsDir = path.join(dir, ".github", "scripts");
+    fs.mkdirSync(ghScriptsDir, { recursive: true });
+    fs.copyFileSync(
+      path.join(REPO_ROOT, ".github", "scripts", "check_heroku_push.py"),
+      path.join(ghScriptsDir, "check_heroku_push.py"),
+    );
+
     const scriptPath = path.join(dir, "guard.sh");
     fs.writeFileSync(scriptPath, script);
     const log = path.join(dir, "git.log");
     fs.writeFileSync(log, "");
+    const ghOutputPath = path.join(dir, "github_output.txt");
+    fs.writeFileSync(ghOutputPath, "");
 
     let stdout = "";
     let status = 0;
@@ -182,6 +193,8 @@ function runGuardIn(shellArgs, script, env) {
         env: {
           PATH: `${binDir}:${process.env.PATH}`,
           HOME: dir,
+          GITHUB_OUTPUT: ghOutputPath,
+          HEROKU_SKIP_API_VERIFY: "1",
           FAKE_GIT_LOG: log,
           FAKE_LINEAGE: LINEAGE,
           FAKE_ALL_KNOWN: ALL_KNOWN,
@@ -195,10 +208,12 @@ function runGuardIn(shellArgs, script, env) {
     }
 
     const calls = fs.readFileSync(log, "utf8").split("\n").filter(Boolean);
+    const githubOutput = fs.readFileSync(ghOutputPath, "utf8");
     return {
       stdout,
       status,
       calls,
+      githubOutput,
       pushes: calls.filter((c) => c.startsWith("push ")),
       forcePushes: calls.filter((c) => c.startsWith("push ") && c.includes("--force")),
     };
@@ -534,6 +549,59 @@ describe("deploy guard (#3171): forward progress without ever rewinding", () => 
         "once again decide whether a deploy happens at all. With merges landing faster " +
         "than CI completes, no run is still the tip when its deploy job starts — that " +
         "makes every deploy skip and production silently stops advancing (#3171).",
+    );
+  });
+
+  test("fails closed when Heroku release command fails even though git push exits 0 (#13495)", () => {
+    const failedReleaseLog = [
+      "remote:  !     Release command declared: this new release will not be available until the command succeeds.",
+      "remote:        Released v6585",
+      "remote: Running release command...",
+      "remote: TypeError: Unknown option 'send_default_pii'",
+      "remote: Waiting for release... failed.",
+      "To https://git.heroku.com/bainluck.git",
+      `   ${OLD.slice(0, 9)}..${NEW.slice(0, 9)}  ${NEW} -> master`,
+    ].join("\n");
+    forEachShell(
+      script,
+      {
+        GITHUB_SHA: NEW,
+        FAKE_LIVE: OLD,
+        FAKE_ORIGIN_TIP: NEW,
+        FAKE_PUSH_EXIT: "0",
+        FAKE_PUSH_OUTPUT: failedReleaseLog,
+      },
+      (r) => {
+        assert.notEqual(r.status, 0, `guard must fail on failed release:\n${r.stdout}`);
+        assert.equal(r.pushes.length, 1, `must not retry or force after release failure:\n${r.stdout}`);
+        assert.deepEqual(r.forcePushes, [], `must never force push on release failure:\n${r.stdout}`);
+        assert.ok(!r.githubOutput.includes("deployed=true"), `must not emit deployed=true:\n${r.githubOutput}`);
+      },
+    );
+  });
+
+  test("fails closed on Heroku pre-receive/compile rejection without retrying with --force (#13495)", () => {
+    const compileRejectedLog = [
+      "remote:  !     Push rejected, failed to compile Python app.",
+      "remote:  !     Push rejected to bainluck.",
+      "To https://git.heroku.com/bainluck.git",
+      ` ! [remote rejected] ${NEW} -> master (pre-receive hook declined)`,
+    ].join("\n");
+    forEachShell(
+      script,
+      {
+        GITHUB_SHA: NEW,
+        FAKE_LIVE: OLD,
+        FAKE_ORIGIN_TIP: NEW,
+        FAKE_PUSH_EXIT: "1",
+        FAKE_PUSH_OUTPUT: compileRejectedLog,
+      },
+      (r) => {
+        assert.notEqual(r.status, 0, `guard must fail on remote rejected:\n${r.stdout}`);
+        assert.equal(r.pushes.length, 1, `must not retry when Heroku pre-receive rejected:\n${r.stdout}`);
+        assert.deepEqual(r.forcePushes, [], `must never force push after [remote rejected]:\n${r.stdout}`);
+        assert.ok(!r.githubOutput.includes("deployed=true"), `must not emit deployed=true:\n${r.githubOutput}`);
+      },
     );
   });
 });

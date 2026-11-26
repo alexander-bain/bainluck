@@ -196,7 +196,7 @@ async def run_with_deadline(awaitable: Awaitable[Any], *, deadline_ms: int) -> A
 
 # --- Process-local last-good store --------------------------------------------
 _last_good: dict[str, tuple[float, Any]] = {}
-_LAST_GOOD_MAX = _env_int("REQUEST_LAST_GOOD_MAX", 512)
+_LAST_GOOD_MAX = _env_int("REQUEST_LAST_GOOD_MAX", 48)
 
 
 def remember_last_good(

@@ -105,6 +105,72 @@ final class NavigationCoordinator: ObservableObject {
 
         guard !pathComponents.isEmpty else { return false }
 
+        guard routeSupportedPath(url: url, pathComponents: pathComponents, queryItems: queryItems) else {
+            return false
+        }
+
+        let descriptor = Self.linkDestinationDescriptor(for: pathComponents)
+        if let arrival = FirstWeekTelemetry13261.classifyArrival(
+            url: url,
+            destinationType: descriptor.destinationType,
+            firstScreen: descriptor.firstScreen
+        ) {
+            SessionOpenTracker13261.shared.recordArrival(arrival)
+        }
+        let destinationType = WidgetAndAlertTelemetry13261.destinationType(for: pathComponents)
+        if let widgetOpen = WidgetAndAlertTelemetry13261.parseWidgetOpen(
+            url: url,
+            destinationType: destinationType
+        ) {
+            AnalyticsService.trackWidgetOpen(
+                widgetKind: widgetOpen.widgetKind,
+                destinationType: widgetOpen.destinationType
+            )
+        }
+        return true
+    }
+
+    nonisolated static func linkDestinationDescriptor(for pathComponents: [String]) -> (destinationType: String, firstScreen: String) {
+        guard let head = pathComponents.first else { return ("other", "other") }
+        switch head {
+        case "events":
+            return pathComponents.count >= 2 && Int(pathComponents[1]) != nil
+                ? ("event", "event_detail")
+                : ("sports", "sports")
+        case "futures":
+            return pathComponents.count >= 2 && Int(pathComponents[1]) != nil
+                ? ("futures", "futures_detail")
+                : ("futures", "futures_list")
+        case "ei":
+            return ("sports", "sports")
+        case "search":
+            return ("search", "search")
+        case "containers", "collections":
+            return ("collection", "collection_hub")
+        case "tournaments":
+            return pathComponents.count >= 2 ? ("tournament", "tournament_hub") : ("tournament", "browse")
+        case "golf":
+            return pathComponents.count >= 2 ? ("golf", "golf_tournament") : ("golf", "golf_category")
+        case "event":
+            return ("concept", "concept_card")
+        case "playoffs":
+            return pathComponents.count >= 2 ? ("playoffs", "league_grid") : ("playoffs", "browse")
+        case "team", "teams", "sport":
+            return ("team", "team_detail")
+        case "my-stuff":
+            return ("my_stuff", "my_stuff")
+        case "preferences":
+            return ("preferences", "preferences")
+        case "weather", "economics", "politics", "entertainment", "calibration", "about", "bug-report":
+            let slug = head.replacingOccurrences(of: "-", with: "_")
+            return (slug, slug)
+        case "daily", "challenge":
+            return ("discover", "discover")
+        default:
+            return ("other", "other")
+        }
+    }
+    private func routeSupportedPath(url: URL, pathComponents: [String], queryItems: [URLQueryItem]?) -> Bool {
         switch pathComponents[0] {
         case "events":
             if pathComponents.count >= 2, let id = Int(pathComponents[1]) {
@@ -151,6 +217,19 @@ final class NavigationCoordinator: ObservableObject {
                   (try? ContainerHubService.path(for: pathComponents[1])) != nil else { return false }
             let name = queryItems?.first(where: { $0.name == "name" })?.value
             navigate(to: .containerHub(slug: pathComponents[1], name: name ?? "Collection"), tab: .leagues)
+            return true
+
+        case "collections":
+            // #13103: shared set URLs (`https://bainluck.com/collections/<slug>`,
+            // `https://www.bainluck.com/collections/<slug>`, or `bainluck://collections/<slug>`)
+            // open `ContainerHubView` directly on Discover so Back lands on the front page.
+            guard pathComponents.count == 2 else { return false }
+            let slug = pathComponents[1]
+            guard slug.count <= 200,
+                  slug.range(of: "^[a-z0-9]+(?:-[a-z0-9]+)*$", options: .regularExpression) != nil,
+                  (try? ContainerHubService.path(for: slug)) != nil else { return false }
+            let name = queryItems?.first(where: { $0.name == "name" })?.value
+            navigate(to: .containerHub(slug: slug, name: name ?? ""), tab: .discover)
             return true
 
         case "tournaments":

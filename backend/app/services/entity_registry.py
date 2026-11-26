@@ -127,11 +127,13 @@ async def resolve_aliases(
     *,
     kind: Optional[str] = None,
     sport_key: Optional[str] = None,
+    ambiguous_names: set[str] | None = None,
 ) -> dict[str, Entity]:
     """Batch variant of :func:`resolve_alias`.
 
     Returns a map of the ORIGINAL alias string -> resolved :class:`Entity` for
-    every input that resolved (unresolved inputs are simply absent). One query.
+    every input that resolved. With `ambiguous_names`, report competing
+    originals in that set and return only unique matches. One query.
     """
     wanted = {a: normalize_alias(a) for a in aliases}
     norms = {n for n in wanted.values() if n}
@@ -150,18 +152,23 @@ async def resolve_aliases(
 
     # Best match per normalized alias (highest alias then entity confidence).
     best: dict[str, tuple[float, float, int, Entity]] = {}
+    competing_norms: set[str] = set()
     for norm, alias_conf, entity in await session.execute(stmt):
         ac = float(alias_conf) if alias_conf is not None else 1.0
         ec = float(entity.confidence) if entity.confidence is not None else 1.0
         key = (ac, ec, -entity.id)
         cur = best.get(norm)
+        if ambiguous_names is not None and cur is not None and cur[3].id != entity.id:
+            competing_norms.add(norm)
         if cur is None or key > cur[:3]:
             best[norm] = (ac, ec, -entity.id, entity)
 
     out: dict[str, Entity] = {}
     for original, norm in wanted.items():
         hit = best.get(norm)
-        if hit:
+        if ambiguous_names is not None and norm in competing_norms:
+            ambiguous_names.add(original)
+        elif hit:
             out[original] = hit[3]
     return out
 

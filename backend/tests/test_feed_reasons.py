@@ -1,7 +1,11 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from app.utils.feed_reasons import (
     RESOLVING_WITHIN_MONTH_HEADLINE,
+    _is_printable_move,
+    _point_change,
+    compose_binary_card_copy,
     generate_event_reason,
     generate_futures_context_summary,
     generate_futures_headline,
@@ -27,7 +31,7 @@ def test_futures_headline_names_major_mover():
         top_mover_change=0.123,
     )
 
-    assert headline == "OpenAI up 12.3 points today"
+    assert headline == "OpenAI up 12 points today"
 
 
 def test_futures_headline_names_opening_surprise():
@@ -39,7 +43,7 @@ def test_futures_headline_names_opening_surprise():
         now=NOW,
     )
 
-    assert headline == "Fed cut down 18.7 points since Mar 4"
+    assert headline == "Fed cut down 19 points since Mar 4"
     assert "from opening" not in headline
 
 
@@ -53,7 +57,7 @@ def test_futures_headline_dates_an_opening_from_a_previous_year():
         now=NOW,
     )
 
-    assert headline == "Fed cut down 18.7 points since Nov 20, 2025"
+    assert headline == "Fed cut down 19 points since Nov 20, 2025"
 
 
 def test_futures_headline_says_nothing_when_the_opening_has_no_date():
@@ -269,7 +273,7 @@ def test_futures_reason_describes_moderate_mover_deterministically():
         top_mover_change=-0.047,
     )
 
-    assert reason == "Colman Domingo odds shifted down 4.7 points today in Best Actor"
+    assert reason == "Colman Domingo odds shifted down 5 points today in Best Actor"
 
 
 def test_futures_headline_describes_moderate_opening_change_deterministically():
@@ -281,7 +285,7 @@ def test_futures_headline_describes_moderate_opening_change_deterministically():
         now=NOW,
     )
 
-    assert headline == "Yes side down 5.2 points since Mar 4"
+    assert headline == "Yes side down 5 points since Mar 4"
 
 
 def test_futures_context_summary_uses_leader_when_headline_missing():
@@ -455,13 +459,13 @@ def test_futures_headline_avoids_date_leader_for_monthly_resolution():
 
 def test_futures_context_summary_combines_signal_and_leader():
     summary = generate_futures_context_summary(
-        headline="Yes side up 10.2 points today",
+        headline="Yes side up 10 points today",
         highlight_reasons=["moderate_movement_24h"],
         leader_name="No",
         leader_probability=0.88,
     )
 
-    assert summary == "Yes side up 10.2 points today; No leads at 88%"
+    assert summary == "Yes side up 10 points today; No leads at 88%"
 
 
 def test_futures_context_summary_adds_leader_to_source_disagreement_headline():
@@ -712,3 +716,166 @@ class TestHumanizeOutcomeNamesForFeed:
         assert result[0]["probability"] == 0.69
         assert result[0]["rank"] == 1
         assert result[0]["movement"] == 0.05
+
+
+def test_13602_mover_cards_use_whole_points_and_never_offer_zero_point_moves():
+    # The 8 live Discover mover deltas cited in #13602.
+    deltas = [-0.155, -0.045, -0.042, 0.005, -0.114, -0.192, 0.135, 0.093]
+    for delta in deltas:
+        headline = generate_futures_headline(
+            highlight_reasons=["major_surprise"],
+            top_surprise_name="Yes",
+            top_surprise_change=delta,
+            top_surprise_opened_at=OPENED_THIS_YEAR,
+            now=NOW,
+        )
+        reason = generate_futures_reason(
+            market_name="Will X happen?",
+            highlight_reasons=["major_surprise"],
+            top_surprise_name="Yes",
+            top_surprise_change=delta,
+            top_surprise_opened_at=OPENED_THIS_YEAR,
+            now=NOW,
+        )
+        binary = compose_binary_card_copy(
+            market_name="Will X happen?",
+            highlight_reasons=["major_surprise"],
+            affirmative_probability=0.09,
+            top_surprise_change=delta,
+            top_surprise_opened_at=OPENED_THIS_YEAR,
+            now=NOW,
+        )
+        for text in (headline, reason, binary.headline, binary.context_summary, binary.reason):
+            assert "." not in text, f"unexpected decimal in {text!r} for delta={delta}"
+        if delta == 0.005:
+            assert headline == "Yes side up 1 point since Mar 4"
+            assert "1 point" in reason and "1 points" not in reason
+            assert binary.headline == "Up 1 point since Mar 4"
+            assert binary.context_summary == "9% chance, up 1 point since Mar 4"
+        else:
+            assert "since Mar 4" in headline
+            assert "since Mar 4" in binary.headline
+            assert "since Mar 4" in binary.context_summary
+
+    # Any move strictly below 0.5 points (+0.0049, +0.004, -0.004, 0.0) rounds to 0 and stays silent.
+    for sub_point in (0.0049, 0.004, -0.004, -0.0049, 0.0):
+        for reason_code in ("major_movement_24h", "moderate_movement_24h"):
+            b = compose_binary_card_copy(
+                market_name="Will X happen?",
+                highlight_reasons=[reason_code],
+                affirmative_probability=0.42,
+                top_mover_change=sub_point,
+                now=NOW,
+            )
+            assert b.headline == ""
+            assert b.context_summary == ""
+            assert b.reason == ""
+            assert (
+                generate_futures_headline(
+                    highlight_reasons=[reason_code],
+                    top_mover_name="Alice",
+                    top_mover_change=sub_point,
+                )
+                == ""
+            )
+            assert "point" not in generate_futures_reason(
+                market_name="Who wins?",
+                highlight_reasons=[reason_code],
+                top_mover_name="Alice",
+                top_mover_change=sub_point,
+            )
+
+    # Singular "1 point" vs plural "2 points".
+    for one_pt in (0.01, 0.014, -0.01, -0.014):
+        b = compose_binary_card_copy(
+            market_name="Will X happen?",
+            highlight_reasons=["moderate_movement_24h"],
+            affirmative_probability=0.42,
+            top_mover_change=one_pt,
+            now=NOW,
+        )
+        assert "1 point today" in b.headline
+        assert "1 points" not in b.headline
+
+    for two_pt in (0.015, 0.02):
+        b = compose_binary_card_copy(
+            market_name="Will X happen?",
+            highlight_reasons=["moderate_movement_24h"],
+            affirmative_probability=0.42,
+            top_mover_change=two_pt,
+            now=NOW,
+        )
+        assert "2 points today" in b.headline
+
+
+def test_13602_half_point_rounding_is_half_up_after_float_noise_cleanup():
+    cases = [
+        (0.035, 4),
+        (0.045, 5),
+        (0.025, 3),
+        (0.085, 9),
+        (0.245 - 0.16, 9),
+        (0.5 - 0.415, 9),
+        (0.005, 1),
+        (0.0449, 4),
+        (0.004, 0),
+        (Decimal("0.085"), 9),
+        (Decimal("0.045"), 5),
+        (Decimal("-0.025"), 3),
+        (Decimal("0.005"), 1),
+        (Decimal("0.004"), 0),
+    ]
+    for delta, expected in cases:
+        assert _point_change(delta) == expected, (delta, expected)
+
+    # 0.005 rounds up to 1 point and prints singular "1 point"; 0.004 rounds to 0 and stays silent.
+    assert _is_printable_move(0.005)
+    assert not _is_printable_move(0.004)
+
+    half_pt = compose_binary_card_copy(
+        market_name="Will X happen?",
+        highlight_reasons=["moderate_movement_24h"],
+        affirmative_probability=0.42,
+        top_mover_change=0.005,
+        now=NOW,
+    )
+    assert half_pt.headline == "Up 1 point today"
+    assert (
+        generate_futures_headline(
+            highlight_reasons=["moderate_movement_24h"],
+            top_mover_name="Alice",
+            top_mover_change=0.005,
+        )
+        == "Alice up 1 point today"
+    )
+    assert "up 1 point today" in generate_futures_reason(
+        market_name="Who wins?",
+        highlight_reasons=["moderate_movement_24h"],
+        top_mover_name="Alice",
+        top_mover_change=0.005,
+    )
+
+    sub_half = compose_binary_card_copy(
+        market_name="Will X happen?",
+        highlight_reasons=["moderate_movement_24h"],
+        affirmative_probability=0.42,
+        top_mover_change=0.004,
+        now=NOW,
+    )
+    assert sub_half.headline == ""
+    assert sub_half.context_summary == ""
+    assert sub_half.reason == ""
+    assert (
+        generate_futures_headline(
+            highlight_reasons=["moderate_movement_24h"],
+            top_mover_name="Alice",
+            top_mover_change=0.004,
+        )
+        == ""
+    )
+    assert "point" not in generate_futures_reason(
+        market_name="Who wins?",
+        highlight_reasons=["moderate_movement_24h"],
+        top_mover_name="Alice",
+        top_mover_change=0.004,
+    )

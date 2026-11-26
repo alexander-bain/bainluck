@@ -848,7 +848,7 @@ def test_0c_meta_training_pause_and_us_bank_failure_stay_priced_with_no_daily_nu
         for r in (card.get("discover_card") or {}).get("distribution_outcomes") or []:
             assert r.get(FEED_FIELD) is None, f"{market_id} distribution: {r!r}"
     meta_item = _feed_item(META_ID, category="tech")
-    assert "78.5 points since" in _caption(meta_item), _caption(meta_item)
+    assert "79 points since" in _caption(meta_item) and "78.5" not in _caption(meta_item), _caption(meta_item)
 
 
 # ---------------------------------------------------------------------------

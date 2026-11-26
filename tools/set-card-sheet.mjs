@@ -42,6 +42,7 @@ export function parseArgs(argv) {
   let feedUrl = null;
   let feedJson = null;
   let scale = 2;
+  let lightOnly = false;
   const slugs = [];
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -66,8 +67,10 @@ export function parseArgs(argv) {
       scale = Number(argv[++i] ?? 2);
     } else if (arg.startsWith("--scale=")) {
       scale = Number(arg.slice("--scale=".length));
+    } else if (arg === "--light-only") {
+      lightOnly = true;
     } else if (arg === "--help" || arg === "-h") {
-      return { help: true, out, webUrl, feedUrl, feedJson, scale, slugs };
+      return { help: true, out, webUrl, feedUrl, feedJson, scale, lightOnly, slugs };
     } else if (arg.startsWith("-")) {
       throw new Error(`Unknown flag: ${arg}`);
     } else {
@@ -83,7 +86,7 @@ export function parseArgs(argv) {
   if (feedUrl && feedJson) {
     throw new Error("Pass at most one of --feed-url and --feed-json");
   }
-  return { help: false, out, webUrl, feedUrl, feedJson, scale, slugs };
+  return { help: false, out, webUrl, feedUrl, feedJson, scale, lightOnly, slugs };
 }
 
 export function extractSlugFromItem(item) {
@@ -185,7 +188,7 @@ async function captureMode(browser, { webUrl, feedBody, slugs, colorScheme, scal
     await page.setViewportSize({ width: VIEWPORT_WIDTH, height: docHeight + 120 });
     await page.waitForTimeout(350);
 
-    // Wait for every image inside rendered machinery/paired roundup cards to finish loading cleanly.
+    // Wait for every image inside rendered roundup cards (both native machinery and paired-stage cards) to finish loading cleanly.
     const imgStatus = await page.evaluate(async (expectedSlugs) => {
       const imgs = [
         ...document.querySelectorAll(
@@ -254,11 +257,20 @@ async function captureMode(browser, { webUrl, feedBody, slugs, colorScheme, scal
   }
 }
 
-async function stitchSheet(browser, { out, webUrl, slugs, lightCaps, darkCaps, scale }) {
+async function stitchSheet(browser, { out, webUrl, slugs, lightCaps, darkCaps, scale, lightOnly = false }) {
+  const sheetWidth = lightOnly ? 444 : 860;
   const rowsHtml = slugs
     .map((slug) => {
       const lc = lightCaps[slug];
-      const dc = darkCaps[slug];
+      const dc = darkCaps ? darkCaps[slug] : null;
+      const darkPane =
+        !lightOnly && dc
+          ? `
+          <div class="pane pane-dark">
+            <div class="pane-label">390 px · Dark media + .dark (${escapeHtml(dc.cardBg)})</div>
+            <img src="${dc.dataUri}" width="390" />
+          </div>`
+          : "";
       return `
       <section class="row">
         <div class="row-head">
@@ -269,15 +281,15 @@ async function stitchSheet(browser, { out, webUrl, slugs, lightCaps, darkCaps, s
           <div class="pane pane-light">
             <div class="pane-label">390 px · Light (${escapeHtml(lc.cardBg)})</div>
             <img src="${lc.dataUri}" width="390" />
-          </div>
-          <div class="pane pane-dark">
-            <div class="pane-label">390 px · Dark media + .dark (${escapeHtml(dc.cardBg)})</div>
-            <img src="${dc.dataUri}" width="390" />
-          </div>
+          </div>${darkPane}
         </div>
       </section>`;
     })
     .join("\n");
+
+  const subText = lightOnly
+    ? "Light mode (the Bain Luck website is light-mode-only; cards ignore .dark)."
+    : "Left: Light (prefers-color-scheme: light). Right: Dark (prefers-color-scheme: dark + .dark class).";
 
   const html = `<!doctype html>
 <html>
@@ -286,7 +298,7 @@ async function stitchSheet(browser, { out, webUrl, slugs, lightCaps, darkCaps, s
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    width: 860px;
+    width: ${sheetWidth}px;
     padding: 20px;
     background: #E5E7EB;
     color: #0F172A;
@@ -316,13 +328,13 @@ async function stitchSheet(browser, { out, webUrl, slugs, lightCaps, darkCaps, s
 <body>
   <header>
     <h1>Set Card Sheet — ${slugs.length} card${slugs.length === 1 ? "" : "s"} as drawn at 390 px (${escapeHtml(webUrl)})</h1>
-    <p class="sub">Left: Light (prefers-color-scheme: light). Right: Dark (prefers-color-scheme: dark + .dark class).</p>
+    <p class="sub">${subText}</p>
   </header>
   ${rowsHtml}
 </body>
 </html>`;
 
-  const ctx = await browser.newContext({ viewport: { width: 860, height: 1000 }, deviceScaleFactor: scale });
+  const ctx = await browser.newContext({ viewport: { width: sheetWidth, height: 1000 }, deviceScaleFactor: scale });
   try {
     const page = await ctx.newPage();
     await page.setContent(html, { waitUntil: "load" });
@@ -387,13 +399,15 @@ export async function main(argv = process.argv.slice(2)) {
       colorScheme: "light",
       scale: opts.scale,
     });
-    const darkCaps = await captureMode(browser, {
-      webUrl: opts.webUrl,
-      feedBody,
-      slugs: opts.slugs,
-      colorScheme: "dark",
-      scale: opts.scale,
-    });
+    const darkCaps = opts.lightOnly
+      ? null
+      : await captureMode(browser, {
+          webUrl: opts.webUrl,
+          feedBody,
+          slugs: opts.slugs,
+          colorScheme: "dark",
+          scale: opts.scale,
+        });
     const outPath = await stitchSheet(browser, {
       out: opts.out,
       webUrl: opts.webUrl,
@@ -401,6 +415,7 @@ export async function main(argv = process.argv.slice(2)) {
       lightCaps,
       darkCaps,
       scale: opts.scale,
+      lightOnly: opts.lightOnly,
     });
     console.log(`SHEET ${outPath}`);
     for (const slug of opts.slugs) {

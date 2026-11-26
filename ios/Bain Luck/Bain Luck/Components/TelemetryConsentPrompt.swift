@@ -20,8 +20,7 @@ struct TelemetryConsentPrompt: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Text("\u{1F340}")
-                .font(.system(size: 44))
+            BainLuckMarkView(size: 44)
 
             Text("Help us find what\u{2019}s broken?")
                 .font(.title3.weight(.bold))

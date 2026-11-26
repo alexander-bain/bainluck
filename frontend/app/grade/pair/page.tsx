@@ -154,18 +154,23 @@ function PairSession() {
     return <Shell><p className="text-sm text-text-secondary">This link needs ?slate= and ?pair=.</p></Shell>;
   }
   if (error && !deck) return <Shell><p className="text-sm text-text-secondary">{error}</p></Shell>;
-  if (!deck) return <Shell><p className="text-sm text-text-muted animate-pulse">Loading the two first tens…</p></Shell>;
+  if (!deck) return <Shell><p className="text-sm text-text-muted animate-pulse">Loading the two card lists…</p></Shell>;
 
   const canPick = !!normalizeGraderName(grader) && opened !== null && !saved && !alreadyPicked && !saving;
   const captureDay = formatCaptureDayPt(deck.captured_at);
+  const count = deck.left.length;
+  const countWord = count === 10 ? "ten" : String(count);
+  const sideLabelPrefix = count === 10 ? "" : ` (${count})`;
   return (
     <Shell>
       <p className="text-xs font-semibold uppercase tracking-wide text-accent-brand">
         Step 1 of 3: pick{captureDay ? ` · ${captureDay}` : ""}
       </p>
-      <h1 className="mt-1 text-base font-semibold text-text-primary">Which first ten would you rather open Discover to?</h1>
+      <h1 className="mt-1 text-base font-semibold text-text-primary">
+        Which first {countWord} would you rather open Discover to?
+      </h1>
       <p className="mt-1 text-sm text-text-secondary">
-        Two orders of {captureDay ? `${captureDay}'s` : "this morning's"} cards. Pick first, then grade Step 2 (the deck) and Step 3 (extra set, if any).
+        Two orders of {captureDay ? `${captureDay}'s` : "this morning's"} cards{sideLabelPrefix}. Pick first, then grade Step 2 (the deck) and Step 3 (extra set, if any).
       </p>
       {!normalizeGraderName(grader) && (
         <input
@@ -188,7 +193,7 @@ function PairSession() {
         </div>
       </fieldset>
 
-      {/* Phone: the two tens take turns at full size. */}
+      {/* Phone: the two lists take turns at full size. */}
       <div className="mt-3 flex gap-2 md:hidden" role="tablist">
         {(["left", "right"] as const).map((t) => (
           <button
@@ -201,19 +206,19 @@ function PairSession() {
               if (t === "right") setSeenRight(true);
             }}
           >
-            {t === "left" ? "Left ten" : "Right ten"}
+            {t === "left" ? `Left ${countWord}` : `Right ${countWord}`}
           </button>
         ))}
       </div>
-      {!seenRight && <p className="mt-1 text-xs text-text-muted md:hidden">Open both tens before picking.</p>}
+      {!seenRight && <p className="mt-1 text-xs text-text-muted md:hidden">Open both {count === 10 ? "tens" : "lists"} before picking.</p>}
       <div className="mt-3 md:hidden">
-        <Column side={tab === "left" ? deck.left : deck.right} label={tab === "left" ? "Left ten" : "Right ten"} />
+        <Column side={tab === "left" ? deck.left : deck.right} label={tab === "left" ? `Left ${countWord}` : `Right ${countWord}`} />
       </div>
 
-      {/* Wide screen: both tens side by side, full size. */}
+      {/* Wide screen: both lists side by side, full size. */}
       <div className="mt-3 hidden gap-6 md:flex">
-        <Column side={deck.left} label="Left ten" />
-        <Column side={deck.right} label="Right ten" />
+        <Column side={deck.left} label={`Left ${countWord}`} />
+        <Column side={deck.right} label={`Right ${countWord}`} />
       </div>
 
       {/* Above the phone tab bar (57 px, painted over the page at z-50, #7848);

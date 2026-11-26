@@ -288,4 +288,294 @@ final class CollectionCardSourceMark11920Tests: XCTestCase {
             }
         }
     }
+
+    func testPairedMetricAndGroupingMachineryCollectionCardsDecodeAndRenderSourceMarks() throws {
+        // Raw JSONDecoder (no convertFromSnakeCase) — verifies PairedCodingKey and SourceMark.Source.DynamicKey
+        // decode both stage_1_source_mark / stage_2_source_mark and observed_at.
+        let pairedJSON = #"""
+        {
+          "set_id": "oscars-best-picture-2027",
+          "category": "entertainment",
+          "kicker": "Oscars 2027",
+          "title": "Best Picture",
+          "subtitle": "Nominated and Wins side by side",
+          "stage_1_label": "Nominated",
+          "stage_2_label": "Wins",
+          "stage_1_settled_yes_label": "✓ Nominated",
+          "stage_1_settled_no_label": "Not nominated",
+          "preferred_visual_form": "paired_bars_top5_expandable",
+          "entries": [
+            {
+              "subject_key": "the-odyssey",
+              "subject": "The Odyssey",
+              "detail": "Christopher Nolan",
+              "stage_1_market_id": 7001,
+              "stage_1_probability": 0.91,
+              "stage_1_source_mark": {
+                "state": "blend",
+                "method": "Bain Luck blend",
+                "sources": [
+                  {"key": "kalshi", "name": "Kalshi", "probability": 0.90, "observed_at": "2026-11-20T16:50:00Z"},
+                  {"key": "polymarket", "name": "Polymarket", "probability": 0.92, "observed_at": "2026-11-20T16:52:00Z"}
+                ]
+              },
+              "stage_2_market_id": 7002,
+              "stage_2_probability": 0.34,
+              "stage_2_source_mark": {
+                "state": "single",
+                "sources": [
+                  {"key": "kalshi", "name": "Kalshi", "probability": 0.34, "observed_at": "2026-11-20T16:55:00Z"}
+                ]
+              }
+            },
+            {
+              "subject_key": "project-hail-mary",
+              "subject": "Project Hail Mary",
+              "detail": "Phil Lord & Christopher Miller",
+              "stage_1_market_id": 7001,
+              "stage_1_probability": 0.78,
+              "stage_1_source_mark": {
+                "state": "blend",
+                "method": "Bain Luck blend",
+                "sources": [
+                  {"key": "kalshi", "name": "Kalshi", "probability": 0.77, "observed_at": "2026-11-20T16:50:00Z"},
+                  {"key": "polymarket", "name": "Polymarket", "probability": 0.79, "observed_at": "2026-11-20T16:52:00Z"}
+                ]
+              },
+              "stage_2_market_id": 7002,
+              "stage_2_probability": 0.19,
+              "stage_2_source_mark": {
+                "state": "blend",
+                "method": "Bain Luck blend",
+                "sources": [
+                  {"key": "kalshi", "name": "Kalshi", "probability": 0.18, "observed_at": "2026-11-20T16:50:00Z"},
+                  {"key": "polymarket", "name": "Polymarket", "probability": 0.20, "observed_at": "2026-11-20T16:52:00Z"}
+                ]
+              }
+            }
+          ]
+        }
+        """#
+        let pairedSet = try JSONDecoder().decode(PairedMetricSet.self, from: Data(pairedJSON.utf8))
+        XCTAssertEqual(pairedSet.entries.count, 2)
+        XCTAssertEqual(pairedSet.entries[0].stage1SourceMark?.state, .blend)
+        XCTAssertEqual(pairedSet.entries[0].stage1SourceMark?.sources.first?.observedAt, "2026-11-20T16:50:00Z")
+        XCTAssertEqual(pairedSet.entries[0].stage2SourceMark?.state, .single)
+        XCTAssertNotNil(SourceMarkButton(pairedSet.entries[0].stage1SourceMark, number: 0.91, numberSize: 12, compactRow: true))
+        XCTAssertNotNil(SourceMarkButton(pairedSet.entries[0].stage2SourceMark, number: 0.34, numberSize: 14, compactRow: true))
+
+        // GroupingMachinery outcome & member fallback resolution (#12288 + #11920):
+        let memberJSON = #"""
+        {
+          "type": "market",
+          "id": 108621,
+          "destination": {"kind": "market", "id": 108621, "web": "/futures/108621", "api": "/api/futures/108621"},
+          "card": {
+            "id": 108621,
+            "name": "House Control 2026",
+            "llm_sport_category": "politics",
+            "source": "both",
+            "source_count": 2,
+            "status": "open",
+            "top_outcomes": [
+              {
+                "id": 11,
+                "name": "Democratic",
+                "probability": 0.56,
+                "rendered_percent": 56,
+                "source_mark": {
+                  "state": "blend",
+                  "method": "Bain Luck blend",
+                  "sources": [
+                    {"key": "kalshi", "name": "Kalshi", "probability": 0.55, "observed_at": "2026-11-20T16:40:00Z"},
+                    {"key": "polymarket", "name": "Polymarket", "probability": 0.57, "observed_at": "2026-11-20T16:41:00Z"}
+                  ]
+                }
+              }
+            ]
+          }
+        }
+        """#
+        let snakeDecoder = JSONDecoder()
+        snakeDecoder.keyDecodingStrategy = .convertFromSnakeCase
+        let member = try snakeDecoder.decode(ContainerHubMember.self, from: Data(memberJSON.utf8))
+        let visualWithoutDirectMark = MachineryOutcomeVisual(
+            outcomeId: 11,
+            marketId: 108621,
+            name: "Democratic",
+            probability: 0.56,
+            renderedPercent: 56
+        )
+        let resolvedFromMember = MachinerySourceMarkResolver11920.outcomeMark(
+            for: visualWithoutDirectMark,
+            marketId: 108621,
+            members: [member]
+        )
+        XCTAssertEqual(resolvedFromMember?.state, .blend)
+        XCTAssertEqual(resolvedFromMember?.sources.count, 2)
+
+        for scheme in [ColorScheme.light, ColorScheme.dark] {
+            let uiStyle: UIUserInterfaceStyle = scheme == .dark ? .dark : .light
+            let surface = scheme == .dark ? Color.black : DS.surface
+            let wrapped = DiscoverPairedMetricCardView(set: pairedSet, form: .pairedBarsTop5Expandable)
+                .padding(16)
+                .frame(width: 390, alignment: .topLeading)
+                .background(surface)
+                .environment(\.colorScheme, scheme)
+            let host = hostForMeasurement(wrapped, at: .large)
+            host.overrideUserInterfaceStyle = uiStyle
+            let fitting = host.sizeThatFits(in: CGSize(width: 390, height: 1600))
+            host.view.frame = CGRect(origin: .zero, size: CGSize(width: 390, height: ceil(fitting.height) + 8))
+            let window: UIWindow
+            if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+                window = UIWindow(windowScene: scene)
+            } else {
+                window = UIWindow(frame: host.view.frame)
+            }
+            window.frame = host.view.frame
+            window.overrideUserInterfaceStyle = uiStyle
+            window.rootViewController = host
+            window.isHidden = false
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            let until = Date().addingTimeInterval(0.15)
+            repeat {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.015))
+            } while Date() < until
+
+            let fmt = UIGraphicsImageRendererFormat()
+            fmt.scale = 3.0
+            let img = UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { ctx in
+                if !host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) {
+                    host.view.layer.render(in: ctx.cgContext)
+                }
+            }
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            try VNImageRequestHandler(cgImage: XCTUnwrap(img.cgImage), options: [:]).perform([req])
+            let ocr = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+            XCTAssertTrue(ocr.contains("The Odyssey"), "Missing contender on paired card (\(scheme)): \(ocr)")
+            XCTAssertFalse(ocr.lowercased().contains("kalshi"), "Leaked Kalshi on paired card (\(scheme)): \(ocr)")
+            XCTAssertFalse(ocr.lowercased().contains("polymarket"), "Leaked Polymarket on paired card (\(scheme)): \(ocr)")
+            XCTAssertFalse(ocr.contains("…") || ocr.contains("..."), "Truncated text on paired card (\(scheme)): \(ocr)")
+
+            if let outDir = ProcessInfo.processInfo.environment["BUILDER_C_RENDER_DIR_11920"], !outDir.isEmpty {
+                let dirURL = URL(fileURLWithPath: outDir, isDirectory: true)
+                try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+                let suffix = scheme == .dark ? "dark" : "light"
+                if let png = img.pngData() {
+                    try png.write(to: dirURL.appendingPathComponent("11920-paired-collection-\(suffix)-390.png"))
+                }
+            }
+        }
+    }
+
+    func testOwnerOnlyDevSourcesOverlayStaysHiddenFromPublicAndShowsBreadthOnlyWhenEnabled() throws {
+        let suite = UserDefaults(suiteName: "DevSourcesOverlay11920Tests.\(UUID().uuidString)")!
+        let publicUser = AuthUser(id: 999999, email: nil, displayName: "Reader", photoUrl: nil, onboardingCompleted: true, createdAt: nil)
+        let ownerUser = AuthUser(id: GroupingMachineryGate12288.ownerUserId, email: nil, displayName: "Owner", photoUrl: nil, onboardingCompleted: true, createdAt: nil)
+
+        XCTAssertFalse(DevSourcesOverlay11920.isSwitchEnabled(for: nil, defaults: suite))
+        XCTAssertFalse(DevSourcesOverlay11920.isSwitchEnabled(for: publicUser, defaults: suite))
+        XCTAssertFalse(DevSourcesOverlay11920.isSwitchEnabled(for: ownerUser, defaults: suite), "Owner dev overlay must default off")
+
+        // Attempting to enable for non-owner or nil must be ignored.
+        DevSourcesOverlay11920.setSwitchEnabled(true, for: nil, defaults: suite)
+        DevSourcesOverlay11920.setSwitchEnabled(true, for: publicUser, defaults: suite)
+        XCTAssertFalse(DevSourcesOverlay11920.isSwitchEnabled(for: publicUser, defaults: suite))
+
+        // Enabling for owner turns it on only for owner.
+        DevSourcesOverlay11920.setSwitchEnabled(true, for: ownerUser, defaults: suite)
+        XCTAssertTrue(DevSourcesOverlay11920.isSwitchEnabled(for: ownerUser, defaults: suite))
+        XCTAssertFalse(DevSourcesOverlay11920.isSwitchEnabled(for: publicUser, defaults: suite))
+
+        let devMark = try JSONDecoder().decode(SourceMark.self, from: Data(#"""
+        {
+          "state": "blend",
+          "method": "Bain Luck blend",
+          "sources": [
+            {"key": "kalshi", "name": "Kalshi", "probability": 0.55, "observed_at": "2026-11-20T16:40:00Z"},
+            {"key": "polymarket", "name": "Polymarket", "probability": 0.57, "observed_at": "2026-11-20T16:41:00Z"}
+          ],
+          "dev": {
+            "of": 3,
+            "missing": ["odds_api"],
+            "weights": {"kalshi": 0.5, "polymarket": 0.5}
+          }
+        }
+        """#.utf8))
+        XCTAssertEqual(DevSourcesOverlay11920.badgeText(for: devMark), "2/3")
+        let lines = DevSourcesOverlay11920.sheetSummaryLines(for: devMark)
+        XCTAssertTrue(lines.contains("Dev · 2 of 3 source families contributing"))
+        XCTAssertTrue(lines.contains("Missing: Sportsbooks"))
+        XCTAssertTrue(lines.contains("Weights: Kalshi 50% · Polymarket 50%"))
+    }
+
+    func testMachineryEventMarksNeverBorrowOneSidesMarkForTheOtherSide() throws {
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+
+        // 1. Direct item with ONLY `source_mark` (home) and no `away_source_mark` -> away stays nil!
+        let directHomeOnly = try dec.decode(MachineryEventVisualItem.self, from: Data(#"""
+        {
+          "event_id": 77001,
+          "sport_key": "soccer_epl",
+          "home_team": "Arsenal",
+          "away_team": "Chelsea",
+          "home_probability": 0.56,
+          "away_probability": 0.22,
+          "source_mark": {
+            "state": "blend",
+            "method": "Bain Luck blend",
+            "sources": [
+              {"key": "kalshi", "name": "Kalshi", "probability": 0.56, "observed_at": "2026-11-20T16:40:00Z"},
+              {"key": "polymarket", "name": "Polymarket", "probability": 0.56, "observed_at": "2026-11-20T16:41:00Z"}
+            ]
+          }
+        }
+        """#.utf8))
+        let resolvedDirect = MachinerySourceMarkResolver11920.eventMarks(for: directHomeOnly)
+        XCTAssertNotNil(resolvedDirect.home)
+        XCTAssertNil(resolvedDirect.away, "Away side without its own mark must stay nil rather than borrowing home's mark")
+
+        // 2. Member fallback with ONLY `source_mark` (home) and no `away_source_mark` -> away stays nil!
+        let bareVisual = try dec.decode(MachineryEventVisualItem.self, from: Data(#"""
+        {
+          "event_id": 77002,
+          "sport_key": "soccer_epl",
+          "home_team": "Liverpool",
+          "away_team": "Everton",
+          "home_probability": 0.68,
+          "away_probability": 0.14
+        }
+        """#.utf8))
+        let homeOnlyMember = try dec.decode(ContainerHubMember.self, from: Data(#"""
+        {
+          "type": "event",
+          "id": 77002,
+          "card": {
+            "id": 77002,
+            "sport": "soccer_epl",
+            "away_team": "Everton",
+            "home_team": "Liverpool",
+            "status": "scheduled",
+            "source_mark": {
+              "state": "blend",
+              "method": "Bain Luck blend",
+              "sources": [
+                {"key": "kalshi", "name": "Kalshi", "probability": 0.68, "observed_at": "2026-11-20T16:40:00Z"},
+                {"key": "polymarket", "name": "Polymarket", "probability": 0.68, "observed_at": "2026-11-20T16:41:00Z"}
+              ]
+            }
+          }
+        }
+        """#.utf8))
+        let resolvedFallback = MachinerySourceMarkResolver11920.eventMarks(for: bareVisual, members: [homeOnlyMember])
+        XCTAssertNotNil(resolvedFallback.home)
+        XCTAssertNil(resolvedFallback.away, "Member fallback must never attach home's mark to the away side")
+    }
 }

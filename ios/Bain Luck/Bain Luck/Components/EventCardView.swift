@@ -35,6 +35,7 @@ struct EventCardView: View {
     /// `FinishedCardAccessibility11325`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.liveOddsRefreshActive) private var liveOddsRefreshActive
 
     /// Unified onto `HeadlineStyleTable199` (`.card`) so team names, scores, and chances
     /// share one size and weight family across every surface.
@@ -230,6 +231,7 @@ struct EventCardView: View {
             teamsAndOdds
             if !compactScheduleStyle {
                 footer
+                GameCardTeamFollowBar295A(event: event)
             }
         }
         .padding(.vertical, 6)
@@ -470,7 +472,8 @@ struct EventCardView: View {
         canStillBeGraded: Bool,
         currentAwayIsWithheld: Bool,
         prematch: PrematchReading?,
-        prematchAwayIsWithheld: Bool
+        prematchAwayIsWithheld: Bool,
+        showsLiveTenths: Bool = false
     ) -> CardSourceMarkPresentation? {
         var event = rawEvent
         event.currentOdds = CompactGameCard12616.currentOddsForCard(rawEvent)
@@ -507,7 +510,7 @@ struct EventCardView: View {
                 return hasAwayCandidate
             }()
 
-            if event.status == "live" {
+            if event.status == "live" && showsLiveTenths {
                 let liveTenths = CompactGameCard12616.liveTenthsStrings(
                     away: event.currentOdds?.awayProbability,
                     home: event.currentOdds?.homeProbability,
@@ -572,7 +575,8 @@ struct EventCardView: View {
             canStillBeGraded: canStillBeGraded,
             currentAwayIsWithheld: currentAwayIsWithheld,
             prematch: prematch,
-            prematchAwayIsWithheld: prematchAwayIsWithheld
+            prematchAwayIsWithheld: prematchAwayIsWithheld,
+            showsLiveTenths: liveOddsRefreshActive
         ),
         let button = SourceMarkButton(
             resolved.mark,
@@ -671,11 +675,23 @@ struct EventCardView: View {
     }
 
     private var showsScheduledInlineProjectionColumn12616: Bool {
-        scheduledProjection12616 != nil && !dynamicTypeSize.isAccessibilitySize
+        guard scheduledProjection12616 != nil, !dynamicTypeSize.isAccessibilitySize else {
+            return false
+        }
+        let rowW = measuredCardWidth > 0 ? measuredCardWidth : 318
+        return CompactGameCard12616.scheduledInlineProjectedFits(
+            awayShortName: shortTeamNames.away,
+            homeShortName: shortTeamNames.home,
+            nameFontSize: uniformCompactTeamNameFontSize,
+            projColWidth: min(compactLiveScoreWidth, 44),
+            chanceColWidth: min(compactLargeChanceWidth, 86),
+            gutter: scoreToPregameGutter,
+            availableRowWidth: rowW
+        )
     }
 
     private var scheduledAccessibilityProjectedLine12616: (visible: String, spoken: String)? {
-        guard isScheduled, dynamicTypeSize.isAccessibilitySize, let pair = scheduledProjection12616 else {
+        guard isScheduled, !showsScheduledInlineProjectionColumn12616, let pair = scheduledProjection12616 else {
             return nil
         }
         let abbrevs = TeamShortName.abbreviationPair(
@@ -727,7 +743,8 @@ struct EventCardView: View {
                 isScheduled: isScheduled,
                 isLive: isLive,
                 isFinished: isFinished,
-                isSuspended: isSuspended
+                isSuspended: isSuspended,
+                showsLiveTenths: liveOddsRefreshActive
             )
 
         return VStack(spacing: 6) {
@@ -762,12 +779,7 @@ struct EventCardView: View {
             } else if isThreeWayCard13121 {
                 threeWayCompetitorStack13121(drawChance: drawChance)
             } else {
-                ViewThatFits(in: .horizontal) {
-                    compactCompetitorStack(rowWidth: 358, drawChance: drawChance, isFallback: false)
-                    compactCompetitorStack(rowWidth: 304, drawChance: drawChance, isFallback: false)
-                    compactCompetitorStack(rowWidth: 272, drawChance: drawChance, isFallback: false)
-                    compactCompetitorStack(rowWidth: 236, drawChance: drawChance, isFallback: true)
-                }
+                compactCompetitorStack(drawChance: drawChance)
             }
 
             if !compactScheduleStyle && !usesFinishedAccessibilityLayout {
@@ -792,58 +804,94 @@ struct EventCardView: View {
                 )
             }
 
-            if !compactScheduleStyle {
-                if let finalForecast = finalForecast11296 {
-                    if usesFinishedAccessibilityLayout {
-                        FinalForecastLine11296(
-                            comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
-                            // Under the team names, past the 24pt crest and the row's 8pt gap.
-                            .padding(.leading, 32)
-                    } else {
-                        CompactProjectedContextLine12616(
-                            text: CompactGameCard12616.finalContextText(finalForecast),
-                            spokenText: FinalForecastComparison11296.spokenText(
-                                finalForecast, awayName: event.awayTeam, homeName: event.homeTeam),
-                            accessibilityId: FinalForecastLine11296.accessibilityIdentifier
-                        )
-                    }
+            if !compactScheduleStyle, let finalForecast = finalForecast11296 {
+                if usesFinishedAccessibilityLayout {
+                    FinalForecastLine11296(
+                        comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+                        // Under the team names, past the 24pt crest and the row's 8pt gap.
+                        .padding(.leading, 32)
+                } else {
+                    LivePregameSummaryRow214A1(
+                        summary: LivePregameCardSummary213A.resolveFinished(
+                            comparison: finalForecast,
+                            event: event
+                        ),
+                        surface: .card,
+                        colors: (away: awayColor, home: homeColor),
+                        spokenText: FinalForecastComparison11296.spokenText(
+                            finalForecast, awayName: event.awayTeam, homeName: event.homeTeam),
+                        allowsStandardWrapping: true,
+                        accessibilityIdentifier: FinalForecastLine11296.accessibilityIdentifier
+                    )
                 }
             }
         }
     }
 
     private func compactCompetitorStack(
-        rowWidth: CGFloat,
-        drawChance: String?,
-        isFallback: Bool
+        drawChance: String?
     ) -> some View {
-        let fontSize = sharedCompactTeamNameFontSize(forRowWidth: rowWidth)
-        return VStack(spacing: 6) {
-            singleRowTeamRow(
-                name: event.awayTeam,
-                avatar: event.avatar(home: false),
-                color: awayColor,
-                record: event.awayTeamData?.record,
-                score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.awayScore : nil,
-                won: awayWon,
-                side: .away,
-                nameFontSize: fontSize,
-                preventSingleWordTruncation: !isFallback
+        let fontSize = uniformCompactTeamNameFontSize
+        let effectiveWidth = measuredCardWidth > 0 ? measuredCardWidth : 334
+        let stacked = dynamicTypeSize.isAccessibilitySize
+            && competitorNeedsStackedRow(
+                cardWidth: effectiveWidth,
+                fontSize: fontSize,
+                reservedChrome: isFinished ? 59 : 42
             )
+        let awayScore = (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.awayScore : nil
+        let homeScore = (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.homeScore : nil
+
+        return VStack(spacing: 6) {
+            if stacked {
+                threeWayStackedTeamRow13121(
+                    name: event.awayTeam,
+                    avatar: event.avatar(home: false),
+                    color: awayColor,
+                    score: awayScore,
+                    won: awayWon,
+                    side: .away,
+                    nameFontSize: fontSize
+                )
+            } else {
+                singleRowTeamRow(
+                    name: event.awayTeam,
+                    avatar: event.avatar(home: false),
+                    color: awayColor,
+                    record: event.awayTeamData?.record,
+                    score: awayScore,
+                    won: awayWon,
+                    side: .away,
+                    nameFontSize: fontSize,
+                    preventSingleWordTruncation: false
+                )
+            }
             if let drawChance {
                 compactDrawRow(drawChance: drawChance, nameFontSize: fontSize)
             }
-            singleRowTeamRow(
-                name: event.homeTeam,
-                avatar: event.avatar(home: true),
-                color: homeColor,
-                record: event.homeTeamData?.record,
-                score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.homeScore : nil,
-                won: homeWon,
-                side: .home,
-                nameFontSize: fontSize,
-                preventSingleWordTruncation: !isFallback
-            )
+            if stacked {
+                threeWayStackedTeamRow13121(
+                    name: event.homeTeam,
+                    avatar: event.avatar(home: true),
+                    color: homeColor,
+                    score: homeScore,
+                    won: homeWon,
+                    side: .home,
+                    nameFontSize: fontSize
+                )
+            } else {
+                singleRowTeamRow(
+                    name: event.homeTeam,
+                    avatar: event.avatar(home: true),
+                    color: homeColor,
+                    record: event.homeTeamData?.record,
+                    score: homeScore,
+                    won: homeWon,
+                    side: .home,
+                    nameFontSize: fontSize,
+                    preventSingleWordTruncation: false
+                )
+            }
         }
     }
 
@@ -863,7 +911,8 @@ struct EventCardView: View {
         return CompactGameCard12616.liveInlinePregameFits(
             awayShortName: shortTeamNames.away,
             homeShortName: shortTeamNames.home,
-            typeSize: dynamicTypeSize
+            typeSize: dynamicTypeSize,
+            availableRowWidth: measuredCardWidth > 0 ? measuredCardWidth : 318
         )
     }
 
@@ -885,24 +934,28 @@ struct EventCardView: View {
         return compactHeaders12616.large != nil
     }
 
+    private var isNarrowFinishedCard: Bool {
+        isFinished && measuredCardWidth > 0 && measuredCardWidth < 310
+    }
+
     private var effectiveMediumColWidth: CGFloat {
         if isScheduled {
-            return min(compactProjectedWidth, 92)
+            return min(compactLiveScoreWidth, 44)
         }
         if isFinished {
-            return min(max(compactPregameWidth, 60), 70)
+            return isNarrowFinishedCard ? 52 : min(max(compactPregameWidth, 56), 62)
         }
-        return min(compactLiveScoreWidth, 52)
+        return min(compactLiveScoreWidth, 44)
     }
 
     private var effectiveLiveProjectedColWidth204C: CGFloat {
-        min(compactLiveScoreWidth, 52)
+        min(compactLiveScoreWidth, 44)
     }
 
     private var effectiveLargeColWidth: CGFloat {
-        if isFinished { return min(compactLiveScoreWidth, 50) }
+        if isFinished { return isNarrowFinishedCard ? 38 : min(compactLiveScoreWidth, 48) }
         if isSuspended { return min(compactPregameWidth, 66) }
-        return min(compactLargeChanceWidth, 90)
+        return min(compactLargeChanceWidth, 86)
     }
 
     private var pregameColumnLeadingGap12616: CGFloat {
@@ -912,6 +965,9 @@ struct EventCardView: View {
     private var largeColumnLeadingGap12616: CGFloat {
         if showsInlineLiveProjected204C {
             return pregameToNowGap + 4
+        }
+        if isNarrowFinishedCard && showsMediumColumn12616 {
+            return 10
         }
         return showsMediumColumn12616 ? scoreToPregameGutter : 0
     }
@@ -923,8 +979,15 @@ struct EventCardView: View {
         return medW + projW + lrgW
     }
 
+    /// #13013 (`246: A`) — One uniform Dynamic-Type-scaled team-name font size across
+    /// every standard game card (`Buccaneers`, `Timberwolves`, `Bills`, college teams, and
+    /// three-way soccer clubs alike).
+    var renderedCompactTeamNameFontSize13013: CGFloat {
+        uniformCompactTeamNameFontSize
+    }
+
     private var twoWayStandardNameFontSize13121: CGFloat {
-        min(compactNameSize, 21)
+        uniformCompactTeamNameFontSize
     }
 
     var isThreeWayCard13121: Bool {
@@ -934,19 +997,30 @@ struct EventCardView: View {
     }
 
     var resolvedCompactTeamNameFontSizeForTest13121: CGFloat {
-        isThreeWayCard13121 ? twoWayStandardNameFontSize13121 : sharedCompactTeamNameFontSize(forRowWidth: measuredCardWidth > 0 ? measuredCardWidth : 334)
+        isThreeWayCard13121 ? twoWayStandardNameFontSize13121 : sharedCompactTeamNameFontSize
     }
 
-    private func threeWayNeedsStackedRow13121(cardWidth: CGFloat) -> Bool {
-        let reservedChrome: CGFloat = isFinished ? 59 : 42
+    private func competitorNeedsStackedRow(
+        cardWidth: CGFloat,
+        fontSize: CGFloat,
+        reservedChrome: CGFloat
+    ) -> Bool {
         let availableInlineNameWidth = cardWidth - reservedChrome - trailingColumnsClusterWidth12616
         guard availableInlineNameWidth > 0 else { return true }
         let maxWord = CardTeamNameSizing.maxSingleWordWidth(
             names: [shortTeamNames.away, shortTeamNames.home],
-            fontSize: twoWayStandardNameFontSize13121,
+            fontSize: fontSize,
             weight: .bold
         )
         return maxWord > availableInlineNameWidth
+    }
+
+    private func threeWayNeedsStackedRow13121(cardWidth: CGFloat) -> Bool {
+        competitorNeedsStackedRow(
+            cardWidth: cardWidth,
+            fontSize: twoWayStandardNameFontSize13121,
+            reservedChrome: isFinished ? 59 : 42
+        )
     }
 
     @ViewBuilder
@@ -1081,20 +1155,12 @@ struct EventCardView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var sharedCompactTeamNameFontSize: CGFloat {
-        sharedCompactTeamNameFontSize(forRowWidth: 330)
+    private var uniformCompactTeamNameFontSize: CGFloat {
+        CompactGameCard12616.uniformCardNameFontSize(scaledBaseSize: compactNameSize)
     }
 
-    private func sharedCompactTeamNameFontSize(forRowWidth rowWidth: CGFloat) -> CGFloat {
-        let reservedChrome: CGFloat = isFinished ? 59 : 44
-        let availableWidth = max(rowWidth - reservedChrome - trailingColumnsClusterWidth12616, 48)
-        return CardTeamNameSizing.sharedWordSafeFontSize(
-            names: [shortTeamNames.away, shortTeamNames.home],
-            baseSize: min(compactNameSize, 21),
-            weight: .bold,
-            availableWidth: availableWidth,
-            minimumScale: 0.48
-        )
+    private var sharedCompactTeamNameFontSize: CGFloat {
+        uniformCompactTeamNameFontSize
     }
 
     private var compactHeaderFont12616: Font {
@@ -1313,7 +1379,7 @@ struct EventCardView: View {
                     .lineLimit(unboundedWrap13121 ? nil : (singleWord ? 1 : 2))
                     .allowsTightening(!unboundedWrap13121)
                     .fixedSize(horizontal: !unboundedWrap13121 && singleWord && preventSingleWordTruncation, vertical: true)
-                if isFinished {
+                if isFinished && won {
                     Text("\u{2713}")
                         .font(HeadlineStyleTable199.secondNumbers(
                             .card,
@@ -1327,7 +1393,7 @@ struct EventCardView: View {
                         .accessibilityHidden(true)
                 }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 if showsMediumColumn12616 {
                     reservedTrailingColumn13121(width: effectiveMediumColWidth) {
@@ -1838,7 +1904,7 @@ struct EventCardView: View {
         let color = side == .home ? homeColor : awayColor
 
         if let prob {
-            if isLive, let tenths = (side == .home ? liveTenthsPair12616.home : liveTenthsPair12616.away) {
+            if isLive && liveOddsRefreshActive, let tenths = (side == .home ? liveTenthsPair12616.home : liveTenthsPair12616.away) {
                 Text(tenths)
                     .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)

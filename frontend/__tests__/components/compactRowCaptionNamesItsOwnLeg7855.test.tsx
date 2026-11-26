@@ -158,6 +158,17 @@ const CORE_CPI = "Core CPI YoY - September 2026";
 const JORDAN = "Will Iran target Jordan?";
 
 describe("#7855 — the compact row's caption is about the leg its percentage is for", () => {
+  beforeEach(() => {
+    // Pin wall clock to this specimen's 2026-09-21 capture timestamp so the
+    // #13722 non-past date-ladder rule evaluates October 31 as upcoming.
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-21T18:55:00Z"));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("is rendering the real served AI bundle, collapsed, with both rows", () => {
     // A fixture that lost its members would make every arm below vacuous.
     const html = render(bundle("ai"));
