@@ -149,63 +149,100 @@ export default function OnboardingPage() {
 
   // Pre-populate from existing preferences when re-visiting onboarding
   const [prePopulated, setPrePopulated] = useState(false);
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   useEffect(() => {
-    if (!isAuthenticated || prePopulated) return;
+    if (!isAuthenticated) {
+      setPrePopulated(false);
+      setPreferencesLoaded(false);
+      return;
+    }
+    if (prePopulated) return;
+    let cancelled = false;
     (async () => {
       try {
         const prefs = await fetchUserPreferences();
-        if (!prefs.onboarding_completed) return;
+        if (cancelled) return;
+        const hasStoredState =
+          prefs.onboarding_completed ||
+          (prefs.favorites?.length ?? 0) > 0 ||
+          Boolean(prefs.home_location) ||
+          Boolean(
+            prefs.sport_affinities &&
+              Object.keys(prefs.sport_affinities).length > 0
+          );
 
-        // Helper to convert favorites to SelectedTeam[]
-        const toSelected = (items: UserFavoriteItem[]): SelectedTeam[] =>
-          items.map((f) => ({
-            id: f.team_id,
-            name: f.team_name,
-            sport_key: f.sport_key,
-            logo_url: f.logo_url,
-            selected: true,
-          }));
+        if (hasStoredState) {
+          // Helper to convert favorites to SelectedTeam[]
+          const toSelected = (items: UserFavoriteItem[]): SelectedTeam[] =>
+            items.map((f) => ({
+              id: f.team_id,
+              name: f.team_name,
+              sport_key: f.sport_key,
+              logo_url: f.logo_url,
+              selected: true,
+            }));
 
-        // Location
-        if (prefs.home_location) {
-          setLocationQuery(prefs.home_location);
-          setSelectedLocation(prefs.home_location);
-        }
-        const locals = prefs.favorites.filter((f) => f.relation_type === "local");
-        if (locals.length > 0) setLocationTeams(toSelected(locals));
-
-        // Follow
-        const follows = prefs.favorites.filter((f) => f.relation_type === "follow");
-        if (follows.length > 0) setFollowTeams(toSelected(follows));
-
-        // Alma maters
-        const almas = prefs.favorites.filter((f) => f.relation_type === "alma_mater");
-        if (almas.length > 0) setAlmaMaterTeams(toSelected(almas));
-
-        // Rivals
-        const rivals = prefs.favorites.filter((f) => f.relation_type === "rival");
-        if (rivals.length > 0) setRivalTeams(toSelected(rivals));
-
-        // Sport affinities
-        if (prefs.sport_affinities && Object.keys(prefs.sport_affinities).length > 0) {
-          const mapped: Record<string, SportLevel> = { ...DEFAULT_AFFINITIES };
-          for (const [key, val] of Object.entries(prefs.sport_affinities)) {
-            if (key in mapped) {
-              // Snap to nearest level
-              if (val >= 0.8) mapped[key] = 1.0;
-              else if (val >= 0.2) mapped[key] = 0.3;
-              else if (val > 0) mapped[key] = 0.1;
-              else mapped[key] = 0;
-            }
+          // Location
+          if (prefs.home_location) {
+            setLocationQuery(prefs.home_location);
+            setSelectedLocation(prefs.home_location);
           }
-          setSportAffinities(mapped);
+          const locals = prefs.favorites.filter(
+            (f) => f.relation_type === "local"
+          );
+          if (locals.length > 0) setLocationTeams(toSelected(locals));
+
+          // Follow
+          const follows = prefs.favorites.filter(
+            (f) => f.relation_type === "follow"
+          );
+          if (follows.length > 0) setFollowTeams(toSelected(follows));
+
+          // Alma maters
+          const almas = prefs.favorites.filter(
+            (f) => f.relation_type === "alma_mater"
+          );
+          if (almas.length > 0) setAlmaMaterTeams(toSelected(almas));
+
+          // Rivals
+          const rivals = prefs.favorites.filter(
+            (f) => f.relation_type === "rival"
+          );
+          if (rivals.length > 0) setRivalTeams(toSelected(rivals));
+
+          // Sport affinities
+          if (
+            prefs.sport_affinities &&
+            Object.keys(prefs.sport_affinities).length > 0
+          ) {
+            const mapped: Record<string, SportLevel> = {
+              ...DEFAULT_AFFINITIES,
+            };
+            for (const [key, val] of Object.entries(prefs.sport_affinities)) {
+              if (key in mapped) {
+                // Snap to nearest level
+                if (val >= 0.8) mapped[key] = 1.0;
+                else if (val >= 0.2) mapped[key] = 0.3;
+                else if (val > 0) mapped[key] = 0.1;
+                else mapped[key] = 0;
+              }
+            }
+            setSportAffinities(mapped);
+          }
         }
 
+        // Only ask the server to replace when preferences loaded cleanly
+        // (returning user's whole state loaded, or new user confirmed). A
+        // failed fetch falls back to defaults and must stay additive.
+        setPreferencesLoaded(true);
         setPrePopulated(true);
       } catch {
-        // If fetch fails, just proceed with defaults
+        // If fetch fails, proceed with defaults and keep preferencesLoaded=false
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [isAuthenticated, prePopulated]);
 
   // =========================================================================
@@ -447,6 +484,7 @@ export default function OnboardingPage() {
         school_selections: almaMaterTeams.map((t) => t.name),
         rival_selections: rivalTeams.map((t) => t.name),
       },
+      replace: preferencesLoaded,
     };
 
     // Get a fresh auth token — pass it DIRECTLY to the API call so it

@@ -169,7 +169,9 @@ async def test_reopening_checklist_preserves_prior_teams_levels_and_location():
     assert prefs.home_location == "Boston"
     assert prefs.onboarding_completed is True
     assert prefs.sport_affinities == {
-        "americanfootball_nfl": 0.3,
+        # nfl was 0.3 and checklist sent 1.0 -> raised to 1.0 (Fable #13819 ask 2);
+        # untouched keys stay at their hand-set Preferences levels.
+        "americanfootball_nfl": 1.0,
         "basketball_nba": 0.1,
         "baseball_mlb": 0.0,
         "politics": 1.0,
@@ -179,6 +181,128 @@ async def test_reopening_checklist_preserves_prior_teams_levels_and_location():
         "initial": ["Patriots", "Celtics", "Red Sox"],
         "212a_picks": ["Boston Bruins", "Boston Celtics"],
     }
+
+
+@pytest.mark.asyncio
+async def test_checklist_raises_low_category_without_lowering_high_or_untouched():
+    """Fable #13819 ask 2: stored low -> checklist pick ends high; high/untouched stays high."""
+    sync, db = _make_session()
+    user = sync.get(User, 1)
+
+    sync.add(
+        UserPreference(
+            user_id=1,
+            home_location="Boston",
+            sport_affinities={
+                "basketball_nba": 0.1,
+                "americanfootball_nfl": 1.0,
+                "baseball_mlb": 1.0,
+            },
+            onboarding_completed=True,
+        )
+    )
+    sync.commit()
+
+    body = OnboardingRequest(
+        follow_teams=[TeamRef(team_id=102)],
+        sport_affinities={"nba": 1.0, "baseball": 0.3},
+    )
+    ret = await submit_onboarding(body=body, user=user, db=db)
+    await db.commit()
+
+    assert ret == {"status": "ok", "onboarding_completed": True}
+    prefs = sync.execute(
+        select(UserPreference).where(UserPreference.user_id == 1)
+    ).scalar_one()
+    assert prefs.sport_affinities == {
+        "basketball_nba": 1.0,
+        "americanfootball_nfl": 1.0,
+        "baseball_mlb": 1.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_website_wizard_replace_true_removes_team_and_lowers_level():
+    """Fable #13819 ask 1: returning website user removes one team and lowers one level."""
+    sync, db = _make_session()
+    user = sync.get(User, 1)
+
+    sync.add_all(
+        [
+            UserFavorite(
+                user_id=1,
+                team_id=101,
+                relation_type="local",
+                source="onboarding",
+                weight=1.0,
+            ),
+            UserFavorite(
+                user_id=1,
+                team_id=102,
+                relation_type="follow",
+                source="onboarding",
+                weight=1.0,
+            ),
+            UserFavorite(
+                user_id=1,
+                team_id=103,
+                relation_type="alma_mater",
+                source="onboarding",
+                weight=1.0,
+            ),
+            UserFavorite(
+                user_id=1,
+                team_id=104,
+                relation_type="follow",
+                source="manual",
+                weight=1.0,
+            ),
+            UserPreference(
+                user_id=1,
+                home_location="Boston",
+                sport_affinities={
+                    "americanfootball_nfl": 1.0,
+                    "basketball_nba": 1.0,
+                },
+                onboarding_completed=True,
+                onboarding_raw={"initial": True},
+            ),
+        ]
+    )
+    sync.commit()
+
+    # Wizard loaded the whole state and the user unticked Celtics (102) and lowered nba (1.0 -> 0.3).
+    body = OnboardingRequest(
+        home_location="Boston",
+        local_teams=[TeamRef(team_id=101)],
+        follow_teams=[TeamRef(team_id=104)],
+        alma_mater_teams=[TeamRef(team_id=103)],
+        sport_affinities={"nfl": 1.0, "nba": 0.3},
+        raw_inputs={"wizard": "replace"},
+        replace=True,
+    )
+    ret = await submit_onboarding(body=body, user=user, db=db)
+    await db.commit()
+
+    assert ret == {"status": "ok", "onboarding_completed": True}
+    fav_rows = sync.execute(
+        select(UserFavorite.team_id, UserFavorite.relation_type).where(
+            UserFavorite.user_id == 1
+        )
+    ).all()
+    assert set(fav_rows) == {
+        (101, "local"),
+        (103, "alma_mater"),
+        (104, "follow"),
+    }
+    prefs = sync.execute(
+        select(UserPreference).where(UserPreference.user_id == 1)
+    ).scalar_one()
+    assert prefs.sport_affinities == {
+        "americanfootball_nfl": 1.0,
+        "basketball_nba": 0.3,
+    }
+    assert prefs.onboarding_raw == {"wizard": "replace"}
 
 
 @pytest.mark.asyncio

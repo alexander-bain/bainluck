@@ -383,6 +383,7 @@ class OnboardingRequest(BaseModel):
     rival_teams: list[TeamRef] = []
     sport_affinities: dict[str, float] = {}  # e.g., {"football": 1.0, "basketball": 0.3}
     raw_inputs: dict = {}  # Saved verbatim for debugging
+    replace: bool = False  # Full-replace opt-in for website wizard; default additive (#13779)
 
 
 class FavoriteItem(BaseModel):
@@ -608,8 +609,20 @@ async def submit_onboarding(
         }
     skipped = sorted(submitted - canonical_ids.keys())
 
-    # 1. Load existing favorites so finishing the checklist is additive (never
-    #    deletes teams followed from earlier onboarding, Settings, or chips).
+    # 1. Replace existing onboarding-sourced favorites ONLY when the caller
+    #    explicitly sends the complete edited state (website setup wizard).
+    #    Default replace=False keeps earlier onboarding, Settings, and chip
+    #    follows intact (protecting both 1.0.7 and 1.0.8 checklist sits).
+    if body.replace:
+        await db.execute(
+            delete(UserFavorite).where(
+                and_(
+                    UserFavorite.user_id == user.id,
+                    UserFavorite.source == "onboarding",
+                )
+            )
+        )
+
     existing_pairs: set[tuple[int, str]] = set(
         (
             await db.execute(
@@ -656,26 +669,35 @@ async def submit_onboarding(
     prefs = result.scalar_one_or_none()
 
     if prefs:
-        if body.home_location is not None and body.home_location.strip():
-            prefs.home_location = body.home_location.strip()
-        existing_affinities = (
-            dict(prefs.sport_affinities)
-            if isinstance(prefs.sport_affinities, dict)
-            else {}
-        )
-        for backend_key, weight in expanded_affinities.items():
-            if backend_key not in existing_affinities:
-                existing_affinities[backend_key] = weight
-        prefs.sport_affinities = existing_affinities
-        prefs.onboarding_completed = True
-        if body.raw_inputs:
-            existing_raw = (
-                dict(prefs.onboarding_raw)
-                if isinstance(prefs.onboarding_raw, dict)
+        if body.replace:
+            prefs.home_location = body.home_location
+            prefs.sport_affinities = expanded_affinities
+            prefs.onboarding_completed = True
+            prefs.onboarding_raw = body.raw_inputs
+        else:
+            if body.home_location is not None and body.home_location.strip():
+                prefs.home_location = body.home_location.strip()
+            existing_affinities = (
+                dict(prefs.sport_affinities)
+                if isinstance(prefs.sport_affinities, dict)
                 else {}
             )
-            existing_raw.update(body.raw_inputs)
-            prefs.onboarding_raw = existing_raw
+            # Picking a category in the checklist may raise a low stored level,
+            # while untouched or higher stored levels stay unchanged (#13779).
+            for backend_key, weight in expanded_affinities.items():
+                stored = existing_affinities.get(backend_key)
+                if stored is None or weight > stored:
+                    existing_affinities[backend_key] = weight
+            prefs.sport_affinities = existing_affinities
+            prefs.onboarding_completed = True
+            if body.raw_inputs:
+                existing_raw = (
+                    dict(prefs.onboarding_raw)
+                    if isinstance(prefs.onboarding_raw, dict)
+                    else {}
+                )
+                existing_raw.update(body.raw_inputs)
+                prefs.onboarding_raw = existing_raw
     else:
         prefs = UserPreference(
             user_id=user.id,

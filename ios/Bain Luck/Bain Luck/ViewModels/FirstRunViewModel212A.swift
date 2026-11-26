@@ -582,8 +582,16 @@ final class FirstRunViewModel212A: ObservableObject {
         defaults.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
 
         var mergedInterests = (defaults.dictionary(forKey: FirstRunStorageKeys212A.localInterestsKey) as? [String: Double]) ?? [:]
-        for (cat, weight) in categoryInterests where mergedInterests[cat] == nil {
-            mergedInterests[cat] = weight
+        // Picking a category in the checklist can raise a low stored level, while
+        // untouched or higher stored levels stay put (#13779 / Fable ask #2).
+        for (cat, weight) in categoryInterests {
+            if let existing = mergedInterests[cat] {
+                if weight > existing {
+                    mergedInterests[cat] = weight
+                }
+            } else {
+                mergedInterests[cat] = weight
+            }
         }
         if !mergedInterests.isEmpty {
             defaults.set(mergedInterests, forKey: FirstRunStorageKeys212A.localInterestsKey)
