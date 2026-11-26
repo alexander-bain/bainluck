@@ -6,7 +6,7 @@
  * immutability, and visualForms Rule #1 (no client-side multi-venue blending).
  */
 import '../helpers/minimalDom';
-import { quarantinedTimingTest } from '../helpers/timingQuarantine';
+import { assertTimingBudgetMs } from '../helpers/timingQuarantine';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import CollectionHub from '@/components/collections/CollectionHub';
@@ -448,10 +448,7 @@ test('pairedMetricSetMarketIds, patchMachineryVisualBlock, and applyEventConcept
   ).toBe(settledConcept);
 });
 
-quarantinedTimingTest(
-  'frontend/__tests__/lib/setPagesLiveReprice10090.test.tsx',
-  'CollectionHub machinery section (market_preview) and AwardCategoryPairedCard (server invalidation) re-price in < 500 ms',
-  async () => {
+test('CollectionHub machinery section (market_preview) and AwardCategoryPairedCard (server invalidation) re-price in < 500 ms', async () => {
   const futuresItem: FeedItem = {
     type: 'futures',
     data: {
@@ -555,7 +552,12 @@ quarantinedTimingTest(
   );
   const dtMachMs = Number(realHrtimeNs() - tMach0) / 1e6;
   console.info(`[capture:collection-machinery] dt_ms=${dtMachMs.toFixed(2)}`);
-  expect(dtMachMs).toBeLessThan(500);
+  assertTimingBudgetMs(
+    'frontend/__tests__/lib/setPagesLiveReprice10090.test.tsx',
+    'CollectionHub machinery section (market_preview) and AwardCategoryPairedCard (server invalidation) re-price in < 500 ms',
+    dtMachMs,
+    500,
+  );
   expect(container.textContent).toContain('58%');
 
   // Switch to Oscars paired-metrics hub (multi-venue companion_polymarket_id 602)
@@ -596,7 +598,12 @@ quarantinedTimingTest(
   await flush(0);
   const dtPairedMs = Number(realHrtimeNs() - tPaired0) / 1e6;
   console.info(`[capture:collection-paired-set] dt_ms=${dtPairedMs.toFixed(2)}`);
-  expect(dtPairedMs).toBeLessThan(500);
+  assertTimingBudgetMs(
+    'frontend/__tests__/lib/setPagesLiveReprice10090.test.tsx',
+    'CollectionHub machinery section (market_preview) and AwardCategoryPairedCard (server invalidation) re-price in < 500 ms',
+    dtPairedMs,
+    500,
+  );
   expect(pairedMetricsMock).toHaveBeenCalledTimes(2);
   expect(container.textContent).toContain('49%');
 

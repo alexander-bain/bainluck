@@ -2,24 +2,28 @@
  * Ruling 241: A guard for `frontend/__tests__/timing_quarantine.json`.
  *
  * Enforces the same contract as `backend/tests/test_timing_quarantine_241a.py`:
- * every quarantined frontend timing test names a real open issue, a 7-day
- * expiry window, and an existing file under `frontend/__tests__/`.
+ * every quarantined frontend timing check names a real open issue, a 7-day
+ * expiry window, and an existing test under `frontend/__tests__/`, while
+ * leaving surrounding behavioral assertions strictly blocking.
  */
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  assertTimingBudgetMs,
   findActiveTimingQuarantineEntry,
   isValidActiveTimingQuarantineEntry,
   MAX_TIMING_QUARANTINE_DAYS,
   normalizeRepoPath,
   parseIsoDateUtc,
-  runQuarantinedTimingBody,
   TIMING_QUARANTINE_FILE,
   utcTodayIso,
 } from '../helpers/timingQuarantine';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
+const SET_PAGES_FILE = 'frontend/__tests__/lib/setPagesLiveReprice10090.test.tsx';
+const SET_PAGES_TEST =
+  'CollectionHub machinery section (market_preview) and AwardCategoryPairedCard (server invalidation) re-price in < 500 ms';
 
 describe('Ruling 241: A — frontend timing_quarantine.json contract', () => {
   it('shipped quarantine entries are valid, unique, reference an issue, and sit within 7 days', () => {
@@ -113,8 +117,8 @@ describe('Ruling 241: A — frontend timing_quarantine.json contract', () => {
     }
   });
 
-  it('forgives in blocking mode, warns clearly, and fails strictly when CI_QUARANTINE_MODE=canary or expired', async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fe-quarantine-run-'));
+  it('forgives only the timing bar in blocking mode and fails strictly in canary or past expiry', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fe-quarantine-bar-'));
     const qFile = path.join(tmpDir, 'timing_quarantine.json');
     const f = 'frontend/__tests__/lib/example.test.tsx';
     const name = 'timing budget test';
@@ -136,59 +140,63 @@ describe('Ruling 241: A — frontend timing_quarantine.json contract', () => {
         'utf8',
       );
 
-      await expect(
-        runQuarantinedTimingBody(
-          f,
-          name,
-          () => {
-            throw new Error('Expected 780 < 500');
-          },
-          {
-            filePath: qFile,
-            todayIso: '2026-11-26',
-            mode: '',
-            warn: (msg) => warnings.push(msg),
-          },
-        ),
-      ).resolves.toBeUndefined();
+      expect(() =>
+        assertTimingBudgetMs(f, name, 780, 500, {
+          filePath: qFile,
+          todayIso: '2026-11-26',
+          mode: '',
+          warn: (msg) => warnings.push(msg),
+        }),
+      ).not.toThrow();
 
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('#13810');
+      expect(warnings[0]).toContain('780.00 ms >= 500 ms');
       expect(warnings[0]).toContain('2026-12-02');
 
-      await expect(
-        runQuarantinedTimingBody(
-          f,
-          name,
-          () => {
-            throw new Error('Expected 780 < 500');
-          },
-          {
-            filePath: qFile,
-            todayIso: '2026-11-26',
-            mode: 'canary',
-          },
-        ),
-      ).rejects.toThrow('Expected 780 < 500');
+      expect(() =>
+        assertTimingBudgetMs(f, name, 780, 500, {
+          filePath: qFile,
+          todayIso: '2026-11-26',
+          mode: 'canary',
+        }),
+      ).toThrow();
 
-      await expect(
-        runQuarantinedTimingBody(
-          f,
-          name,
-          () => {
-            throw new Error('Expected 780 < 500');
-          },
-          {
-            filePath: qFile,
-            todayIso: '2026-12-03',
-            mode: '',
-          },
-        ),
-      ).rejects.toThrow('Expected 780 < 500');
+      expect(() =>
+        assertTimingBudgetMs(f, name, 780, 500, {
+          filePath: qFile,
+          todayIso: '2026-12-03',
+          mode: '',
+        }),
+      ).toThrow();
 
       expect(isValidActiveTimingQuarantineEntry({ testFile: 'frontend/app/foo.tsx' }, '2026-11-26')).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it('keeps setPagesLiveReprice10090 behavioral assertions blocking while the timing bar entry is active', () => {
+    const warnings: string[] = [];
+    // Shipped entry is active today and forgives an overrun on the timing bar alone in blocking mode.
+    expect(() =>
+      assertTimingBudgetMs(SET_PAGES_FILE, SET_PAGES_TEST, 780, 500, {
+        mode: '',
+        warn: (msg) => warnings.push(msg),
+      }),
+    ).not.toThrow();
+    expect(warnings).toHaveLength(1);
+
+    // The test itself remains an ordinary `test(...)` calling assertTimingBudgetMs only at the timing bars,
+    // so a broken number in that test still fails normally with the entry active.
+    const src = fs.readFileSync(path.join(REPO_ROOT, SET_PAGES_FILE), 'utf8');
+    expect(src).toContain(`test('${SET_PAGES_TEST}'`);
+    expect(src).toContain("expect(container.textContent).toContain('49%')");
+    expect(src).toContain('expect(pairedMetricsMock).toHaveBeenCalledTimes(2)');
+    expect(src).not.toContain('quarantinedTimingTest');
+    expect(() => {
+      assertTimingBudgetMs(SET_PAGES_FILE, SET_PAGES_TEST, 780, 500, { mode: '', warn: () => {} });
+      expect('48%').toContain('49%');
+    }).toThrow();
   });
 });

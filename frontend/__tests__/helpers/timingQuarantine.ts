@@ -1,13 +1,14 @@
 /**
  * Ruling 241: A — frontend tests-only timing quarantine (`frontend/__tests__/timing_quarantine.json`).
  *
- * Mirrors `backend/tests/conftest.py`'s `timing_quarantined_tests`: a timing test that
- * fails on master, passes on the alarm's automatic re-run, and was not touched by the
- * batch is moved to the non-blocking set for at most 7 days with an open issue.
+ * Mirrors `backend/tests/conftest.py`'s `timing_quarantined_tests`: when a wall-clock
+ * timing budget assertion fails on master, passes on re-run, and was untouched by the
+ * batch, only that timing budget check is moved to the non-blocking set for <= 7 days
+ * with an open issue. Surrounding functional/behavioral assertions remain strictly blocking.
  *
  * When `CI_QUARANTINE_MODE=canary`, or once `expires` has passed, or if the entry is
- * malformed, the test runs strictly and fails on error. Otherwise failures are reported
- * via `console.warn` without reddening blocking `npm run test:ci`.
+ * malformed, the timing budget check asserts strictly. Otherwise an overrun logs a warning
+ * without reddening blocking `npm run test:ci`.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -100,47 +101,43 @@ export function findActiveTimingQuarantineEntry(
 }
 
 /**
- * Execute `fn` as a Jest `test`, treating active non-canary quarantine hits as non-blocking.
+ * Assert only a wall-clock timing budget (`elapsedMs < budgetMs`).
+ *
+ * When an active quarantine entry exists in `timing_quarantine.json` and
+ * `CI_QUARANTINE_MODE` is not `canary`, an overrun warns instead of failing so
+ * surrounding behavioral assertions in the test stay strictly blocking.
  */
-export async function runQuarantinedTimingBody(
+export function assertTimingBudgetMs(
   testFile: string,
   testName: string,
-  fn: () => void | Promise<void>,
+  elapsedMs: number,
+  budgetMs: number,
   options?: {
     filePath?: string;
     todayIso?: string;
     mode?: string;
     warn?: (message: string) => void;
   },
-): Promise<void> {
+): void {
+  if (elapsedMs < budgetMs) {
+    expect(elapsedMs).toBeLessThan(budgetMs);
+    return;
+  }
+
   const mode = (options?.mode ?? process.env.CI_QUARANTINE_MODE ?? '').trim().toLowerCase();
   const entry = findActiveTimingQuarantineEntry(testFile, testName, {
     filePath: options?.filePath,
     todayIso: options?.todayIso,
   });
 
-  if (mode === 'canary' || entry === null) {
-    await fn();
+  if (mode !== 'canary' && entry !== null) {
+    const warnFn = options?.warn ?? console.warn;
+    warnFn(
+      `[timing-quarantine #${entry.issue}] non-blocking timing miss in ` +
+        `${testFile} :: ${testName} (${elapsedMs.toFixed(2)} ms >= ${budgetMs} ms, expires ${entry.expires})`,
+    );
     return;
   }
 
-  try {
-    await fn();
-  } catch (err: unknown) {
-    const warnFn = options?.warn ?? console.warn;
-    const message = err instanceof Error ? err.message : String(err);
-    warnFn(
-      `[timing-quarantine #${entry.issue}] non-blocking timing failure in ` +
-        `${testFile} :: ${testName} (expires ${entry.expires}): ${message}`,
-    );
-  }
-}
-
-/** Register a Jest test governed by `frontend/__tests__/timing_quarantine.json`. */
-export function quarantinedTimingTest(
-  testFile: string,
-  testName: string,
-  fn: () => void | Promise<void>,
-): void {
-  test(testName, () => runQuarantinedTimingBody(testFile, testName, fn));
+  expect(elapsedMs).toBeLessThan(budgetMs);
 }
