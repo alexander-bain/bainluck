@@ -197,7 +197,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             for word in ["Score", "79", "77", "Pregame Timberwolves 62%"] {
                 XCTAssertTrue(visible.contains(word), "\(name): missing \(word) — \(describe(read))")
             }
-            for word in ["Now", "41.8%", "58.2%"] {
+            for word in ["Now", "42%", "58%"] {
                 XCTAssertEqual(visible.contains(word), showsNow, "\(name): \(word) — \(describe(read))")
             }
         }
