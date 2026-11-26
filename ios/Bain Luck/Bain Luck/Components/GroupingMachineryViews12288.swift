@@ -1829,6 +1829,7 @@ struct MachineryDiscoverCardView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.machineryPreloadedImages12288) private var preloadedImages
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
     @ScaledMetric(relativeTo: .caption2) private var kickerSize: CGFloat = 11
     @ScaledMetric(relativeTo: .headline) private var titleSize: CGFloat = 17
     @ScaledMetric(relativeTo: .subheadline) private var rowSize: CGFloat = 14
@@ -1909,26 +1910,33 @@ struct MachineryDiscoverCardView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+
+        VStack(spacing: 0) {
+            if let onOpenContainer {
+                Button {
+                    onOpenContainer(card.slug, card.title)
+                } label: {
+                    content.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                NavigationLink(value: Route.containerHub(slug: card.slug, name: card.title)) {
+                    content.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 16, verticalPadding: 8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBgColor)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(borderColor, lineWidth: 1))
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.04), radius: 6, x: 0, y: 2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("discover.machineryCard.\(card.slug)")
-
-        if let onOpenContainer {
-            Button {
-                onOpenContainer(card.slug, card.title)
-            } label: {
-                content.contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        } else {
-            NavigationLink(value: Route.containerHub(slug: card.slug, name: card.title)) {
-                content.contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
     }
 
     @ViewBuilder

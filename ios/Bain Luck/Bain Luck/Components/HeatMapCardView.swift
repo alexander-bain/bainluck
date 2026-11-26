@@ -22,6 +22,7 @@ struct HeatMapCardView: View {
     /// text-size setting instead of a hardcoded 11pt.
     @ScaledMetric(relativeTo: .caption) private var labelFontSize: CGFloat = 12
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     // MARK: - Derived data
 
@@ -206,6 +207,11 @@ struct HeatMapCardView: View {
             // the affordance does not differ by card shape.
             if let revealedPriceAge {
                 LiquidityRevealCaption(sentence: revealedPriceAge)
+                    .padding(.top, 8)
+            }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 0, verticalPadding: 4)
                     .padding(.top, 8)
             }
         }
