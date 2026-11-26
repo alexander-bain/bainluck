@@ -34,12 +34,14 @@ than silently opening a public write endpoint.
 
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
-from sqlalchemy import text
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
+from sqlalchemy import Date as SaDate, String as SaString, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import ClientTimingEvent
@@ -267,3 +269,111 @@ async def client_timing_summary(
 def _as_float(value: Any) -> Optional[float]:
     """`percentile_cont` returns Decimal over a numeric column, not float."""
     return None if value is None else round(float(value), 1)
+
+
+# ---------------------------------------------------------------------------
+# Anonymous Pre-Consent Lifecycle Counts (424: A / 434: A · #13261)
+# ---------------------------------------------------------------------------
+
+ANONYMOUS_LIFECYCLE_EVENTS_434A = frozenset(
+    {
+        "first_open",
+        "first_run_finished",
+        "previous_session_crashed",
+    }
+)
+MAX_ANONYMOUS_APP_VERSION_LEN = 16
+MAX_ANONYMOUS_DAY_SKEW_DAYS = 1
+ANONYMOUS_APP_VERSION_RE = re.compile(r"\A\d+(?:\.\d+){0,3}\Z")
+ANONYMOUS_DAY_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
+
+_UPSERT_ANONYMOUS_COUNT_SQL = text(
+    """
+    INSERT INTO anonymous_install_counts (day, app_version, event, count)
+    VALUES (:day, :app_version, :event, 1)
+    ON CONFLICT (day, app_version, event)
+    DO UPDATE SET count = anonymous_install_counts.count + 1
+    """
+).bindparams(
+    bindparam("day", type_=SaDate()),
+    bindparam("app_version", type_=SaString(MAX_ANONYMOUS_APP_VERSION_LEN)),
+    bindparam("event", type_=SaString(32)),
+)
+
+
+def _utc_today() -> date:
+    """Server UTC clock used to partition and bound `anonymous_install_counts.day`."""
+    return datetime.now(timezone.utc).date()
+
+
+class AnonymousInstallCountRequest(BaseModel):
+    """Closed 3-key payload for `424: A` / `434: A` pre-consent counts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event: StrictStr
+    app_version: StrictStr
+    day: StrictStr
+
+    @field_validator("event")
+    @classmethod
+    def _validate_event(cls, value: str) -> str:
+        if value not in ANONYMOUS_LIFECYCLE_EVENTS_434A:
+            raise ValueError("Unsupported anonymous lifecycle event")
+        return value
+
+    @field_validator("app_version")
+    @classmethod
+    def _validate_app_version(cls, value: str) -> str:
+        if len(value) > MAX_ANONYMOUS_APP_VERSION_LEN or not ANONYMOUS_APP_VERSION_RE.fullmatch(value):
+            raise ValueError("app_version must be digits and dots up to 16 chars")
+        return value
+
+    @field_validator("day")
+    @classmethod
+    def _validate_day(cls, value: str) -> str:
+        if not ANONYMOUS_DAY_RE.fullmatch(value):
+            raise ValueError("day must be YYYY-MM-DD")
+        date.fromisoformat(value)
+        return value
+
+
+@router.post("/anonymous-counts", status_code=202)
+async def ingest_anonymous_install_count(
+    body: AnonymousInstallCountRequest,
+    db: AsyncSession = Depends(get_db_rw),
+) -> Dict[str, str]:
+    """Increment the daily aggregate counter for one of three closed lifecycle events.
+
+    Enforces closed keys, closed event names, digits-and-dots ``app_version``
+    (max 16 chars), and ``day`` within ±1 day of the server's UTC clock; records
+    the server's UTC day into ``anonymous_install_counts`` with zero per-event
+    rows, zero IPs, and zero identifiers. Metered by ``RateLimitMiddleware``.
+    """
+    client_day = date.fromisoformat(body.day)
+    server_today = _utc_today()
+    if abs((client_day - server_today).days) > MAX_ANONYMOUS_DAY_SKEW_DAYS:
+        raise HTTPException(
+            status_code=422,
+            detail="day outside allowed server window",
+        )
+
+    try:
+        await db.execute(
+            _UPSERT_ANONYMOUS_COUNT_SQL,
+            {
+                "day": server_today,
+                "app_version": body.app_version,
+                "event": body.event,
+            },
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("anonymous-counts upsert failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to store anonymous count",
+        )
+
+    return {"status": "accepted", "day": server_today.isoformat()}
