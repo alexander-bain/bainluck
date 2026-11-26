@@ -58,6 +58,7 @@ from app.utils.discover_fun_scout import (
     evaluate_scout_against_seed_sets,
     evaluate_tagging_pass_against_seed_sets,
     format_fun_scout_pre_run_spend_line,
+    normalize_retired_scout_sets,
     retire_scout_set,
     run_nightly_fun_scout,
     run_scout_set_writing_pass,
@@ -647,8 +648,29 @@ class TestScoutDurabilityPreFlip13124:
 
         ok_r, err_r = scout_task.retire_scout_set_durable("old-retired-slug")
         assert ok_r is True and err_r is None
-        retired = scout_task._load_retired_sets_durable(tmp_path / "missing_retired.json")
-        assert "old-retired-slug" in retired
+        retired_file = tmp_path / "retired.json"
+        retired_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "slug": "file-retired",
+                        "name": "File Retired",
+                        "reason": "Alex dropped",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        retired = scout_task._load_retired_sets_durable(retired_file)
+        assert isinstance(retired, list)
+        by_slug = {r["slug"]: r for r in retired}
+        assert by_slug["file-retired"]["name"] == "File Retired"
+        assert by_slug["file-retired"]["reason"] == "Alex dropped"
+        assert by_slug["old-retired-slug"]["name"] == "old-retired-slug"
+
+        retired_missing = scout_task._load_retired_sets_durable(tmp_path / "missing_retired.json")
+        assert isinstance(retired_missing, list)
+        assert [r["slug"] for r in retired_missing] == ["old-retired-slug"]
 
         # If Redis fails, licence falls back safely to awaiting_look (0 clean days)
         # and retired sets fail closed (raise).
@@ -661,6 +683,268 @@ class TestScoutDurabilityPreFlip13124:
         assert fallback.clean_days == 0
         with pytest.raises(RuntimeError, match="redis down"):
             scout_task._load_retired_sets_durable(tmp_path / "missing_retired.json")
+
+    def test_task_call_path_handles_empty_populated_and_set_retired_sets(
+        self, tmp_path, monkeypatch
+    ):
+        """Regression test for the 2026-11-25 1:12 AM PT crash:
+        ``_load_retired_sets_durable`` returned ``set[str]`` where
+        ``run_scout_tagging_pass`` sliced ``retired_sets[:12]``.
+        Exercises the real ``discover_fun_scout`` -> ``_run_discover_fun_scout`` ->
+        ``run_nightly_fun_scout`` -> prompt + validation path without mocking
+        ``run_nightly_fun_scout``.
+        """
+        import asyncio
+        import importlib
+        from unittest.mock import AsyncMock
+
+        tasks_pkg = importlib.import_module("app.tasks")
+        scout_task = importlib.import_module("app.tasks.discover_fun_scout")
+        monkeypatch.delenv("LLM_MODEL", raising=False)
+        monkeypatch.delenv("LLM_MODEL_FUN_SCOUT_SETS", raising=False)
+        monkeypatch.delenv("LLM_MODEL_FUN_SCOUT_TAG", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(llm_request, "_get_ledger", lambda: MemoryBudgetLedger())
+
+        store: dict[str, Any] = {}
+
+        class _FakeRedis:
+            def get(self, key):
+                return store.get(key)
+
+            def set(self, key, val, ex=None):
+                store[key] = val
+
+            def incrbyfloat(self, key, delta):
+                cur = float(store.get(key) or 0.0)
+                nxt = cur + float(delta)
+                store[key] = str(nxt)
+                return nxt
+
+            def expire(self, key, ttl):
+                return True
+
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: _FakeRedis())
+        monkeypatch.setattr(scout_task, "_UNRECORDED_SPEND_MONTHS", set())
+
+        members = [
+            _mk(101, "Will GTA VI release before 2026?"),
+            _mk(102, "Will Winds of Winter release before 2026?"),
+            _mk(103, "Will Hollow Knight Silksong release before 2026?"),
+            _mk(104, "Will the U.S. confirm aliens exist?"),
+        ]
+        monkeypatch.setattr(
+            scout_task,
+            "fetch_open_non_sports_markets_for_scout",
+            AsyncMock(return_value=members),
+        )
+        monkeypatch.setattr(
+            scout_task,
+            "fetch_reader_dismissed_sets_for_scout",
+            AsyncMock(return_value={}),
+        )
+
+        openai_calls: list[dict[str, Any]] = []
+        anthropic_calls: list[dict[str, Any]] = []
+
+        class _FakeOpenAI:
+            class _Chat:
+                class _Completions:
+                    def create(self, **kwargs):
+                        openai_calls.append(kwargs)
+                        body = json.dumps(
+                            {
+                                "tagged": [
+                                    {
+                                        "market_id": 101,
+                                        "fun_group": "vaporware",
+                                        "is_fun_single": False,
+                                        "set_hint": "long-awaited-releases",
+                                        "reason": "long wait",
+                                    },
+                                    {
+                                        "market_id": 102,
+                                        "fun_group": "vaporware",
+                                        "is_fun_single": False,
+                                        "set_hint": "long-awaited-releases",
+                                        "reason": "long wait",
+                                    },
+                                    {
+                                        "market_id": 103,
+                                        "fun_group": "vaporware",
+                                        "is_fun_single": False,
+                                        "set_hint": "long-awaited-releases",
+                                        "reason": "long wait",
+                                    },
+                                    {
+                                        "market_id": 104,
+                                        "fun_group": "aliens",
+                                        "is_fun_single": True,
+                                        "set_hint": None,
+                                        "reason": "water cooler",
+                                    },
+                                ]
+                            }
+                        )
+                        return SimpleNamespace(
+                            choices=[SimpleNamespace(message=SimpleNamespace(content=body))],
+                            usage=SimpleNamespace(prompt_tokens=400, completion_tokens=120),
+                        )
+
+                completions = _Completions()
+
+            chat = _Chat()
+
+        class _FakeAnthropic:
+            def __init__(self, *, include_retired_proposal: bool = False):
+                self._include_retired_proposal = include_retired_proposal
+
+            @property
+            def messages(self):
+                outer = self
+
+                class _Messages:
+                    def create(self, **kwargs):
+                        anthropic_calls.append(kwargs)
+                        sets_out = [
+                            {
+                                "slug": "long-awaited-releases",
+                                "name": "Long-awaited releases",
+                                "kicker": "LONG WAIT",
+                                "category": "culture",
+                                "why_better_together": "Three famous delayed releases side by side.",
+                                "look": "bars",
+                                "selector_kind": "fun_tag",
+                                "member_ids": [101, 102, 103],
+                            }
+                        ]
+                        if outer._include_retired_proposal:
+                            sets_out.insert(
+                                0,
+                                {
+                                    "slug": "already-retired-set",
+                                    "name": "Already Retired Set",
+                                    "kicker": "REPEAT",
+                                    "category": "culture",
+                                    "why_better_together": "Three famous delayed releases side by side.",
+                                    "look": "bars",
+                                    "selector_kind": "fun_tag",
+                                    "member_ids": [101, 102, 103],
+                                },
+                            )
+                        return SimpleNamespace(
+                            content=[SimpleNamespace(text=json.dumps({"sets": sets_out}))],
+                            usage=SimpleNamespace(input_tokens=1200, output_tokens=250),
+                        )
+
+                return _Messages()
+
+        monkeypatch.setattr(scout_task, "build_scout_openai_client", lambda: _FakeOpenAI())
+        monkeypatch.setattr(
+            scout_task,
+            "build_scout_anthropic_client",
+            lambda: _FakeAnthropic(include_retired_proposal=False),
+        )
+        missing_retired = tmp_path / "missing_retired.json"
+        missing_licence = tmp_path / "missing_licence.json"
+        monkeypatch.setattr(scout_task, "SCOUT_RETIRED_SETS_PATH", missing_retired)
+        monkeypatch.setattr(scout_task, "SCOUT_LICENCE_STATE_PATH", missing_licence)
+
+        # 1. Exact reproduction of the 1:12 AM PT cold-start state: empty Redis + missing file
+        out_empty = asyncio.run(
+            scout_task._run_discover_fun_scout(
+                force=True,
+                output_dir=tmp_path / "staged_empty",
+                now=FROZEN_NOW,
+                publish_to_github=False,
+            )
+        )
+        assert out_empty["status"] == "completed"
+        assert out_empty["validated_set_count"] == 1
+        assert [s["slug"] for s in out_empty["staged_sets"]] == ["long-awaited-releases"]
+        assert (tmp_path / "staged_empty" / "long-awaited-releases.json").exists()
+        assert json.loads(store["bainluck:fun_scout:latest"])["staged_sets"][0]["slug"] == (
+            "long-awaited-releases"
+        )
+
+        # 2. Populated file (dict entries) + durable Redis slug: prompts include retired entries
+        #    and validation rejects a re-proposed retired set while keeping novel sets.
+        retired_file = tmp_path / "retired.json"
+        retired_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "slug": "file-retired-set",
+                        "name": "File Retired Set",
+                        "reason": "Too repetitive",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        ok_r, err_r = scout_task.retire_scout_set_durable("already-retired-set")
+        assert ok_r is True and err_r is None
+        monkeypatch.setattr(scout_task, "SCOUT_RETIRED_SETS_PATH", retired_file)
+        monkeypatch.setattr(
+            scout_task,
+            "build_scout_anthropic_client",
+            lambda: _FakeAnthropic(include_retired_proposal=True),
+        )
+
+        openai_calls.clear()
+        anthropic_calls.clear()
+        out_populated = asyncio.run(
+            scout_task._run_discover_fun_scout(
+                force=True,
+                output_dir=tmp_path / "staged_populated",
+                now=FROZEN_NOW,
+                publish_to_github=False,
+            )
+        )
+        assert out_populated["status"] == "completed"
+        assert out_populated["validated_set_count"] == 1
+        assert out_populated["rejected_set_count"] == 1
+        assert [s["slug"] for s in out_populated["staged_sets"]] == ["long-awaited-releases"]
+        tag_system_prompt = openai_calls[0]["messages"][0]["content"]
+        set_user_prompt = anthropic_calls[0]["messages"][0]["content"]
+        assert "File Retired Set" in tag_system_prompt
+        assert "already-retired-set" in tag_system_prompt
+        assert "File Retired Set" in set_user_prompt
+        assert "already-retired-set" in set_user_prompt
+
+        # 3. Full Celery task entry point (`discover_fun_scout.run`) reaches `_run_discover_fun_scout`
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return FROZEN_NOW if tz is not None else FROZEN_NOW.replace(tzinfo=None)
+
+        monkeypatch.setattr(scout_task, "datetime", _FrozenDatetime)
+        orig_run_scout = scout_task._run_discover_fun_scout
+        monkeypatch.setattr(
+            scout_task,
+            "_run_discover_fun_scout",
+            lambda **kw: orig_run_scout(output_dir=tmp_path / "staged_celery", **kw),
+        )
+        monkeypatch.setattr(tasks_pkg, "_tracked_run", lambda _name, coro: asyncio.run(coro))
+        celery_task = tasks_pkg.celery_app.tasks["app.tasks.discover_fun_scout"]
+        out_celery = celery_task.run(force=True)
+        assert out_celery["status"] == "completed"
+        assert [s["slug"] for s in out_celery["staged_sets"]] == ["long-awaited-releases"]
+        assert (tmp_path / "staged_celery" / "long-awaited-releases.json").exists()
+
+        # 4. Defense-in-depth: direct callers passing a raw Python `set` do not crash
+        direct_out = run_nightly_fun_scout(
+            members,
+            [ScoutUncoveredFamily("vaporware", "Will GTA VI release?", 6)],
+            openai_client=_FakeOpenAI(),
+            anthropic_client=_FakeAnthropic(include_retired_proposal=False),
+            retired_sets={"legacy-set-slug"},
+            output_dir=tmp_path / "staged_direct",
+            now=FROZEN_NOW,
+        )
+        assert [v.slug for v in direct_out["validated_sets"]] == ["long-awaited-releases"]
+        normalized_from_set = normalize_retired_scout_sets({"b-slug", "a-slug"})
+        assert [r["slug"] for r in normalized_from_set] == ["a-slug", "b-slug"]
 
     @pytest.mark.asyncio
     async def test_failed_monthly_ledger_write_marks_month_unknown_and_closes_next_run(

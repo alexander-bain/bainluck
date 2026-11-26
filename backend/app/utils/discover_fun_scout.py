@@ -42,7 +42,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from app.services.llm_models import (
     MODELS,
@@ -2230,6 +2230,60 @@ def retire_scout_set(
     return updated
 
 
+def normalize_retired_scout_sets(
+    retired_sets: Iterable[Mapping[str, Any] | str] = (),
+) -> list[dict[str, Any]]:
+    """Normalize any iterable of retired set mappings or slugs into a deterministic list.
+
+    Prevents ``TypeError`` when callers pass an unordered ``set`` or bare slugs
+    where prompt builders slice ``retired_sets[:N]`` and read ``r.get(...)``.
+    """
+    is_unordered = isinstance(retired_sets, (set, frozenset))
+    by_key: dict[str, dict[str, Any]] = {}
+    ordered_keys: list[str] = []
+
+    for item in retired_sets:
+        if isinstance(item, Mapping):
+            raw_slug = str(item.get("slug") or "").strip()
+            raw_name = str(item.get("name") or "").strip()
+            raw_reason = str(item.get("reason") or "").strip()
+            raw_retired_at = str(item.get("retired_at") or "").strip()
+            slug = _slugify(raw_slug or raw_name)
+            name = raw_name or raw_slug
+            if not slug and not name:
+                continue
+            entry: dict[str, Any] = {
+                "slug": slug,
+                "name": name,
+                "reason": raw_reason,
+            }
+            if raw_retired_at:
+                entry["retired_at"] = raw_retired_at
+        elif isinstance(item, str):
+            cleaned = item.strip()
+            slug = _slugify(cleaned)
+            if not slug:
+                continue
+            entry = {"slug": slug, "name": cleaned, "reason": ""}
+        else:
+            continue
+
+        key = entry["slug"] or entry["name"].lower()
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = entry
+            ordered_keys.append(key)
+        else:
+            for field in ("name", "reason", "retired_at"):
+                if not existing.get(field) and entry.get(field):
+                    existing[field] = entry[field]
+
+    normalized = [by_key[k] for k in ordered_keys]
+    if is_unordered:
+        normalized.sort(key=lambda r: (str(r.get("slug") or ""), str(r.get("name") or "")))
+    return normalized
+
+
 def _normalize_reader_dismissed_sets(
     reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, int]:
@@ -2444,14 +2498,15 @@ def run_scout_tagging_pass(
     *,
     openai_client: Any,
     approved_examples: Sequence[FunMarketEntry],
-    retired_sets: Sequence[Mapping[str, Any]] = (),
+    retired_sets: Iterable[Mapping[str, Any] | str] = (),
     job_budget: Optional[JobBudget] = None,
     batch_size: int = _TAG_BATCH_SIZE,
 ) -> tuple[list[ScoutTaggedMarket], float]:
     """Run the small-model high-recall tagging pass over open non-sports titles."""
     examples_json = json.dumps(_approved_examples_summary(approved_examples))
+    normalized_retired = normalize_retired_scout_sets(retired_sets)
     retired_json = json.dumps(
-        [{"name": r.get("name"), "reason": r.get("reason")} for r in retired_sets[:12]]
+        [{"name": r.get("name"), "reason": r.get("reason")} for r in normalized_retired[:12]]
     )
     system_prompt = (
         "You are filtering prediction markets for Bain Luck's Discover feed. "
@@ -2509,7 +2564,7 @@ def run_scout_set_writing_pass(
     *,
     anthropic_client: Any,
     approved_examples: Sequence[FunMarketEntry],
-    retired_sets: Sequence[Mapping[str, Any]] = (),
+    retired_sets: Iterable[Mapping[str, Any] | str] = (),
     morning_grades: Sequence[Mapping[str, Any]] = (),
     reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
     job_budget: Optional[JobBudget] = None,
@@ -2589,13 +2644,14 @@ def run_scout_set_writing_pass(
         f"{f.family_key} (open={f.open_count}, sample={f.sample_title})"
         for f in uncovered_families[:80]
     ]
+    normalized_retired = normalize_retired_scout_sets(retired_sets)
     normalized_reader_dismissed = _normalize_reader_dismissed_sets(reader_dismissed_sets)
     top_reader_dismissed = sorted(
         normalized_reader_dismissed.items(), key=lambda kv: (-kv[1], kv[0])
     )[:20]
     user_prompt = (
         f"Approved examples: {json.dumps(_approved_examples_summary(approved_examples))}\n"
-        f"Retired sets (do NOT repeat): {json.dumps(list(retired_sets)[:20])}\n"
+        f"Retired sets (do NOT repeat): {json.dumps(normalized_retired[:20])}\n"
         f"Recent morning grades: {json.dumps(list(morning_grades)[:20])}\n"
         f"Reader dismissed sets ('not for me'): {json.dumps(dict(top_reader_dismissed))}\n"
         f"Uncovered sentinel families ({len(family_lines)}):\n"
@@ -2664,7 +2720,7 @@ def run_nightly_fun_scout(
     anthropic_client: Any,
     output_dir: Optional[Path] = None,
     approved_examples: Optional[Sequence[FunMarketEntry]] = None,
-    retired_sets: Sequence[Mapping[str, Any]] = (),
+    retired_sets: Iterable[Mapping[str, Any] | str] = (),
     morning_grades: Sequence[Mapping[str, Any]] = (),
     reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
     existing_slugs: frozenset[str] = frozenset(),
@@ -2693,6 +2749,7 @@ def run_nightly_fun_scout(
     job_budget = JobBudget(SCOUT_RUN_CAP_USD)
     catalog_by_id = {m.market_id: m for m in markets}
 
+    normalized_retired = normalize_retired_scout_sets(retired_sets)
     if pretagged is not None:
         tagged = list(pretagged[0])
         tag_cost = round(float(pretagged[1]), 6)
@@ -2701,7 +2758,7 @@ def run_nightly_fun_scout(
             markets,
             openai_client=openai_client,
             approved_examples=examples,
-            retired_sets=retired_sets,
+            retired_sets=normalized_retired,
             job_budget=job_budget,
         )
     normalized_reader_dismissed = _normalize_reader_dismissed_sets(reader_dismissed_sets)
@@ -2711,7 +2768,7 @@ def run_nightly_fun_scout(
         uncovered_families,
         anthropic_client=anthropic_client,
         approved_examples=examples,
-        retired_sets=retired_sets,
+        retired_sets=normalized_retired,
         morning_grades=morning_grades,
         reader_dismissed_sets=normalized_reader_dismissed,
         job_budget=job_budget,
@@ -2720,10 +2777,14 @@ def run_nightly_fun_scout(
     )
 
     retired_slugs = frozenset(
-        _slugify(str(r.get("slug") or r.get("name") or "")) for r in retired_sets
+        s
+        for r in normalized_retired
+        if (s := _slugify(str(r.get("slug") or r.get("name") or "")))
     )
     retired_title_keys = frozenset(
-        _normalized_title_key(str(r.get("name") or "")) for r in retired_sets
+        k
+        for r in normalized_retired
+        if (k := _normalized_title_key(str(r.get("name") or "")))
     )
 
     validated: list[ScoutValidatedSet] = []
