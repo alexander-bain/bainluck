@@ -3,6 +3,18 @@ import SwiftUI
 
 // MARK: - Decision 364: A — Single-Screen Five-Row First-Run Checklist (#11934)
 
+private enum ChecklistColumn364A {
+    static let maxWidth: CGFloat = 680
+}
+
+private extension View {
+    func checklistReadableColumn364A(alignment: Alignment = .leading) -> some View {
+        self
+            .frame(maxWidth: ChecklistColumn364A.maxWidth, alignment: alignment)
+            .frame(maxWidth: .infinity)
+    }
+}
+
 /// Shared live thumbnail helper that checks `machineryPreloadedImages12288` first
 /// (making offline simulator renders crisp and network-free), then falls back to
 /// `AsyncImage` over HTTPS, or a tinted SF Symbol badge when no URL is served.
@@ -382,6 +394,7 @@ struct FirstRunChecklistView364A: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
+            .checklistReadableColumn364A(alignment: .center)
             .accessibilityIdentifier("checklist364A.goToDiscoverButton")
         }
         .background(DS.surface)
@@ -661,6 +674,7 @@ struct FirstRunLookupStepView364A: View {
                     }
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
         }
         .background(DS.surface)
@@ -927,6 +941,7 @@ struct FirstRunFollowStepView364A: View {
                     }
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
 
             Divider()
@@ -940,6 +955,7 @@ struct FirstRunFollowStepView364A: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .checklistReadableColumn364A(alignment: .center)
             .background(DS.surface)
         }
         .background(DS.surface)
@@ -1109,6 +1125,7 @@ struct FirstRunExploreSetsStepView364A: View {
                     }
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
 
             Divider()
@@ -1122,6 +1139,7 @@ struct FirstRunExploreSetsStepView364A: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .checklistReadableColumn364A(alignment: .center)
             .background(DS.surface)
         }
         .background(DS.surface)
@@ -1197,6 +1215,7 @@ struct FirstRunSignInStepView364A: View {
                     }
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
         }
         .background(DS.surface)
@@ -1377,6 +1396,7 @@ struct FirstRunAlertsStepView364A: View {
                     .padding(.top, 4)
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
         }
         .background(DS.surface)
@@ -1425,6 +1445,7 @@ struct FirstRunLeaveToDiscoverPreview364A: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .checklistReadableColumn364A()
 
             Divider()
 
@@ -1440,6 +1461,7 @@ struct FirstRunLeaveToDiscoverPreview364A: View {
                     }
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
         }
         .background(DS.surface)
@@ -1483,6 +1505,7 @@ private struct StepTopBar364A: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .checklistReadableColumn364A()
     }
 }
 
