@@ -401,12 +401,14 @@ struct MyStuffChecklistBanner364A: View {
     var body: some View {
         if state.showsInMyStuff {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
+                HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 8) {
                     Text("Getting started \u{00B7} \(state.progressText)")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(DS.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.85)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
                     Button {
                         state.dismissedFromMyStuff = true
@@ -430,15 +432,17 @@ struct MyStuffChecklistBanner364A: View {
                         Button {
                             onOpenRow(row)
                         } label: {
-                            HStack(spacing: 8) {
+                            HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .firstTextBaseline : .center, spacing: 8) {
                                 Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(isDone ? DS.greenReadable : (lit ? DS.blueReadable : DS.textMuted))
                                 Text(row.title)
                                     .font(.footnote.weight(isDone ? .medium : .semibold))
                                     .foregroundStyle(isDone ? DS.textSecondaryReadable : (lit ? DS.textPrimary : DS.textMuted))
-                                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                                    .minimumScaleFactor(0.84)
+                                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
                                 if !isDone {
                                     Image(systemName: "chevron.right")

@@ -61,8 +61,9 @@ for (const labels of [[], ['tier-b'], ['tier-b', 'eval-candidate-other']]) {
   for (const name of ['change-scope', 'backend-tests', 'database-integration', 'frontend-build', 'search-recall'])
     assert.ok(ordinary.includes(name), `${name} disappeared from ordinary PR CI for ${labels}`);
   assert.ok(!ordinary.includes('deploy'));
+  assert.ok(!ordinary.includes('deploy-after-full'));
 }
-assert.ok(queued([], 'push').includes('deploy'), 'master pushes retain their release path');
+assert.ok(queued([], 'push').includes('deploy') || queued([], 'push').includes('deploy-after-full'), 'master pushes retain their release path');
 """
     result = subprocess.run(
         ["node", "-e", script],

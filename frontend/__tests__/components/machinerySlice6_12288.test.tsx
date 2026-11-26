@@ -318,15 +318,16 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
     const html = renderToStaticMarkup(
       <MachinerySectionRenderer visualBlock={mixedArtBlock} members={[]} />,
     );
-    // Market 901 has 1 real headshot + 1 invisible width-matching spacer; Market 902 has 0 spacers (flush left)
-    const spacerMatches = html.match(/data-testid="machinery-avatar-spacer"/g) ?? [];
-    expect(spacerMatches).toHaveLength(1);
-    // Zero monogram initials anywhere
-    expect(html).not.toContain(">AB<");
+    // Decision 387: A (#13605): Market 901 keeps 1 real headshot + 1 initials circle (`AB`);
+    // Market 902 has zero pictures so renders 0 circles (stays flush left).
+    const initialsMatches = html.match(/data-testid="machinery-avatar-initials"/g) ?? [];
+    expect(initialsMatches).toHaveLength(1);
+    expect(html).toContain(">AB<");
     expect(html).not.toContain(">OA<");
+    expect(html).not.toContain('data-testid="machinery-avatar-spacer"');
     expect(html).not.toContain('data-testid="award-paired-art-fallback"');
 
-    // Discover card with mixed art also reserves spacer for artless sibling row
+    // Discover card with mixed art renders initials in the same circle for artless sibling row
     const mixedCard: MachineryCardContract = {
       slug: "machinery-2028-presidential",
       form_id: "contender_spotlight",
@@ -352,8 +353,9 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
       ],
     };
     const cardHtml = renderToStaticMarkup(<MachineryDiscoverCard card={mixedCard} />);
-    expect(cardHtml).toContain('data-testid="machinery-avatar-spacer"');
-    expect(cardHtml).not.toContain(">UC<");
+    expect(cardHtml).toContain('data-testid="machinery-avatar-initials"');
+    expect(cardHtml).toContain(">UC<");
+    expect(cardHtml).not.toContain('data-testid="machinery-avatar-spacer"');
   });
 
   it("2d: assigns distinct line colours when chart series share duplicate or empty colours", () => {

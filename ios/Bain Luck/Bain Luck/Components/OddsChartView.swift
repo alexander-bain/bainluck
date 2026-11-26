@@ -426,14 +426,28 @@ final class OddsChartViewModel: ObservableObject {
     let eventId: Int
     /// The chart's own history read, when the page has not handed it one yet.
     /// A seam so a test can hold the read open; the app always uses the default.
-    private let fetchHistory: @Sendable (Int) async throws -> EventHistoryResponse
+    private let fetchHistory: @Sendable (Int, String?) async throws -> EventHistoryResponse
 
     init(eventId: Int, preloaded: EventHistoryResponse? = nil,
-         fetchHistory: @escaping @Sendable (Int) async throws -> EventHistoryResponse = {
-             try await APIClient.shared.fetchEventHistory(id: $0, hours: 168)
-         }) {
+         fetchHistory: (@Sendable (Int) async throws -> EventHistoryResponse)? = nil) {
         self.eventId = eventId
-        self.fetchHistory = fetchHistory
+        if let fetchHistory {
+            self.fetchHistory = { id, _ in try await fetchHistory(id) }
+        } else {
+            self.fetchHistory = { id, range in
+                try await APIClient.shared.fetchEventHistory(id: id, hours: 168, range: range)
+            }
+        }
+        if let preloaded {
+            self.history = preloaded
+            self.loading = false
+        }
+    }
+
+    init(eventId: Int, preloaded: EventHistoryResponse? = nil,
+         fetchHistoryWithRange: @escaping @Sendable (Int, String?) async throws -> EventHistoryResponse) {
+        self.eventId = eventId
+        self.fetchHistory = fetchHistoryWithRange
         if let preloaded {
             self.history = preloaded
             self.loading = false
@@ -471,7 +485,7 @@ final class OddsChartViewModel: ObservableObject {
         guard history == nil else { return }  // Skip if preloaded
         loading = true
         do {
-            history = try await fetchHistory(eventId)
+            history = try await fetchHistory(eventId, "since_start")
             error = nil
             loading = false
         } catch {
@@ -484,6 +498,17 @@ final class OddsChartViewModel: ObservableObject {
             // chart that already has data.
             guard history == nil else { return }
             self.error = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    func loadFullHistoryIfNeeded() async {
+        guard history?.preWindowOmitted == true else { return }
+        do {
+            let full = try await fetchHistory(eventId, "all")
+            adopt(full)
+        } catch {
+            logger.error("Failed to load full history for event \(self.eventId): \(error)")
         }
     }
 }
@@ -1107,6 +1132,16 @@ struct OddsChartView: View {
         .onChange(of: historyOffer) { _, _ in
             guard let preloadedHistory else { return }
             vm.adopt(preloadedHistory)
+        }
+        .task(id: "\(vm.history?.preWindowOmitted == true)-\(status ?? "")-\(selectedRange.rawValue)-\(preloadedHistoryGeneration ?? -1)") {
+            guard preloadedHistoryGeneration == nil,
+                  Self.needsFullHistoryUpgrade(
+                      status: status,
+                      commenceTime: commenceTime?.asDate,
+                      history: vm.history,
+                      selectedRange: selectedRange
+                  ) else { return }
+            await vm.loadFullHistoryIfNeeded()
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $isFullscreen) {
@@ -1768,6 +1803,36 @@ struct OddsChartView: View {
     static func offersSinceStart(isGameStarted: Bool, kickoff: Date?, now: Date = Date()) -> Bool {
         guard isGameStarted, let kickoff else { return false }
         return kickoff <= now
+    }
+
+    /// True whenever the held history response omitted pre-window points
+    /// (`pre_window_omitted == true`) AND the displayed chart needs `"all"` —
+    /// either because the reader selected `"All"`, or because `"Since Start"` is not
+    /// offered (e.g. a delayed-tip `status == "scheduled"` game past `commence_time`,
+    /// where `showPicker == false` forces `drawnRange == .all`, #13683).
+    static func needsFullHistoryUpgrade(
+        status: String?,
+        commenceTime: Date?,
+        history: EventHistoryResponse?,
+        selectedRange: OddsTimeRange,
+        now: Date = Date()
+    ) -> Bool {
+        guard history?.preWindowOmitted == true else { return false }
+        let started = gameHasStarted(
+            status: status,
+            commenceTime: commenceTime,
+            commenceTimeIsKickoff: history?.commenceTimeIsKickoff,
+            history: history,
+            now: now
+        )
+        let kickoff = sinceStartCut(
+            commenceTime: commenceTime,
+            commenceTimeIsKickoff: history?.commenceTimeIsKickoff
+        )
+        if !offersSinceStart(isGameStarted: started, kickoff: kickoff, now: now) {
+            return true
+        }
+        return selectedRange == .all
     }
 
     /// The Since Start window over already-clipped points.
@@ -4673,14 +4738,14 @@ struct OddsChartView: View {
         dataRange: ClosedRange<Date>? = nil
     ) -> [Date] {
         let regular = xAxisTicks(for: domain, plan: plan, calendar: calendar)
+        guard plan.labelStyle == .calendarDay || plan.labelStyle == .monthAndYear,
+              domain.upperBound > domain.lowerBound else { return regular }
         let openBound = dataRange.map { max(domain.lowerBound, $0.lowerBound) } ?? domain.lowerBound
         let closeBound = dataRange.map { min(domain.upperBound, $0.upperBound) } ?? domain.upperBound
         let clampedBoundsValid = closeBound >= openBound
         let boundedRegular = (dataRange != nil && clampedBoundsValid)
             ? regular.filter { $0 >= openBound && $0 <= closeBound }
             : regular
-        guard plan.labelStyle == .calendarDay || plan.labelStyle == .monthAndYear,
-              domain.upperBound > domain.lowerBound else { return boundedRegular }
         let effectiveOpen = clampedBoundsValid ? openBound : domain.lowerBound
         let effectiveClose = clampedBoundsValid ? closeBound : domain.upperBound
         guard effectiveClose > effectiveOpen else { return [effectiveOpen] }

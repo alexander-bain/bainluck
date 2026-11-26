@@ -794,6 +794,241 @@ async def get_kit_container_pages_preview(
     }
 
 
+async def _build_live_real_sets_audit_report(
+    db: AsyncSession,
+    *,
+    request: Request | None = None,
+    now: datetime | None = None,
+    feed_getter: Callable[..., Awaitable[Any]] | None = None,
+    container_getter: Callable[..., Awaitable[Any]] | None = None,
+    discovery_reader: Callable[..., Awaitable[Any]] | None = None,
+    roundup_producers: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Assemble live Discover bundles + public containers without cross-module import cycles."""
+    from starlette.requests import Request as StarletteRequest
+    from starlette.responses import Response as StarletteResponse
+
+    from app.services.container_discovery import discover_collections
+    from app.utils.container_machinery import _default_art_resolver
+    from app.utils.kit_v1_set_builder import build_real_sets_audit_report
+    from app.utils.roundup_containers import ROUNDUP_PRODUCERS
+
+    feed_fn = feed_getter
+    if feed_fn is None and request is not None:
+        app_obj = getattr(request, "app", None)
+        for route in getattr(app_obj, "routes", None) or ():
+            ep = getattr(route, "endpoint", None)
+            if getattr(ep, "__name__", None) == "get_feed":
+                feed_fn = ep
+                break
+
+    bundles: list[dict[str, Any]] = []
+    if feed_fn is not None:
+        feed_req = request or StarletteRequest(
+            {"type": "http", "method": "GET", "path": "/api/feed", "headers": []}
+        )
+        feed_payload = await feed_fn(
+            response=StarletteResponse(),
+            request=feed_req,
+            limit=200,
+            offset=0,
+            sport=None,
+            category=None,
+            include_events=True,
+            include_futures=True,
+            my_teams_only=False,
+            mode=None,
+            tags=None,
+            event_pct=None,
+            edition=None,
+            debug=False,
+            debug_ground_truth=False,
+            debug_personalization=False,
+            exclude_reviewed=False,
+            reviewer=None,
+            reviewed_surface=None,
+            machinery="1",
+            secret=None,
+            db=db,
+            user=None,
+        )
+        items = (feed_payload.get("items") or []) if isinstance(feed_payload, dict) else []
+        bundles = [it for it in items if isinstance(it, dict) and it.get("type") == "bundle"]
+
+    slugs: list[str] = []
+    seen_slugs: set[str] = set()
+    for b in bundles:
+        c_slug = str(((b.get("data") or {}).get("collection_ref") or {}).get("slug") or "").strip()
+        if c_slug and c_slug not in seen_slugs:
+            seen_slugs.add(c_slug)
+            slugs.append(c_slug)
+    try:
+        disc_fn = discovery_reader or discover_collections
+        disc = await disc_fn(db, limit=60)
+        for col in disc.collections or ():
+            c_slug = str((col or {}).get("slug") or "").strip()
+            if c_slug and c_slug not in seen_slugs:
+                seen_slugs.add(c_slug)
+                slugs.append(c_slug)
+    except Exception as exc:
+        logger.warning("kit-v1 real-sets discovery read degraded: %s", exc)
+    for c_slug in sorted(roundup_producers or ROUNDUP_PRODUCERS):
+        if c_slug not in seen_slugs:
+            seen_slugs.add(c_slug)
+            slugs.append(c_slug)
+
+    get_c = container_getter or _get_container
+    containers_map: dict[str, dict[str, Any]] = {}
+    for c_slug in slugs:
+        try:
+            payload = await get_c(
+                c_slug, True, None, None, None, None, None, None, True, db
+            )
+            if isinstance(payload, StarletteResponse):
+                payload = json.loads(bytes(payload.body).decode("utf-8"))
+            if isinstance(payload, dict) and (payload.get("sections") or payload.get("container")):
+                containers_map[c_slug] = payload
+        except HTTPException as exc:
+            logger.debug("kit-v1 real-sets container %s skipped (http): %s", c_slug, exc.detail)
+            continue
+        except Exception as exc:
+            logger.warning("kit-v1 real-sets container %s skipped: %s", c_slug, exc)
+            continue
+
+    return build_real_sets_audit_report(
+        {"bundles": bundles, "containers": containers_map},
+        now=now,
+        resolver=_default_art_resolver(),
+    )
+
+
+KIT_V1_REAL_SETS_PREVIEW_REDIS_KEY = "kit_v1_real_sets:preview:v1"
+KIT_V1_REAL_SETS_PREVIEW_TTL_S = 7 * 86400
+
+
+def _decode_kit_v1_preview_payload(raw: Any) -> Optional[dict]:
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", errors="replace")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def read_saved_kit_v1_real_sets_preview() -> Optional[dict]:
+    """Read the worker-built Kit v1 real-sets preview snapshot from Redis.
+
+    Never computes inline on a web worker (#13551 / H12 protection).
+    """
+    from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+    try:
+        client = await get_shared_async_redis()
+        res = await bounded_redis_call(
+            lambda: client.get(KIT_V1_REAL_SETS_PREVIEW_REDIS_KEY)
+        )
+        if res.is_ok:
+            return _decode_kit_v1_preview_payload(res.value)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — fail open to explicit not_built_yet payload
+        logger.debug("kit-v1-real-sets preview Redis read failed", exc_info=True)
+    return None
+
+
+def write_saved_kit_v1_real_sets_preview_sync(report: dict) -> bool:
+    """Persist a worker-built Kit v1 real-sets audit snapshot into Redis."""
+    from app.tasks.redis_state import get_redis_client
+
+    payload = dict(report)
+    payload.setdefault("status", "ready")
+    payload.setdefault("served_from", "worker_redis")
+    encoded = json.dumps(payload, default=str, ensure_ascii=False)
+    try:
+        client = get_redis_client()
+        client.set(
+            KIT_V1_REAL_SETS_PREVIEW_REDIS_KEY,
+            encoded,
+            ex=KIT_V1_REAL_SETS_PREVIEW_TTL_S,
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        logger.warning("kit-v1-real-sets preview Redis write failed", exc_info=True)
+        return False
+
+
+def _kit_v1_not_built_yet_payload() -> dict:
+    return {
+        "kit_version": 1,
+        "status": "not_built_yet",
+        "served_from": "none",
+        "message": (
+            "No worker-built Kit v1 real-sets snapshot is saved in Redis yet. "
+            "Trigger POST /api/containers/preview/kit-v1-real-sets/refresh "
+            "(or click 'Refresh snapshot on worker') to build it off-web."
+        ),
+        "generated_at": None,
+        "snapshot_captured_at": None,
+        "build_elapsed_s": None,
+        "total_sets": 0,
+        "fitting_count": 0,
+        "kept_today_count": 0,
+        "top_10": [],
+        "fitting_beyond_top_10": [],
+        "alex_question_examples": [],
+        "kept_today": [],
+    }
+
+
+@router.get("/preview/kit-v1-real-sets")
+async def get_kit_v1_real_sets_preview(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only read of the worker-built Kit v1 real-sets preview snapshot (#13551).
+
+    Strictly reads Redis and returns `status="not_built_yet"` on miss — never runs
+    the 76-container live audit inline on the web dyno (Heroku 30s H12 budget).
+    """
+    from app.routes.admin_utils import _check_admin_auth
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    cached = await read_saved_kit_v1_real_sets_preview()
+    if cached is None:
+        return _kit_v1_not_built_yet_payload()
+    result = dict(cached)
+    result.setdefault("status", "ready")
+    result.setdefault("served_from", "worker_redis")
+    return result
+
+
+@router.post("/preview/kit-v1-real-sets/refresh")
+async def refresh_kit_v1_real_sets_preview_endpoint(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Enqueue background worker refresh of the Kit v1 real-sets preview (#13551)."""
+    from app.routes.admin_utils import _check_admin_auth
+    from app.tasks import refresh_kit_v1_real_sets_preview
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    task = refresh_kit_v1_real_sets_preview.delay()
+    return {
+        "status": "queued",
+        "task": "app.tasks.refresh_kit_v1_real_sets_preview",
+        "queue": "background",
+        "task_id": getattr(task, "id", None),
+        "message": "Queued worker build for the Kit v1 real-sets snapshot. Reload in ~15-30s.",
+    }
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),

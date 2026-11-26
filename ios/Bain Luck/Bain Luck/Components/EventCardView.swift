@@ -820,6 +820,7 @@ struct EventCardView: View {
                         colors: (away: awayColor, home: homeColor),
                         spokenText: FinalForecastComparison11296.spokenText(
                             finalForecast, awayName: event.awayTeam, homeName: event.homeTeam),
+                        allowsStandardWrapping: true,
                         accessibilityIdentifier: FinalForecastLine11296.accessibilityIdentifier
                     )
                 }
@@ -831,32 +832,66 @@ struct EventCardView: View {
         drawChance: String?
     ) -> some View {
         let fontSize = uniformCompactTeamNameFontSize
-        return VStack(spacing: 6) {
-            singleRowTeamRow(
-                name: event.awayTeam,
-                avatar: event.avatar(home: false),
-                color: awayColor,
-                record: event.awayTeamData?.record,
-                score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.awayScore : nil,
-                won: awayWon,
-                side: .away,
-                nameFontSize: fontSize,
-                preventSingleWordTruncation: false
+        let effectiveWidth = measuredCardWidth > 0 ? measuredCardWidth : 334
+        let stacked = dynamicTypeSize.isAccessibilitySize
+            && competitorNeedsStackedRow(
+                cardWidth: effectiveWidth,
+                fontSize: fontSize,
+                reservedChrome: isFinished ? 59 : 42
             )
+        let awayScore = (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.awayScore : nil
+        let homeScore = (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.homeScore : nil
+
+        return VStack(spacing: 6) {
+            if stacked {
+                threeWayStackedTeamRow13121(
+                    name: event.awayTeam,
+                    avatar: event.avatar(home: false),
+                    color: awayColor,
+                    score: awayScore,
+                    won: awayWon,
+                    side: .away,
+                    nameFontSize: fontSize
+                )
+            } else {
+                singleRowTeamRow(
+                    name: event.awayTeam,
+                    avatar: event.avatar(home: false),
+                    color: awayColor,
+                    record: event.awayTeamData?.record,
+                    score: awayScore,
+                    won: awayWon,
+                    side: .away,
+                    nameFontSize: fontSize,
+                    preventSingleWordTruncation: false
+                )
+            }
             if let drawChance {
                 compactDrawRow(drawChance: drawChance, nameFontSize: fontSize)
             }
-            singleRowTeamRow(
-                name: event.homeTeam,
-                avatar: event.avatar(home: true),
-                color: homeColor,
-                record: event.homeTeamData?.record,
-                score: (isLive || isFinished || isSuspended) && event.scoreSourceUnavailable != true ? event.homeScore : nil,
-                won: homeWon,
-                side: .home,
-                nameFontSize: fontSize,
-                preventSingleWordTruncation: false
-            )
+            if stacked {
+                threeWayStackedTeamRow13121(
+                    name: event.homeTeam,
+                    avatar: event.avatar(home: true),
+                    color: homeColor,
+                    score: homeScore,
+                    won: homeWon,
+                    side: .home,
+                    nameFontSize: fontSize
+                )
+            } else {
+                singleRowTeamRow(
+                    name: event.homeTeam,
+                    avatar: event.avatar(home: true),
+                    color: homeColor,
+                    record: event.homeTeamData?.record,
+                    score: homeScore,
+                    won: homeWon,
+                    side: .home,
+                    nameFontSize: fontSize,
+                    preventSingleWordTruncation: false
+                )
+            }
         }
     }
 
@@ -899,12 +934,16 @@ struct EventCardView: View {
         return compactHeaders12616.large != nil
     }
 
+    private var isNarrowFinishedCard: Bool {
+        isFinished && measuredCardWidth > 0 && measuredCardWidth < 310
+    }
+
     private var effectiveMediumColWidth: CGFloat {
         if isScheduled {
             return min(compactLiveScoreWidth, 44)
         }
         if isFinished {
-            return min(max(compactPregameWidth, 56), 62)
+            return isNarrowFinishedCard ? 52 : min(max(compactPregameWidth, 56), 62)
         }
         return min(compactLiveScoreWidth, 44)
     }
@@ -914,7 +953,7 @@ struct EventCardView: View {
     }
 
     private var effectiveLargeColWidth: CGFloat {
-        if isFinished { return min(compactLiveScoreWidth, 48) }
+        if isFinished { return isNarrowFinishedCard ? 38 : min(compactLiveScoreWidth, 48) }
         if isSuspended { return min(compactPregameWidth, 66) }
         return min(compactLargeChanceWidth, 86)
     }
@@ -926,6 +965,9 @@ struct EventCardView: View {
     private var largeColumnLeadingGap12616: CGFloat {
         if showsInlineLiveProjected204C {
             return pregameToNowGap + 4
+        }
+        if isNarrowFinishedCard && showsMediumColumn12616 {
+            return 10
         }
         return showsMediumColumn12616 ? scoreToPregameGutter : 0
     }
@@ -958,16 +1000,27 @@ struct EventCardView: View {
         isThreeWayCard13121 ? twoWayStandardNameFontSize13121 : sharedCompactTeamNameFontSize
     }
 
-    private func threeWayNeedsStackedRow13121(cardWidth: CGFloat) -> Bool {
-        let reservedChrome: CGFloat = isFinished ? 59 : 42
+    private func competitorNeedsStackedRow(
+        cardWidth: CGFloat,
+        fontSize: CGFloat,
+        reservedChrome: CGFloat
+    ) -> Bool {
         let availableInlineNameWidth = cardWidth - reservedChrome - trailingColumnsClusterWidth12616
         guard availableInlineNameWidth > 0 else { return true }
         let maxWord = CardTeamNameSizing.maxSingleWordWidth(
             names: [shortTeamNames.away, shortTeamNames.home],
-            fontSize: twoWayStandardNameFontSize13121,
+            fontSize: fontSize,
             weight: .bold
         )
         return maxWord > availableInlineNameWidth
+    }
+
+    private func threeWayNeedsStackedRow13121(cardWidth: CGFloat) -> Bool {
+        competitorNeedsStackedRow(
+            cardWidth: cardWidth,
+            fontSize: twoWayStandardNameFontSize13121,
+            reservedChrome: isFinished ? 59 : 42
+        )
     }
 
     @ViewBuilder
@@ -1326,7 +1379,7 @@ struct EventCardView: View {
                     .lineLimit(unboundedWrap13121 ? nil : (singleWord ? 1 : 2))
                     .allowsTightening(!unboundedWrap13121)
                     .fixedSize(horizontal: !unboundedWrap13121 && singleWord && preventSingleWordTruncation, vertical: true)
-                if isFinished {
+                if isFinished && won {
                     Text("\u{2713}")
                         .font(HeadlineStyleTable199.secondNumbers(
                             .card,

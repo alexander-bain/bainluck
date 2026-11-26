@@ -459,8 +459,8 @@ final class EventAtlasLivePathE5_11666Tests: XCTestCase {
             contentsOf: root.appendingPathComponent("Views/EventDetailView.swift"),
             encoding: .utf8
         )
-        XCTAssertTrue(viewSource.contains("confirmedAtShown: vm.confirmedAtCoveringShown(event)"))
-        XCTAssertTrue(viewSource.contains("preview: vm.blendPreview"))
+        XCTAssertTrue(viewSource.contains("confirmedAt: vm.event.flatMap { vm.displayedConfirmation($0) }"))
+        XCTAssertTrue(viewSource.contains("vm.displaysPreview(event)"))
         XCTAssertTrue(viewSource.contains("ekgTracker: ekgTracker"))
         XCTAssertTrue(viewSource.contains("EventAtlasLivePath11666.stepEkgTracker("))
 

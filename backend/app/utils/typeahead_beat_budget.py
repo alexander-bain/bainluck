@@ -2202,13 +2202,17 @@ def free_background_slots(
 #: existing-row `current_record` update, <0.5 s/fire, 12 fires/day). Census over
 #: assembled `beat_schedule` prints `explicit 113 implicit 38 total 151`.
 #: #13338 adds a daily onboarding membership refresh on background.
-#: 🔴 RE-DERIVED at atlas/12221-kit-container-pages (2026-11-25, #12221 / #13696):
-#: 152 → 153, explicit 114 → 115, fall-through UNMOVED at 38.
+#: #13606 Part 1: `materialize-finished-event-charts`
+#: (`crontab(minute="*/10")`) names `background` every 10 minutes (bounded 5-event
+#: batch via `FINISHED_EVENT_HISTORY_BATCH_SIZE`, fast materialization for
+#: finished-game durable charts). Explicit 114 -> 115, implicit 38, total 153.
+#: 🔴 RE-DERIVED at atlas/12221-kit-container-pages (2026-11-26, #12221 / #13696):
+#: 153 → 154, explicit 115 → 116, fall-through UNMOVED at 38.
 #: `propose-uncovered-containers-nightly` (`crontab(minute=35, hour=9)`, daily
 #: 09:35 UTC = 1:35 AM PT) names `options={"queue": "background"}` (1 fire/day,
 #: bounded 2,500-market read into Redis-only preview deck). Census RUN over
-#: assembled `beat_schedule` printed `explicit 115 implicit 38 total 153`.
-BACKGROUND_BEAT_COUNT = 153
+#: assembled `beat_schedule` prints `explicit 116 implicit 38 total 154`.
+BACKGROUND_BEAT_COUNT = 154
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

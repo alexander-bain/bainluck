@@ -55,7 +55,7 @@ class ScopeAttempt(unittest.TestCase):
 
     def test_only_retained_live_scope_fails_every_marker_and_deploy_barrier(self):
         jobs=yaml.safe_load((ROOT/'.github/workflows/ci.yml').read_text())['jobs']
-        for name in ['fast-gate','backend-tests','e2e-contract','golden-baseline-floor','deploy']:
+        for name in ['fast-gate','backend-tests','e2e-contract','golden-baseline-floor','deploy','deploy-after-full']:
             guard=jobs[name]['steps'][0]
             self.assertEqual(guard['name'], "Require this run's change-scope attempt")
             self.assertEqual(guard.get('if'), "needs.change-scope.outputs.live == 'true'")
@@ -65,7 +65,7 @@ class ScopeAttempt(unittest.TestCase):
         full_marker = next(step for step in jobs['fast-gate']['steps']
                            if step.get('name') == 'Ordinary candidate uses the full CI gates')
         self.assertEqual(full_marker['if'], "needs.change-scope.outputs.live != 'true'")
-        for name in ['fast-gate','deploy']:
+        for name in ['fast-gate','deploy','deploy-after-full']:
             self.assertTrue(any(step.get('name')=='Recheck current fast eligibility' for step in jobs[name]['steps']))
 
 if __name__=='__main__':unittest.main()

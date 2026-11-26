@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import subprocess
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from importlib import import_module
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,6 +34,19 @@ from app.utils.feed_cache import (
 pcp = import_module("app.tasks.precompute_category_pages")
 
 _CATEGORIES = ("politics", "economics", "entertainment", "tech", "weather", "culture")
+
+
+@pytest.fixture(autouse=True)
+def _restore_roundup_producers_registry():
+    """Restore exact ROUNDUP_PRODUCERS entries after tests that enable optional candidates."""
+    from app.utils import roundup_containers as rc
+
+    snapshot = dict(rc.ROUNDUP_PRODUCERS)
+    try:
+        yield
+    finally:
+        rc.ROUNDUP_PRODUCERS.clear()
+        rc.ROUNDUP_PRODUCERS.update(snapshot)
 
 
 def _scored_event_item(oid: int) -> dict:
@@ -664,3 +681,40 @@ async def test_derive_inner_child_error_logs_warning_and_lets_fallback_build(
         and "discover" in rec.getMessage()
         for rec in caplog.records
     )
+
+
+def test_prewarm_and_turn_on_packet_pass_in_both_orders() -> None:
+    """Guard against ROUNDUP_PRODUCERS leak regardless of pytest shard ordering."""
+    if os.environ.get("_ATLAS_ORDER_GUARD_ACTIVE") == "1":
+        pytest.skip("Already inside subprocess order guard")
+    backend_dir = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    env["_ATLAS_ORDER_GUARD_ACTIVE"] = "1"
+    orders = (
+        [
+            "tests/test_prewarm_derive_limit20_from_50_13445.py",
+            "tests/test_turn_on_packet_13_candidates_12288.py",
+        ],
+        [
+            "tests/test_turn_on_packet_13_candidates_12288.py",
+            "tests/test_prewarm_derive_limit20_from_50_13445.py",
+        ],
+    )
+    for pair in orders:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                *pair,
+                "-k",
+                "not test_prewarm_and_turn_on_packet_pass_in_both_orders",
+                "-q",
+            ],
+            cwd=str(backend_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, f"Order {pair} failed:\n{proc.stdout}\n{proc.stderr}"
+
