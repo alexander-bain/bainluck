@@ -1,0 +1,79 @@
+{
+  "deck_id": "forms-blind-deck-2026-11-27",
+  "created_at": "2026-11-26",
+  "ruling": "363: A / #13551",
+  "blind": true,
+  "seed": 2026112701,
+  "sealed_checksum_sha256": "0b5d5f1fd033a99a889fb15e5053a54ed11f70030c56aca21c660f86ce8e8621",
+  "image_width_px": 780,
+  "css_width_px": 390,
+  "color_scheme": "light",
+  "forms": [
+    {
+      "item_id": "s01",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-01.png",
+      "width_px": 780,
+      "height_px": 1050
+    },
+    {
+      "item_id": "s02",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-02.png",
+      "width_px": 780,
+      "height_px": 1122
+    },
+    {
+      "item_id": "s03",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-03.png",
+      "width_px": 780,
+      "height_px": 798
+    },
+    {
+      "item_id": "s04",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-04.png",
+      "width_px": 780,
+      "height_px": 1262
+    },
+    {
+      "item_id": "s05",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-05.png",
+      "width_px": 780,
+      "height_px": 1318
+    },
+    {
+      "item_id": "s06",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-06.png",
+      "width_px": 780,
+      "height_px": 894
+    },
+    {
+      "item_id": "s07",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-07.png",
+      "width_px": 780,
+      "height_px": 820
+    },
+    {
+      "item_id": "s08",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-08.png",
+      "width_px": 780,
+      "height_px": 790
+    },
+    {
+      "item_id": "s09",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-09.png",
+      "width_px": 780,
+      "height_px": 1748
+    },
+    {
+      "item_id": "s10",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-10.png",
+      "width_px": 780,
+      "height_px": 834
+    },
+    {
+      "item_id": "s11",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/3fe041c51f468850d6cb7ac0c7f1c315345b39e0/forms-deck-2026-11-27/card-11.png",
+      "width_px": 780,
+      "height_px": 732
+    }
+  ]
+}
