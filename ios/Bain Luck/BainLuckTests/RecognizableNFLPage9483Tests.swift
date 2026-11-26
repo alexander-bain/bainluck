@@ -197,10 +197,10 @@ final class RecognizableNFLPage9483Tests: XCTestCase {
 
     // MARK: - #9483 v476 phone fit (design return 20261018: 375x812 NBA final)
 
-    private func pageCode() throws -> String {
+    private func code(_ relativePath: String) throws -> String {
         let here = URL(fileURLWithPath: #filePath)
         let url = here.deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Bain Luck/Views/EventDetailView.swift")
+            .appendingPathComponent("Bain Luck/\(relativePath)")
         return try String(contentsOf: url, encoding: .utf8)
     }
 
@@ -210,43 +210,52 @@ final class RecognizableNFLPage9483Tests: XCTestCase {
         return String(text[lo.upperBound..<hi.lowerBound])
     }
 
-    /// The adopted header's top row is the chip's height: its disclosure keeps
-    /// the whole 44pt target (the button's own frame, unchanged) but overhangs
-    /// the card's top inset and the row gap, each of which holds it exactly.
+    /// The top bar's EKG disclosure keeps a full 44 pt hit target while overhanging
+    /// the card's 12 pt vertical padding so it does not add a row of its own;
+    /// trailing source marks stay compact with `.padding(.vertical, -10)`.
     func testTheDisclosureKeepsItsTargetWithoutARowOfItsOwn() throws {
-        let page = try pageCode()
-        let button = try span(page, from: "private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false, ekgDrawn: Bool = false) -> some View {",
-                              to: "// MARK: - Chart Header Bar")
+        let card = try code("Components/EventSportHeadlineCard12472.swift")
+        let body = try span(card, from: "var body: AnyView {", to: "// MARK: - Top Bar")
+        XCTAssertTrue(body.contains("VStack(alignment: .leading, spacing: 10)"))
+        XCTAssertTrue(body.contains(".padding(.vertical, 12)"),
+                      "the card's vertical padding must hold the disclosure's overhang")
+
+        let trailing = try span(card, from: "private var trailingControls: some View {",
+                                to: "private var ekgButton: some View {")
+        XCTAssertTrue(trailing.contains("markButton\n                    .padding(.vertical, -10)"))
+
+        let button = try span(card, from: "private var ekgButton: some View {",
+                              to: "// MARK: - Unified Column-Header")
         XCTAssertTrue(button.contains("minHeight: 44"), "control: the 44pt target itself")
-        let hero = try span(page, from: "private func heroSection(", to: "static func heroBackdrop(")
-        XCTAssertTrue(hero.contains("nflPairedDetails(event)\n"))
-        XCTAssertTrue(hero.contains(".padding(.vertical, stacked ? 0 : -Self.adoptedDisclosureOverhang9483)"),
+        XCTAssertTrue(button.contains(".padding(.vertical, -12)"),
                       "the disclosure sets the row's height again")
-        XCTAssertTrue(hero.contains("VStack(spacing: approvedPair ? Self.adoptedDisclosureOverhang9483 : 12)"),
-                      "the gap below must hold the overhang")
-        XCTAssertTrue(hero.contains(".padding(.top, approvedPair ? 12 : 0)"))
-        XCTAssertLessThanOrEqual(EventDetailView.adoptedDisclosureOverhang9483, 12,
-                                 "the overhang must stay inside the card's top inset")
-        XCTAssertEqual(44 - 2 * EventDetailView.adoptedDisclosureOverhang9483, 24,
-                       "the row it leaves is the chip's height")
     }
 
-    /// A decided final's FINAL chip and its date share one row at default
-    /// text, stacking from xxLarge as the legacy meta row does; a priced pair
-    /// (whose chip can be empty) keeps the stacked column it had.
+    /// A decided final's Final chip and its date share one single meta line in the
+    /// unified headline card (`case .after`), stacking only at large text via `topBar`;
+    /// finished pages mount no EKG disclosure.
     func testAFinalsChipAndDateShareARowAtDefaultText() throws {
-        let page = try pageCode()
-        let hero = try span(page, from: "private func heroSection(", to: "static func heroBackdrop(")
-        let adopted = try span(hero, from: "if approvedPair {", to: "} else {")
-        XCTAssertTrue(adopted.contains("let decided = nflPairedHeadline(event, hasScore: hasScore)?.away.won != nil"))
-        XCTAssertTrue(adopted.contains("let adoptedMetaLayout = decided && !stacked\n"
-                                       + "                    ? metaLayout : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))"),
-                      "the final's chip and date are stacked again, or a priced pair shares the row")
-        XCTAssertTrue(adopted.contains("adoptedMetaLayout {"))
-        XCTAssertTrue(adopted.contains("if !decided {\n                        nflPairedDetails(event)"),
-                      "control: a decided final mounts no disclosure")
-        XCTAssertTrue(hero.contains("let metaLayout = stacked\n            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))"),
-                      "control: the shared layout stacks at large text")
+        let card = try code("Components/EventSportHeadlineCard12472.swift")
+        let topBar = try span(card, from: "private var topBar: some View {",
+                              to: "@ViewBuilder\n    private var leadingMeta: some View {")
+        XCTAssertTrue(topBar.contains("let layout = stacksRowsVertically\n"
+                                      + "            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))\n"
+                                      + "            : AnyLayout(HStackLayout(alignment: .center, spacing: 8))"))
+        let leadingMeta = try span(card, from: "@ViewBuilder\n    private var leadingMeta: some View {",
+                                   to: "private func liveBadgePill")
+        let afterBranch = try span(leadingMeta, from: "case .after:", to: "case .during:")
+        XCTAssertTrue(afterBranch.contains("model.plainMetaText"))
+        XCTAssertTrue(afterBranch.contains("Text(text)"))
+
+        let headlines = try code("Utilities/EventSportHeadlines12472.swift")
+        let afterMeta = try span(headlines, from: "nonisolated static func afterMetaText(league: String, event: EventDetail) -> String {",
+                                 to: "nonisolated static func pregameStartText(")
+        XCTAssertTrue(afterMeta.contains("parts.joined(separator: \" · \")"))
+
+        let resolveAfter = try span(headlines, from: "nonisolated private static func resolveAfter(",
+                                    to: "nonisolated private static func makeCompatTeamRow(")
+        XCTAssertTrue(resolveAfter.contains("showsEkg: false"),
+                      "control: a decided final mounts no EKG disclosure")
     }
 
     /// The chart's heading no longer repeats FINAL beside "Win Probability":

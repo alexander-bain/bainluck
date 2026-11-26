@@ -247,6 +247,10 @@ final class JourneyCapsuleResolvesTeamColourThroughTheFloor7036Tests: XCTestCase
 
         XCTAssertTrue(body.contains("let probHex = MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)"))
         XCTAssertTrue(body.contains("let logoHex = MyStuffTeamTextColour.logoTintHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)"))
+        XCTAssertEqual(body.components(separatedBy: "let probHex =").count - 1, 1,
+                       "probHex must have a single binding in MyStuffView so no second raw binding slips through")
+        XCTAssertEqual(body.components(separatedBy: "let logoHex =").count - 1, 1,
+                       "logoHex must have a single binding in MyStuffView so no second raw binding slips through")
 
         let occurrences = body.components(separatedBy: "Color(hex:").dropFirst()
         XCTAssertGreaterThanOrEqual(occurrences.count, 6,
