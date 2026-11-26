@@ -75,7 +75,7 @@ describe("#12825 Discover story & comparison bundles render served hero imagery"
         id: "comparison:ipo:1-2",
         title: "IPOs",
         kind: "comparison",
-        shared_question: "Who goes public, and at what price?",
+        shared_question: "Who goes public, and at what valuation?",
         image_url:
           "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/92/New_York_Stock_Exchange_August_2017_02.jpg/500px-New_York_Stock_Exchange_August_2017_02.jpg",
         image_presentation: "photo",

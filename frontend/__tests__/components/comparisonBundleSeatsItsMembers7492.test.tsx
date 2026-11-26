@@ -82,7 +82,7 @@ import DiscoverCard from "../../components/DiscoverCard";
 import { BUNDLE_PEEK_COUNT } from "../../components/discover/constants";
 
 /** `_bundle_subtitle("ipo_valuation", 2)` — the specimen's own header line. */
-const SHARED_QUESTION = "Which of these companies is priced highest to list?";
+const SHARED_QUESTION = "Which of these companies is valued highest to list?";
 
 /** The chevron's path data, from both bundle headers. */
 const CHEVRON = "M19 9l-7 7-7-7";

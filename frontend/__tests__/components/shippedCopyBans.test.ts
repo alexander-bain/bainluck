@@ -1566,3 +1566,148 @@ describe("#13806 — Discover candidate grouping JSONs carry no banned copy in r
     }
   });
 });
+
+describe("Item 6 / #13844 follow-up — reader lines written in code carry no banned copy", () => {
+  const repoRoot = path.resolve(__dirname, "../../..");
+
+  function stripPyCommentsAndDocstrings(src: string): string {
+    return src
+      .replace(/^[ \t]*("""|''')[\s\S]*?\1/gm, "")
+      .replace(/^\s*#.*$/gm, "")
+      .replace(/(^|[^\\])#[^\n'"]*$/gm, "$1");
+  }
+
+  function stripTsComments(src: string): string {
+    return src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|\s)\/\/[^\n]*$/gm, "");
+  }
+
+  function extractQuotedLiterals(cleanedSrc: string): string[] {
+    const out: string[] = [];
+    const re = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(cleanedSrc)) !== null) {
+      const val = m[2].replace(/\$\{[^}]+\}/g, "X").replace(/\{[^}]+\}/g, "X").trim();
+      if (val && /\s/.test(val)) {
+        out.push(val);
+      }
+    }
+    return out;
+  }
+
+  it("pins all retired code-written reader lines under price-family", () => {
+    const retired = [
+      "Which of these companies is priced highest to list?",
+      "Who goes public, and at what price?",
+      "Events priced near 45%",
+      "Two other openings are priced too.",
+      "The card scales the Yes and No prices together to total 100%",
+      "The No number is 100% minus this source's Yes price",
+      "Bain Luck field · source price scaled across the winner field",
+      "Price unavailable · Dec 31",
+      "Will X happen? — price unavailable",
+    ];
+    for (const sentence of retired) {
+      expect(findBannedCopy(sentence, ALL_COPY_BANS).map((h) => h.ban.id)).toContain("price-family");
+    }
+    expect("Shaded cells show served chances across both title races.").toMatch(/\bserved chances\b/i);
+  });
+
+  it("finds zero banned-language hits in kit_v1_golden_examples.json reader lines", () => {
+    const goldenPath = path.join(repoRoot, "backend/data/discover/kit_v1_golden_examples.json");
+    const parsed = JSON.parse(fs.readFileSync(goldenPath, "utf8")) as {
+      items?: unknown[];
+    };
+    const readerKeys = new Set([
+      "title",
+      "kicker",
+      "common_headline",
+      "stat_caption",
+      "footnote",
+      "disclosure",
+      "label",
+      "leading_label",
+    ]);
+    const lines: Array<{ loc: string; text: string }> = [];
+    const walk = (node: unknown, loc: string) => {
+      if (Array.isArray(node)) {
+        node.forEach((v, i) => walk(v, `${loc}[${i}]`));
+      } else if (node && typeof node === "object") {
+        for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+          if (typeof v === "string" && readerKeys.has(k)) {
+            lines.push({ loc: `${loc}.${k}`, text: v });
+          } else {
+            walk(v, `${loc}.${k}`);
+          }
+        }
+      }
+    };
+    walk(parsed.items ?? [], "kit_v1_golden_examples.items");
+    expect(lines.length).toBeGreaterThan(0);
+
+    const failures: string[] = [];
+    for (const { loc, text } of lines) {
+      for (const hit of findBannedCopy(text, ALL_COPY_BANS)) {
+        failures.push(`${loc} [${hit.ban.id}: ${hit.matched}]: ${JSON.stringify(text)}`);
+      }
+      if (/\bserved chances\b/i.test(text)) {
+        failures.push(`${loc} [served-chances]: ${JSON.stringify(text)}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("finds zero banned-language hits across code modules that author reader copy", () => {
+    const codeTargets = [
+      "backend/app/utils/discover_bundles.py",
+      "backend/app/utils/cross_domain_yardsticks.py",
+      "backend/app/utils/opening_weekend_slate.py",
+      "backend/app/utils/deadline_family_story.py",
+      "backend/app/utils/same_deadline_board.py",
+      "backend/app/utils/golf_source_mark.py",
+      "backend/app/utils/kit_v1_spec.py",
+      "frontend/lib/discover/deadlineFamilyCard.ts",
+    ];
+    // Physical USD spot prices (not prediction-market probabilities) & internal/regex literals
+    const nonProbabilityAllowlist = new Set([
+      "Where is the oil price going?",
+      "Commodity price ranges",
+      "Compare price range probabilities across commodity markets.",
+      "Where do these commodity prices land?",
+      "flow_sentinel matching_defect: nfl_division_roundup withheld kalshi price division=%s",
+      "Mutually exclusive columns sum above 115 as served (123%, 127%) and <2 valid columns remain; keep today's card.",
+    ]);
+
+    const failures: string[] = [];
+    for (const rel of codeTargets) {
+      const raw = fs.readFileSync(path.join(repoRoot, rel), "utf8");
+      const cleaned = rel.endsWith(".py") ? stripPyCommentsAndDocstrings(raw) : stripTsComments(raw);
+      for (const literal of extractQuotedLiterals(cleaned)) {
+        if (
+          nonProbabilityAllowlist.has(literal) ||
+          literal.includes("\\b") ||
+          literal.startsWith("flow_sentinel") ||
+          literal.includes("eslint")
+        ) {
+          continue;
+        }
+        for (const hit of findBannedCopy(literal, ALL_COPY_BANS)) {
+          // `Bain Luck blend · ...` is the standing #12581/#1986/#13269 source-mark
+          // attribution prefix; enforce `price-family` and every other ban on it,
+          // while allowing only the `blend` attribution word itself there.
+          if (hit.ban.id === "blend" && literal.startsWith("Bain Luck blend · ")) {
+            continue;
+          }
+          failures.push(`${rel} [${hit.ban.id}: ${hit.matched}]: ${JSON.stringify(literal)}`);
+        }
+        if (/\bserved chances\b/i.test(literal)) {
+          failures.push(`${rel} [served-chances]: ${JSON.stringify(literal)}`);
+        }
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(`Banned reader copy in code modules:\n  ${failures.join("\n  ")}`);
+    }
+  });
+});

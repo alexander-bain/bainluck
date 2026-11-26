@@ -38,7 +38,7 @@ def golfer_price_mark(data: dict[str, Any], displayed: float) -> dict:
         mark["method"] = (
             "Bain Luck blend · average after scaling the individual winner fields"
             if mark["state"] == "blend"
-            else "Bain Luck field · source price scaled across the winner field"
+            else "Bain Luck field · source probability scaled across the winner field"
         )
     mean = sum(admitted.values()) / len(admitted)
     if not isclose(mean, displayed, abs_tol=1e-9):
