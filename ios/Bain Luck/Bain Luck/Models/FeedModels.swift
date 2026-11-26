@@ -976,6 +976,13 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     var awaySourceMark: SourceMark? = nil
     var pregameSourceMark: SourceMark? = nil
     var awayPregameSourceMark: SourceMark? = nil
+    /// #13775 — server-resolved hero win probability pair (`hero_probability` /
+    /// `hero_probability_away`) carried alongside `hero_probability_source`.
+    /// Read through `CompactGameCard12616.currentOddsForCard` when `current_odds`
+    /// is nil or carries no current probability (e.g. prediction-market-only upcoming
+    /// games with `bookmaker_count == 0`).
+    var heroProbability: Double? = nil
+    var heroProbabilityAway: Double? = nil
 }
 
 /// What a card should draw in one participant's avatar slot, and how.

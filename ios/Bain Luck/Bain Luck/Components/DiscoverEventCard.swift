@@ -51,9 +51,7 @@ struct NativeEventDiscoverCard: View {
         chartHistory: EventHistoryResponse? = nil
     ) {
         var reading = event
-        reading.currentOdds = OpeningLineHero.currentOddsForCard(
-            event.currentOdds, heroSource: event.heroProbabilitySource
-        )
+        reading.currentOdds = CompactGameCard12616.currentOddsForCard(event)
         self.event = reading
         self.feedContext = feedContext
         self.expandedContext = expandedContext
