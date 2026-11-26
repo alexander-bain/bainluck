@@ -336,3 +336,154 @@ def test_championship_path_stmt_market_ids_compile():
     )
     assert "futures_outcomes.market_id = ANY (ARRAY[1, 2, 3])" in filtered_sql
     assert "NOT (EXISTS (SELECT futures_outcomes.id FROM futures_outcomes" in filtered_sql
+
+
+@pytest.mark.asyncio
+async def test_get_team_clamps_page_cache_ttl_to_oldest_futures_piece_and_skips_expired(
+    monkeypatch,
+):
+    now_wall = 1_800_000_000.0
+    now_mono = 500.0
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(cache_mod.time, "time", lambda: now_wall)
+    monkeypatch.setattr(cache_mod.time, "monotonic", lambda: now_mono)
+
+    db = _fake_real_pg_session()
+    team_ns = SimpleNamespace(
+        id=100,
+        sport_id=1,
+        name="Boston Celtics",
+        slug="boston-celtics",
+        abbreviation="BOS",
+        logo_url=None,
+        logo_url_small=None,
+        logo_url_large=None,
+        espn_id="2",
+        primary_color="#007A33",
+        secondary_color=None,
+        alternate_names=[],
+        current_record=None,
+        location="Boston",
+        roster_players=[],
+        standings_data=None,
+        standings_updated_at=None,
+        season_stats=None,
+        season_stats_updated_at=None,
+        sport=SimpleNamespace(key="basketball_nba", name="NBA"),
+    )
+    from app.routes import user as user_route
+
+    empty_scalars = MagicMock()
+    empty_scalars.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=empty_scalars)  # type: ignore[method-assign]
+
+    fake_client = MagicMock()
+    setex_calls: list[tuple[str, int, dict]] = []
+
+    async def _fake_setex(key: str, ttl: int, val: str) -> bool:
+        setex_calls.append((key, ttl, json.loads(val)))
+        return True
+
+    fake_client.get = AsyncMock(return_value=None)
+    fake_client.setex = AsyncMock(side_effect=_fake_setex)
+
+    state: dict[str, object] = {
+        "upcoming": [],
+        "award_cached_at": now_wall - 52.0,
+        "cache_expires_at": now_wall + 8.0,
+    }
+    saw_timings_not_none: list[bool] = []
+
+    async def _fake_futures(_ids, _db, limit=30, timings=None):
+        del _ids, _db, limit
+        saw_timings_not_none.append(timings is not None)
+        if timings is not None:
+            timings["_award_cached_at"] = state["award_cached_at"]
+            timings["_cache_expires_at"] = state["cache_expires_at"]
+        return {"items": [{"market_id": 1}]}
+
+    async def _fake_briefs(*_a, **_k):
+        return (list(state["upcoming"]), [])
+
+    with (
+        patch.object(cache_mod, "get_shared_async_redis", AsyncMock(return_value=fake_client)),
+        patch.object(teams_route, "_resolve_team_by_identifier", AsyncMock(return_value=team_ns)),
+        patch.object(
+            teams_route,
+            "_resolve_team_family_context",
+            AsyncMock(
+                return_value=(
+                    "basketball_nba",
+                    "basketball_nba",
+                    [1],
+                    [1],
+                    {100},
+                    {"Boston Celtics"},
+                    [100],
+                    ["Boston Celtics"],
+                )
+            ),
+        ),
+        patch.object(teams_route, "_folded_briefs", side_effect=_fake_briefs),
+        patch.object(teams_route, "_read_cached_grid", AsyncMock(return_value=None)),
+        patch.object(
+            teams_route, "_format_team", return_value={"id": 100, "slug": "boston-celtics"}
+        ),
+        patch.object(user_route, "_query_team_futures", side_effect=_fake_futures),
+        patch.object(teams_route, "_get_championship_path", AsyncMock(return_value=[])),
+    ):
+        # 1) Non-playing club (`base_ttl=60`) with 52 s-old season piece -> clamped to 8 s.
+        resp1 = await teams_route.get_team("boston-celtics", debug_timing=False, db=db)
+        assert "_timings_ms" not in resp1
+        assert saw_timings_not_none == [True]
+        assert cache_mod._l1_cache[(cache_mod.cache_scope_key(db), "boston-celtics")][0] == pytest.approx(
+            now_mono + 8.0
+        )
+        assert setex_calls[-1][1] == 8
+        assert setex_calls[-1][2]["ttl"] == pytest.approx(8.0)
+
+        # 2a) Playing club (`base_ttl=15`) with 50 s-old season piece (exp=now+10) -> clamped to 10 s.
+        cache_mod.clear_team_page_l1_cache()
+        state["upcoming"] = [{"id": 1, "status": "live"}]
+        state["award_cached_at"] = now_wall - 50.0
+        state["cache_expires_at"] = now_wall + 10.0
+        await teams_route.get_team("boston-celtics", debug_timing=False, db=db)
+        assert cache_mod._l1_cache[(cache_mod.cache_scope_key(db), "boston-celtics")][0] == pytest.approx(
+            now_mono + 10.0
+        )
+        assert setex_calls[-1][1] == 10
+        assert setex_calls[-1][2]["ttl"] == pytest.approx(10.0)
+
+        # 2b) Playing club (`base_ttl=15`) with 20 s-old season piece (exp=now+40) -> capped at 15 s.
+        cache_mod.clear_team_page_l1_cache()
+        state["upcoming"] = [{"id": 1, "status": "live"}]
+        state["award_cached_at"] = now_wall - 20.0
+        state["cache_expires_at"] = now_wall + 40.0
+        await teams_route.get_team("boston-celtics", debug_timing=False, db=db)
+        assert cache_mod._l1_cache[(cache_mod.cache_scope_key(db), "boston-celtics")][0] == pytest.approx(
+            now_mono + 15.0
+        )
+        assert setex_calls[-1][1] == 15
+        assert setex_calls[-1][2]["ttl"] == pytest.approx(15.0)
+
+        # 3) Non-playing club with 11 s-old event-linked piece (15 s TTL -> exp=now+4) -> clamped to 4 s.
+        cache_mod.clear_team_page_l1_cache()
+        state["upcoming"] = []
+        state["award_cached_at"] = now_wall - 11.0
+        state["cache_expires_at"] = now_wall + 4.0
+        await teams_route.get_team("boston-celtics", debug_timing=False, db=db)
+        assert cache_mod._l1_cache[(cache_mod.cache_scope_key(db), "boston-celtics")][0] == pytest.approx(
+            now_mono + 4.0
+        )
+        assert setex_calls[-1][1] == 4
+        assert setex_calls[-1][2]["ttl"] == pytest.approx(4.0)
+
+        # 4) Already-expired futures piece -> page is NOT cached in L1 or Redis.
+        cache_mod.clear_team_page_l1_cache()
+        prev_calls = len(setex_calls)
+        state["award_cached_at"] = now_wall - 60.5
+        state["cache_expires_at"] = now_wall - 0.5
+        resp_expired = await teams_route.get_team("boston-celtics", debug_timing=False, db=db)
+        assert resp_expired["futures"][0]["market_id"] == 1
+        assert cache_mod._l1_cache == {}
+        assert len(setex_calls) == prev_calls
