@@ -275,6 +275,7 @@ from app.utils.feed_cache import (
     feed_page_base_built_at,
     feed_page_base_cache_key,
     feed_page_base_enabled,
+    feed_page_base_fallback_limits,
     feed_page_base_last_good_key,
     feed_page_base_last_good_max_age_s,
     feed_response_cache_key,
@@ -5432,10 +5433,32 @@ async def get_feed(
             else:
                 _base_raw, _base_status, _base_body = None, None, None
                 _used_machinery_page_base = False
-                if _include_machinery_feed and not _include_machinery_preview:
-                    _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
+                _candidate_pb_keys = [_page_base_key] + [
+                    feed_page_base_cache_key(
+                        **{**_page_base_shape, "limit": _fb_limit}
+                    )
+                    for _fb_limit in feed_page_base_fallback_limits(
+                        limit=limit,
+                        include_events=include_events,
+                        include_futures=include_futures,
+                    )
+                ]
+                for _cand_pb_key in _candidate_pb_keys:
+                    if _include_machinery_feed and not _include_machinery_preview:
+                        _mach_pb_key = feed_machinery_page_base_key(_cand_pb_key)
+                        _base_raw, _base_status = await _read_shared_feed_cache(
+                            _shared_redis, _mach_pb_key
+                        )
+                        _base_body = (
+                            _safe_cache_payload(_base_raw)
+                            if _base_raw is not None
+                            else None
+                        )
+                        if _base_body is not None:
+                            _used_machinery_page_base = True
+                            break
                     _base_raw, _base_status = await _read_shared_feed_cache(
-                        _shared_redis, _mach_pb_key
+                        _shared_redis, _cand_pb_key
                     )
                     _base_body = (
                         _safe_cache_payload(_base_raw)
@@ -5443,16 +5466,7 @@ async def get_feed(
                         else None
                     )
                     if _base_body is not None:
-                        _used_machinery_page_base = True
-                if _base_body is None:
-                    _base_raw, _base_status = await _read_shared_feed_cache(
-                        _shared_redis, _page_base_key
-                    )
-                    _base_body = (
-                        _safe_cache_payload(_base_raw)
-                        if _base_raw is not None
-                        else None
-                    )
+                        break
             if (
                 _base_body is not None
                 and _include_machinery_feed
