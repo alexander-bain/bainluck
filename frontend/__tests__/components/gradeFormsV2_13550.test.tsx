@@ -281,4 +281,20 @@ describe("#13550 (363: A) & #13551 — /grade/forms v2 pile sort", () => {
     expect(pageSrc).toContain("src={firstCard.image_url}");
     expect(pageSrc).toContain("draggable={false}");
   });
+
+  test("#13843 all 11 Friday deck cards are self-hosted under public/forms-deck-2026-11-27 with exact PNG dimensions", () => {
+    const publicDir = path.resolve(__dirname, "../../public");
+    expect(formsDeck.forms).toHaveLength(11);
+    for (const card of formsDeck.forms) {
+      expect(card.image_url).toMatch(/^\/forms-deck-2026-11-27\/card-\d{2}\.png$/);
+      expect(card.image_url).not.toContain("raw.githubusercontent.com");
+      const filePath = path.join(publicDir, card.image_url.replace(/^\//, ""));
+      expect(fs.existsSync(filePath)).toBe(true);
+      const buf = fs.readFileSync(filePath);
+      expect(buf.toString("ascii", 1, 4)).toBe("PNG");
+      expect(buf.readUInt32BE(16)).toBe(card.width_px);
+      expect(buf.readUInt32BE(20)).toBe(card.height_px);
+      expect(card.width_px).toBe(780);
+    }
+  });
 });
