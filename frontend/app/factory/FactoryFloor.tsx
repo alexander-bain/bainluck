@@ -608,6 +608,7 @@ export default function FactoryFloor(initial: {
         station={person?.position?.station}
         change={status.change ?? undefined}
         post={id === "Fable" ? undefined : laneCheckIns[id]}
+        checkInIssue={data?.signals.now_lines_issue}
         update={id === "Fable" ? undefined : laneUpdates[id]}
         voice={id === "Fable" ? undefined : data?.speech?.[id]}
         habits={data?.crew_week?.builders[id]}
