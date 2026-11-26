@@ -43,6 +43,35 @@ def _fresh_ts(hours_ago: float = 0.5) -> str:
     return (NOW - timedelta(hours=hours_ago)).isoformat()
 
 
+_REAL_DATETIME = datetime
+
+
+class _FrozenDateTimeMeta(type(_REAL_DATETIME)):
+    def __instancecheck__(cls, inst: object) -> bool:
+        return isinstance(inst, _REAL_DATETIME)
+
+    def __subclasscheck__(cls, sub: type) -> bool:
+        return issubclass(sub, _REAL_DATETIME)
+
+
+class _FrozenDateTime(_REAL_DATETIME, metaclass=_FrozenDateTimeMeta):
+    @classmethod
+    def now(cls, tz=None):
+        return NOW if tz is None else NOW.astimezone(tz)
+
+    @classmethod
+    def utcnow(cls):
+        return NOW.replace(tzinfo=None)
+
+
+def _freeze_nuggets_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.utils import game_nuggets as game_nuggets_mod
+
+    monkeypatch.setattr(events_route, "datetime", _FrozenDateTime)
+    monkeypatch.setattr(eval_route, "datetime", _FrozenDateTime)
+    monkeypatch.setattr(game_nuggets_mod, "datetime", _FrozenDateTime)
+
+
 def _rich_payloads():
     game_markets = {
         "totals": [
@@ -533,6 +562,7 @@ async def test_related_futures_strips_american_odds_from_fresh_and_cached_payloa
 async def test_http_nuggets_and_admin_grading_scorecard_e2e(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _freeze_nuggets_clock(monkeypatch)
     gm, rf, tp = _rich_payloads()
     fake_ev = SimpleNamespace(
         id=14780582,
@@ -1286,6 +1316,8 @@ def test_reader_league_name_uses_plain_labels() -> None:
 async def test_game_nuggets_deck_deals_qualified_best_covered_first_with_league_cap_and_shorter_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _freeze_nuggets_clock(monkeypatch)
+
     def _make_ev(eid: int, sport_key: str, sport_name: str, hours_ahead: int, away: str, home: str):
         return SimpleNamespace(
             id=eid,
@@ -1451,6 +1483,8 @@ async def test_game_nuggets_deck_timeout_ceiling_returns_short_deck_cleanly(
 ) -> None:
     """An ~8s ceiling stops slow /deck work and returns what qualified without caching (#13642)."""
     import asyncio
+
+    _freeze_nuggets_clock(monkeypatch)
 
     ev = SimpleNamespace(
         id=4001,

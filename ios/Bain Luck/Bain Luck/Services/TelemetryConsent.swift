@@ -269,6 +269,7 @@ public final class TelemetryConsent: @unchecked Sendable {
             // already accumulated on device, rather than merely stopping new
             // ones. This is the native equivalent of the web's reload-to-unload.
             sink.resetAnalyticsData()
+            AnalyticsPrivacy.resetSearchHashSecret()
         }
     }
 

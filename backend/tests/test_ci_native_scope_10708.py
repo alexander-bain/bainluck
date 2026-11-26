@@ -225,6 +225,7 @@ def test_the_native_job_runs_the_computed_set_and_feeds_every_backend_leg():
     assert native["needs"] == ["change-scope", "fast-gate"]
     assert native["if"] == (
         "needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'"
+        " && !(github.event_name == 'pull_request' && github.event.pull_request.draft)"
     )
     run = next(s for s in native["steps"] if s.get("name") == "Run the native backend readers")
     assert run["env"] == {"NATIVE_TESTS": "${{ needs.change-scope.outputs.native_tests }}"}

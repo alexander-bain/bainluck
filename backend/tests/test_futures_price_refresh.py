@@ -232,6 +232,37 @@ class TestSelectionPredicate:
         for name, sql in askers.items():
             assert shared in _normalise(sql), f"{name} does not compose LIVE_MARKET_SQL"
 
+    def test_split_liveness_askers_compose_the_one_shared_split_form(self):
+        """#13742: CTE-split selectors must interpolate the split form from
+        `futures_liveness`, not rebuild any liveness arm by hand."""
+        import inspect
+
+        from app.tasks import venue_poll_30s as v
+        from app.utils.futures_liveness import (
+            EXACTLY_ONE_WINNER_SQL,
+            LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL,
+            settled_one_winner_markets_sql,
+        )
+
+        split_src = inspect.getsource(v)
+        assert split_src.count("{LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL}") == 2
+        assert split_src.count("{settled_one_winner_markets_sql()}") == 2
+        for name, builder in (
+            ("venue_poll_30s.kalshi_population_sql", v.kalshi_population_sql),
+            ("venue_poll_30s.polymarket_population_sql", v.polymarket_population_sql),
+        ):
+            for arm in (False, True):
+                sql = _normalise(builder(open_arm=arm))
+                assert _normalise(LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL) in sql, (
+                    f"{name}({arm}) does not compose LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL"
+                )
+                assert _normalise(EXACTLY_ONE_WINNER_SQL) in sql, (
+                    f"{name}({arm}) does not compose EXACTLY_ONE_WINNER_SQL"
+                )
+                assert _normalise(settled_one_winner_markets_sql()) in sql, (
+                    f"{name}({arm}) does not compose settled_one_winner_markets_sql()"
+                )
+
     def test_the_census_cannot_be_satisfied_by_a_short_list(self):
         """CERT-452's structural finding, not just its instance.
 
@@ -1325,9 +1356,19 @@ class _FakeSession:
         if "SELECT id, external_id FROM futures_outcomes" in compiled:
             return _FakeResult([(oid, ext) for ext, oid in self._outcomes.items()])
         if compiled.lstrip().upper().startswith("INSERT INTO FUTURES_ODDS_SNAPSHOTS"):
-            self.snapshot_probabilities.append(
-                float(statement.compile().params["probability"])
-            )
+            multi = getattr(statement, "_multi_values", None)
+            if multi:
+                for chunk in multi:
+                    for row in chunk:
+                        prob = next(
+                            v for k, v in row.items()
+                            if getattr(k, "key", str(k)) == "probability"
+                        )
+                        self.snapshot_probabilities.append(float(prob))
+            else:
+                self.snapshot_probabilities.append(
+                    float(statement.compile().params["probability"])
+                )
         return _FakeResult([])
 
 
@@ -1417,9 +1458,19 @@ class _RunHarness:
             if "SELECT id, external_id FROM futures_outcomes" in sql:
                 return _RunHarness._Result([(11, "0xabc")])
             if sql.lstrip().upper().startswith("INSERT INTO FUTURES_ODDS_SNAPSHOTS"):
-                self.outer.snapshot_probabilities.append(
-                    float(statement.compile().params["probability"])
-                )
+                multi = getattr(statement, "_multi_values", None)
+                if multi:
+                    for chunk in multi:
+                        for row in chunk:
+                            prob = next(
+                                v for k, v in row.items()
+                                if getattr(k, "key", str(k)) == "probability"
+                            )
+                            self.outer.snapshot_probabilities.append(float(prob))
+                else:
+                    self.outer.snapshot_probabilities.append(
+                        float(statement.compile().params["probability"])
+                    )
                 return _RunHarness._Result()
             if "fm.id = ANY(:market_ids)" in sql:
                 return _RunHarness._Result([], scalar=0)

@@ -282,11 +282,18 @@ final class PinManager: ObservableObject {
         if isAuthenticated, alreadyPinned { pendingRemovals.insert(SavedPin(type: type, value: id)) }
         saveToDefaults()
 
+        let surface = FirstWeekTelemetry13261.currentSurface
         guard isAuthenticated else {
             feedback = Self.confirmed(removed: alreadyPinned)
             if type == "event", !alreadyPinned {
                 enqueueGameAlertsOptInPromptIfEligible(eventID: id, generation: generation)
             }
+            AnalyticsService.trackPinItem(
+                action: alreadyPinned ? "unpin" : "pin",
+                itemType: type,
+                itemId: id,
+                surface: surface
+            )
             return nil
         }
 
@@ -307,6 +314,12 @@ final class PinManager: ObservableObject {
                 if type == "event", !alreadyPinned {
                     await offerGameAlertsOptInPromptIfEligible(eventID: id, generation: generation)
                 }
+                AnalyticsService.trackPinItem(
+                    action: alreadyPinned ? "unpin" : "pin",
+                    itemType: type,
+                    itemId: id,
+                    surface: surface
+                )
             } catch {
                 guard identityGeneration == generation else { return }
                 logger.error("Failed to sync pin to server: \(error)")
