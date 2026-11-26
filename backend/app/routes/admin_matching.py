@@ -3527,6 +3527,7 @@ async def manual_link_prediction_market(
                 home_win_probability=round(home_prob, 4),
                 away_win_probability=round(away_prob, 4),
                 is_completed=(getattr(event, "status", None) in ("completed", "closed")),
+                commence_time=getattr(event, "commence_time", None),
                 game_state={
                     "market_name": market.name,
                     "market_id": market.id,
