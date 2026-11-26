@@ -21,6 +21,7 @@ import {
 } from "@/lib/teamColors";
 import { prematchReading } from "@/lib/prematchReading";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
+import { renderedThreeWayPercents } from "@/lib/renderedPercent";
 import {
   admittedLiveProjection,
   cardProjectedFinal,
@@ -90,6 +91,7 @@ export interface UnifiedGameCardData {
   draw_prob?: number | null;
   served_home_pct?: number | null;
   served_away_pct?: number | null;
+  served_draw_pct?: number | null;
   pregame_home_pct: number | null;
   pregame_away_pct: number | null;
   pregame_draw_pct?: number | null;
@@ -1169,8 +1171,17 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     : (event.hero_probability_away ?? event.current_odds?.away_probability ?? null);
   const rawDraw = probWithheld
     ? null
-    : ((event.current_odds as { draw_probability?: number | null } | undefined)?.draw_probability ??
-        null);
+    : (event.hero_probability_draw ?? event.current_odds?.draw_probability ?? null);
+  const heroAlignedWithOdds =
+    (event.hero_probability == null ||
+      (event.current_odds?.home_probability != null &&
+        Math.abs(event.hero_probability - event.current_odds.home_probability) < 1e-6)) &&
+    (event.hero_probability_away == null ||
+      (event.current_odds?.away_probability != null &&
+        Math.abs(event.hero_probability_away - event.current_odds.away_probability) < 1e-6)) &&
+    (event.hero_probability_draw == null ||
+      (event.current_odds?.draw_probability != null &&
+        Math.abs(event.hero_probability_draw - event.current_odds.draw_probability) < 1e-6));
 
   const eventPrematch = (event as Event & { prematch_odds?: FeedEventData["prematch_odds"] })
     .prematch_odds;
@@ -1299,13 +1310,17 @@ export function buildUnifiedCardFromEvent(event: Event): UnifiedGameCardData {
     away_prob: rawAway,
     draw_prob: rawDraw,
     served_home_pct:
-      probWithheld || event.hero_probability != null || event.hero_probability_away != null
+      probWithheld || !heroAlignedWithOdds
         ? null
         : event.current_odds?.home_rendered_percent,
     served_away_pct:
-      probWithheld || event.hero_probability != null || event.hero_probability_away != null
+      probWithheld || !heroAlignedWithOdds
         ? null
         : event.current_odds?.away_rendered_percent,
+    served_draw_pct:
+      probWithheld || !heroAlignedWithOdds
+        ? null
+        : event.current_odds?.draw_rendered_percent,
     pregame_home_pct: openHome,
     pregame_away_pct: openAway,
     pregame_draw_pct: openDrawPct,
@@ -1458,6 +1473,7 @@ export function buildUnifiedCardFromFeed(
     draw_prob: rawDraw,
     served_home_pct: probWithheld ? null : data.current_odds?.home_rendered_percent,
     served_away_pct: probWithheld ? null : data.current_odds?.away_rendered_percent,
+    served_draw_pct: probWithheld ? null : data.current_odds?.draw_rendered_percent,
     pregame_home_pct: pre?.homePercent ?? null,
     pregame_away_pct: pre?.awayPercent ?? null,
     pregame_draw_pct: openDrawPct,
@@ -1658,19 +1674,49 @@ export default function EventCard183A({
 
   const awayWithheld =
     !hasExplicitThreeWayCurrent && awayIsTheComplement(card.away_prob, card.home_prob, card.sport);
-  const [awayWholePct, homeWholePct] = servedDuelPercents(
-    card.away_prob,
-    card.home_prob,
-    card.served_away_pct,
-    card.served_home_pct,
-  );
+  let awayWholePct: number | null;
+  let homeWholePct: number | null;
+  let drawWholePct: number | null;
+  if (
+    hasExplicitThreeWayCurrent &&
+    card.home_prob != null &&
+    card.away_prob != null &&
+    inferredDraw != null
+  ) {
+    if (
+      typeof card.served_home_pct === "number" &&
+      typeof card.served_draw_pct === "number" &&
+      typeof card.served_away_pct === "number" &&
+      Number.isInteger(card.served_home_pct) &&
+      Number.isInteger(card.served_draw_pct) &&
+      Number.isInteger(card.served_away_pct) &&
+      card.served_home_pct + card.served_draw_pct + card.served_away_pct === 100
+    ) {
+      homeWholePct = card.served_home_pct;
+      drawWholePct = card.served_draw_pct;
+      awayWholePct = card.served_away_pct;
+    } else {
+      [homeWholePct, drawWholePct, awayWholePct] = renderedThreeWayPercents(
+        card.home_prob,
+        inferredDraw,
+        card.away_prob,
+      );
+    }
+  } else {
+    [awayWholePct, homeWholePct] = servedDuelPercents(
+      card.away_prob,
+      card.home_prob,
+      card.served_away_pct,
+      card.served_home_pct,
+    );
+    drawWholePct = inferredDraw != null ? Math.round(inferredDraw * 100) : null;
+  }
 
   const liveTenths = isLive
     ? formatLiveTenthsPair(card.away_prob, card.home_prob, awayWithheld)
     : { away: null, home: null };
   const liveDrawTenths =
     isLive && inferredDraw != null ? formatSingleLiveTenths(inferredDraw) : null;
-  const drawWholePct = inferredDraw != null ? Math.round(inferredDraw * 100) : null;
 
   const scoreUnavailable = isLive && card.score_source_unavailable === true;
   const hasTennisSetBoxes =

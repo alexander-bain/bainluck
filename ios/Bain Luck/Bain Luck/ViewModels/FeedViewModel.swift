@@ -507,7 +507,13 @@ final class FeedViewModel: ObservableObject {
     /// True while a live-game auto-refresh timer is armed. Observable so a test can
     /// prove refresh is active immediately after the main publish, even while a slow
     /// sibling is still loading (L2-209 Item 2 / C68).
-    private(set) var refreshArmed = false
+    /// True while the live auto-refresh timer is armed.
+    @Published private(set) var refreshArmed = false
+
+    /// True only while live auto-refresh is actively running and healthy (#13634).
+    var liveOddsRefreshRunning: Bool {
+        refreshArmed && !refreshFailed
+    }
 
     static let autoRefreshInterval: TimeInterval = 30
 
@@ -631,27 +637,45 @@ final class FeedViewModel: ObservableObject {
 
     func filteredUpcoming(for categoryID: String) -> [FeedItem] {
         let now = clock()
-        return filteredItems(for: categoryID).filter {
+        let raw = filteredItems(for: categoryID).filter {
             guard $0.type == "event" else { return false }
             return EventState.section(of: $0.event, now: now) == .upcoming
                 && SportsUpcomingCutoff13001.admitsUpcoming($0.event, now: now)
         }
+        return SportsFuturesShelf13013.orderedUpcoming(raw, now: now)
     }
 
     func filteredTopMarkets(for categoryID: String) -> [FeedItem] {
         filteredItems(for: categoryID).filter { $0.type == "futures" }
     }
 
+    func filteredFuturesShelfCards(for categoryID: String, limit: Int? = SportsFuturesShelf13013.maxCompactShelfCards) -> [SportsFuturesShelf13013.ShelfCard] {
+        SportsFuturesShelf13013.shelfCards(
+            from: items,
+            groupedItems: groupedItems,
+            for: categoryID,
+            limit: limit
+        )
+    }
+
+    func futuresShelfLeads(for categoryID: String) -> Bool {
+        let now = clock()
+        return SportsFuturesShelf13013.shelfLeads(
+            live: filteredLiveNow(for: categoryID),
+            upcoming: filteredUpcoming(for: categoryID),
+            now: now
+        )
+    }
+
     // MARK: - What the tab shows (#11288)
 
     /// True when at least one `FeedView` section would draw a card for this
-    /// category. Grouped props are not chip-filtered, so they count everywhere.
+    /// category.
     func showsCards(for categoryID: String) -> Bool {
-        !groupedItems.isEmpty
-            || !filteredLiveNow(for: categoryID).isEmpty
+        !filteredLiveNow(for: categoryID).isEmpty
             || !filteredJustHappened(for: categoryID).isEmpty
             || !filteredUpcoming(for: categoryID).isEmpty
-            || !filteredTopMarkets(for: categoryID).isEmpty
+            || !filteredFuturesShelfCards(for: categoryID, limit: nil).isEmpty
     }
 
     /// The live inputs to `tabState`. Pinned rows live in `PinManager`, so the

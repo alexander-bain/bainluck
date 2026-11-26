@@ -1,5 +1,21 @@
 import SwiftUI
 
+private struct LiveOddsRefreshActiveKey13634: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Direction 395 (#12538 / #13634) — Tenths belong ONLY on numbers pushed at
+    /// sub-second stream pace. Cards refreshed on a timer (Discover 30s, Sports 30s,
+    /// My Stuff 15s) and non-refreshing surfaces leave this default `false` in 1.0.8
+    /// so every feed/card prints whole percents (`54%`). Kept as the fail-closed
+    /// gate for 1.0.9 per-card sub-second streams (`#10090`).
+    var liveOddsRefreshActive: Bool {
+        get { self[LiveOddsRefreshActiveKey13634.self] }
+        set { self[LiveOddsRefreshActiveKey13634.self] = newValue }
+    }
+}
+
 /// #12616 (Decision 161-B, "chance first") — pure column grammar, scheduled
 /// sportsbook projection admission, live tenths duel formatting, optional
 /// three-way soccer draw row, and compact context-line formatting for
@@ -196,13 +212,16 @@ enum CompactGameCard12616 {
         isScheduled: Bool,
         isLive: Bool,
         isFinished: Bool,
-        isSuspended: Bool
+        isSuspended: Bool,
+        showsLiveTenths: Bool = false
     ) -> String? {
         guard DrawPricedWinner.sportPricesADraw(event.sport), !isSuspended else { return nil }
         if isLive {
             guard hasExplicitThreeWayCurrent(event),
                   let draw = usableProbability(event.currentOdds?.drawProbability) else { return nil }
-            return formatSingleLiveTenths(draw)
+            return showsLiveTenths
+                ? formatSingleLiveTenths(draw)
+                : formatProbability(draw, renderedPercent: nil)
         }
         if isScheduled {
             guard hasExplicitThreeWayCurrent(event),
@@ -365,14 +384,45 @@ enum CompactGameCard12616 {
         return (away: awayText, home: homeText, draw: drawText)
     }
 
-    /// Whether the `"Pregame"` column (`48pt` at `.large`) fits beside `Score`
+    /// #13013 (`246: A`) — Shared uniform cap (`17.5 pt`) for `HeadlineStyleTable199.names(.card)`
+    /// across standard (`.xSmall`…`.xxxLarge`) game cards so every card on a screen draws
+    /// team names at the exact same point size rather than shrinking per card.
+    nonisolated static func uniformCardNameFontSize(scaledBaseSize: CGFloat) -> CGFloat {
+        min(scaledBaseSize, 17.5)
+    }
+
+    /// #13013 (`246: A`) — True when the scheduled `"Proj."` column fits alongside
+    /// `Chance` and the full uniform team-name size without clipping a single-word
+    /// team name; when false (e.g. `"Timberwolves"` at `.xxxLarge` on a `318 pt` row),
+    /// the projection moves cleanly to the quiet footer line instead of shrinking the name.
+    nonisolated static func scheduledInlineProjectedFits(
+        awayShortName: String,
+        homeShortName: String,
+        nameFontSize: CGFloat,
+        projColWidth: CGFloat,
+        chanceColWidth: CGFloat,
+        gutter: CGFloat,
+        availableRowWidth: CGFloat = 318
+    ) -> Bool {
+        let nonNameBudget: CGFloat = 42 + projColWidth + gutter + chanceColWidth
+        let availableNameWidth = availableRowWidth - nonNameBudget
+        guard availableNameWidth >= 56 else { return false }
+        let widestWord = CardTeamNameSizing.widestWordWidth(
+            names: [awayShortName, homeShortName],
+            fontSize: nameFontSize,
+            weight: .bold
+        )
+        return widestWord <= availableNameWidth
+    }
+
+    /// Whether the `"Pregame"` / `"Proj."` column (`48pt` at `.large`) fits beside `Score`
     /// and `Now` without squeezing or breaking a single-word team name
-    /// (`"Timberwolves"`, `.xxxLarge`).
+    /// (`"Timberwolves"`, `"Buccaneers"`) at the uniform card team-name font size.
     nonisolated static func liveInlinePregameFits(
         awayShortName: String,
         homeShortName: String,
         typeSize: DynamicTypeSize,
-        availableRowWidth: CGFloat = 330
+        availableRowWidth: CGFloat = 318
     ) -> Bool {
         guard !typeSize.isAccessibilitySize else { return false }
         let scale: CGFloat
@@ -383,24 +433,22 @@ enum CompactGameCard12616 {
         case .large: scale = 1.0
         case .xLarge: scale = 1.08
         case .xxLarge: scale = 1.15
-        default: return false // .xxxLarge drops Pregame column to context fallback
+        default: return false // .xxxLarge drops Pregame/Proj. column to context fallback
         }
-        // Crest + gaps (42) + Score (52 cap) + gutter (18) + Proj/Pregame (58 cap) + gap (14) + Now (90 cap).
-        let scoreW = min(44 * scale, 52)
-        let midW = min(48 * scale, 58)
-        let nowW = min(82 * scale, 90)
+        // Crest + gaps (42) + Score (44 cap) + gutter (18) + Proj/Pregame (44 cap) + gap (14) + Now (86 cap).
+        let scoreW = min(44 * scale, 44)
+        let midW = min(44 * scale, 44)
+        let nowW = min(82 * scale, 86)
         let nonNameBudget: CGFloat = 42 + scoreW + 18 + midW + 14 + nowW
         let availableNameWidth = availableRowWidth - nonNameBudget
         guard availableNameWidth >= 56 else { return false }
-        let approxCharWidth = 10.2 * scale
-        for shortName in [awayShortName, homeShortName] {
-            for word in shortName.split(separator: " ") {
-                if CGFloat(word.count) * approxCharWidth > availableNameWidth {
-                    return false
-                }
-            }
-        }
-        return true
+        let nameSize = uniformCardNameFontSize(scaledBaseSize: HeadlineStyleTable199.nameBaseSize(.card) * scale)
+        let widestWord = CardTeamNameSizing.widestWordWidth(
+            names: [awayShortName, homeShortName],
+            fontSize: nameSize,
+            weight: .bold
+        )
+        return widestWord <= availableNameWidth
     }
 }
 

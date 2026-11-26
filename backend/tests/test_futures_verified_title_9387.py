@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from fastapi import Request
 from sqlalchemy.dialects import postgresql
 
 import app.routes.futures as futures_routes
@@ -448,6 +449,103 @@ async def timeline(mid, markets, representation=None, top=10):
 
 def by_name(payload, name, key="outcomes"):
     return next(o for o in payload[key] if o["name"] == name)
+
+
+@pytest.mark.usefixtures("opening_seating_off")
+async def test_sports_feed_and_saved_pin_read_the_same_title_13500(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from app.dependencies.auth import get_optional_user
+    from app.routes import feed
+    from app.services.database import get_db
+    from app.utils import futures_page_cache, request_cache
+    from tests.integration.conftest import _make_mock_result
+    from tests.integration.test_route_feed_prewarm import _RecordingRedis, _install_redis
+
+    markets = trio()
+    feed_db = AsyncMock()
+    feed_db.execute.return_value = _make_mock_result()
+    detail_db = _DB(markets)
+    api = FastAPI()
+    api.include_router(feed.router, prefix="/api/feed")
+    api.include_router(futures_routes.router, prefix="/api/futures")
+
+    async def fixture_db(request: Request):
+        yield feed_db if request.url.path == "/api/feed" else detail_db
+
+    async def anonymous():
+        return None
+
+    api.dependency_overrides[get_db] = fixture_db
+    api.dependency_overrides[get_optional_user] = anonymous
+    monkeypatch.setattr(futures_routes, "_VERIFIED_TITLE_CACHE", {})
+    monkeypatch.setattr(futures_routes, "_verified_title_cache_seconds", lambda: 30)
+    request_cache._reset_last_good_for_tests()
+    futures_page_cache._reset_for_tests()
+    feed_url = "/api/feed?limit=50&offset=0&mode=sports"
+    detail_url = f"/api/futures/{ODDS_ID}"
+
+    def top(payload):
+        return sorted(payload["outcomes"], key=lambda row: row["probability"] or -1, reverse=True)[:3]
+
+    def visible(rows):
+        return [
+            (row["id"], row["name"], row["probability"], row.get("rendered_percent"), row["source_mark"])
+            for row in rows
+        ]
+
+    try:
+        with _at():
+            async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as client:
+                raw = await client.get(detail_url)
+                assert raw.status_code == 200, raw.text
+                source = raw.json()
+                card = {"type": "futures", "data": {
+                    "id": ODDS_ID, "source": "odds_api", "status": "open",
+                    "top_outcomes": top(source),
+                }, "headline": "Source-only points"}
+                _install_redis(monkeypatch, _RecordingRedis(stale_payload={
+                    "items": [card], "total": 1, "limit": 50, "offset": 0, "has_more": False,
+                }))
+
+                cold = await client.get(feed_url)
+                assert cold.status_code == 200
+                assert all(row["probability"] is None for row in cold.json()["items"][0]["data"]["top_outcomes"])
+                assert detail_db.kinds.count("candidates") == 0
+
+                result = await client.get(detail_url, params={"representation": VERIFIED})
+                assert result.status_code == 200
+                detail_payload = result.json()
+                assert detail_payload["representation"] == VERIFIED
+                assert visible(top(detail_payload)) != visible(top(source))
+                events_before = feed_db.execute.await_count
+                sports = await client.get(feed_url)
+                assert sports.status_code == 200
+                assert sports.headers["x-feed-cache"] == "stale_hit"
+                item = sports.json()["items"][0]
+                assert visible(item["data"]["top_outcomes"]) == visible(top(detail_payload))
+                assert item["headline"] is None
+                assert feed_db.execute.await_count == events_before
+                assert detail_db.kinds.count("candidates") == 1
+
+                # A subsequent snapshot loses the other venues. Both reader
+                # paths go back to the same admitted source rows.
+                detail_db.markets = {ODDS_ID: markets[0]}
+                futures_routes._VERIFIED_TITLE_CACHE.clear()
+                refusal = await client.get(detail_url, params={
+                    "representation": VERIFIED, "fresh": "true",
+                })
+                assert refusal.status_code == 200
+                assert refusal.json()["representation"] == "source"
+                fallback = await client.get(feed_url)
+                assert fallback.status_code == 200
+                assert visible(fallback.json()["items"][0]["data"]["top_outcomes"]) == visible(top(refusal.json()))
+    finally:
+        futures_page_cache._reset_for_tests()
+        request_cache._reset_last_good_for_tests()
 
 
 NEW_DETAIL_KEYS = {"representation", "question_identity", "contributing_sources"}

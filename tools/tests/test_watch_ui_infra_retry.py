@@ -179,6 +179,37 @@ class LaunchNeverAcceptedTests(unittest.TestCase):
         self.assertIn("timeout-minutes: 10", step)
         self.assertIn("if: always()", step)
 
+    def test_pre_connect_and_simulator_service_interruptions_are_retried_only_without_real_failures(self):
+        samples = (
+            "Runner encountered an error (Early unexpected exit, operation never finished bootstrapping - no restart will be attempted)",
+            "Runner encountered an error (Failed to establish communication with the test runner.)",
+            "The test runner failed to initialize for UI testing.",
+            "CoreSimulatorService: Connection interrupted during boot",
+            "SimLaunchHostService: Connection interrupted",
+            "Simulator device failed to launch com.bainluck.Bain-Luck.watchkitapp with error: RequestDenied",
+        )
+        for sample in samples:
+            with self.subTest(sample=sample):
+                self.assertIsNotNone(infra.infra_abort(sample))
+                failed = "/x/PickerAliasJourneyTests.swift:12: error: -[BainLuckWatchUITests.PickerAliasJourneyTests testX] : XCTAssertTrue failed\n"
+                self.assertIsNone(infra.infra_abort(failed + "\n" + sample))
+                overrun = "Test Case '-[BainLuckWatchUITests.PickerAliasJourneyTests testX]' exceeded execution time allowance of 5 minutes.\n"
+                self.assertIsNone(infra.infra_abort(overrun + "\n" + sample))
+
+    def test_stage_guard_and_receipt_steps_have_five_minute_timeout(self):
+        workflow = (ROOT / ".github/workflows/watch-mvp.yml").read_text()
+        for step_name in (
+            "Bound the execution step independently of its child supervisor",
+            "Keep failed or interrupted execution receipts unpaid",
+        ):
+            step = workflow.split(f"- name: {step_name}", 1)[1].split("\n      - ", 1)[0]
+            self.assertIn("timeout-minutes: 5", step, step_name)
+
+    def test_execute_readiness_recovers_once_via_pair_reboot(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        execute_boot = harness.split("products-verification.json\"", 1)[1].split("XCODE_ARGS=", 1)[0]
+        self.assertIn("reboot_pair_until_ready", execute_boot)
+
 
 CLOCKFACE_CASE = "Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests testColdActualWidgetTapRetainsOfflineReading]'"
 CLOCKFACE_OVERRUN = (

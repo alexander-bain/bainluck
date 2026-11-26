@@ -357,8 +357,8 @@ jobs:
           exit 1
         }
         cat /tmp/onboarding13338.txt
-        grep -qE "[^0-9]17 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
-          echo "::error::#13338 onboarding gate did not run all seventeen cases"
+        grep -qE "[^0-9]18 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
+          echo "::error::#13338 onboarding gate did not run all eighteen cases"
           exit 1
         }
     - name: "#12519 team-merge dedup keeps distinct names (real Postgres)"
@@ -408,7 +408,7 @@ jobs:
     - name: "#5821 and #10520 real-Postgres gates"
       id: db_12612_shared_5821_10520
       if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
-      run: bash ../.github/scripts/run-12612-pg-gates.sh shared tests/test_polymarket_container_sibling_5821.py tests/test_repair_10520_keeper_current_anchor.py tests/integration/test_stale_betting_e2e_13496_pg.py
+      run: bash ../.github/scripts/run-12612-pg-gates.sh shared tests/test_polymarket_container_sibling_5821.py tests/test_repair_10520_keeper_current_anchor.py tests/integration/test_stale_betting_e2e_13496_pg.py tests/integration/test_unified_game_chance_parity_13508_pg.py
     - id: db_010_typeahead_next_fixture_contracts_or_next
       name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
       if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
@@ -2385,8 +2385,8 @@ jobs:
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_live_writers_observation_order_8910_pg.py \\\n  -v -rs 2>&1 | tee /tmp/writers8910.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/writers8910.txt; then\n  echo \"::error::#8910 other-writers gate SKIPPED \u2014 the gate did not\
-        \ run\"\n  exit 1\nfi\ngrep -qE \"[^0-9]18 passed[,[:space:]]\" /tmp/writers8910.txt || {\n  echo \"::error::#8910 other-writers gate\
-        \ did not run all eighteen cases\"\n  exit 1\n}\n"
+        \ run\"\n  exit 1\nfi\ngrep -qE \"[^0-9]19 passed[,[:space:]]\" /tmp/writers8910.txt || {\n  echo \"::error::#8910 other-writers gate\
+        \ did not run all nineteen cases\"\n  exit 1\n}\n"
     - id: db_295_837_every_benchmark_price_reaches_the_nu
       name: '#837 every benchmark price reaches the number at the default floor (real Postgres)'
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
@@ -2485,7 +2485,7 @@ jobs:
     - id: db_308_12288_grouping_preview_loads_every_candid
       name: '#12288 grouping preview loads every candidate definition on real Postgres'
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-      run: "python -m pytest tests/integration/test_container_machinery_snapshot_12288_pg.py -v -rs > /tmp/machinerysnapshot12288.txt 2>&1 || {\n  cat /tmp/machinerysnapshot12288.txt\n  exit 1\n}\ncat /tmp/machinerysnapshot12288.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/machinerysnapshot12288.txt; then\n  echo \"::error::#12288 machinery snapshot gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]5 passed([,[:space:]]|$)\" /tmp/machinerysnapshot12288.txt || {\n  echo \"::error::#12288 machinery snapshot gate did not run all five cases\"\n  exit 1\n}\n"
+      run: "python -m pytest tests/integration/test_container_machinery_snapshot_12288_pg.py -v -rs > /tmp/machinerysnapshot12288.txt 2>&1 || {\n  cat /tmp/machinerysnapshot12288.txt\n  exit 1\n}\ncat /tmp/machinerysnapshot12288.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/machinerysnapshot12288.txt; then\n  echo \"::error::#12288 machinery snapshot gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]6 passed([,[:space:]]|$)\" /tmp/machinerysnapshot12288.txt || {\n  echo \"::error::#12288 machinery snapshot gate did not run all six cases\"\n  exit 1\n}\n"
     - name: "#12612 feed static tag filter (real Postgres)"
       id: db_12612_feed_static_tag_filter
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
@@ -2495,7 +2495,19 @@ jobs:
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
       env:
         CALIBRATION_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_cal12612
-      run: bash ../.github/scripts/run-12612-pg-gates.sh cal tests/test_calibration_examples_canonical_262.py tests/test_calibration_canonical_pg.py tests/test_calibration_horizon_honest_263.py
+      run: bash ../.github/scripts/run-12612-pg-gates.sh cal tests/test_calibration_examples_canonical_262.py tests/test_calibration_canonical_pg.py tests/test_calibration_horizon_honest_263.py tests/test_time_horizon_bounded_chunks.py
+    - name: "#13606 history since_start SQL pushdown plans and oracle equivalence (real Postgres)"
+      id: db_13606_history_since_start_pushdown
+      if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+      run: "set -o pipefail\npython -m pytest tests/integration/test_history_since_start_pushdown_13606_pg.py \\\n  -v -rs 2>&1 | tee /tmp/historysince13606.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/historysince13606.txt; then\n  echo \"::error::#13606 history since_start gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\ngrep -qE \"[^0-9]5 passed([,[:space:]]|$)\" /tmp/historysince13606.txt || {\n  echo \"::error::#13606 history since_start gate did not run all five cases\"\n  exit 1\n}\n"
+    - name: "#13573 team futures Q1 rewrite equivalence (real Postgres)"
+      id: db_13573_team_futures_q1_pg
+      if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+      run: "python -m pytest tests/integration/test_team_futures_q1_pg_13573.py -v -rs > /tmp/teamfuturesq113573.txt 2>&1 || {\n  cat /tmp/teamfuturesq113573.txt\n  exit 1\n}\ncat /tmp/teamfuturesq113573.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/teamfuturesq113573.txt; then\n  echo \"::error::#13573 team futures Q1 gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]1 passed([,[:space:]]|$)\" /tmp/teamfuturesq113573.txt || {\n  echo \"::error::#13573 team futures Q1 gate did not execute its case\"\n  exit 1\n}\n"
+    - name: "#12818 search untraded 60-row window guard (real Postgres)"
+      id: db_12818_search_untraded_window_guard
+      if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+      run: bash ../.github/scripts/run-12612-pg-gates.sh search12818 tests/test_search_untraded_window_guard_12818.py
 
     - name: "#12252 shared tail \u2014 upload this attempt's 55-A retries for the flake sentinel"
       id: db_flaky_retries_upload

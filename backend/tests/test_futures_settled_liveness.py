@@ -724,3 +724,42 @@ class TestTheSeventhPriceAsker:
         assert out["terminal"] == "no_work"
         assert out["reason"] == "all_registered_markets_settled"
         assert out["conditions_settled"] == 1
+
+
+class TestSplitLivenessFormAndVenuePoll30s:
+    """#13742 — CTE-split selectors share one home in ``futures_liveness``."""
+
+    def test_settled_predicate_composes_the_named_split_clauses(self):
+        settled = _norm(liveness.SETTLED_PREDICATE_SQL)
+        assert _norm(liveness.WINNER_NOT_SETTLED_SQL) in settled
+        assert _norm(liveness.VENUE_SETTLED_LIVE_SQL) in settled
+
+    def test_split_market_bounds_carry_base_and_venue_stamp_without_winner_probe(self):
+        split_sql = _norm(liveness.LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL)
+        assert _norm(liveness.BASE_LIVENESS_SQL) in split_sql
+        assert _norm(liveness.VENUE_SETTLED_LIVE_SQL) in split_sql
+        assert "not exists" not in split_sql
+        assert "fo_w" not in split_sql
+
+    def test_split_winner_sql_reads_only_the_unambiguous_true_arm(self):
+        winner_sql = _norm(liveness.settled_one_winner_markets_sql())
+        assert "fo_is_winner is true" in winner_sql
+        assert "is_winner = false" not in winner_sql
+        assert "is_winner is not null" not in winner_sql
+        assert "is_winner is not true" not in winner_sql
+
+    def test_venue_poll_30s_composes_the_shared_split_liveness_form(self):
+        import inspect
+
+        from app.tasks import venue_poll_30s as v
+
+        src = inspect.getsource(v)
+        assert "VENUE_SETTLED_KEY" not in src
+        assert "_VENUE_SETTLED_CUTOFF_SQL" not in src
+        for builder in (v.kalshi_population_sql, v.polymarket_population_sql):
+            for arm in (False, True):
+                sql = _norm(builder(open_arm=arm))
+                assert _norm(liveness.LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL) in sql
+                assert _norm(liveness.EXACTLY_ONE_WINNER_SQL) in sql
+                assert _norm(liveness.settled_one_winner_markets_sql()) in sql
+

@@ -9,9 +9,11 @@
 // individual-competitor event via /api/event/{key}.
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { useEventConceptPriceStream } from "@/hooks/useEventConceptPriceStream";
+import { usePairedMetricSetStream } from "@/hooks/usePairedMetricSetStream";
 import Link from "next/link";
 import { fetchEventConcept, fetchPairedMetricsByCeremony } from "@/lib/api";
 import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
@@ -134,7 +136,7 @@ export default function EventConceptPage() {
     return () => clearTimeout(timer);
   }, [decodedKey]);
 
-  const { data, error, isLoading, isValidating } = useSWR(
+  const { data, error, isLoading, isValidating, mutate: mutateConcept } = useSWR(
     decodedKey ? ["event-concept", decodedKey] : null,
     () => fetchEventConcept(decodedKey),
     {
@@ -180,12 +182,23 @@ export default function EventConceptPage() {
   const isOscarsConcept =
     domain === "awards" &&
     (slug === "oscars" || slug === "the-oscars" || slug.startsWith("oscars-"));
-  const { data: oscarsPairedData } = useSWR(
+  const { data: oscarsPairedData, mutate: mutatePaired } = useSWR(
     isOscarsConcept ? ["paired-metrics-ceremony", "oscars"] : null,
     () => fetchPairedMetricsByCeremony("oscars"),
     { revalidateOnFocus: false },
   );
   const oscarsPairedSets = oscarsPairedData?.sets ?? [];
+
+  const refreshConcept = useCallback(() => {
+    void mutateConcept();
+  }, [mutateConcept]);
+  const refreshPaired = useCallback(() => {
+    void mutatePaired();
+  }, [mutatePaired]);
+
+  // #10090: live price stream (authority-v3 matchups + market_preview + server-blended invalidations).
+  const liveData = useEventConceptPriceStream(data, refreshConcept);
+  usePairedMetricSetStream(oscarsPairedSets, refreshPaired, isOscarsConcept);
 
   // L2-113: canonicalize + upgrade to the pretty, self-resolving slug the backend
   // supplies (combat: headliner+date). Discover/search cards link with the bare
@@ -256,7 +269,8 @@ export default function EventConceptPage() {
     );
   }
 
-  const { event, primary, children, movers } = data;
+  const conceptData = liveData ?? data;
+  const { event, primary, children, movers } = conceptData;
   // L2-121: the shared PropsSection body (THE SCRIPT → THE DIVERGENCE) — the ONE
   // props component under the DUEL/FIELD/CONTAINER heroes — replaces the plain
   // EventProps WHERE the envelope supplies props-script marks (golf today). Each
@@ -268,9 +282,9 @@ export default function EventConceptPage() {
   // L2-135 Item 3: the scoring/records families render as QuantityGroup ladders in
   // their own section, so drop their single-row props-script marks here — one
   // question, one place ("don't double-render").
-  const scoringIds = scoringRecordMarketIds(data.children);
-  const scoringFamilyCount = scoringRecordChildren(data.children).length;
-  const propMarks: PropMark[] = (data.props_script ?? [])
+  const scoringIds = scoringRecordMarketIds(conceptData.children);
+  const scoringFamilyCount = scoringRecordChildren(conceptData.children).length;
+  const propMarks: PropMark[] = (conceptData.props_script ?? [])
     .filter((p) => !(typeof p.market_id === "number" && scoringIds.has(p.market_id)))
     .map((p, i) => ({
       key: p.key ?? i,
@@ -295,7 +309,7 @@ export default function EventConceptPage() {
   const hasPropsScript = propMarks.length > 0;
   const hasScoringRecords = scoringFamilyCount > 0;
   const propScriptIds = new Set(
-    (data.props_script ?? [])
+    (conceptData.props_script ?? [])
       .map((p) => p.market_id ?? p.key)
       .filter((v): v is number => typeof v === "number"),
   );
@@ -354,7 +368,7 @@ export default function EventConceptPage() {
   // (settled-means-settled).
   const finishColumns =
     hasWinnerField && !isSettled
-      ? renderedFinishColumns(data).map((c) => ({ key: c.key, label: c.label }))
+      ? renderedFinishColumns(conceptData).map((c) => ({ key: c.key, label: c.label }))
       : [];
   // L2-132: the WINNER EVOLUTION chart — the winner field's probability path so
   // far (the tournament's story to date). Soccer (World Cup) has no useful race
@@ -428,23 +442,23 @@ export default function EventConceptPage() {
 
       <EventHeader
         event={event}
-        marketsTracked={marketsTracked(data)}
+        marketsTracked={marketsTracked(conceptData)}
         nav={nav}
         fallbackName={decodedKey}
-        nextEdition={data.competition?.next_edition}
+        nextEdition={conceptData.competition?.next_edition}
       />
 
       {/* Same-day live feature (2026-07-19): AI live-commentary box — TOP of page,
           The Open Championship only, LIVE only. Backend emits `commentary` solely
           for that scoped, in-play case; honest-empty otherwise. */}
-      <CommentaryBox commentary={data.commentary} live={isLive} />
+      <CommentaryBox commentary={conceptData.commentary} live={isLive} />
 
       {/* UX-P065: a settled edition of a standing competition says when the
           competition returns. Between editions is the DEFAULT state of a major's
           page (~51 weeks a year), and until now the page said nothing at all.
           Sits above the settled hero: it frames the champion, it never replaces
           them — settled stays settled. Honest-empty when no next edition. */}
-      <NextEditionStrip competition={data.competition} settled={isSettled} />
+      <NextEditionStrip competition={conceptData.competition} settled={isSettled} />
 
       <MoversStrip movers={movers} show={SHOW_MOVERS} />
 
@@ -578,7 +592,7 @@ export default function EventConceptPage() {
           (EventProps returns null on no items — the common no-leftover case). */}
       {event.domain === "awards" ? <MatchupsRail items={propChildren} sport="awards" title="Nominations and more" /> : <EventProps
         items={propChildren}
-        sections={data.sections}
+        sections={conceptData.sections}
         title={hasPropsScript ? "Other markets" : undefined}
         anchorId={hasPropsScript ? "other-markets" : undefined}
         domain={event.domain}
@@ -587,7 +601,7 @@ export default function EventConceptPage() {
       {/* L2-135: Scoring & Records — the Under-N families as QuantityGroup ladders,
           not a wall of numbers. Suppressed once settled (settled-means-settled). */}
       {hasScoringRecords && !isSettled && (
-        <ScoringRecordsLadders items={data.children} />
+        <ScoringRecordsLadders items={conceptData.children} />
       )}
 
       {/* Non-winner-field settled events (combat/soccer) keep the completed-journey

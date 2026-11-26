@@ -30,6 +30,8 @@ final class FinishedChanceAndMoreSport13168Tests: XCTestCase {
       "hero_probability_source": "settled",
       "hero_settled_result": "away",
       "event_tags": ["sport:hockey", "competitive_structure:best_of_7"],
+      "home_series_wins": 0,
+      "away_series_wins": 0,
       "away_team_data": {
         "primary_color": "#F74902",
         "abbreviation": "PHI"

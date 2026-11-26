@@ -142,6 +142,9 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         # hands back a task_id, so its result must be retained or that poll
         # never resolves.
         "app.tasks.matching_reconciliation",
+        # #13606 Part 1: dispatched on cold-miss from `routes/events.py::get_event_odds_history`
+        # (Condition 4); fire-and-forget, listed here so the route-scan guard matches.
+        "app.tasks.materialize_finished_event_charts",
         "app.tasks.merge_degenerate_combat_events",
         "app.tasks.merge_duplicate_events",
         "app.tasks.null_impossible_both_sides_openings",
@@ -160,6 +163,9 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.recover_datagolf_participation",
         "app.tasks.refresh_event_concept",
         "app.tasks.refresh_hub",
+        # #13584: dispatched by `POST /api/containers/preview/kit-v1-real-sets/refresh`
+        # so admin/preview refreshes return a task_id whose status remains pollable.
+        "app.tasks.refresh_kit_v1_real_sets_preview",
         "app.tasks.refresh_league",
         # LAT-P138: dispatched by `routes/prop_families.py` after it serves the
         # 24h mirror, the same shape as the three above.

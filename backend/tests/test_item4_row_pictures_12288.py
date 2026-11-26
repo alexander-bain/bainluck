@@ -25,6 +25,8 @@ ROW_ART_ENABLED_SLUGS = (
     "machinery-2026-summed-up",
     "machinery-cast-delayed-cancelled",
     "machinery-stage-and-cover",
+    "machinery-tv-and-gaming-2026",
+    "machinery-chess-milestones-and-curiosities",
 )
 
 ROW_ART_HIDDEN_SLUGS = (
@@ -169,14 +171,18 @@ async def test_complete_card_keeps_pictures_while_partial_section_drops_row_pict
     assert len(pop_rows) == 3
     # Discover card has 3/3 pictured rows (Mariah Carey, Beyoncé, Taylor Swift) -> keeps all 3.
     assert all((r.get("art") or {}).get("url") for r in pop_rows), pop_rows
-    # Set-page section has unpictured rows (Simeon Barclay, Kabawa) -> all-or-nothing strips section row art.
+    # Decision 387: A (#13605): set-page section keeps verified pictures on pictured rows
+    # (Beyoncé, Taylor Swift, Elon Musk) and keeps clean monogram initials on unpictured rows.
     pop_sec_items = pop_res.sections[0]["visual_block"]["items"]
     assert len(pop_sec_items) == 6
-    assert all(
-        not (o.get("art") or {}).get("url")
-        for it in pop_sec_items
-        for o in (it.get("outcomes") or ())
-    ), pop_sec_items
+    by_mid = {int(it["market_id"]): it for it in pop_sec_items}
+    for pictured_mid in (67804457, 108306, 109309, 108254):
+        assert (by_mid[pictured_mid]["outcomes"][0]["art"] or {}).get("url")
+    for unpictured_mid in (58903285, 67804475):
+        u_art = by_mid[unpictured_mid]["outcomes"][0]["art"]
+        assert not u_art.get("url")
+        assert u_art.get("kind") == "monogram"
+        assert u_art.get("initials")
 
     # Complete section (every row pictured on card AND set page) keeps all pictures on both.
     stage_defn = load_machinery_definition(paths_by_slug["machinery-stage-and-cover"])
@@ -228,7 +234,7 @@ async def test_complete_card_keeps_pictures_while_partial_section_drops_row_pict
 
 
 @pytest.mark.asyncio
-async def test_partial_card_and_section_strip_all_row_pictures_no_monograms_beside_photos() -> None:
+async def test_partial_card_and_section_keep_held_pictures_with_monogram_fallback_387a() -> None:
     clear_fun_markets_cache()
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
 
@@ -264,12 +270,22 @@ async def test_partial_card_and_section_strip_all_row_pictures_no_monograms_besi
     ]
     space_res = await produce_container_machinery({"markets": space_markets, "teams": []}, space_defn, now=NOW)
     assert hasattr(space_res, "machinery_card"), space_res
-    assert all((r.get("art") or {}).get("url") is None for r in space_res.machinery_card["rows"])
-    assert all(
-        not (o.get("art") or {}).get("url")
-        for it in space_res.sections[0]["visual_block"]["items"]
-        for o in (it.get("outcomes") or ())
-    )
+    # Decision 387: A (#13605): keep held flag on United States/China row while unpictured siblings stay monograms with initials.
+    card_by_mid = {int(r["market_id"]): r for r in space_res.machinery_card["rows"]}
+    assert (card_by_mid[108247]["art"] or {}).get("url")
+    for unpictured_mid in (108300, 108236):
+        u_art = card_by_mid[unpictured_mid]["art"]
+        assert u_art.get("url") is None
+        assert u_art.get("kind") == "monogram"
+        assert u_art.get("initials")
+
+    sec_by_mid = {int(it["market_id"]): it for it in space_res.sections[0]["visual_block"]["items"]}
+    assert (sec_by_mid[108247]["outcomes"][0]["art"] or {}).get("url")
+    for unpictured_mid in (108300, 108236):
+        u_art = sec_by_mid[unpictured_mid]["outcomes"][0]["art"]
+        assert u_art.get("url") is None
+        assert u_art.get("kind") == "monogram"
+        assert u_art.get("initials")
 
     engaged_defn = load_machinery_definition(paths_by_slug["machinery-who-gets-engaged"])
     engaged_markets = [

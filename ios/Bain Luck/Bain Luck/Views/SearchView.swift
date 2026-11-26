@@ -77,6 +77,8 @@ struct SearchView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @FocusState private var isSearchFocused: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var path: NavigationPath
     /// #10878 — the Mac window's kept place for this screen: the query and
     /// results (the view model), the open detail and the results' scroll
@@ -335,7 +337,10 @@ struct SearchView: View {
             Image(systemName: "magnifyingglass")
                 .font(.subheadline)
                 .foregroundStyle(isSearchFocused ? .primary : .secondary)
-            TextField("Search teams, games, futures...", text: $viewModel.query)
+            TextField(
+                dynamicTypeSize.isAccessibilitySize ? "Search" : "Search teams, games, futures...",
+                text: $viewModel.query
+            )
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
                 .focused($isSearchFocused)
@@ -424,8 +429,22 @@ struct SearchView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(isSelected ? Color.blue.opacity(0.15) : Color.cardBackgroundDark)
-                        .foregroundStyle(isSelected ? .blue : .primary)
+                        .background(
+                            Capsule().fill(
+                                isSelected
+                                    ? Color.blue.opacity(0.15)
+                                    : (colorScheme == .dark ? Color.cardBackground : DS.cardBg)
+                            )
+                        )
+                        .overlay(
+                            Capsule().stroke(
+                                isSelected
+                                    ? Color.blue.opacity(0.45)
+                                    : (colorScheme == .dark ? Color.white.opacity(0.14) : DS.border),
+                                lineWidth: 1
+                            )
+                        )
+                        .foregroundStyle(isSelected ? .blue : (colorScheme == .dark ? Color.primary : DS.textPrimary))
                         .clipShape(Capsule())
                     }
                 }
@@ -443,17 +462,13 @@ struct SearchView: View {
                 if !viewModel.recentSearches.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("Recent")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 4)
+                            emptySectionHeader13672("Recent")
                             Spacer()
                             Button {
                                 viewModel.clearRecentSearches()
                             } label: {
                                 Text("Clear")
-                                    .font(.caption)
+                                    .font(.caption.weight(.semibold))
                                     .foregroundStyle(.blue)
                             }
                         }
@@ -497,19 +512,16 @@ struct SearchView: View {
                         .padding(.vertical, 4)
                 }
 
-                // Tournaments with a hub screen. These navigate straight to the
-                // hub rather than seeding a text query, because the query is the
-                // thing that does not work: "US Open" matches no event text.
-                if !featuredTournaments.isEmpty {
+                // Tournaments currently being played, with a hub screen (#13671: omit
+                // finished tournaments from Browse/empty-state discovery while typed search
+                // below can still surface their archive hub when queried directly).
+                let activeTournaments = featuredTournaments.filter { $0.isBeingPlayed() }
+                if !activeTournaments.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Tournaments")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 4)
+                        emptySectionHeader13672("Tournaments")
 
                         FlowLayout(spacing: 8) {
-                            ForEach(featuredTournaments) { hub in
+                            ForEach(activeTournaments) { hub in
                                 quickSearchChip(icon: hub.icon, label: hub.title) {
                                     path.append(Route.tournamentHub(slug: hub.slug, name: hub.title))
                                 }
@@ -520,11 +532,7 @@ struct SearchView: View {
 
                 // Quick Search by Sport
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Browse by Sport")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
+                    emptySectionHeader13672("Browse by Sport")
 
                     FlowLayout(spacing: 8) {
                         ForEach(quickSearches) { item in
@@ -538,11 +546,7 @@ struct SearchView: View {
 
                 // Categories (navigate to dedicated views)
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Categories")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
+                    emptySectionHeader13672("Categories")
 
                     FlowLayout(spacing: 8) {
                         ForEach(categoryLinks) { item in
@@ -555,11 +559,7 @@ struct SearchView: View {
 
                 // Trending / Explore
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(viewModel.trendingSearches.isEmpty ? "Explore" : "Trending")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
+                    emptySectionHeader13672(viewModel.trendingSearches.isEmpty ? "Explore" : "Trending")
 
                     FlowLayout(spacing: 8) {
                         if viewModel.trendingSearches.isEmpty {
@@ -599,23 +599,51 @@ struct SearchView: View {
             .padding(.horizontal)
             .padding(.top, 12)
         }
+        .background(colorScheme == .dark ? Color.groupedBackground : DS.surface)
+    }
+
+    private func emptySectionHeader13672(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .textCase(.uppercase)
+            .tracking(0.5)
+            .foregroundStyle(colorScheme == .dark ? Color.secondary : DS.textSecondary)
+            .padding(.horizontal, 4)
     }
 
     private func quickSearchChip(icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 11))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(colorScheme == .dark ? Color.secondary : DS.textSecondary)
                 Text(label)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(colorScheme == .dark ? Color.primary : DS.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.cardBackgroundDark)
-            .clipShape(Capsule())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .frame(minHeight: 38)
+            .background(
+                Capsule().fill(colorScheme == .dark ? Color.cardBackground : DS.cardBg)
+            )
+            .overlay(
+                Capsule().stroke(
+                    colorScheme == .dark ? Color.white.opacity(0.14) : DS.border,
+                    lineWidth: 1
+                )
+            )
+            .shadow(
+                color: colorScheme == .dark ? .clear : Color.black.opacity(0.03),
+                radius: 2,
+                x: 0,
+                y: 1
+            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("search.quickChip.\(label)")
     }
 
     // MARK: - Suggestions
@@ -656,6 +684,7 @@ struct SearchView: View {
                     switch suggestion.type {
                     case "team":
                         if let slug = suggestion.teamSlug {
+                            trackSearchTap(type: "team", position: 0)
                             path.append(Route.teamDetail(slug: slug))
                         } else {
                             viewModel.query = suggestion.text
@@ -663,6 +692,7 @@ struct SearchView: View {
                         }
                     case "event":
                         if let eventId = suggestion.eventId {
+                            trackSearchTap(type: "event", position: 0)
                             path.append(Route.eventDetail(id: eventId))
                         } else {
                             viewModel.query = suggestion.text
@@ -670,6 +700,7 @@ struct SearchView: View {
                         }
                     case "futures":
                         if let marketId = suggestion.marketId {
+                            trackSearchTap(type: "futures", position: 0)
                             path.append(Route.futuresDetail(id: marketId))
                         }
                     default:
@@ -849,6 +880,14 @@ struct SearchView: View {
 
     // MARK: - Search Results
 
+    private func trackSearchTap(type: String, position: Int) {
+        AnalyticsService.trackSearchResultClick(
+            query: viewModel.query,
+            resultType: type,
+            position: position
+        )
+    }
+
     private func searchResults(_ results: SearchResponse) -> some View {
         List {
             // Tournament hubs the query names, above everything else.
@@ -861,10 +900,13 @@ struct SearchView: View {
             let hubs = featuredTournaments(matching: results.query)
             if !hubs.isEmpty {
                 Section {
-                    ForEach(hubs) { hub in
+                    ForEach(Array(hubs.enumerated()), id: \.element.id) { idx, hub in
                         NavigationLink(value: Route.tournamentHub(slug: hub.slug, name: hub.title)) {
                             searchTournamentRow(hub)
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            trackSearchTap(type: "tournament", position: idx)
+                        })
                         .macKeyboardRow(.tournamentHub(slug: hub.slug, name: hub.title), in: keyboardSelection)
                     }
                 } header: {
@@ -880,11 +922,15 @@ struct SearchView: View {
             let collectionEntries = SearchCollectionRows.entries(in: results)
             if !collectionEntries.isEmpty {
                 Section {
-                    ForEach(collectionEntries) { entry in
+                    ForEach(Array(collectionEntries.enumerated()), id: \.element.id) { idx, entry in
                         NavigationLink(value: entry.route) {
                             SearchCollectionRow(entry: entry)
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            trackSearchTap(type: "collection", position: idx)
+                        })
                         .macKeyboardRow(entry.route, in: keyboardSelection)
+                        .macResultMenu(entry.route)
                     }
                 } header: {
                     Label("Collections", systemImage: "square.stack.3d.up.fill")
@@ -911,11 +957,14 @@ struct SearchView: View {
             // Teams
             if let teams = results.teams, !teams.isEmpty {
                 Section {
-                    ForEach(teams) { team in
+                    ForEach(Array(teams.enumerated()), id: \.element.id) { idx, team in
                         if let slug = team.slug {
                             NavigationLink(value: Route.teamDetail(slug: slug)) {
                                 searchTeamRow(team)
                             }
+                            .simultaneousGesture(TapGesture().onEnded {
+                                trackSearchTap(type: "team", position: idx)
+                            })
                             .macKeyboardRow(.teamDetail(slug: slug), in: keyboardSelection)
                         }
                     }
@@ -951,6 +1000,8 @@ struct SearchView: View {
                         // masonry deal is what keeps it packed.
                         iPadCardGrid(results.results) { event in
                             Button {
+                                let pos = results.results.firstIndex(where: { $0.id == event.id }) ?? 0
+                                trackSearchTap(type: "event", position: pos)
                                 path.append(Route.eventDetail(id: event.id))
                             } label: {
                                 searchEventCard183A(event)
@@ -960,10 +1011,13 @@ struct SearchView: View {
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else {
-                        ForEach(results.results) { event in
+                        ForEach(Array(results.results.enumerated()), id: \.element.id) { idx, event in
                             NavigationLink(value: Route.eventDetail(id: event.id)) {
                                 searchEventCard183A(event)
                             }
+                            .simultaneousGesture(TapGesture().onEnded {
+                                trackSearchTap(type: "event", position: idx)
+                            })
                             .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
                             .macResultMenu(.eventDetail(id: event.id))
                         }
@@ -996,17 +1050,23 @@ struct SearchView: View {
             let families = results.futuresFamilies ?? []
             let flatFutures = SearchGrouping.flatFutures(results.futures, families: families)
 
-            ForEach(families) { family in
+            ForEach(Array(families.enumerated()), id: \.element.id) { famIdx, family in
                 Section {
                     NavigationLink(value: Route.futuresDetail(id: family.headline.id)) {
                         searchFamilyRow(family.headline, prominent: true)
                     }
+                    .simultaneousGesture(TapGesture().onEnded {
+                        trackSearchTap(type: "futures", position: famIdx)
+                    })
                     .macKeyboardRow(.futuresDetail(id: family.headline.id), in: keyboardSelection)
                     .macResultMenu(.futuresDetail(id: family.headline.id))
-                    ForEach(family.members) { member in
+                    ForEach(Array(family.members.enumerated()), id: \.element.id) { memIdx, member in
                         NavigationLink(value: Route.futuresDetail(id: member.id)) {
                             searchFamilyRow(member, prominent: false)
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            trackSearchTap(type: "futures", position: memIdx + 1)
+                        })
                         .macKeyboardRow(.futuresDetail(id: member.id), in: keyboardSelection)
                         .macResultMenu(.futuresDetail(id: member.id))
                     }
@@ -1048,11 +1108,14 @@ struct SearchView: View {
             )
             if !concepts.isEmpty {
                 Section {
-                    ForEach(concepts) { concept in
+                    ForEach(Array(concepts.enumerated()), id: \.element.id) { idx, concept in
                         if let marketId = concept.marketId {
                             NavigationLink(value: Route.futuresDetail(id: marketId)) {
                                 searchConceptRow(concept)
                             }
+                            .simultaneousGesture(TapGesture().onEnded {
+                                trackSearchTap(type: "event_concept", position: idx)
+                            })
                             .macKeyboardRow(.futuresDetail(id: marketId), in: keyboardSelection)
                             .macResultMenu(.futuresDetail(id: marketId))
                         }
@@ -1074,6 +1137,8 @@ struct SearchView: View {
                         // below it.
                         iPadCardGrid(flatFutures) { market in
                             Button {
+                                let pos = flatFutures.firstIndex(where: { $0.id == market.id }) ?? 0
+                                trackSearchTap(type: "futures", position: pos)
                                 path.append(Route.futuresDetail(id: market.id))
                             } label: {
                                 searchFuturesRow(market)
@@ -1083,10 +1148,13 @@ struct SearchView: View {
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else {
-                        ForEach(flatFutures) { market in
+                        ForEach(Array(flatFutures.enumerated()), id: \.element.id) { idx, market in
                             NavigationLink(value: Route.futuresDetail(id: market.id)) {
                                 searchFuturesRow(market)
                             }
+                            .simultaneousGesture(TapGesture().onEnded {
+                                trackSearchTap(type: "futures", position: idx)
+                            })
                             .macKeyboardRow(.futuresDetail(id: market.id), in: keyboardSelection)
                             .macResultMenu(.futuresDetail(id: market.id))
                         }
@@ -1154,6 +1222,7 @@ struct SearchView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .listRowBackground(Color.clear)
+                .noteReviewPromptTrouble12304()
 
             case .empty:
                 ContentUnavailableView(

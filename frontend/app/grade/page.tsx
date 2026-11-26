@@ -343,6 +343,19 @@ function Shell({ children, tally }: { children: React.ReactNode; tally?: string 
             Grade proposed grouping cards beside best single member →
           </Link>
         </p>
+        <p className="mt-2 text-center text-xs text-text-muted">
+          <Link href="/grade/forms" className="hover:underline">
+            Forms blind pile sort (363: A) →
+          </Link>
+          {" · "}
+          <Link href="/grade/containers" className="hover:underline">
+            Containers blind 20 (363: A) →
+          </Link>
+          {" · "}
+          <Link href="/grade/sets-v2" className="hover:underline">
+            Sets blind 40 v2 (#13544) →
+          </Link>
+        </p>
       </div>
     </div>
   );

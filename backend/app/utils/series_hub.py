@@ -1452,10 +1452,27 @@ async def _load_series_hub_from_db(
             if eid in cards_by_id:
                 games.append(dict(cards_by_id[eid]))
 
-    # Load series markets by series_code or explicit series_market_ids
+    # Load series markets by explicit series_market_ids when given, or by anchored
+    # Kalshi ticker prefixes when only series_code is available (avoids leading-%
+    # ILIKE full-table scans on futures_markets — #13718).
     mkt_clauses = []
-    if series_code:
-        mkt_clauses.append(FuturesMarket.external_id.ilike(f"%{series_code}%"))
+    if series_code and not series_market_ids:
+        sport_name = str(rule.get("sport") or "").strip().lower()
+        sport_prefixes_map = {
+            "baseball_mlb": ("MLB",),
+            "basketball_nba": ("NBA",),
+            "icehockey_nhl": ("NHL",),
+            "basketball_wnba": ("WNBA",),
+        }
+        sport_codes = sport_prefixes_map.get(sport_name, ("MLB", "NBA", "NHL", "WNBA"))
+        ticker_prefixes = [
+            FuturesMarket.external_id.like(f"KX{sp}{fam}-{series_code}%")
+            for sp in sport_codes
+            for fam in ("SERIES", "SERIESSCORE", "SERIESGAMES", "SERIESSPREAD")
+        ]
+        mkt_clauses.append(
+            (FuturesMarket.source == "kalshi") & or_(*ticker_prefixes)
+        )
     if series_market_ids:
         mkt_clauses.append(FuturesMarket.id.in_(series_market_ids))
     if prop_market_ids:

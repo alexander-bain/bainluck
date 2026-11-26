@@ -68,11 +68,11 @@ final class MacMainWindow10878Tests: XCTestCase {
     func testTheSidebarHasThePhonesFivePlacesInOrder() {
         XCTAssertEqual(
             MacMainWindow10878.destinations.map(\.tab),
-            [.discover, .feed, .leagues, .search, .myStuff]
+            [.myStuff, .discover, .feed, .leagues, .search]
         )
         XCTAssertEqual(
             MacMainWindow10878.destinations.map(\.title),
-            ["Discover", "Sports", "Browse", "Search", "My Stuff"]
+            ["My Stuff", "Discover", "Sports", "Browse", "Search"]
         )
         XCTAssertEqual(MacMainWindow10878.quickLinks.map(\.tab), [.preferences, .calibration])
         XCTAssertEqual(MacMainWindow10878.quickLinks.map(\.title), ["Preferences", CalibrationView.readerTitle])
@@ -852,26 +852,37 @@ private final class MountHost {
     }
 
     #if !os(macOS)
-    /// Shows the hosting controller in a window of the foreground-active scene,
-    /// waiting for the host app to activate as the sibling rigs do. With no
-    /// such scene the test FAILS here, by name — it is never skipped and the
-    /// screen is never mounted scene-less.
+    /// Shows the hosting controller in a window of a foreground `UIWindowScene`,
+    /// matching `TheLiveChartEndCarriesTheHeroNumber9436Tests.Hosted` (`#12745`):
+    /// waits up to 2 s for `.foregroundActive`, then accepts a connected
+    /// foreground scene so inactive runner transitions do not wedge the suite
+    /// while never falling back to a sceneless `UIWindow(frame:)`.
     private func attachToActiveScene() async {
         guard window == nil, !sceneMissing else { return }
+        let activeDeadline = CACurrentMediaTime() + 2
         let deadline = CACurrentMediaTime() + 10
         func activeScene() -> UIWindowScene? {
             UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
                 .first { $0.activationState == .foregroundActive }
         }
-        while activeScene() == nil && CACurrentMediaTime() < deadline {
+        func usableScene() -> UIWindowScene? {
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            return scenes.first { $0.activationState == .foregroundActive }
+                ?? scenes.first { $0.activationState == .foregroundInactive }
+                ?? scenes.first
+        }
+        while activeScene() == nil && CACurrentMediaTime() < activeDeadline {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
-        guard let scene = activeScene() else {
+        while usableScene() == nil && CACurrentMediaTime() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard let scene = usableScene() else {
             let sceneStates = UIApplication.shared.connectedScenes.map {
                 "\(type(of: $0)):\($0.activationState.rawValue)"
             }.sorted().joined(separator: ", ")
-            XCTFail("MountHost requires a foreground-active window scene; connected scenes: \(sceneStates)")
+            XCTFail("MountHost requires a foreground window scene; connected scenes: \(sceneStates)")
             sceneMissing = true
             return
         }

@@ -170,6 +170,10 @@ async def _check_and_backfill():
                     logger.warning("Backfill error for event %d at %s: %s", event_id, date_param, e)
                     current += timedelta(minutes=5)
 
+            if snapshots_added > 0:
+                from app.services.finished_event_history import invalidate_finished_event_history
+
+                await invalidate_finished_event_history(session, [event_id])
             await session.commit()
             total_backfilled += snapshots_added
             logger.info(
@@ -303,6 +307,10 @@ async def _backfill_historical_for_sport(sport: str, days_back: int = 30, max_ev
                     logger.warning("Backfill error event %d at %s: %s", event.id, date_param, e)
                     current += timedelta(minutes=10)
 
+            if event_snapshots > 0:
+                from app.services.finished_event_history import invalidate_finished_event_history
+
+                await invalidate_finished_event_history(session, [event.id])
             await session.commit()
             total_snapshots += event_snapshots
             logger.info(
@@ -490,6 +498,10 @@ async def _lookup_and_backfill_missing_extids(sport: str, days_back: int = 30, m
                     except Exception:
                         current += timedelta(minutes=10)
 
+                if event_snaps > 0:
+                    from app.services.finished_event_history import invalidate_finished_event_history
+
+                    await invalidate_finished_event_history(session, [event.id])
                 await session.commit()
                 backfilled_snaps += event_snaps
 

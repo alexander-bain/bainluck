@@ -796,19 +796,29 @@ actor APIClient {
 
     // MARK: - Generic POST (Dictionary body)
 
-    private func post<T: Decodable & Sendable>(_ path: String, body: [String: String?]) async throws -> sending T {
+    private func post<T: Decodable & Sendable>(
+        _ path: String,
+        body: [String: String?],
+        explicitAuthToken: String? = nil,
+        includeSessionHeader: Bool = false
+    ) async throws -> sending T {
         guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if includeSessionHeader {
+            request.setValue(sessionId, forHTTPHeaderField: "X-Session-Id")
+        }
 
         // Filter nil values and encode
         let filtered = body.compactMapValues { $0 }
         request.httpBody = try JSONSerialization.data(withJSONObject: filtered)
 
-        if let provider = authTokenProvider, let token = await provider() {
+        if let explicitAuthToken {
+            request.setValue("Bearer \(explicitAuthToken)", forHTTPHeaderField: "Authorization")
+        } else if let provider = authTokenProvider, let token = await provider() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
@@ -1086,13 +1096,29 @@ actor APIClient {
 
     /// Fetches win-probability history for an event over the requested trailing window.
     func fetchEventHistory(id: Int, hours: Int = 24) async throws -> EventHistoryResponse {
-        return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60,
+        try await fetchEventHistory(id: id, hours: hours, range: nil)
+    }
+
+    func fetchEventHistory(id: Int, hours: Int, range: String?) async throws -> EventHistoryResponse {
+        var query: [String: String] = ["hours": "\(hours)"]
+        if let range, !range.isEmpty {
+            query["range"] = range
+        }
+        return try await fetch("/api/events/\(id)/history", query: query, cacheTTL: 60,
                                sharesPendingRead: true)
     }
 
     func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
-        try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"],
-                        cacheTTL: 60, requiresNetwork: true, revalidationQuery: ["fresh": "true"])
+        try await fetchFreshEventHistory(id: id, hours: hours, range: nil)
+    }
+
+    func fetchFreshEventHistory(id: Int, hours: Int, range: String?) async throws -> EventHistoryResponse {
+        var query: [String: String] = ["hours": "\(hours)"]
+        if let range, !range.isEmpty {
+            query["range"] = range
+        }
+        return try await fetch("/api/events/\(id)/history", query: query,
+                               cacheTTL: 60, requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     /// #4974 — a finished game's recorded probability checkpoints. Transport only:
@@ -1152,11 +1178,16 @@ actor APIClient {
         return try await fetch("/api/events/search/trending", cacheTTL: 300)
     }
 
+    /// Fetches live search suggestions (live/upcoming games and major championship subjects).
+    func fetchSearchSuggestions() async throws -> SearchSuggestionsResponse212A {
+        return try await fetch("/api/events/search-suggestions", cacheTTL: 120)
+    }
+
     // MARK: - Team Page
 
     /// Fetches the team page summary, events, and market context by team slug.
-    func fetchTeamPage(slug: String) async throws -> TeamPageResponse {
-        return try await fetch("/api/teams/\(slug)")
+    func fetchTeamPage(slug: String, requiresNetwork: Bool = false) async throws -> TeamPageResponse {
+        return try await fetch("/api/teams/\(slug)", requiresNetwork: requiresNetwork)
     }
 
     /// Fresh projections of already-painted cards. No editorial feed-cache read.
@@ -1366,6 +1397,12 @@ actor APIClient {
         return try await fetch("/api/me/preferences")
     }
 
+    /// Adds a favorite-team relation for the signed-in user (`POST /api/me/favorites`).
+    func addFavorite(teamId: Int, relationType: String = "follow") async throws -> StatusResponse {
+        let body = AddFavoriteRequest(teamId: teamId, relationType: relationType)
+        return try await postEncodable("/api/me/favorites", body: body)
+    }
+
     /// Removes a favorite-team relation from the current user's preferences.
     func removeFavorite(teamId: Int, relationType: String) async throws -> StatusResponse {
         return try await delete("/api/me/favorites/\(teamId)", query: ["relation_type": relationType])
@@ -1524,6 +1561,25 @@ actor APIClient {
     /// during a round, and this is the screen a reader stays on to watch them.
     func fetchGolfTournament(slug: String) async throws -> GolfTournamentDetailResponse {
         return try await fetch("/api/golf/tournaments/\(slug)", cacheTTL: 60)
+    }
+
+    /// Fetches the blended, field-normalized probability history for a golf tournament (#13426).
+    func fetchGolfTournamentProbabilityTimeline(
+        slug: String,
+        top: Int = 20,
+        hours: Int = 168,
+        fullRange: Bool = false
+    ) async throws -> ProbabilityTimelineResponse {
+        let query = [
+            "top": "\(top)",
+            "hours": "\(hours)",
+        ].merging(EvolutionFullRange.query(fullRange: fullRange)) { current, _ in current }
+        return try await fetch(
+            "/api/golf/tournaments/\(slug)/probability-timeline",
+            query: query,
+            requiresNetwork: true,
+            revalidationQuery: ["fresh": "true"]
+        )
     }
 
     /// One event concept — the JSON behind the web's `/event/<domain>/<slug>`
@@ -1721,5 +1777,28 @@ actor APIClient {
             body["user_id"] = String(userId)
         }
         return try await post("/api/notifications/register", body: body)
+    }
+
+    /// Detach a push token from the signed-in account while still holding the
+    /// live session JWT (#12569 app half). Sends `Authorization: Bearer` plus
+    /// `X-Session-Id` so unsigned `/register` calls can leave account-bound rows alone.
+    func unregisterDeviceToken(
+        deviceToken: String,
+        platform: String,
+        tokenKind: String = "apns",
+        authToken: String
+    ) async throws -> NotificationRegisterResponse {
+        let body: [String: String?] = [
+            "device_token": deviceToken,
+            "platform": platform,
+            "session_id": sessionId,
+            "token_kind": tokenKind,
+        ]
+        return try await post(
+            "/api/notifications/unregister",
+            body: body,
+            explicitAuthToken: authToken,
+            includeSessionHeader: true
+        )
     }
 }

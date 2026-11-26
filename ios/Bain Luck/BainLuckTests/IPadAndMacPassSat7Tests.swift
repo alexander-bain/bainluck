@@ -155,9 +155,13 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
 
     private func buildTwelveScreens() async throws -> [ScreenSpecimen] {
         let dec = Self.snakeDecoder
-        let auth = AuthManager()
+        let auth = AuthManager(restoreOnInit: false)
+        let suite = "IPadAndMacPassSat7Tests"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let emptyFollows = FollowManager295A(defaults: defaults, initialSubjects: [])
         let pins = PinManager(
-            defaults: UserDefaults(suiteName: "IPadAndMacPassSat7Tests")!,
+            defaults: defaults,
             serverLoad: { PinsResponse(events: [], futures: []) },
             serverSync: { _, _, _ in }
         )
@@ -359,6 +363,7 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
           ]
         }
         """.utf8))
+        DiscoverEventChartHistoryCache191A.shared.store(liveEventHistory, for: 9101)
         let liveRelatedFutures = try dec.decode(RelatedFuturesResponse.self, from: Data("""
         {
           "event_id": 9101,
@@ -491,6 +496,7 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
                     .environmentObject(auth)
                     .environmentObject(NavigationCoordinator())
                     .environmentObject(pins)
+                    .environment(\.followManager295A, emptyFollows)
             )
         }
 
@@ -500,6 +506,7 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
                     .environmentObject(auth)
                     .environmentObject(NavigationCoordinator())
                     .environmentObject(pins)
+                    .environment(\.followManager295A, emptyFollows)
             )
         }
 
@@ -708,6 +715,7 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
         window.overrideUserInterfaceStyle = .light
         window.isHidden = false
         defer {
+            DiscoverEventChartHistoryCache191A.shared.remove(eventId: 9101)
             window.isHidden = true
             window.rootViewController = nil
         }
@@ -855,20 +863,26 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
         window.overrideUserInterfaceStyle = .light
         window.isHidden = false
         defer {
+            DiscoverEventChartHistoryCache191A.shared.remove(eventId: 9101)
             window.isHidden = true
             window.rootViewController = nil
         }
+        let proofSuite = "IPadAndMacPassSat7WidthProof"
+        let proofDefaults = UserDefaults(suiteName: proofSuite)!
+        proofDefaults.removePersistentDomain(forName: proofSuite)
+        let emptyProofFollows = FollowManager295A(defaults: proofDefaults, initialSubjects: [])
         let pins = PinManager(
-            defaults: UserDefaults(suiteName: "IPadAndMacPassSat7WidthProof")!,
+            defaults: proofDefaults,
             serverLoad: { PinsResponse(events: [], futures: []) },
             serverSync: { _, _, _ in }
         )
         let myStuffIPad = NavigationStack {
             MyStuffView()
         }
-        .environmentObject(AuthManager())
+        .environmentObject(AuthManager(restoreOnInit: false))
         .environmentObject(NavigationCoordinator())
         .environmentObject(pins)
+        .environment(\.followManager295A, emptyProofFollows)
         let img = captureViewport(myStuffIPad, size: CGSize(width: 834, height: 1194), scale: 1.0, window: window)
         let cg = try XCTUnwrap(img.cgImage)
         let data = try XCTUnwrap(cg.dataProvider?.data) as Data
@@ -909,7 +923,7 @@ final class IPadAndMacPassSat7Tests: XCTestCase {
             }
             """.utf8))
             let phoneView = NavigationStack { PreferencesView(loadedPrefsForTest: prefsResp) }
-                .environmentObject(AuthManager())
+                .environmentObject(AuthManager(restoreOnInit: false))
                 .environmentObject(NavigationCoordinator())
                 .environmentObject(pins)
                 .environment(\.horizontalSizeClass, .compact)

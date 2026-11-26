@@ -7,6 +7,13 @@ import SwiftUI
 enum ContainerHubGridLayout13417 {
     static let spacing: CGFloat = 16
     static let minimumTwoColumnCardWidth: CGFloat = 340
+    static let maxContentWidth: CGFloat = 900
+    static let contentHorizontalPadding: CGFloat = 18
+
+    nonisolated static func innerContentWidth(containerWidth: CGFloat) -> CGFloat {
+        guard containerWidth.isFinite, containerWidth > 0 else { return 0 }
+        return max(0, min(containerWidth, maxContentWidth) - contentHorizontalPadding * 2)
+    }
 
     nonisolated static func columnCount(
         horizontalSizeClass: UserInterfaceSizeClass?,
@@ -15,7 +22,7 @@ enum ContainerHubGridLayout13417 {
     ) -> Int {
         guard horizontalSizeClass == .regular else { return 1 }
         if dynamicTypeSize.isAccessibilitySize { return 1 }
-        if let availableWidth, availableWidth > 0 {
+        if let availableWidth {
             let perColumnWidth = (availableWidth - spacing) / 2
             if perColumnWidth < minimumTwoColumnCardWidth {
                 return 1
@@ -40,6 +47,50 @@ nonisolated struct ContainerHubPresentation: Sendable {
             return nil
         }
         return raw
+    }
+
+    /// #11040 / #13103: One-line plain-English reason directly under the set's title,
+    /// matching web's `CollectionHub` (`shown.dek ?? shown.subtitle ?? shown.edition`)
+    /// instead of exposing internal pagination counts at the top of the screen.
+    var headerReasonLine: String? {
+        guard response.state == .published else { return nil }
+        if let subtitle { return subtitle }
+        if response.edition?.family == "departure" {
+            return "When this job might end, and what comes next. Each market keeps its own number, because their rules can differ."
+        }
+        if response.edition?.isTheme == true {
+            switch response.edition?.subject {
+            case "oscars":
+                return "Nomination and win chances across every Academy Award category."
+            case "ai":
+                return "Live market chances across AI models, milestones, and regulation."
+            default:
+                break
+            }
+        }
+        if let edition = response.edition {
+            if edition.kind == "mlb_postseason", let season = edition.season {
+                return "MLB \(season) Postseason games, results, and championship markets."
+            }
+            if edition.kind == "nfl_week", let season = edition.season, let week = edition.week {
+                let stage = edition.stage == "Regular Season" ? "" : "\((edition.stage ?? "").trimmingCharacters(in: .whitespaces)) "
+                return "NFL \(season) \(stage)Week \(week) matchups and related markets."
+            }
+            if edition.kind == "nfl_season", let season = edition.season {
+                return "NFL \(season) weekly slates and championship markets."
+            }
+        }
+        return nil
+    }
+
+    /// Bottom pager count for paginated theme sets, matching web's `CollectionHub` footer pager.
+    var pagerCountLabel: String? {
+        guard response.state == .published,
+              response.edition?.isTheme == true,
+              loadedCount > 0 else {
+            return nil
+        }
+        return "\(loadedCount) of \(max(totalCount, loadedCount)) markets"
     }
     var sections: [ContainerHubSection] { response.sections }
     var hasMachinerySections: Bool { sections.contains { $0.visualBlock != nil } }

@@ -209,14 +209,11 @@ final class BadgeLettersResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
     func testBothMyStuffCrestCirclesRouteThroughTheFloor() throws {
         let body = try String(contentsOf: Self.myStuffURL, encoding: .utf8)
 
-        // TWO, not three: the anchor carries the type prefix, and the
-        // declaration inside `enum MyStuffTeamTextColour` does not repeat it. The
-        // first draft of this line said three "for the declaration too" and the
-        // suite reddened on the real tree — which is the guard working, and the
-        // reason a count is written against a measured file rather than against
-        // an expectation of one.
-        XCTAssertEqual(body.components(separatedBy: "MyStuffTeamTextColour.logoTintHex(").count - 1, 2,
-                       "expected BOTH crest circles — one of the two is still raw")
+        // THREE calls in `MyStuffView`: `PlayoffJourneyCard` AX arm, `PlayoffJourneyCard`
+        // standard arm, and the shared `logoHex` binding in `mergedFutureRow` (no raw
+        // crest tint call remains).
+        XCTAssertEqual(body.components(separatedBy: "MyStuffTeamTextColour.logoTintHex(").count - 1, 3,
+                       "expected all three crest logo tint sites to route through the floor")
         XCTAssertFalse(body.contains("color: Color(hex: item.matchedTeam?.primaryColor ?? \"#6b7280\")"),
                        "the merged-future row's crest is raw again")
         XCTAssertFalse(body.contains("color: Color(hex: journey.teamColor ?? \"#6b7280\")"),
@@ -232,8 +229,10 @@ final class BadgeLettersResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
         let body = try String(contentsOf: Self.teamLogoURL, encoding: .utf8)
         XCTAssertTrue(body.contains("This is drawn as TEXT, not only as a tint"),
                       "TeamLogoView's #7036 contract has been removed from the parameter it governs")
-        XCTAssertTrue(body.contains("Text(Self.badge(teamName: teamName, opponentName: opponentName, sportKey: sportKey))"),
+        XCTAssertTrue(body.contains("Text(Self.badge("),
                       "initialsFallback no longer paints the badge — the contract above it may be stale")
+        XCTAssertTrue(body.contains("teamName: teamName") && body.contains("opponentName: opponentName") && body.contains("sportKey: sportKey"),
+                      "initialsFallback no longer passes teamName/opponentName/sportKey to Self.badge")
         XCTAssertTrue(body.contains(".foregroundStyle(color)"),
                       "initialsFallback no longer draws the letters IN `color`, so re-read the contract")
     }

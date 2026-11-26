@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
+import BainLuckMark from "@/components/BainLuckMark";
 import { useState, useRef, useEffect } from "react";
 
-const browsePages = [
+const browsePages: { label: string; href: string; emoji?: string; brandMark?: boolean }[] = [
   { label: "MMA", href: "/hub/mma", emoji: "🥊" },
   { label: "Boxing", href: "/hub/boxing", emoji: "🥊" },
   { label: "Golf", href: "/hub/golf", emoji: "⛳" },
@@ -15,7 +16,7 @@ const browsePages = [
   { label: "Entertainment", href: "/entertainment", emoji: "🎬" },
   { label: "Economics", href: "/economics", emoji: "📈" },
   { label: "Weather", href: "/weather", emoji: "🌤" },
-  { label: "About", href: "/about", emoji: "🍀" },
+  { label: "About", href: "/about", brandMark: true },
 ];
 
 export default function DesktopNav() {
@@ -140,7 +141,7 @@ export default function DesktopNav() {
                     : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
                 }`}
               >
-                <span>{page.emoji}</span>
+                <span>{page.brandMark ? <BainLuckMark size={16} /> : page.emoji}</span>
                 <span className="font-medium">{page.label}</span>
               </Link>
             ))}

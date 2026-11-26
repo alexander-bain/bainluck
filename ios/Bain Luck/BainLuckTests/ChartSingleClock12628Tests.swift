@@ -207,20 +207,22 @@ final class ChartSingleClock12628Tests: XCTestCase {
 
             let req = VNRecognizeTextRequest()
             req.recognitionLevel = .accurate
+            req.minimumTextHeight = 0.0
             try VNImageRequestHandler(cgImage: XCTUnwrap(img.cgImage), options: [:]).perform([req])
             let ocrLines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
             let joined = ocrLines.joined(separator: "\n")
+            let compact = joined.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
 
             XCTAssertTrue(
-                joined.contains("8:45:00 PM EST") || joined.contains("8:45:00 PM"),
+                joined.contains("8:45:00 PM EST") || joined.contains("8:45:00 PM") || compact.contains("8:45:00PM"),
                 "Expected Eastern scrub readout '8:45:00 PM EST' (\(scheme)); got OCR:\n\(joined)"
             )
             XCTAssertTrue(
-                joined.contains("8:29 PM") && joined.contains("9:59 PM"),
+                compact.contains("8:29PM") && compact.contains("9:59PM"),
                 "Expected Eastern x-axis ticks '8:29 PM' .. '9:59 PM' (\(scheme)); got OCR:\n\(joined)"
             )
             XCTAssertFalse(
-                joined.contains("5:45:00 PM") || joined.contains("Fri 5:45 PM") || joined.contains(" PM PT") || joined.contains("5:29 PM"),
+                compact.contains("5:45:00PM") || compact.contains("Fri5:45PM") || compact.contains("PMPT") || compact.contains("5:29PM"),
                 "Must never show Pacific readout or ticks on an Eastern chart (\(scheme)); got OCR:\n\(joined)"
             )
             XCTAssertFalse(

@@ -36,6 +36,7 @@ from app.models import Event, FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.hero_probability import blend_provenance, resolve_hero
 from app.utils.latest_observation import load_latest_observed_at
+from app.utils.lifecycle import served_event_status
 from app.utils.market_liquidity import grade_liquidity
 from app.utils.prematch_reading import opening_consensus_has_frozen
 from app.utils.proven_duplicates import (
@@ -965,27 +966,9 @@ async def _load_blends(
         await session.execute(
             select(
                 Event.id,
-                # THE NAME COLUMNS, NOT THE RELATIONSHIPS (CERT-2235).
-                #
-                # `Event.home_team` / `Event.away_team` are `relationship()`s to
-                # `Team`, not strings. Putting one in a `select()` does not
-                # fail — it compiles to a boolean comparison
-                # (`teams.id = events.home_team_id`) landing in an unnamed
-                # result key, so `row.home_team` never carries the player's
-                # name. `orient_event_blend` then cannot match either name onto
-                # a side and refuses every linked row by design, which is the
-                # whole ship failing silently on the first screen.
-                #
-                # `home_team_name` / `away_team_name` are the `mapped_column`s
-                # that hold the string (models.py:141-142), and they are what
-                # every other read of a fixture's names on this route uses.
                 Event.home_team_name,
                 Event.away_team_name,
                 Event.status,
-                # #3922: `opening_consensus_has_frozen` needs BOTH of the
-                # writer's guards. `status` alone answers "scheduled" for a
-                # fixture whose start time has passed but whose status has not
-                # been advanced yet, and that row's opening HAS frozen.
                 Event.commence_time,
                 Event.home_score,
                 Event.away_score,
@@ -994,54 +977,121 @@ async def _load_blends(
                 Event.espn_win_prob_home,
                 Event.opening_home_probability,
                 Event.opening_away_probability,
+                Event.sport_id,
             ).where(Event.id.in_(sorted(set(event_ids))[:MAX_BLEND_EVENTS]))
         )
     ).all()
 
-    # THE FOLD, BATCHED (#3937). The event page reads its hero off a
-    # `FoldedBlendView`, so a match whose Kalshi price lives on a suppressed twin
-    # row blends three venues there and — until this call existed — two here.
-    # That is not a rounding difference: on 2026-09-08 the US Open hub printed
-    # Alcaraz 76% over a match page reading 77%, because canonical 15306813 holds
-    # betting + Polymarket and its twin 15306391 holds the Kalshi reading.
-    #
-    # ONE lookup per `_FOLD_BATCH_ARMS` rows, not one per row: this loader is
-    # capped at `MAX_BLEND_EVENTS` fixtures and a per-row fold would be an N+1 on
-    # the first screen of a slam. That cost is exactly why #3810 left this
-    # surface unfolded, so paying it correctly is the ship rather than a detail
-    # of it. Today's US Open hub carries 8 linked rows, measured at ~5 ms.
-    folded_sources = await folded_probability_sources_batch(session, rows)
+    sport_ids = sorted({
+        int(r.sport_id)
+        for r in rows
+        if getattr(r, "sport_id", None) is not None and not hasattr(r, "sport")
+    })
+    sport_by_id: dict[int, Any] = {}
+    if sport_ids:
+        from types import SimpleNamespace
+        from app.models.models import Sport
 
-    # ONE clock for the whole batch (#3922). Read per row, two fixtures starting
-    # in the same second could land on opposite sides of the freeze, and the hub
-    # would print an opening on one and withhold it on the other for no reason a
-    # reader could see.
+        try:
+            sp_rows = (
+                await session.execute(
+                    select(Sport.id, Sport.key).where(Sport.id.in_(sport_ids))
+                )
+            ).all()
+            for sp in sp_rows:
+                if hasattr(sp, "id") and hasattr(sp, "key"):
+                    sport_by_id[int(sp.id)] = SimpleNamespace(id=int(sp.id), key=sp.key)
+                elif isinstance(sp, (tuple, list)) and len(sp) >= 2:
+                    sport_by_id[int(sp[0])] = SimpleNamespace(id=int(sp[0]), key=sp[1])
+        except Exception:
+            sport_by_id = {}
+
+    from types import SimpleNamespace as _SimpleNS
+    from app.utils.unified_game_read import (
+        load_unified_game_reads,
+        resolve_unified_card_chance,
+    )
+
+    wrapped_rows = []
+    for r in rows:
+        if hasattr(r, "sport"):
+            wrapped_rows.append(r)
+        else:
+            sid = getattr(r, "sport_id", None)
+            wrapped_rows.append(
+                _SimpleNS(
+                    id=r.id,
+                    sport_id=sid,
+                    sport=sport_by_id.get(int(sid)) if sid is not None else None,
+                    home_team_name=r.home_team_name,
+                    away_team_name=r.away_team_name,
+                    status=r.status,
+                    commence_time=r.commence_time,
+                    home_score=r.home_score,
+                    away_score=r.away_score,
+                    completed_at=getattr(r, "completed_at", None),
+                    win_probability_sources=r.win_probability_sources,
+                    espn_win_prob_home=r.espn_win_prob_home,
+                    opening_home_probability=r.opening_home_probability,
+                    opening_away_probability=r.opening_away_probability,
+                    espn_id=None,
+                    external_id=None,
+                    statpal_fixture_id=None,
+                    event_tags=None,
+                )
+            )
+
+    unified_batch = await load_unified_game_reads(
+        session,
+        wrapped_rows,
+        collapse_in_page=False,
+        include_same_league_external=True,
+        include_odds=True,
+        fold_sources_fn=folded_probability_sources_batch,
+        fault_tolerant_external=True,
+        fault_tolerant_odds=True,
+    )
+
     now = datetime.now(timezone.utc)
     blends: dict[int, dict[str, Any]] = {}
-    for row in rows:
-        # A `Row` answers `getattr` for every column selected above, which is the
-        # whole interface `resolve_hero` asks for — it reads its inputs through
-        # `getattr(..., default)` precisely so an ORM object, a row and a test
-        # stub are the same thing to it. `FoldedBlendView` forwards everything it
-        # does not override, so the row keeps answering for all of them.
-        # The row's OWN sources are the default, never `None`. The batch promises
-        # an entry per event, but `FoldedBlendView(row, None)` would blank the
-        # readings the row already had — a missing key must degrade to today's
-        # unfolded answer, not to a hero that vanishes.
-        view = FoldedBlendView(
-            row, folded_sources.get(int(row.id), row.win_probability_sources)
+    for row in wrapped_rows:
+        uread = unified_batch.by_id.get(int(row.id))
+        view = (
+            uread.blend_view
+            if uread is not None
+            else FoldedBlendView(row, row.win_probability_sources)
         )
-        source_inputs: list[tuple[str, float]] = []
-        source_method: list[str] = []
-        hero = resolve_hero(
-            view, source_inputs=source_inputs, source_method=source_method,
-        )
-        if hero is None:
-            continue
-        home_mark, away_mark = headline_source_marks(
-            view, hero, source_inputs,
-            method=source_method[0] if source_method else None,
-        )
+        sport_key = row.sport.key if getattr(row, "sport", None) else None
+        served_status = served_event_status(row.status, row.commence_time, now)
+        if uread is not None:
+            chance = resolve_unified_card_chance(
+                uread, sport_key=sport_key, served_status=served_status
+            )
+            hero = chance.effective_hero
+            if hero is None:
+                continue
+            home_prob = chance.home_probability
+            away_prob = chance.away_probability
+            draw_prob = chance.draw_probability
+            home_mark = chance.source_mark
+            away_mark = chance.away_source_mark
+            bk_count = chance.bookmaker_count
+        else:
+            source_inputs: list[tuple[str, float]] = []
+            source_method: list[str] = []
+            hero = resolve_hero(
+                view, source_inputs=source_inputs, source_method=source_method,
+            )
+            if hero is None:
+                continue
+            home_prob = hero.home_probability
+            away_prob = hero.away_probability
+            draw_prob = None
+            home_mark, away_mark = headline_source_marks(
+                view, hero, source_inputs,
+                method=source_method[0] if source_method else None,
+            )
+            bk_count = 0
         # `blend_provenance` reads the SAME view, never the bare row: the source
         # count drives the confidence bars and the age stamp drives the freshness
         # line, and lighting two bars under a three-venue number is the same
@@ -1066,10 +1116,12 @@ async def _load_blends(
         blends[int(row.id)] = {
             "home_name": row.home_team_name,
             "away_name": row.away_team_name,
-            "home_probability": hero.home_probability,
-            "away_probability": hero.away_probability,
+            "home_probability": home_prob,
+            "away_probability": away_prob,
+            "draw_probability": draw_prob,
             "home_source_mark": home_mark,
             "away_source_mark": away_mark,
+            "bookmaker_count": bk_count,
             "source": hero.source,
             "source_count": source_count,
             # THE EVENT'S OWN OPEN, travelling beside the event's own current

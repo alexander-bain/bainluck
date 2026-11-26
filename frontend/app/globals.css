@@ -24,6 +24,15 @@
   --text-muted: #9CA3AF;
   --text-inverse: #F8FAFC;
 
+  /* Kit v1 contrast tokens (#13635 parity — WCAG AA >= 4.5:1 text, >= 3.05:1 marks) */
+  --kit-primary: #111827;
+  --kit-secondary: #5E6370;
+  --kit-muted: #59606D;
+  --kit-accent: #047857;
+  --kit-warn: #9A4D00;
+  --kit-track: #F3F4F6;
+  --kit-inverse: #FFFFFF;
+
   /* Accents */
   --accent-live: #22C55E;
   --accent-brand: #10B981;

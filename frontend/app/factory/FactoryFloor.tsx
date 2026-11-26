@@ -463,7 +463,6 @@ export default function FactoryFloor(initial: {
     const post = data.crew_posts?.[lane];
     if (post && recentlyActive(post.at, recordTime)) clockedIn.add(lane);
   }
-  const foremanPose = crewPose(data, "Fable", recordTime, []);
   const engineeringRecords = clipboard(recordTime, shipped, onFloor);
   const mergesToday = new Set(
     data.changes
@@ -597,16 +596,17 @@ export default function FactoryFloor(initial: {
   }
 
   function crewCard(id: CrewIdentity, titleId?: string) {
-    const lane = visible.filter(change => change.builder === id);
-    const status = id === "Fable" ? foremanPose : crewPose(data!, id, recordTime, lane);
+    const person = floorCrew.find(crew => crew.identity === id);
+    const status = person ?? crewPose(data!, id, recordTime, visible.filter(change => change.builder === id));
     return (
       <CrewCard
         key={id}
         identity={id}
         name={names[id]}
         pose={status.pose}
-        clockedIn={id === "Fable" ? foremanPose.pose === "working" : clockedIn.has(id)}
-        number={status.change?.number}
+        clockedIn={id === "Fable" ? status.pose === "working" : clockedIn.has(id)}
+        station={person?.position?.station}
+        change={status.change ?? undefined}
         post={id === "Fable" ? undefined : laneCheckIns[id]}
         update={id === "Fable" ? undefined : laneUpdates[id]}
         voice={id === "Fable" ? undefined : data?.speech?.[id]}

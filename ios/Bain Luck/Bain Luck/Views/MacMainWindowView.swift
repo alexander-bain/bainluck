@@ -45,11 +45,11 @@ enum MacMainWindow10878 {
     /// The five places the phone's tab bar has, in the same order and with the
     /// same names, so a reader moving between phone and Mac finds them.
     static let destinations: [SidebarItem] = [
+        SidebarItem(tab: .myStuff, title: "My Stuff", systemImage: "person.fill"),
         SidebarItem(tab: .discover, title: "Discover", systemImage: "safari"),
         SidebarItem(tab: .feed, title: "Sports", systemImage: "rectangle.stack.fill"),
         SidebarItem(tab: .leagues, title: "Browse", systemImage: "square.grid.2x2"),
         SidebarItem(tab: .search, title: "Search", systemImage: "magnifyingglass"),
-        SidebarItem(tab: .myStuff, title: "My Stuff", systemImage: "person.fill"),
     ]
 
     /// The iPad sidebar's Quick Links, unchanged.
