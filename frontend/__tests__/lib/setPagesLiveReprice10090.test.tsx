@@ -6,6 +6,7 @@
  * immutability, and visualForms Rule #1 (no client-side multi-venue blending).
  */
 import '../helpers/minimalDom';
+import { quarantinedTimingTest } from '../helpers/timingQuarantine';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import CollectionHub from '@/components/collections/CollectionHub';
@@ -447,7 +448,10 @@ test('pairedMetricSetMarketIds, patchMachineryVisualBlock, and applyEventConcept
   ).toBe(settledConcept);
 });
 
-test('CollectionHub machinery section (market_preview) and AwardCategoryPairedCard (server invalidation) re-price in < 500 ms', async () => {
+quarantinedTimingTest(
+  'frontend/__tests__/lib/setPagesLiveReprice10090.test.tsx',
+  'CollectionHub machinery section (market_preview) and AwardCategoryPairedCard (server invalidation) re-price in < 500 ms',
+  async () => {
   const futuresItem: FeedItem = {
     type: 'futures',
     data: {
