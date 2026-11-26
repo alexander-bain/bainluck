@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 import json
 import os
 from pathlib import Path
@@ -52,6 +53,194 @@ def _parse_iso_utc(raw: Any) -> datetime | None:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _parse_timestamp_utc(raw: Any) -> datetime | None:
+    """Parse an ISO timestamp string or numeric Unix epoch (seconds) into UTC datetime."""
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        val = float(raw)
+        if val > 0:
+            try:
+                return datetime.fromtimestamp(val, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+        return None
+    return _parse_iso_utc(raw)
+
+
+def _parse_http_date_utc(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        dt = parsedate_to_datetime(raw.strip())
+    except (TypeError, ValueError):
+        return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def format_age_duration(seconds: float | None) -> str:
+    """Compact human duration for Markdown copy/reading age columns."""
+    if seconds is None:
+        return "?"
+    s = max(0.0, float(seconds))
+    if s < 120.0:
+        return f"{int(round(s))}s"
+    if s < 7200.0:
+        return f"{s / 60.0:.1f}m"
+    return f"{s / 3600.0:.1f}h"
+
+
+def _extract_envelope_meta(body: Any, response_meta: dict[str, Any] | None) -> dict[str, Any]:
+    """Combine HTTP response metadata with any cache/build timestamp on the enclosing body."""
+    merged = dict(response_meta or {})
+    if not isinstance(body, dict):
+        return merged
+    candidates: list[Any] = []
+    cache_block = body.get("cache")
+    if isinstance(cache_block, dict):
+        candidates.extend(
+            cache_block.get(k) for k in ("built_at", "cached_at", "generated_at", "computed_at")
+        )
+    candidates.extend(body.get(k) for k in ("built_at", "cached_at", "generated_at", "computed_at"))
+    for cand in candidates:
+        parsed = _parse_timestamp_utc(cand)
+        if parsed is not None:
+            merged["envelope_built_at"] = parsed.isoformat()
+            break
+    if not merged.get("cache_header") and isinstance(cache_block, dict):
+        hit_status = cache_block.get("status")
+        if isinstance(hit_status, str) and hit_status.strip():
+            merged["cache_header"] = hit_status.strip()
+    return merged
+
+
+def _newest_reading_timestamp(card: dict[str, Any]) -> tuple[datetime | None, str | None]:
+    """Return ``(timestamp, source_field)`` for the payload's newest price reading clock."""
+    hero_obs = _parse_iso_utc(card.get("hero_probability_observed_at"))
+    if hero_obs is not None:
+        return hero_obs, "hero_probability_observed_at"
+
+    newest: datetime | None = None
+    sm = card.get("source_mark")
+    if isinstance(sm, dict):
+        for entry in sm.get("sources") or ():
+            if not isinstance(entry, dict):
+                continue
+            obs = _parse_iso_utc(entry.get("observed_at")) or _parse_iso_utc(entry.get("updated_at"))
+            if obs is not None and (newest is None or obs > newest):
+                newest = obs
+    wps = card.get("win_probability_sources")
+    if isinstance(wps, dict):
+        for key, entry in wps.items():
+            if key == "betting_book_count" or not isinstance(entry, dict):
+                continue
+            obs = _parse_iso_utc(entry.get("updated_at")) or _parse_iso_utc(entry.get("observed_at"))
+            if obs is not None and (newest is None or obs > newest):
+                newest = obs
+    if newest is not None:
+        return newest, "newest_source_updated_at"
+    return None, None
+
+
+def extract_copy_age(
+    payload: dict[str, Any],
+    *,
+    response_meta: dict[str, Any] | None = None,
+    fallback_now: datetime | None = None,
+) -> dict[str, Any]:
+    """Extract both cache/build copy age and underlying probability reading age."""
+    meta = response_meta or {}
+    server_date = _parse_iso_utc(meta.get("server_date"))
+    fetched_at = _parse_iso_utc(meta.get("fetched_at"))
+    ref_now = server_date or fetched_at or fallback_now
+    if ref_now is not None and ref_now.tzinfo is None:
+        ref_now = ref_now.replace(tzinfo=timezone.utc)
+
+    cache_header = str(meta.get("cache_header") or "").strip() or None
+    state_fresh = payload.get("state_read_fresh")
+    state_not_after = _parse_iso_utc(payload.get("state_read_not_after")) or _parse_iso_utc(
+        payload.get("state_read_not_before")
+    )
+    envelope_built = _parse_timestamp_utc(meta.get("envelope_built_at"))
+    card_built = None
+    for k in ("built_at", "cached_at", "generated_at", "computed_at"):
+        card_built = _parse_timestamp_utc(payload.get(k))
+        if card_built is not None:
+            break
+    age_header = meta.get("age_header_seconds")
+
+    copy_age_s: float | None = None
+    copy_age_source: str | None = None
+    cache_status: str | None = None
+    if isinstance(state_fresh, bool):
+        cache_status = "fresh" if state_fresh else "cached"
+    elif cache_header:
+        cache_status = cache_header
+
+    if state_not_after is not None and ref_now is not None:
+        copy_age_s = round(max(0.0, (ref_now - state_not_after).total_seconds()), 1)
+        copy_age_source = "state_read"
+    elif envelope_built is not None and ref_now is not None:
+        copy_age_s = round(max(0.0, (ref_now - envelope_built).total_seconds()), 1)
+        copy_age_source = "envelope_built_at"
+    elif card_built is not None and ref_now is not None:
+        copy_age_s = round(max(0.0, (ref_now - card_built).total_seconds()), 1)
+        copy_age_source = "payload_built_at"
+    elif isinstance(age_header, (int, float)) and not isinstance(age_header, bool):
+        copy_age_s = round(max(0.0, float(age_header)), 1)
+        copy_age_source = "http_age_header"
+
+    reading_dt, reading_src = _newest_reading_timestamp(payload)
+    reading_age_s: float | None = None
+    if reading_dt is not None and ref_now is not None:
+        reading_age_s = round(max(0.0, (ref_now - reading_dt).total_seconds()), 1)
+
+    info: dict[str, Any] = {
+        "copy_age_seconds": copy_age_s,
+        "copy_age_source": copy_age_source,
+        "cache_status": cache_status,
+        "reading_age_seconds": reading_age_s,
+        "reading_age_source": reading_src,
+        "reading_observed_at": reading_dt.isoformat() if reading_dt is not None else None,
+        "fetched_at": fetched_at.isoformat() if fetched_at is not None else None,
+    }
+    info["summary"] = format_copy_age(info)
+    return info
+
+
+def format_copy_age(age_info: dict[str, Any] | None) -> str:
+    """Format a compact list/page copy age string for the nightly report."""
+    if not isinstance(age_info, dict):
+        return "copy ?, read ?"
+    copy_s = age_info.get("copy_age_seconds")
+    cache_status = age_info.get("cache_status")
+    reading_s = age_info.get("reading_age_seconds")
+
+    if copy_s is not None:
+        copy_part = f"copy {format_age_duration(copy_s)}"
+        if cache_status:
+            copy_part += f" ({cache_status})"
+    elif cache_status:
+        copy_part = f"copy ? ({cache_status})"
+    else:
+        copy_part = "copy ?"
+
+    read_part = f"read {format_age_duration(reading_s)}"
+    return f"{copy_part}, {read_part}"
+
+
+def _fetch_gap_seconds(card_age: dict[str, Any] | None, detail_age: dict[str, Any] | None) -> float | None:
+    if not isinstance(card_age, dict) or not isinstance(detail_age, dict):
+        return None
+    t_card = _parse_iso_utc(card_age.get("fetched_at"))
+    t_detail = _parse_iso_utc(detail_age.get("fetched_at"))
+    if t_card is None or t_detail is None:
+        return None
+    return round(abs((t_detail - t_card).total_seconds()), 1)
 
 
 def _matchup_label(ev: dict[str, Any]) -> str:
@@ -153,12 +342,22 @@ def compare_card_against_detail(
     surface: str,
     card: dict[str, Any],
     detail: dict[str, Any],
+    card_age: dict[str, Any] | None = None,
+    detail_age: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Compare one surface event card against its canonical `/api/events/{id}` detail."""
     diffs: list[dict[str, Any]] = []
     event_id = detail.get("id") or card.get("id")
     matchup = _matchup_label(detail)
     sport_key = str(detail.get("sport") or card.get("sport") or "")
+    extra_age: dict[str, Any] = {}
+    if card_age is not None:
+        extra_age["surface_copy_age"] = card_age
+    if detail_age is not None:
+        extra_age["detail_copy_age"] = detail_age
+    gap = _fetch_gap_seconds(card_age, detail_age)
+    if gap is not None:
+        extra_age["fetch_gap_seconds"] = gap
 
     c_head = extract_headline_percent(card)
     d_head = extract_headline_percent(detail)
@@ -172,6 +371,7 @@ def compare_card_against_detail(
                 "field": "headline_percent",
                 "surface_value": c_head,
                 "detail_value": d_head,
+                **extra_age,
             }
         )
 
@@ -188,6 +388,7 @@ def compare_card_against_detail(
                     "field": f"source.{src_key}",
                     "surface_value": c_srcs[src_key],
                     "detail_value": d_srcs[src_key],
+                    **extra_age,
                 }
             )
     if isinstance(card.get("source_mark"), dict) and isinstance(detail.get("source_mark"), dict):
@@ -203,6 +404,7 @@ def compare_card_against_detail(
                     "field": "source_keys",
                     "surface_value": sorted(c_srcs),
                     "detail_value": sorted(d_srcs),
+                    **extra_age,
                 }
             )
 
@@ -218,6 +420,7 @@ def compare_card_against_detail(
                 "field": "bookmaker_count",
                 "surface_value": c_books,
                 "detail_value": d_books,
+                **extra_age,
             }
         )
 
@@ -348,23 +551,30 @@ class PacedClient:
         pace_seconds: float,
         sleep_fn: Callable[[float], None] = time.sleep,
         monotonic_fn: Callable[[], float] = time.monotonic,
+        now_fn: Callable[[], datetime] | None = None,
     ) -> None:
         self.client = client
         self.pace_seconds = max(0.0, float(pace_seconds))
         self._sleep = sleep_fn
         self._monotonic = monotonic_fn
+        self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
         self._last_request_at: float | None = None
         self.request_count = 0
 
-    def get_json(
+    def get_json_with_meta(
         self,
         path: str,
         *,
         params: dict[str, Any] | None = None,
         timeout: float | None = None,
         retries: int = 0,
-    ) -> tuple[int | None, Any | None, str | None]:
-        last_result: tuple[int | None, Any | None, str | None] = (None, None, "no attempts")
+    ) -> tuple[int | None, Any | None, str | None, dict[str, Any]]:
+        last_result: tuple[int | None, Any | None, str | None, dict[str, Any]] = (
+            None,
+            None,
+            "no attempts",
+            {},
+        )
         attempts = max(0, int(retries)) + 1
         for _ in range(attempts):
             if self._last_request_at is not None and self.pace_seconds > 0:
@@ -381,16 +591,62 @@ class PacedClient:
                     extra["timeout"] = timeout
                 resp = self.client.get(path, params=params, headers=tagged(full_url), **extra)
             except Exception as exc:
-                last_result = (None, None, f"{type(exc).__name__}: {exc}")
+                last_result = (None, None, f"{type(exc).__name__}: {exc}", {})
                 continue
             if resp.status_code != 200:
-                last_result = (resp.status_code, None, f"HTTP {resp.status_code} on {path}")
+                last_result = (resp.status_code, None, f"HTTP {resp.status_code} on {path}", {})
                 continue
+            fetched_at = self._now_fn().astimezone(timezone.utc)
+            server_date = _parse_http_date_utc(resp.headers.get("date"))
+            age_header_s: float | None = None
+            raw_age = resp.headers.get("age")
+            if raw_age is not None:
+                try:
+                    parsed_age = float(str(raw_age).strip())
+                    if parsed_age >= 0:
+                        age_header_s = round(parsed_age, 1)
+                except ValueError:
+                    # Non-numeric Age header is ignored; body timestamps still provide copy age.
+                    pass
+            cache_hdr: str | None = None
+            for hdr_name in (
+                "x-feed-cache",
+                "x-search-cache",
+                "x-cache",
+                "x-vercel-cache",
+                "cf-cache-status",
+            ):
+                val = str(resp.headers.get(hdr_name) or "").strip()
+                if val:
+                    cache_hdr = val
+                    break
+            meta: dict[str, Any] = {
+                "fetched_at": fetched_at.isoformat(),
+                "server_date": server_date.isoformat() if server_date is not None else None,
+                "age_header_seconds": age_header_s,
+                "cache_header": cache_hdr,
+            }
             try:
-                return resp.status_code, resp.json(), None
+                return resp.status_code, resp.json(), None, meta
             except Exception as exc:
-                last_result = (resp.status_code, None, f"JSONDecodeError on {path}: {exc}")
+                last_result = (resp.status_code, None, f"JSONDecodeError on {path}: {exc}", meta)
         return last_result
+
+    def get_json(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
+        retries: int = 0,
+    ) -> tuple[int | None, Any | None, str | None]:
+        st, body, err, _meta = self.get_json_with_meta(
+            path,
+            params=params,
+            timeout=timeout,
+            retries=retries,
+        )
+        return st, body, err
 
 
 def effective_pace_seconds(base_url: str, requested_pace: float) -> float:
@@ -433,7 +689,7 @@ def run_standing_scores(
         client_kwargs["transport"] = transport
 
     with httpx.Client(**client_kwargs) as raw_client:
-        paced = PacedClient(raw_client, pace_seconds=pace, sleep_fn=sleep_fn)
+        paced = PacedClient(raw_client, pace_seconds=pace, sleep_fn=sleep_fn, now_fn=now_fn)
 
         # 1. Health / live commit
         st, health_body, err = paced.get_json("/api/health")
@@ -449,10 +705,11 @@ def run_standing_scores(
 
         # 2. Item 7: Standing >72h sportsbook census (ALL scheduled games, including untwinned)
         scheduled_events: list[dict[str, Any]] = []
+        scheduled_meta_by_id: dict[int, dict[str, Any]] = {}
         seen_sched_ids: set[int] = set()
         for page_idx in range(4):
             offset = page_idx * 500
-            st_s, sched_body, err_s = paced.get_json(
+            st_s, sched_body, err_s, meta_s = paced.get_json_with_meta(
                 "/api/events",
                 params={"status": "scheduled", "days": 14, "past_days": 0, "limit": 500, "offset": offset},
                 timeout=45.0,
@@ -463,6 +720,7 @@ def run_standing_scores(
                     {"path": f"/api/events?status=scheduled&offset={offset}", "status": st_s, "error": err_s or "non-dict payload"}
                 )
                 break
+            sched_env_meta = _extract_envelope_meta(sched_body, meta_s)
             batch = [e for e in (sched_body.get("events") or ()) if isinstance(e, dict)]
             for row in batch:
                 rid = row.get("id")
@@ -470,6 +728,7 @@ def run_standing_scores(
                     if rid in seen_sched_ids:
                         continue
                     seen_sched_ids.add(rid)
+                    scheduled_meta_by_id[rid] = sched_env_meta
                 scheduled_events.append(row)
             if len(batch) < 500:
                 break
@@ -477,17 +736,19 @@ def run_standing_scores(
         census = compute_stale_sportsbook_census(scheduled_events, now=clock_now, stale_hours=stale_hours)
 
         # 3. Live games (/api/events?status=live&limit=50); avoid unfiltered /api/events?days=3
-        st_l, live_body, err_l = paced.get_json(
+        st_l, live_body, err_l, meta_l = paced.get_json_with_meta(
             "/api/events",
             params={"status": "live", "limit": 50},
             timeout=30.0,
             retries=1,
         )
+        live_env_meta: dict[str, Any] = {}
         if err_l or not isinstance(live_body, dict):
             http_errors.append({"path": "/api/events?status=live", "status": st_l, "error": err_l or "non-dict payload"})
             live_events: list[dict[str, Any]] = []
         else:
             live_events = [e for e in (live_body.get("events") or ()) if isinstance(e, dict)]
+            live_env_meta = _extract_envelope_meta(live_body, meta_l)
 
         window_end = clock_now + timedelta(days=3)
         scheduled_3d: list[dict[str, Any]] = []
@@ -499,31 +760,38 @@ def run_standing_scores(
         # 4. Select up to max_games live / <=48h scheduled games across all represented sports
         combined_by_id: dict[int, dict[str, Any]] = {}
         list_surface_by_id: dict[int, str] = {}
+        list_meta_by_id: dict[int, dict[str, Any]] = {}
         for ev in live_events:
             eid = ev.get("id")
             if isinstance(eid, int) and eid not in combined_by_id:
                 combined_by_id[eid] = ev
                 list_surface_by_id[eid] = "GET /api/events?status=live"
+                list_meta_by_id[eid] = live_env_meta
         for ev in scheduled_3d:
             eid = ev.get("id")
             if isinstance(eid, int) and eid not in combined_by_id:
                 combined_by_id[eid] = ev
                 list_surface_by_id[eid] = "GET /api/events?status=scheduled"
+                list_meta_by_id[eid] = scheduled_meta_by_id.get(eid, {})
         selected_games = select_audit_games(list(combined_by_id.values()), now=clock_now, max_games=max_games)
         selected_by_id = {int(g["id"]): g for g in selected_games if isinstance(g.get("id"), int)}
         sports_covered = sorted({str(g.get("sport") or "") for g in selected_games if g.get("sport")})
 
         surface_cards: dict[tuple[int, str], dict[str, Any]] = {}
+        surface_meta: dict[tuple[int, str], dict[str, Any]] = {}
         for g in selected_games:
             gid = g.get("id")
             if isinstance(gid, int):
-                surface_cards[(gid, list_surface_by_id.get(gid, "GET /api/events?status=scheduled"))] = g
+                surf = list_surface_by_id.get(gid, "GET /api/events?status=scheduled")
+                surface_cards[(gid, surf)] = g
+                surface_meta[(gid, surf)] = list_meta_by_id.get(gid, {})
 
         # 5. Sports feed (/api/feed?mode=sports&limit=200)
-        st, feed_body, err = paced.get_json("/api/feed", params={"mode": "sports", "limit": 200})
+        st, feed_body, err, meta_f = paced.get_json_with_meta("/api/feed", params={"mode": "sports", "limit": 200})
         if err or not isinstance(feed_body, dict):
             http_errors.append({"path": "/api/feed?mode=sports", "status": st, "error": err or "non-dict payload"})
         else:
+            feed_env_meta = _extract_envelope_meta(feed_body, meta_f)
             for item in feed_body.get("items") or ():
                 if isinstance(item, dict) and item.get("type") == "event":
                     data = item.get("data")
@@ -531,14 +799,16 @@ def run_standing_scores(
                         eid = int(data["id"])
                         if eid in selected_by_id:
                             surface_cards[(eid, "GET /api/feed?mode=sports")] = data
+                            surface_meta[(eid, "GET /api/feed?mode=sports")] = feed_env_meta
 
         # 6. League pages (/api/leagues/{sport_key})
         for sk in sports_covered[:max_leagues]:
             path = f"/api/leagues/{sk}"
-            st, lg_body, err = paced.get_json(path)
+            st, lg_body, err, meta_lg = paced.get_json_with_meta(path)
             if err or not isinstance(lg_body, dict):
                 http_errors.append({"path": path, "status": st, "error": err or "non-dict payload"})
                 continue
+            lg_env_meta = _extract_envelope_meta(lg_body, meta_lg)
             for key in ("upcoming_games", "recent_results", "unreported_games", "events", "live_events"):
                 rows = lg_body.get(key)
                 if isinstance(rows, list):
@@ -547,6 +817,7 @@ def run_standing_scores(
                             eid = int(ev["id"])
                             if eid in selected_by_id:
                                 surface_cards[(eid, f"GET {path}")] = ev
+                                surface_meta[(eid, f"GET {path}")] = lg_env_meta
 
         # 7. Search spot-checks across sports (/api/events/search)
         searched_sports: set[str] = set()
@@ -561,74 +832,83 @@ def run_standing_scores(
             if len(q) < 3:
                 continue
             searched_sports.add(sk)
-            st, sr_body, err = paced.get_json("/api/events/search", params={"q": q, "per_page": 15})
+            st, sr_body, err, meta_sr = paced.get_json_with_meta(
+                "/api/events/search", params={"q": q, "per_page": 15}
+            )
             if err or not isinstance(sr_body, dict):
                 http_errors.append({"path": f"/api/events/search?q={q}", "status": st, "error": err or "non-dict payload"})
                 continue
+            sr_env_meta = _extract_envelope_meta(sr_body, meta_sr)
             for ev in sr_body.get("results") or ():
                 if isinstance(ev, dict) and isinstance(ev.get("id"), int):
                     eid = int(ev["id"])
                     if eid in selected_by_id:
                         surface_cards[(eid, "GET /api/events/search")] = ev
+                        surface_meta[(eid, "GET /api/events/search")] = sr_env_meta
                         search_query_by_id[eid] = q
 
         def _refetch_surface_card(
             eid: int,
             surface: str,
             sport_key: str,
-        ) -> dict[str, Any] | None:
+        ) -> tuple[dict[str, Any], dict[str, Any]] | None:
             if surface == "GET /api/events?status=live":
                 params: dict[str, Any] = {"status": "live", "limit": 50}
                 if sport_key:
                     params["sport"] = sport_key
-                _, b, e = paced.get_json("/api/events", params=params)
+                _, b, e, m = paced.get_json_with_meta("/api/events", params=params)
                 if e or not isinstance(b, dict):
                     return None
+                env_m = _extract_envelope_meta(b, m)
                 for row in b.get("events") or ():
                     if isinstance(row, dict) and row.get("id") == eid:
-                        return row
+                        return row, env_m
                 return None
             if surface == "GET /api/events?status=scheduled":
                 params = {"status": "scheduled", "days": 3, "past_days": 0, "limit": 200}
                 if sport_key:
                     params["sport"] = sport_key
-                _, b, e = paced.get_json("/api/events", params=params)
+                _, b, e, m = paced.get_json_with_meta("/api/events", params=params)
                 if e or not isinstance(b, dict):
                     return None
+                env_m = _extract_envelope_meta(b, m)
                 for row in b.get("events") or ():
                     if isinstance(row, dict) and row.get("id") == eid:
-                        return row
+                        return row, env_m
                 return None
             if surface == "GET /api/feed?mode=sports":
-                _, b, e = paced.get_json("/api/feed", params={"mode": "sports", "limit": 200})
+                _, b, e, m = paced.get_json_with_meta("/api/feed", params={"mode": "sports", "limit": 200})
                 if e or not isinstance(b, dict):
                     return None
+                env_m = _extract_envelope_meta(b, m)
                 for item in b.get("items") or ():
                     if isinstance(item, dict) and item.get("type") == "event":
                         data = item.get("data")
                         if isinstance(data, dict) and data.get("id") == eid:
-                            return data
+                            return data, env_m
                 return None
             if surface.startswith("GET /api/leagues/"):
                 path = surface[len("GET ") :]
-                _, b, e = paced.get_json(path)
+                _, b, e, m = paced.get_json_with_meta(path)
                 if e or not isinstance(b, dict):
                     return None
+                env_m = _extract_envelope_meta(b, m)
                 for k in ("upcoming_games", "recent_results", "unreported_games", "events", "live_events"):
                     for row in b.get(k) or ():
                         if isinstance(row, dict) and row.get("id") == eid:
-                            return row
+                            return row, env_m
                 return None
             if surface == "GET /api/events/search":
                 q = search_query_by_id.get(eid)
                 if not q:
                     return None
-                _, b, e = paced.get_json("/api/events/search", params={"q": q, "per_page": 15})
+                _, b, e, m = paced.get_json_with_meta("/api/events/search", params={"q": q, "per_page": 15})
                 if e or not isinstance(b, dict):
                     return None
+                env_m = _extract_envelope_meta(b, m)
                 for row in b.get("results") or ():
                     if isinstance(row, dict) and row.get("id") == eid:
-                        return row
+                        return row, env_m
                 return None
             return None
 
@@ -640,18 +920,30 @@ def run_standing_scores(
         games_verified = 0
         for eid in [int(g["id"]) for g in selected_games if isinstance(g.get("id"), int)]:
             path = f"/api/events/{eid}"
-            st, detail, err = paced.get_json(path)
+            st, detail, err, detail_meta = paced.get_json_with_meta(path)
             if err or not isinstance(detail, dict):
                 http_errors.append({"path": path, "status": st, "error": err or "non-dict payload"})
                 continue
             games_verified += 1
+            detail_age = extract_copy_age(detail, response_meta=detail_meta, fallback_now=clock_now)
             is_live_detail = str(detail.get("status") or "").lower() in {"live", "in_progress"}
             detail_sport = str(detail.get("sport") or "")
             for (card_eid, surface), card in sorted(surface_cards.items(), key=lambda x: (x[0][0], x[0][1])):
                 if card_eid != eid:
                     continue
                 surface_comparisons += 1
-                card_diffs = compare_card_against_detail(surface=surface, card=card, detail=detail)
+                card_age = extract_copy_age(
+                    card,
+                    response_meta=surface_meta.get((card_eid, surface)),
+                    fallback_now=clock_now,
+                )
+                card_diffs = compare_card_against_detail(
+                    surface=surface,
+                    card=card,
+                    detail=detail,
+                    card_age=card_age,
+                    detail_age=detail_age,
+                )
                 if not card_diffs:
                     continue
                 prob_only = all(
@@ -663,8 +955,8 @@ def run_standing_scores(
                     # ordinary line movement between list read and page read is not
                     # filed as a disagreement. If either re-read fails, record it
                     # as unconfirmed (-> INCOMPLETE) rather than a confirmed diff.
-                    re_card = _refetch_surface_card(eid, surface, detail_sport or str(card.get("sport") or ""))
-                    if re_card is None:
+                    refetched = _refetch_surface_card(eid, surface, detail_sport or str(card.get("sport") or ""))
+                    if refetched is None:
                         unconfirmed_disagreements.append(
                             {
                                 "event_id": eid,
@@ -673,11 +965,15 @@ def run_standing_scores(
                                 "surface": surface,
                                 "is_live": is_live_detail,
                                 "reason": "list_reread_failed",
+                                "surface_copy_age": card_age,
+                                "detail_copy_age": detail_age,
                                 "initial_diffs": card_diffs,
                             }
                         )
                         continue
-                    _, re_detail, re_err = paced.get_json(path)
+                    re_card, re_card_meta = refetched
+                    re_card_age = extract_copy_age(re_card, response_meta=re_card_meta, fallback_now=clock_now)
+                    _, re_detail, re_err, re_detail_meta = paced.get_json_with_meta(path)
                     if re_err or not isinstance(re_detail, dict):
                         unconfirmed_disagreements.append(
                             {
@@ -687,12 +983,21 @@ def run_standing_scores(
                                 "surface": surface,
                                 "is_live": is_live_detail,
                                 "reason": f"detail_reread_failed:{re_err or 'non-dict payload'}",
+                                "surface_copy_age": re_card_age,
+                                "detail_copy_age": detail_age,
                                 "initial_diffs": card_diffs,
                             }
                         )
                         continue
+                    re_detail_age = extract_copy_age(
+                        re_detail, response_meta=re_detail_meta, fallback_now=clock_now
+                    )
                     re_diffs = compare_card_against_detail(
-                        surface=surface, card=re_card, detail=re_detail
+                        surface=surface,
+                        card=re_card,
+                        detail=re_detail,
+                        card_age=re_card_age,
+                        detail_age=re_detail_age,
                     )
                     if not re_diffs:
                         live_tick_drifts.append(
@@ -702,6 +1007,9 @@ def run_standing_scores(
                                 "matchup": _matchup_label(detail),
                                 "surface": surface,
                                 "is_live": is_live_detail,
+                                "surface_copy_age": re_card_age,
+                                "detail_copy_age": re_detail_age,
+                                "fetch_gap_seconds": _fetch_gap_seconds(re_card_age, re_detail_age),
                                 "initial_diffs": card_diffs,
                             }
                         )
@@ -807,14 +1115,20 @@ def render_markdown_report(result: dict[str, Any]) -> str:
             [
                 "## List vs Page Disagreements",
                 "",
-                "| Event | Sport | Matchup | Surface | Field | Surface Val | Detail Val |",
-                "|---|---|---|---|---|---|---|",
+                "| Event | Sport | Matchup | Surface | Field | Surface Val | Detail Val | List Copy Age | Page Copy Age |",
+                "|---|---|---|---|---|---|---|---|---|",
             ]
         )
         for d in lvp["disagreements"][:50]:
+            list_age_str = format_copy_age(d.get("surface_copy_age")) if d.get("surface_copy_age") else "copy ?, read ?"
+            page_age_str = format_copy_age(d.get("detail_copy_age")) if d.get("detail_copy_age") else "copy ?, read ?"
+            gap = d.get("fetch_gap_seconds")
+            if gap is not None:
+                page_age_str += f" (gap {format_age_duration(gap)})"
             lines.append(
                 f"| `{d['event_id']}` | `{d['sport_key']}` | {d['matchup']} | `{d['surface']}` | "
-                f"`{d['field']}` | `{d['surface_value']}` | `{d['detail_value']}` |"
+                f"`{d['field']}` | `{d['surface_value']}` | `{d['detail_value']}` | "
+                f"`{list_age_str}` | `{page_age_str}` |"
             )
         lines.append("")
 
