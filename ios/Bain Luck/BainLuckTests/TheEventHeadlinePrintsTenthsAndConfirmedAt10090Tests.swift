@@ -116,13 +116,18 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
     /// The hero view reads the tenths function on all three priced arms
     /// (pair, lone draw-priced side, NFL paired headline), not a whole rule.
     func testTheEventPageHeroCallsTheTenthsPairOnEveryPricedArm() throws {
-        let source = try String(contentsOf: Self.repoFile("ios/Bain Luck/Bain Luck/Views/EventDetailView.swift"), encoding: .utf8)
-        XCTAssertTrue(source.contains("let printed = EventHeadlineTenths10090.pair(home: home, away: away)"))
-        XCTAssertTrue(source.contains("Text(printed.away ?? \"\")"))
-        XCTAssertTrue(source.contains("Text(printed.home)"))
-        XCTAssertTrue(source.contains("Text(EventHeadlineTenths10090.pair(home: home, away: nil).home)"))
-        XCTAssertTrue(source.contains("let printed = EventHeadlineTenths10090.pair(home: pair.home, away: away)"))
-        XCTAssertFalse(source.contains("Text(formatProbability(away, renderedPercent: awayPct))"))
+        let headlines = try String(contentsOf: Self.repoFile("ios/Bain Luck/Bain Luck/Utilities/EventSportHeadlines12472.swift"), encoding: .utf8)
+        let duringStart = try XCTUnwrap(headlines.range(of: "nonisolated private static func resolveDuring("))
+        let duringEnd = try XCTUnwrap(headlines.range(of: "// MARK: - Phase 3: `after`", range: duringStart.upperBound..<headlines.endIndex))
+        let during = String(headlines[duringStart.lowerBound..<duringEnd.lowerBound])
+        XCTAssertTrue(during.contains("let tenths = EventHeadlineTenths10090.pair(home: pair.home, away: away)"))
+        XCTAssertTrue(during.contains("awayNow = tenths.away ?? \"\""))
+        XCTAssertTrue(during.contains("homeNow = tenths.home"))
+        XCTAssertTrue(during.contains("homeNow = EventHeadlineTenths10090.pair(home: pair.home, away: nil).home"))
+        XCTAssertFalse(during.contains("formatProbability("))
+        let pregameHelperStart = try XCTUnwrap(headlines.range(of: "nonisolated static func nflPregameChanceTexts("))
+        let pregameHelper = String(headlines[pregameHelperStart.lowerBound...].prefix(600))
+        XCTAssertTrue(pregameHelper.contains("let tenths = EventHeadlineTenths10090.pair(home: home, away: away)"))
     }
 
     /// Settled results and cards print as today: a finished line's end label
