@@ -31,6 +31,7 @@
 export * from './types';
 export * from './config';
 export * from './sanitize';
+export { trackFollowTeam, trackPinItem } from './followPin';
 export {
   initializeAnalytics,
   isAnalyticsReady,
