@@ -212,7 +212,10 @@ async def test_batch6_builds_clean_headlines_google_card_split_and_no_elon_lead(
                 assert mc["rows"][0]["name"] == "Bigger opening weekend than Dune 3: Avengers: Doomsday"
                 assert res.rows[0]["label"] == "Bigger opening weekend than Dune 3: Avengers: Doomsday"
 
-    assert not any("dropped row pictures" in rec.message for rec in caplog.records)
+    assert not any(
+        "missing art for subjects=" in rec.message or "dropped row pictures" in rec.message
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.asyncio

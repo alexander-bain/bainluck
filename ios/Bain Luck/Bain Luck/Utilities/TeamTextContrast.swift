@@ -51,6 +51,10 @@ enum TeamTextContrast {
     /// deliberately not taken inside a bug fix.
     static let minimumRatio = 3.0
 
+    /// WCAG AA contrast for normal text on dark surfaces (such as rotated chart
+    /// side labels, axis percentages, and team ink text over dark cards, #13759).
+    static let darkTextMinimumRatio = 4.5
+
     /// The app's primary pages draw on `Color.cardBackground`, which is white (`1.0`).
     /// Widgets, dark mode, Watch faces, and Live Activities sit on dark surfaces (`0.012`).
     static let cardSurfaceLuminance = 1.0
@@ -83,8 +87,12 @@ enum TeamTextContrast {
         return (max(l, bg) + 0.05) / (min(l, bg) + 0.05)
     }
 
-    /// Does `hex` clear WCAG's 3:1 floor against `surfaceLuminance`?
-    static func readableOnSurface(_ hex: String?, surfaceLuminance: Double) -> Bool {
+    /// Does `hex` clear `minimumRatio` against `surfaceLuminance`?
+    static func readableOnSurface(
+        _ hex: String?,
+        surfaceLuminance: Double,
+        minimumRatio: Double = Self.minimumRatio
+    ) -> Bool {
         guard let ratio = contrast(hex, againstSurfaceLuminance: surfaceLuminance) else { return false }
         return ratio >= minimumRatio
     }
@@ -188,14 +196,15 @@ enum TeamTextContrast {
     }
 
     /// Lightens `hex` in HSL space (preserving hue and saturation) by the minimum
-    /// lightness increase needed for the quantized `#RRGGBB` result to clear `minimumRatio`
-    /// (`3.0:1`) against `surfaceLuminance`. Returns `nil` if `hex` is absent/unparseable.
+    /// lightness increase needed for the quantized `#RRGGBB` result to clear
+    /// `minimumRatio` against `surfaceLuminance`. Returns `nil` if `hex` is absent/unparseable.
     static func lightenedForDarkSurface(
         _ hex: String?,
-        surfaceLuminance: Double = darkSurfaceLuminance
+        surfaceLuminance: Double = darkSurfaceLuminance,
+        minimumRatio: Double = Self.minimumRatio
     ) -> String? {
         guard let rgb = ProbabilityBarPalette.rgb(hex) else { return nil }
-        if readableOnSurface(hex, surfaceLuminance: surfaceLuminance) {
+        if readableOnSurface(hex, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) {
             return String(format: "#%02X%02X%02X", rgb.r, rgb.g, rgb.b)
         }
         let r0 = Double(rgb.r) / 255.0
@@ -260,7 +269,7 @@ enum TeamTextContrast {
         for _ in 0..<24 {
             let mid = (low + high) / 2.0
             let candidate = hexAtLightness(mid)
-            if readableOnSurface(candidate, surfaceLuminance: surfaceLuminance) {
+            if readableOnSurface(candidate, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) {
                 high = mid
             } else {
                 low = mid
@@ -270,7 +279,7 @@ enum TeamTextContrast {
         var lCursor = high
         while lCursor <= 1.0 {
             let candidate = hexAtLightness(lCursor)
-            if readableOnSurface(candidate, surfaceLuminance: surfaceLuminance) {
+            if readableOnSurface(candidate, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) {
                 return candidate
             }
             lCursor += 1.0 / 512.0
@@ -278,24 +287,31 @@ enum TeamTextContrast {
         return "#FFFFFF"
     }
 
+    private static let darkSeparationLadder = ["#94A3B8", "#60A5FA", "#F59E0B", "#A78BFA", "#34D399"]
+
     /// Ruling 221 single-team dark-surface colour:
-    /// 1. `primaryHex` when it clears 3:1 against `surfaceLuminance`;
-    /// 2. else `secondaryHex` when present and readable (>= 3:1);
-    /// 3. else `lightenedForDarkSurface(primaryHex, surfaceLuminance:)` (never grey
+    /// 1. `primaryHex` when it clears `minimumRatio` against `surfaceLuminance`;
+    /// 2. else `secondaryHex` when present and readable (>= `minimumRatio`);
+    /// 3. else `lightenedForDarkSurface(primaryHex, surfaceLuminance:, minimumRatio:)` (never grey
     ///    when a valid primary colour exists);
     /// 4. `nil` only when no valid primary or readable secondary colour exists.
     static func usableOnDarkSurface(
         primaryHex: String?,
         secondaryHex: String? = nil,
-        surfaceLuminance: Double = darkSurfaceLuminance
+        surfaceLuminance: Double = darkSurfaceLuminance,
+        minimumRatio: Double = Self.minimumRatio
     ) -> String? {
-        if readableOnSurface(primaryHex, surfaceLuminance: surfaceLuminance) {
+        if readableOnSurface(primaryHex, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) {
             return canonicalHex(primaryHex)
         }
-        if readableOnSurface(secondaryHex, surfaceLuminance: surfaceLuminance) {
+        if readableOnSurface(secondaryHex, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) {
             return canonicalHex(secondaryHex)
         }
-        return lightenedForDarkSurface(primaryHex, surfaceLuminance: surfaceLuminance)
+        return lightenedForDarkSurface(
+            primaryHex,
+            surfaceLuminance: surfaceLuminance,
+            minimumRatio: minimumRatio
+        )
     }
 
     /// Ruling 221 + Ruling 197 away/home pair on a dark surface.
@@ -305,29 +321,36 @@ enum TeamTextContrast {
         awaySecondaryHex: String? = nil,
         homeSecondaryHex: String? = nil,
         surfaceLuminance: Double = darkSurfaceLuminance,
+        minimumRatio: Double = Self.minimumRatio,
         checkHueFamily: Bool = true
     ) -> (away: String, home: String) {
         let awayCandidate = usableOnDarkSurface(
             primaryHex: awayHex,
             secondaryHex: awaySecondaryHex,
-            surfaceLuminance: surfaceLuminance
+            surfaceLuminance: surfaceLuminance,
+            minimumRatio: minimumRatio
         )
         let homeCandidate = usableOnDarkSurface(
             primaryHex: homeHex,
             secondaryHex: homeSecondaryHex,
-            surfaceLuminance: surfaceLuminance
+            surfaceLuminance: surfaceLuminance,
+            minimumRatio: minimumRatio
         )
         let awayClashAlternate: String? = {
-            if readableOnSurface(awayHex, surfaceLuminance: surfaceLuminance) {
-                return readableOnSurface(awaySecondaryHex, surfaceLuminance: surfaceLuminance)
+            if readableOnSurface(awayHex, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) {
+                return readableOnSurface(awaySecondaryHex, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
                     ? canonicalHex(awaySecondaryHex)
                     : nil
             }
-            if readableOnSurface(awaySecondaryHex, surfaceLuminance: surfaceLuminance) {
+            if readableOnSurface(awaySecondaryHex, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) {
                 // Away switched to its readable secondary (e.g. Ravens gold #9E7C0C); if
                 // that clashes with home (e.g. Steelers gold #FFB612), use away's lightened
                 // primary (#6450DC purple) before falling back to slate grey.
-                return lightenedForDarkSurface(awayHex, surfaceLuminance: surfaceLuminance)
+                return lightenedForDarkSurface(
+                    awayHex,
+                    surfaceLuminance: surfaceLuminance,
+                    minimumRatio: minimumRatio
+                )
             }
             return nil
         }()
@@ -337,12 +360,42 @@ enum TeamTextContrast {
             awaySecondaryHex: awayClashAlternate,
             checkHueFamily: checkHueFamily
         )
-        let safeAway = readableOnSurface(raw.away, surfaceLuminance: surfaceLuminance)
+        var safeAway = readableOnSurface(raw.away, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
             ? raw.away
-            : (lightenedForDarkSurface(raw.away, surfaceLuminance: surfaceLuminance) ?? raw.away)
-        let safeHome = readableOnSurface(raw.home, surfaceLuminance: surfaceLuminance)
+            : (lightenedForDarkSurface(raw.away, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? raw.away)
+        let safeHome = readableOnSurface(raw.home, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
             ? raw.home
-            : (lightenedForDarkSurface(raw.home, surfaceLuminance: surfaceLuminance) ?? raw.home)
+            : (lightenedForDarkSurface(raw.home, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? raw.home)
+
+        // When a caller asks above the default 3.0 floor (e.g. dark game chart text
+        // at 4.5:1), lightening both sides can push dark neutrals or fallback rungs
+        // into the same hue/luminance band; step away onto a distinct dark-readable
+        // rung there, while keeping default 3.0 callers bit-identical to master.
+        if minimumRatio > Self.minimumRatio {
+            let hueClash = checkHueFamily && ProbabilityBarPalette.sameHueFamily(safeAway, safeHome)
+            if !ProbabilityBarPalette.distinguishable(safeAway, safeHome) || hueClash {
+                if let distinct = darkSeparationLadder.first(where: { rung in
+                    let candidate = readableOnSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
+                        ? rung
+                        : (lightenedForDarkSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? rung)
+                    let noHueClash = !checkHueFamily || !ProbabilityBarPalette.sameHueFamily(candidate, safeHome)
+                    return noHueClash && ProbabilityBarPalette.distinguishable(candidate, safeHome)
+                }) {
+                    safeAway = readableOnSurface(distinct, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
+                        ? distinct
+                        : (lightenedForDarkSurface(distinct, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? distinct)
+                } else if let distinctAnyHue = darkSeparationLadder.first(where: { rung in
+                    let candidate = readableOnSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
+                        ? rung
+                        : (lightenedForDarkSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? rung)
+                    return ProbabilityBarPalette.distinguishable(candidate, safeHome)
+                }) {
+                    safeAway = readableOnSurface(distinctAnyHue, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
+                        ? distinctAnyHue
+                        : (lightenedForDarkSurface(distinctAnyHue, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? distinctAnyHue)
+                }
+            }
+        }
         return (safeAway, safeHome)
     }
 
@@ -353,6 +406,7 @@ enum TeamTextContrast {
         awaySecondaryHex: String? = nil,
         homeSecondaryHex: String? = nil,
         surfaceLuminance: Double,
+        darkMinimumRatio: Double = Self.minimumRatio,
         checkHueFamily: Bool = true
     ) -> (away: String, home: String) {
         if surfaceLuminance >= 0.5 {
@@ -369,6 +423,7 @@ enum TeamTextContrast {
             awaySecondaryHex: awaySecondaryHex,
             homeSecondaryHex: homeSecondaryHex,
             surfaceLuminance: surfaceLuminance,
+            minimumRatio: darkMinimumRatio,
             checkHueFamily: checkHueFamily
         )
     }
@@ -380,6 +435,7 @@ enum TeamTextContrast {
         awaySecondaryHex: String? = nil,
         homeSecondaryHex: String? = nil,
         colorScheme: ColorScheme,
+        darkMinimumRatio: Double = Self.minimumRatio,
         checkHueFamily: Bool = true
     ) -> (away: String, home: String) {
         surfaceColorHexes(
@@ -388,6 +444,7 @@ enum TeamTextContrast {
             awaySecondaryHex: awaySecondaryHex,
             homeSecondaryHex: homeSecondaryHex,
             surfaceLuminance: surfaceLuminance(for: colorScheme),
+            darkMinimumRatio: darkMinimumRatio,
             checkHueFamily: checkHueFamily
         )
     }
@@ -398,6 +455,7 @@ enum TeamTextContrast {
         awaySecondaryHex: String? = nil,
         homeSecondaryHex: String? = nil,
         colorScheme: ColorScheme,
+        darkMinimumRatio: Double = Self.minimumRatio,
         checkHueFamily: Bool = true
     ) -> (away: Color, home: Color) {
         let hexes = surfaceColorHexes(
@@ -406,6 +464,7 @@ enum TeamTextContrast {
             awaySecondaryHex: awaySecondaryHex,
             homeSecondaryHex: homeSecondaryHex,
             colorScheme: colorScheme,
+            darkMinimumRatio: darkMinimumRatio,
             checkHueFamily: checkHueFamily
         )
         return (Color(hex: hexes.away), Color(hex: hexes.home))
