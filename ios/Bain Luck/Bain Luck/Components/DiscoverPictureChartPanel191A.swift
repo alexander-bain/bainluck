@@ -533,7 +533,7 @@ final class DiscoverEventChartHistoryCache191A {
         return entries[eventId]?.response
     }
 
-    private func store(_ response: EventHistoryResponse, for eventId: Int) {
+    func store(_ response: EventHistoryResponse, for eventId: Int) {
         entries[eventId] = Entry(response: response, fetchedAt: Date())
         order.removeAll { $0 == eventId }
         order.append(eventId)
@@ -541,6 +541,11 @@ final class DiscoverEventChartHistoryCache191A {
             let evicted = order.removeFirst()
             entries.removeValue(forKey: evicted)
         }
+    }
+
+    func remove(eventId: Int) {
+        entries.removeValue(forKey: eventId)
+        order.removeAll { $0 == eventId }
     }
 }
 
