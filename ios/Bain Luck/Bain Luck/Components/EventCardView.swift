@@ -820,6 +820,7 @@ struct EventCardView: View {
                         colors: (away: awayColor, home: homeColor),
                         spokenText: FinalForecastComparison11296.spokenText(
                             finalForecast, awayName: event.awayTeam, homeName: event.homeTeam),
+                        allowsStandardWrapping: true,
                         accessibilityIdentifier: FinalForecastLine11296.accessibilityIdentifier
                     )
                 }
@@ -933,12 +934,16 @@ struct EventCardView: View {
         return compactHeaders12616.large != nil
     }
 
+    private var isNarrowFinishedCard: Bool {
+        isFinished && measuredCardWidth > 0 && measuredCardWidth < 310
+    }
+
     private var effectiveMediumColWidth: CGFloat {
         if isScheduled {
             return min(compactLiveScoreWidth, 44)
         }
         if isFinished {
-            return min(max(compactPregameWidth, 56), 62)
+            return isNarrowFinishedCard ? 52 : min(max(compactPregameWidth, 56), 62)
         }
         return min(compactLiveScoreWidth, 44)
     }
@@ -948,7 +953,7 @@ struct EventCardView: View {
     }
 
     private var effectiveLargeColWidth: CGFloat {
-        if isFinished { return min(compactLiveScoreWidth, 48) }
+        if isFinished { return isNarrowFinishedCard ? 38 : min(compactLiveScoreWidth, 48) }
         if isSuspended { return min(compactPregameWidth, 66) }
         return min(compactLargeChanceWidth, 86)
     }
@@ -960,6 +965,9 @@ struct EventCardView: View {
     private var largeColumnLeadingGap12616: CGFloat {
         if showsInlineLiveProjected204C {
             return pregameToNowGap + 4
+        }
+        if isNarrowFinishedCard && showsMediumColumn12616 {
+            return 10
         }
         return showsMediumColumn12616 ? scoreToPregameGutter : 0
     }
@@ -1371,7 +1379,7 @@ struct EventCardView: View {
                     .lineLimit(unboundedWrap13121 ? nil : (singleWord ? 1 : 2))
                     .allowsTightening(!unboundedWrap13121)
                     .fixedSize(horizontal: !unboundedWrap13121 && singleWord && preventSingleWordTruncation, vertical: true)
-                if isFinished {
+                if isFinished && won {
                     Text("\u{2713}")
                         .font(HeadlineStyleTable199.secondNumbers(
                             .card,

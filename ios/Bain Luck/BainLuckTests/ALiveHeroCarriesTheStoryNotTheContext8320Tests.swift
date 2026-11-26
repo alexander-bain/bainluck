@@ -81,32 +81,46 @@ final class ALiveHeroCarriesTheStoryNotTheContext8320Tests: XCTestCase {
         return String(code[lower.lowerBound..<upper.lowerBound])
     }
 
+    private func sourceCode(_ subpath: String) throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // BainLuckTests
+            .deletingLastPathComponent()   // Bain Luck (project dir)
+            .appendingPathComponent("Bain Luck")
+            .appendingPathComponent(subpath)
+        return try String(contentsOf: url, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                guard let slashes = line.range(of: "//") else { return String(line) }
+                return String(line[line.startIndex..<slashes.lowerBound])
+            }
+            .joined(separator: "\n")
+            .filter { !$0.isWhitespace }
+    }
+
     private func heroCode() throws -> String {
-        try span(pageCode(), from: "privatefuncheroSection(", to: "staticletverdictSlotWidth")
+        try span(pageCode(), from: "privatefuncheroSection(_event:EventDetail)->someView{", to: "staticfuncfinalForecast11296")
     }
 
     func testTheScanCanSeeTheFileItIsAbout() throws {
         let code = try pageCode()
         XCTAssertTrue(code.contains("structEventDetailView:View{"))
-        XCTAssertGreaterThan(try heroCode().count, 3_000, "the hero span is far too short")
+        XCTAssertGreaterThan(try heroCode().count, 400, "the hero span is unexpectedly short")
     }
 
     func testTheHeroGatesEveryPieceOfContextOnTheOneRule() throws {
         let hero = try heroCode()
-        XCTAssertTrue(hero.contains(
-            "letcarriesContext=EventDetailView.heroCarriesGameContext(status:event.status)"))
-        for gated in [
-            "ifcarriesContext,letbroadcast=event.espn?.broadcast",
-            "ifcarriesContext,letcommenceTime=event.commenceTime",
-            "ifcarriesContext,letrecord=event.awayTeamData?.record",
-            "ifcarriesContext,letrecord=event.homeTeamData?.record",
-            "ifcarriesContext,letcaption=SinceOpenCaption.caption(",
-            "ifcarriesContext,letprojection=projectionText(event,hasScore:hasScore)",
-            // #9483 v476 — the adopted NFL/NBA header's broadcast + start line.
-            "ifcarriesContext,letcontext=adoptedPregameContext9483(event)",
-        ] {
-            XCTAssertTrue(hero.contains(gated), "the hero no longer gates: \(gated)")
-        }
+        XCTAssertTrue(hero.contains("EventSportHeadlines12472.resolve(") && hero.contains("EventSportHeadlineCard12472("),
+                      "heroSection no longer delegates to the unified EventSportHeadlineCard12472 hero")
+
+        let resolver = try sourceCode("Utilities/EventSportHeadlines12472.swift")
+        let duringSpan = try span(resolver, from: "nonisolatedprivatestaticfuncresolveDuring(", to: "nonisolatedprivatestaticfuncresolveAfter(")
+        XCTAssertFalse(duringSpan.contains("livePregameMetaText"), "resolveDuring added pregame countdown/broadcast string")
+        XCTAssertFalse(duringSpan.contains("SinceOpenCaption"), "the live hero renders SinceOpenCaption again")
+
+        let card = try sourceCode("Components/EventSportHeadlineCard12472.swift")
+        let meta = try span(card, from: "privatevarleadingMeta:someView{", to: "privatefuncliveBadgePill(")
+        XCTAssertTrue(meta.contains("case.before:") && meta.contains("livePregameMetaText"), "before phase lost pregame meta")
+        XCTAssertTrue(meta.contains("case.during:ifletbadgeText=model.liveBadgeText{"), "live hero meta should show badge + league only")
     }
 
     func testTheSparklineAndTheLiveOpenedLineAreGoneFromTheHero() throws {

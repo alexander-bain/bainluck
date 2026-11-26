@@ -272,10 +272,10 @@ final class HeroSaysTheCountdownOnce6544Tests: XCTestCase {
     /// status too, but that status is not the kickoff countdown and cannot
     /// replace its minute clock.
     func testTheChipStillTicks() throws {
-        let code = try heroCode()
+        let cardCode = try code("Components", "EventSportHeadlineCard12472.swift")
         XCTAssertTrue(
-            code.contains("TimelineView(.periodic(from:.now,by:60)){_in"
-                          + "heroStatusBadge(event)}"),
+            cardCode.contains("case.before:TimelineView(.periodic(from:.now,by:60)){tickin")
+                && cardCode.contains("Self.livePregameMetaText(model:model,now:tick.date)"),
             """
             the hero's status chip is no longer inside a 60-second TimelineView. \
             It looks like a decorative wrapper around one badge and it is not: \

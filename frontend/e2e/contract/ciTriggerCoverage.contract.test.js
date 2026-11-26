@@ -174,38 +174,31 @@ describe("CI trap #2: every pull request gets a CI run, whatever its base", () =
     );
   });
 
-  it("deploy is still gated on a push to master, so an any-base PR cannot release", () => {
+  it("deploy and deploy-after-full are gated on a push to master, so an any-base PR cannot release", () => {
     // This is the assertion that makes dropping the pull_request filter safe.
-    // If deploy's guard ever weakens to something a pull_request event can
+    // If either release job's guard ever weakens to something a pull_request event can
     // satisfy, a PR from a fork or a stacked branch could push to Heroku.
-    const lines = codeOf(readWorkflow()).split("\n");
-    const start = lines.findIndex((l) => l === "  deploy:");
-    assert.notEqual(start, -1, "ci.yml has no top-level job named `deploy`.");
-    const rest = lines.slice(start + 1);
-    let end = rest.findIndex((l) => /^ {2}\S/.test(l));
-    if (end === -1) end = rest.length;
-    const deploy = rest.slice(0, end).join("\n");
-
-    assert.match(
-      deploy,
-      /if:.*github\.event_name\s*==\s*'push'/,
-      "the deploy job no longer requires `github.event_name == 'push'`. Since ci.yml now runs " +
-        "on pull requests into ANY base, that condition is the only thing standing between a PR " +
-        "run and a Heroku release."
-    );
-    assert.match(
-      deploy,
-      /if:.*github\.ref\s*==\s*'refs\/heads\/master'/,
-      "the deploy job no longer requires `github.ref == 'refs/heads/master'`."
-    );
+    for (const jobName of ["deploy", "deploy-after-full"]) {
+      const deploy = deployJob(readWorkflow(), jobName);
+      assert.match(
+        deploy,
+        /if:.*github\.event_name\s*==\s*'push'/,
+        `${jobName} no longer requires \`github.event_name == 'push'\`.`,
+      );
+      assert.match(
+        deploy,
+        /if:.*github\.ref\s*==\s*'refs\/heads\/master'/,
+        `${jobName} no longer requires \`github.ref == 'refs/heads/master'\`.`,
+      );
+    }
   });
 });
 
-/** The `deploy:` job's body, comments stripped, as one string. */
-function deployJob(text = readWorkflow()) {
+/** A named deploy job's body, comments stripped, as one string. */
+function deployJob(text = readWorkflow(), jobName = "deploy") {
   const lines = codeOf(text).split("\n");
-  const start = lines.findIndex((l) => l === "  deploy:");
-  assert.notEqual(start, -1, "ci.yml has no top-level job named `deploy`.");
+  const start = lines.indexOf(`  ${jobName}:`);
+  assert.notEqual(start, -1, `ci.yml has no top-level job named \`${jobName}\`.`);
   const rest = lines.slice(start + 1);
   let end = rest.findIndex((l) => /^ {2}\S/.test(l));
   if (end === -1) end = rest.length;
@@ -257,52 +250,24 @@ function deployJob(text = readWorkflow()) {
  * the failure the group exists to prevent and is not what this change loosens.
  */
 describe("THRU-F: the deploy queue delays releases, it never kills one", () => {
-  it("deploy still serializes on a constant `heroku-deploy` concurrency group", () => {
-    const deploy = deployJob();
-
-    assert.match(
-      deploy,
-      /^\s+concurrency:$/m,
-      "the deploy job no longer declares a `concurrency:` block. Without one, two merges " +
-        "whose CI finishes together both run `git push heroku` at once and race over which " +
-        "release lands last."
-    );
-
-    const group = deploy.split("\n").find((l) => /^\s+group:/.test(l));
-    assert.notEqual(group, undefined, "deploy's `concurrency:` block has no `group:` key.");
-    assert.equal(
-      group.trim(),
-      "group: heroku-deploy",
-      `deploy's concurrency group is "${group.trim()}", not "group: heroku-deploy".`
-    );
-    assert.doesNotMatch(
-      group,
-      /\$\{\{/,
-      `deploy's concurrency group is templated ("${group.trim()}"). A group computed from the ` +
-        "run, sha or ref puts every deploy in a group of its own, which is the same as having " +
-        "no group: releases stop being serialized and can push to Heroku concurrently."
-    );
+  it("both release jobs serialize on a constant `heroku-deploy` concurrency group", () => {
+    for (const jobName of ["deploy", "deploy-after-full"]) {
+      const deploy = deployJob(readWorkflow(), jobName);
+      assert.match(deploy, /^\s+concurrency:$/m, `${jobName} missing concurrency`);
+      const group = deploy.split("\n").find((l) => /^\s+group:/.test(l));
+      assert.notEqual(group, undefined, `${jobName} concurrency missing group`);
+      assert.equal(group.trim(), "group: heroku-deploy");
+      assert.doesNotMatch(group, /\$\{\{/);
+    }
   });
 
-  it("deploy is never cancelled in progress, because in progress means mid-release", () => {
-    const deploy = deployJob();
-    const flag = deploy.split("\n").find((l) => /^\s+cancel-in-progress:/.test(l));
-
-    // Absent is fine — false is the GitHub default. Only `true` is the defect.
-    if (flag === undefined) return;
-
-    assert.equal(
-      flag.trim(),
-      "cancel-in-progress: false",
-      `deploy sets "${flag.trim()}". A deploy job is "in progress" for the whole of ` +
-        "`git push heroku`, and Heroku streams the build and release back over that push — so " +
-        "cancelling it does not stop the release, it only throws away the job that was " +
-        "supposed to verify and reconcile it. Production changes, the run reads `cancelled`, " +
-        "and the never-backwards guard's rejection/ancestry/fail-closed path never runs.\n\n" +
-        "This does not need to be true to coalesce a merge burst: a concurrency group holds " +
-        "one pending job and a newly queued job already cancels the previously pending one, " +
-        "whatever this flag says. Delete the key or set it to false; do not set it to true."
-    );
+  it("neither release job is ever cancelled in progress, because in progress means mid-release", () => {
+    for (const jobName of ["deploy", "deploy-after-full"]) {
+      const deploy = deployJob(readWorkflow(), jobName);
+      const flag = deploy.split("\n").find((l) => /^\s+cancel-in-progress:/.test(l));
+      if (flag === undefined) continue;
+      assert.equal(flag.trim(), "cancel-in-progress: false");
+    }
   });
 });
 
@@ -358,11 +323,11 @@ describe("CI trap #2, generalized: no PR-reporting workflow filters by base bran
 
 
 describe("compose push evidence cannot release", () => {
-  it("both release jobs remain restricted to master", () => {
+  it("both release jobs and release-required remain restricted to master", () => {
     const workflow = codeOf(readWorkflow());
-    for (const job of ["release-required", "deploy"]) {
+    for (const job of ["release-required", "deploy", "deploy-after-full"]) {
       const start = workflow.indexOf(`  ${job}:`);
-      assert.ok(start >= 0);
+      assert.ok(start >= 0, `missing ${job}`);
       const body = workflow.slice(start).split(/\n  [a-z][\w-]*:/)[0];
       assert.match(body, /if:.*github\.ref == 'refs\/heads\/master'.*github\.event_name == 'push'/);
     }

@@ -3531,7 +3531,12 @@ async def _delete_departing_market_snapshots(
             or_(stamped.in_(ids), stamped.is_(None)),
         )
     )
-    return result.rowcount or 0
+    deleted_count = result.rowcount or 0
+    if deleted_count > 0:
+        from app.services.finished_event_history import invalidate_finished_event_history
+
+        await invalidate_finished_event_history(session, [event_id])
+    return deleted_count
 
 
 async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit: int = 2000) -> int:
@@ -8019,6 +8024,7 @@ async def _phase2_persist_group_reading(
             home_win_probability=round(home_prob, 4),
             away_win_probability=round(away_prob, 4),
             draw_probability=None if draw_prob is None else round(draw_prob, 4),
+            is_completed=bool(getattr(anchor, "event_has_result", False)),
             game_state={
                 # `reading.market`, NOT the group's primary. The primary is only
                 # the row picked to iterate once per (event, source); since the
@@ -13284,6 +13290,7 @@ async def _poll_live_prediction_market_prices():
                         if (event.status or "").lower() == "live"
                         else None
                     ),
+                    is_completed=(getattr(event, "status", None) in ("completed", "closed")),
                 )
 
                 if is_new:
@@ -13779,6 +13786,13 @@ async def _backfill_polymarket_win_prob_history(
                 )
                 session.add(snapshot)
                 stats["snapshots_created"] += 1
+
+            if stats["snapshots_created"] > 0:
+                from app.services.finished_event_history import (
+                    invalidate_finished_event_history,
+                )
+
+                await invalidate_finished_event_history(session, [event_id])
 
             await session.commit()
 

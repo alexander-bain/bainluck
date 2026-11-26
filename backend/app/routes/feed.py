@@ -9787,7 +9787,11 @@ def _printed_outcome_name(
         _negates_market_question,
         _weak_outcome_label,
         format_tied_leaders,
+        is_opposing_binary_pair,
     )
+
+    if len(tied_names) == 2 and is_opposing_binary_pair(tied_names):
+        return single
 
     if any(
         n.lower() in {"yes", "no"}
@@ -9797,6 +9801,27 @@ def _printed_outcome_name(
     ):
         return single
     return format_tied_leaders(tied_names) or single
+
+
+def _is_even_two_way_board(
+    outcomes_data: list[dict],
+    printed_leader: Optional[int],
+    printed_runner_up: Optional[int],
+    field_is_a_race: Optional[bool],
+) -> bool:
+    """True when a 2-outcome exclusive board ties evenly on opposing generic labels (e.g. Down 50% / Up 50%) (#13645)."""
+    if (
+        len(outcomes_data) != 2
+        or printed_leader is None
+        or printed_runner_up is None
+        or int(printed_leader) != int(printed_runner_up)
+        or field_is_a_race is False
+    ):
+        return False
+    from app.utils.feed_reasons import is_opposing_binary_pair
+
+    names = [str(o.get("name") or "").strip() for o in outcomes_data]
+    return is_opposing_binary_pair(names)
 
 
 def _normalize_feed_probabilities(
@@ -14962,6 +14987,9 @@ async def _score_sports_mode_futures(
 
         # THE PRINT STEP (#6552). These three are the only completed copies;
         # every predicate above keeps the raw `*_name` it matched on.
+        _even_two_way = _is_even_two_way_board(
+            outcomes_data, _printed_leader, _printed_runner_up, _field_is_a_race
+        )
         _h_leader = _printed_outcome_name(leader_name, display_names, market.name, top_outcomes_data)
         _h_mover = _printed_outcome_name(top_mover_name, display_names, market.name)
         _h_surprise = _printed_outcome_name(
@@ -14992,6 +15020,7 @@ async def _score_sports_mode_futures(
                 rendered_affirmative_percent=_printed_affirmative,
                 top_surprise_opened_at=top_surprise_opened_at,
                 now=now,
+                even_two_way_tie=_even_two_way,
             )
             or highlight_result.primary_reason
         )
@@ -15015,6 +15044,7 @@ async def _score_sports_mode_futures(
             top_surprise_change=top_surprise_change,
             top_surprise_opened_at=top_surprise_opened_at,
             now=now,
+            even_two_way_tie=_even_two_way,
         )
 
         quality = classify_market_quality(
@@ -15090,6 +15120,7 @@ async def _score_sports_mode_futures(
             rendered_affirmative_percent=_printed_affirmative,
             top_surprise_opened_at=top_surprise_opened_at,
             now=now,
+            even_two_way_tie=_even_two_way,
         )
 
         source_names = (
@@ -16956,6 +16987,9 @@ async def _score_futures(
             # "Anthropic leads at 69%" instead of "Yes leads at 69%".
             # …and #6552's completed club label is applied in the same step,
             # so the raw `*_name` above stays the lookup key it has to be.
+            _even_two_way = _is_even_two_way_board(
+                outcomes_data, _printed_leader, _printed_runner_up, _field_is_a_race
+            )
             _h_leader = _printed_outcome_name(leader_name, display_names, market.name, top_outcomes_data)
             _h_mover = _printed_outcome_name(
                 top_mover_name, display_names, market.name
@@ -16988,6 +17022,7 @@ async def _score_futures(
                     rendered_affirmative_percent=_printed_affirmative,
                     top_surprise_opened_at=top_surprise_opened_at,
                     now=now,
+                    even_two_way_tie=_even_two_way,
                 )
                 or highlight_result.primary_reason
             )
@@ -17011,6 +17046,7 @@ async def _score_futures(
                 top_surprise_change=top_surprise_change,
                 top_surprise_opened_at=top_surprise_opened_at,
                 now=now,
+                even_two_way_tie=_even_two_way,
             )
 
             quality = classify_market_quality(
@@ -17414,6 +17450,7 @@ async def _score_futures(
                 rendered_affirmative_percent=_printed_affirmative,
                 top_surprise_opened_at=top_surprise_opened_at,
                 now=now,
+                even_two_way_tie=_even_two_way,
             )
 
             source_names = (

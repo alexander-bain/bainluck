@@ -451,6 +451,16 @@ struct EventDetailView: View {
                     showProbabilityDetails = false
                     showUpdateStream = false
                 }
+                .task(id: "\(vm.historyGeneration)-\(vm.event?.status ?? "")-\(chartRange.rawValue)") {
+                    guard let ev = vm.event,
+                          OddsChartView.needsFullHistoryUpgrade(
+                              status: ev.status,
+                              commenceTime: ev.commenceTime?.asDate,
+                              history: vm.history,
+                              selectedRange: chartRange
+                          ) else { return }
+                    await vm.loadFullHistoryIfNeeded()
+                }
                 #if os(iOS)
                 .background(
                     PageDetailsCloser(

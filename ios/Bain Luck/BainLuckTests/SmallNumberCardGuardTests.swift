@@ -62,18 +62,57 @@ final class SmallNumberCardGuardTests: XCTestCase {
     private func recognizeTokens(in image: UIImage) throws -> [OCRToken] {
         let cgImage = try XCTUnwrap(image.cgImage)
         var tokens: [OCRToken] = []
-        let request = VNRecognizeTextRequest { req, _ in
-            guard let results = req.results as? [VNRecognizedTextObservation] else { return }
-            for obs in results {
-                if let top = obs.topCandidates(1).first {
-                    let h = obs.boundingBox.height * CGFloat(cgImage.height)
-                    tokens.append(OCRToken(text: top.string, pixelHeight: h))
+
+        func scan(_ target: CGImage, level: VNRequestTextRecognitionLevel = .accurate) throws {
+            let request = VNRecognizeTextRequest { req, _ in
+                guard let results = req.results as? [VNRecognizedTextObservation] else { return }
+                for obs in results {
+                    if let top = obs.topCandidates(1).first {
+                        let h = obs.boundingBox.height * CGFloat(target.height)
+                        tokens.append(OCRToken(text: top.string, pixelHeight: h))
+                    }
                 }
             }
+            request.recognitionLevel = level
+            request.usesLanguageCorrection = false
+            request.minimumTextHeight = 0.0
+            try VNImageRequestHandler(cgImage: target, options: [:]).perform([request])
         }
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+
+        try scan(cgImage)
+
+        // Vision full-card pass can drop short isolated score numerals (e.g. `62` beside wide team
+        // names at narrow 306pt xxxLarge). Scan isolated score/numeric column crops (recording exact
+        // `boundingBox.height * crop.height` pixels with zero distortion) and fall back to `.fast`
+        // on the narrow score column if `.accurate` omits an isolated digit pair above the bar.
+        let rightStart = Int(CGFloat(cgImage.width) * 0.42)
+        if let numericCrop = cgImage.cropping(to: CGRect(
+            x: rightStart,
+            y: 0,
+            width: cgImage.width - rightStart,
+            height: cgImage.height
+        )) {
+            try scan(numericCrop)
+        }
+        let scoreColWidth = Int(CGFloat(cgImage.width) * 0.30)
+        if let scoreCol = cgImage.cropping(to: CGRect(
+            x: rightStart,
+            y: 0,
+            width: scoreColWidth,
+            height: cgImage.height
+        )) {
+            try scan(scoreCol)
+            if let upperScoreBand = scoreCol.cropping(to: CGRect(
+                x: 0,
+                y: 0,
+                width: scoreCol.width,
+                height: Int(CGFloat(scoreCol.height) * 0.55)
+            )) {
+                try scan(upperScoreBand)
+                try scan(upperScoreBand, level: .fast)
+            }
+        }
+
         return tokens
     }
 
@@ -195,18 +234,18 @@ final class SmallNumberCardGuardTests: XCTestCase {
                 let liveTokens = try recognizeTokens(in: liveImage)
                 let awayScoreH = try tokenHeight(matching: "58", in: liveTokens, context: liveCtx)
                 let homeScoreH = try tokenHeight(matching: "62", in: liveTokens, context: liveCtx)
-                let awayNowH = try tokenHeight(matching: "30.0%", in: liveTokens, context: liveCtx)
-                let homeNowH = try tokenHeight(matching: "70.0%", in: liveTokens, context: liveCtx)
+                let awayNowH = try tokenHeight(matching: "30%", in: liveTokens, context: liveCtx)
+                let homeNowH = try tokenHeight(matching: "70%", in: liveTokens, context: liveCtx)
 
                 XCTAssertGreaterThanOrEqual(
                     awayNowH,
                     awayScoreH,
-                    "\(liveCtx): away Now (30.0% = \(awayNowH)px) drew smaller than away Score (58 = \(awayScoreH)px)"
+                    "\(liveCtx): away Now (30% = \(awayNowH)px) drew smaller than away Score (58 = \(awayScoreH)px)"
                 )
                 XCTAssertGreaterThanOrEqual(
                     homeNowH,
                     homeScoreH,
-                    "\(liveCtx): home Now (70.0% = \(homeNowH)px) drew smaller than home Score (62 = \(homeScoreH)px)"
+                    "\(liveCtx): home Now (70% = \(homeNowH)px) drew smaller than home Score (62 = \(homeScoreH)px)"
                 )
 
                 let schedCtx = "\(surface.name) scheduled (\(Int(surface.width))pt, \(typeSize))"

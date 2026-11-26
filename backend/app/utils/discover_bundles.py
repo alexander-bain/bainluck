@@ -585,6 +585,28 @@ def _bundle_subtitle(measure: str, count: int) -> str:
     return f"What do these {count} markets say together?"
 
 
+def _member_outcomes_are_dates(data: Mapping[str, Any]) -> bool:
+    """Return True when a bundle member's outcomes form a multi-date ladder."""
+    dc = data.get("discover_card")
+    if isinstance(dc, Mapping):
+        raw_pts = dc.get("threshold_points") or ()
+        priced = [
+            pt
+            for pt in raw_pts
+            if isinstance(pt, Mapping) and pt.get("probability") is not None
+        ]
+        if len(priced) >= 2 and all(
+            str(pt.get("source") or "") == "date_bucket" for pt in priced
+        ):
+            return True
+    top_outs = data.get("top_outcomes") or ()
+    if isinstance(top_outs, Sequence) and not isinstance(top_outs, (str, bytes)):
+        return _outcomes_are_all_date_buckets(
+            [dict(o) for o in top_outs if isinstance(o, Mapping)]
+        )
+    return False
+
+
 def _bundle_member_single_row_label(data: Mapping[str, Any]) -> Optional[str]:
     """Return the single level or deadline a collapsed bundle row displays."""
     dc = data.get("discover_card")
@@ -635,19 +657,33 @@ def _public_member_item(item: dict[str, Any]) -> dict[str, Any]:
             else data.get("name")
         )
         if isinstance(template_source, str) and _ANY_TEMPLATE_BLANK.search(template_source):
-            chosen_label = _bundle_member_single_row_label(data)
-            if chosen_label:
+            if _member_outcomes_are_dates(data):
                 filled = fill_market_display_name_blank(
                     template_source,
-                    chosen_label,
-                    single_row=True,
+                    single_row=False,
                 )
+                updated_data = {
+                    k: v
+                    for k, v in data.items()
+                    if k != "title_states_single_answer"
+                }
                 if filled:
-                    pub["data"] = {
-                        **data,
-                        "name": filled,
-                        "title_states_single_answer": True,
-                    }
+                    updated_data["name"] = filled
+                pub["data"] = updated_data
+            else:
+                chosen_label = _bundle_member_single_row_label(data)
+                if chosen_label:
+                    filled = fill_market_display_name_blank(
+                        template_source,
+                        chosen_label,
+                        single_row=True,
+                    )
+                    if filled:
+                        pub["data"] = {
+                            **data,
+                            "name": filled,
+                            "title_states_single_answer": True,
+                        }
     return pub
 
 

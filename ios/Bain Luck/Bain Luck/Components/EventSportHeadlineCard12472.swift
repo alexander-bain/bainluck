@@ -732,6 +732,7 @@ struct EventSportHeadlineCard12472: View {
             colors: colors,
             scaledSize: cappedSummarySize,
             minScale: stacksRowsVertically ? 0.45 : 0.78,
+            allowsAccessibilityWrapping: false,
             accessibilityIdentifier: "headline-12472-pregame-summary"
         )
         .background(
