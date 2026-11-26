@@ -160,6 +160,7 @@ def normalize_market_record(row: Any) -> dict[str, Any]:
             "created_at": getattr(row, "created_at", None),
             "status": getattr(row, "status", "open") or "open",
             "settled_at": getattr(row, "settled_at", None),
+            "mutually_exclusive": getattr(row, "mutually_exclusive", True),
             "volume_24h": getattr(row, "volume_24h", None),
             "max_movement_24h": getattr(row, "max_movement_24h", None),
             "market_metadata": meta,
@@ -248,10 +249,10 @@ def _generic_stem_key(market: Mapping[str, Any]) -> tuple[str, str] | None:
             if canon and canon not in _GENERIC_SINGLE_NOUNS:
                 return (canon, label)
 
-    # Priority 2b: Quoted primary title subject (excluding quoted single spoken words after 'say')
-    for m_q in re.finditer(r'["\u201c\']([^"\u201d\']{4,42})["\u201d\']', title):
+    # Priority 2b: Quoted primary title subject (double quotes only — never split on apostrophe possessives)
+    for m_q in re.finditer(r'["\u201c]([^"\u201d]{4,42})["\u201d]', title):
         before = title[:m_q.start()].lower()
-        if re.search(r"\bsay\s*$", before):
+        if re.search(r"\b(?:say|contain)\s*$", before):
             continue
         inner = m_q.group(1).strip()
         words = inner.split()
@@ -342,15 +343,46 @@ def _generic_stem_key(market: Mapping[str, Any]) -> tuple[str, str] | None:
     return ("_".join(sorted(key_tokens)), " ".join(w.capitalize() for w in key_tokens))
 
 
+_PUBLIC_SET_GENERIC_TOKENS = frozenset({
+    "the", "and", "for", "of", "in", "by", "to", "on", "at", "with", "from", "into",
+    "machinery", "roundup", "theme", "story", "polymarket", "kalshi", "deadline", "family",
+    "next", "big", "new", "top", "all", "this", "year", "years", "race", "races",
+    "showdown", "deals", "long", "shots", "shot", "awaited", "tech", "ai", "us", "uk",
+    "day", "days", "week", "month", "months", "november", "december", "january", "nov",
+    "dec", "jan", "movers", "oddities", "problems", "math", "data", "centers", "stage",
+    "cover", "music", "film", "box", "office", "macro", "rates", "conflict", "best",
+    "picture", "actor", "actress", "game", "awards", "summed", "world", "cup", "cups",
+    "playoffs", "division", "conference", "league", "titles", "grand", "slam", "tennis",
+    "white", "christmas", "extreme", "earth", "climate", "water", "energy", "storms",
+    "quakes", "highs", "tomorrows", "tomorrow", "opening", "weekend", "celtics", "lakers",
+    "games", "afc", "nfl", "nhl", "nba", "cfp", "high", "side", "quests", "end",
+})
+
+
+def _extract_public_set_tokens(names: Iterable[str]) -> frozenset[str]:
+    out: set[str] = set()
+    for name in names:
+        for tok in re.findall(r"[a-z]{3,}", str(name or "").lower()):
+            if tok not in _PUBLIC_SET_GENERIC_TOKENS and tok not in _STEM_STOPWORDS:
+                out.add(tok)
+    return frozenset(out)
+
+
 def discover_candidate_families(
     markets: Iterable[Any],
     *,
     covered_ids: frozenset[int] | set[int] = frozenset(),
+    covered_public_set_names: Iterable[str] = (),
     now: datetime | None = None,
     min_markets: int = 5,
     min_age_hours: float = 0.0,
+    refusals_out: list[tuple[Family, dict[str, Any]]] | None = None,
 ) -> tuple[list[Family], dict[int, dict[str, Any]]]:
-    """Build uncovered candidate families via ``grouping_families`` plus generic frame/stem groups."""
+    """Build uncovered candidate families via ``grouping_families`` plus generic frame/stem groups.
+
+    Refuses any family (series or topic_stem) whose core is already covered by a live
+    public set instead of proposing a leftover remainder page (#13696 Point 5).
+    """
     ref_now = _parse_iso_dt(now) or datetime.now(timezone.utc)
     normalized: dict[int, dict[str, Any]] = {}
     atoms: list[Atom] = []
@@ -374,8 +406,6 @@ def discover_candidate_families(
         mid_int = int(mid)
         normalized[mid_int] = m
 
-        # Keep markets even if settled on eligible check? Condition 5 rejects settled families;
-        # exclude dead non-priced markets from eligibility while checking settled status in proposer.
         outcomes = m.get("outcomes") or []
         has_price = any(
             (o.get("current_probability") if isinstance(o, Mapping) else None) is not None
@@ -410,26 +440,127 @@ def discover_candidate_families(
         min_markets=min_markets,
     )
 
-    claimed_ids = {mid for fam in candidates for mid in fam.member_ids}
-    # Second generic pass for uncovered markets lacking identical series/event keys
-    stem_buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    covered_series_stems: dict[str, set[int]] = defaultdict(set)
+    refused_overlap_ids: set[int] = set()
+    for fam in grouping.families:
+        fam_eligible = [mid for mid in fam.member_ids if mid in eligible_ids]
+        fam_covered = [mid for mid in fam_eligible if mid in covered_ids]
+        if not fam_covered:
+            continue
+        # Record stem keys from covered grouping families so leftover siblings
+        # are never swept into a brand-new `topic_stem` page without their core.
+        for mid in fam_eligible:
+            refused_overlap_ids.add(mid)
+            stem = _generic_stem_key(normalized[mid])
+            if stem is not None and mid in covered_ids:
+                covered_series_stems[stem[0]].add(mid)
+        if refusals_out is not None and len(fam_eligible) >= min_markets:
+            refusals_out.append((
+                fam,
+                {
+                    "refusal_reason": "refused_core_already_in_public_set",
+                    "covered_member_count": len(fam_covered),
+                    "total_member_count": len(fam_eligible),
+                },
+            ))
+
+    claimed_ids = {mid for fam in candidates for mid in fam.member_ids} | refused_overlap_ids
+    # Build second-pass stem buckets across ALL remaining eligible markets (including
+    # covered markets) so covered cores refuse leftover pages cleanly (#13696 Point 5).
+    stem_buckets_all: dict[str, list[dict[str, Any]]] = defaultdict(list)
     stem_labels: dict[str, str] = {}
     for mid_int in sorted(eligible_ids):
-        if mid_int in covered_ids or mid_int in claimed_ids:
+        if mid_int in claimed_ids:
             continue
         m = normalized[mid_int]
         stem = _generic_stem_key(m)
         if stem is None:
             continue
         skey, slabel = stem
-        stem_buckets[skey].append(m)
+        stem_buckets_all[skey].append(m)
         stem_labels.setdefault(skey, slabel)
 
-    for skey, rows in sorted(stem_buckets.items()):
-        if len(rows) < min_markets:
+    public_set_tokens = _extract_public_set_tokens(covered_public_set_names)
+    global_covered_stem_tokens: dict[str, set[int]] = defaultdict(set)
+    for cov_mid in sorted(covered_ids & eligible_ids):
+        cov_stem = _generic_stem_key(normalized[cov_mid])
+        if cov_stem is not None:
+            for tok in cov_stem[0].split("_"):
+                if len(tok) >= 3 and tok not in _PUBLIC_SET_GENERIC_TOKENS and tok not in _STEM_STOPWORDS:
+                    global_covered_stem_tokens[tok].add(cov_mid)
+
+    covered_core_anchors: set[str] = set()
+    for skey, rows in sorted(stem_buckets_all.items()):
+        uncovered_rows = [r for r in rows if int(r["id"]) not in covered_ids]
+        covered_rows = [r for r in rows if int(r["id"]) in covered_ids]
+        series_covered_ids = covered_series_stems.get(skey, set())
+        total_covered = len(covered_rows) + len(series_covered_ids)
+        total_members = len(rows) + len(series_covered_ids)
+        stem_toks = [
+            t for t in skey.split("_")
+            if len(t) >= 3 and t not in _PUBLIC_SET_GENERIC_TOKENS and t not in _STEM_STOPWORDS
+        ]
+        sibling_token_covered = max(
+            (len(global_covered_stem_tokens.get(t, set())) for t in stem_toks),
+            default=0,
+        )
+        name_overlap = bool(stem_toks and (set(stem_toks) & public_set_tokens)) and (
+            total_covered >= 1 or sibling_token_covered >= 1
+        )
+        if len(uncovered_rows) < min_markets and len(rows) < min_markets:
             continue
-        members = tuple(sorted(int(r["id"]) for r in rows))
-        first_dt = min((_parse_iso_dt(r.get("created_at")) or ref_now) for r in rows)
+        covered_share = total_covered / max(1, total_members)
+        top_two_covered = False
+        if covered_rows:
+            ranked_rows = sorted(
+                rows,
+                key=lambda r: (
+                    -float(r.get("volume_24h") or 0),
+                    -score_market_interestingness(dict(r), now=ref_now).score,
+                    int(r["id"]),
+                ),
+            )
+            top_two_ids = {int(r["id"]) for r in ranked_rows[:2]}
+            covered_id_set = {int(r["id"]) for r in covered_rows}
+            top_two_covered = bool(top_two_ids & covered_id_set)
+
+        anchor_overlap = bool(stem_toks and (set(stem_toks) & covered_core_anchors) and total_covered >= 1)
+        core_covered = (
+            name_overlap
+            or anchor_overlap
+            or covered_share >= 0.20
+            or (top_two_covered and covered_share >= 0.15)
+            or (len(series_covered_ids) >= 2 and covered_share >= 0.15)
+        )
+        if core_covered:
+            covered_core_anchors.update(stem_toks)
+            if refusals_out is not None and (len(uncovered_rows) >= min_markets or name_overlap):
+                combined_ids = sorted({int(r["id"]) for r in rows} | series_covered_ids)
+                members = tuple(combined_ids)
+                first_dt = min(
+                    (_parse_iso_dt(normalized[mid].get("created_at")) or ref_now)
+                    for mid in members
+                )
+                refusals_out.append((
+                    Family(
+                        kind="topic_stem",
+                        key=skey,
+                        label=stem_labels[skey],
+                        member_ids=members,
+                        first_created_at=first_dt,
+                    ),
+                    {
+                        "refusal_reason": "refused_core_already_in_public_set",
+                        "covered_member_count": max(total_covered, sibling_token_covered if name_overlap else total_covered),
+                        "total_member_count": len(members),
+                    },
+                ))
+            continue
+
+        if len(uncovered_rows) < min_markets:
+            continue
+        members = tuple(sorted(int(r["id"]) for r in uncovered_rows))
+        first_dt = min((_parse_iso_dt(r.get("created_at")) or ref_now) for r in uncovered_rows)
         candidates.append(Family(
             kind="topic_stem",
             key=skey,
@@ -500,6 +631,7 @@ def propose_top_containers(
     markets: Iterable[Any],
     *,
     covered_ids: frozenset[int] | set[int] = frozenset(),
+    covered_public_set_names: Iterable[str] = (),
     now: datetime | None = None,
     max_proposals: int = 5,
     audit_top_n: int = 15,
@@ -508,11 +640,14 @@ def propose_top_containers(
 ) -> dict[str, Any]:
     """Rank uncovered families by interest and compose top ``preview`` Kit pages + full audit."""
     ref_now = _parse_iso_dt(now) or datetime.now(timezone.utc)
+    overlap_refusals: list[tuple[Family, dict[str, Any]]] = []
     families, by_id = discover_candidate_families(
         markets,
         covered_ids=covered_ids,
+        covered_public_set_names=covered_public_set_names,
         now=ref_now,
         min_markets=min_markets,
+        refusals_out=overlap_refusals,
     )
 
     scored: list[tuple[float, Family]] = [
@@ -525,6 +660,8 @@ def propose_top_containers(
     pages: list[dict[str, Any]] = []
     audit: list[dict[str, Any]] = []
     used_slugs: set[str] = set()
+    used_subject_tokens: list[set[str]] = []
+    _subj_noise = frozenset({"outlook", "timeline", "updates", "the", "part", "and", "for", "of", "in", "by", "on", "to"})
 
     for rank_idx, (interest, fam) in enumerate(scored[:max(audit_top_n, max_proposals * 3)], 1):
         members = [by_id[mid] for mid in fam.member_ids if mid in by_id]
@@ -569,16 +706,52 @@ def propose_top_containers(
         if outcome.get("accepted") and len(pages) < max_proposals:
             page = dict(outcome["page"])
             page["interest_score"] = interest
-            if page["slug"] not in used_slugs:
+            subj_toks = {
+                t.lower() for t in re.findall(r"[A-Za-z0-9]{2,}", str(page.get("title") or ""))
+                if t.lower() not in _subj_noise
+            }
+            dup_subj = bool(subj_toks) and any(
+                subj_toks <= prev or prev <= subj_toks
+                for prev in used_subject_tokens
+            )
+            if page["slug"] in used_slugs:
+                entry["accepted"] = False
+                entry["refusal_reason"] = "refused_duplicate_page_slug"
+            elif dup_subj:
+                entry["accepted"] = False
+                entry["refusal_reason"] = "refused_duplicate_page_subject"
+            else:
                 used_slugs.add(page["slug"])
+                used_subject_tokens.append(subj_toks)
                 pages.append(page)
                 entry["selected_for_preview"] = True
                 entry["slug"] = page["slug"]
                 entry["headline"] = page["title"]
-            else:
-                entry["accepted"] = False
-                entry["refusal_reason"] = "refused_duplicate_page_slug"
         audit.append(entry)
+
+    scored_refusals = [
+        (score_family_interest(fam, by_id, now=ref_now, dismissed_keys=dismissed_keys), fam, meta)
+        for fam, meta in overlap_refusals
+    ]
+    scored_refusals.sort(key=lambda item: (-item[0], item[1].fingerprint, item[1].label))
+    for interest, fam, meta in scored_refusals:
+        members = [by_id[mid] for mid in fam.member_ids if mid in by_id]
+        audit.append({
+            "rank": None,
+            "family_fingerprint": fam.fingerprint,
+            "kind": fam.kind,
+            "key": fam.key,
+            "label": fam.label,
+            "kicker": resolve_kicker(members),
+            "interest_score": interest,
+            "family_size": fam.size,
+            "accepted": False,
+            "selected_for_preview": False,
+            "refusal_reason": meta["refusal_reason"],
+            "covered_member_count": meta["covered_member_count"],
+            "total_member_count": meta["total_member_count"],
+            "variants": [],
+        })
 
     return {
         "kit_page_version": 1,

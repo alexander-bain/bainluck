@@ -580,6 +580,7 @@ def test_every_built_cell_carries_provenance_and_matches_market_page(monkeypatch
             created_at=REF_NOW - timedelta(days=5),
             updated_at=REF_NOW,
             market_tier=2,
+            mutually_exclusive=True,
             market_metadata={},
         )
         fm.outcomes = [
@@ -635,7 +636,7 @@ def test_every_built_cell_carries_provenance_and_matches_market_page(monkeypatch
 
     market_by_id = {m["id"]: m for m in [*family_a, *family_b]}
     detail_by_id = {
-        mid: _format_market_detail(_to_orm(m), normalize_numbers=False)
+        mid: _format_market_detail(_to_orm(m), normalize_numbers=True)
         for mid, m in market_by_id.items()
     }
 
@@ -657,8 +658,9 @@ def test_every_built_cell_carries_provenance_and_matches_market_page(monkeypatch
         matched_out = next((o for o in served_outcomes if o.get("id") == oid), None)
         assert matched_out is not None, f"Missing outcome {oid} on market {mid}: {served_outcomes}"
         served_prob = float(matched_out["probability"])
-        expected_int = rendered_percent(served_prob)
-        expected_disp = _pct_display(served_prob)
+        rp_raw = matched_out.get("rendered_percent")
+        expected_int = int(rp_raw) if rp_raw is not None else rendered_percent(served_prob)
+        expected_disp = _pct_display(served_prob, expected_int)
 
         pct_marks = [
             mk for mk in marks
@@ -889,3 +891,313 @@ def test_taste_harm_guards_zero_ellipsis_chronological_matrix_and_natural_headli
     assert ok_res["accepted"] is True, ok_res
     serialized = json.dumps(ok_res["page"])
     assert "\u2026" not in serialized and "..." not in serialized, serialized
+
+
+def test_13696_rework_five_fable_fixes():
+    """Pins all 5 fixes from Fable's #13696 review (comment-7162594660):
+
+    1. Half-percent binary ties (0.135/0.865 -> 13%, 0.285/0.715 -> 28%) match
+       `_format_market_detail(..., normalize_numbers=True)` (`rendered_percent`), not 14%/29%.
+    2. `one_in_n` refuses multi-outcome markets so no unlabelled 15%/9% multi-outcome rows appear.
+    3. Binary row labels & stat_captions keep full grammatical questions + `'on'` for single days.
+    4. Section headings are 2–4 word topical titles (never drawing/scale names).
+    5. Leftover families whose core is already in `covered_ids` are refused cleanly.
+    """
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.routes.futures import _format_market_detail
+    from app.utils.kit_container_page_builder import (
+        _BANNED_SECTION_HEADINGS,
+        _build_dated_tiles_section,
+        _build_one_in_n_section,
+        _build_shared_scale_section,
+        _top_outcome_cell,
+    )
+
+    # 1. Exact rendered_percent parity on 0.135 / 0.865 (13%) and 0.285 / 0.715 (28%)
+    half_135 = {
+        "id": 99601,
+        "name": "Will Exec A resign by Mar 31 2027?",
+        "category": "tech",
+        "source": "kalshi",
+        "status": "open",
+        "outcomes": [
+            {"id": 6011, "name": "Yes", "current_probability": 0.135},
+            {"id": 6012, "name": "No", "current_probability": 0.865},
+        ],
+    }
+    half_285 = {
+        "id": 99602,
+        "name": "Will Exec A resign by Dec 31 2027?",
+        "category": "tech",
+        "source": "kalshi",
+        "status": "open",
+        "outcomes": [
+            {"id": 6021, "name": "Yes", "current_probability": 0.285},
+            {"id": 6022, "name": "No", "current_probability": 0.715},
+        ],
+    }
+    for m_dict, expected_pct in ((half_135, 13), (half_285, 28)):
+        orm = FuturesMarket(
+            id=m_dict["id"],
+            name=m_dict["name"],
+            category="tech",
+            llm_sport_category="tech",
+            source="kalshi",
+            external_id=f"KXHALF-{m_dict['id']}",
+            status="open",
+            created_at=REF_NOW,
+            updated_at=REF_NOW,
+            mutually_exclusive=True,
+            market_metadata={},
+        )
+        orm.outcomes = [
+            FuturesOutcome(
+                id=o["id"],
+                external_id=f"out-{o['id']}",
+                name=o["name"],
+                current_probability=o["current_probability"],
+                opening_probability=o["current_probability"],
+                rank=i + 1,
+                is_winner=False,
+                last_updated=REF_NOW,
+            )
+            for i, o in enumerate(m_dict["outcomes"])
+        ]
+        detail = _format_market_detail(orm, normalize_numbers=True)
+        served_yes = next(o for o in detail["outcomes"] if o["name"] == "Yes")
+        assert served_yes["rendered_percent"] == expected_pct
+        _, _, built_pct = _top_outcome_cell(m_dict)
+        assert built_pct == expected_pct, (m_dict["id"], built_pct, served_yes)
+
+    dt_half = _build_dated_tiles_section("exec-a", "TECH", [half_135, half_285], set(), now=REF_NOW)
+    assert dt_half is not None
+    centers = [cell["marks"][0]["center_label"] for cell in dt_half["body"]["rows"][0]["cells"]]
+    assert centers == ["13%", "28%"], centers
+
+    # 2. one_in_n excludes multi-outcome markets (no unlabelled 15% / 9% field rows)
+    oin_multi_and_bin = [
+        _multi(99610, "What will central bank rate be at the end of 2027?", {"2.5%": 15, "2.75%": 15, "3.0%": 40, "Other": 30}, category="economics"),
+        _multi(99611, "Total policy dissents in 2027?", {"Five": 9, "Four": 45, "Three": 46}, category="economics"),
+        _bin(99612, "Will Exec B be TIME Person of the Year?", 8, category="tech"),
+        _bin(99613, "Will Exec B join a cabinet panel?", 5, category="tech"),
+    ]
+    oin = _build_one_in_n_section("exec-b", "TECH", oin_multi_and_bin, set())
+    assert oin is not None
+    oin_mids = {it["provenance"]["market_id"] for it in oin["body"]["items"]}
+    assert oin_mids == {99612, 99613}, oin_mids
+    assert oin["common_headline"].lower() not in _BANNED_SECTION_HEADINGS
+    assert oin["stat_caption"].startswith('"Will Exec B be TIME Person of the Year?" carries a 1 in 12 (8%) chance'), oin["stat_caption"]
+
+    # 3. Single-day "on", no bare verb fragments ("testify", "be TIME...", "target"), and grammatical captions
+    single_day = [
+        _bin(99620, "Will Team Alpha reach Checkpoint Z on Nov 25, 2026?", 94, category="politics", res_days=2),
+        _bin(99621, "Will Team Alpha reach Checkpoint Z by Dec 15, 2026?", 62, category="politics", res_days=21),
+    ]
+    dt_day = _build_dated_tiles_section("alpha", "POLITICS", single_day, set(), now=REF_NOW)
+    assert dt_day is not None
+    dt_lead_text = dt_day["body"]["rows"][0]["leading"][0]["text"]
+    assert dt_lead_text.startswith("Will "), dt_lead_text
+    assert "on Nov 25, 2026" in dt_day["stat_caption"], dt_day["stat_caption"]
+    assert "sits at" not in dt_day["stat_caption"]
+
+    # 4. Stage-speech / shared_scale topical 2-4 word headings + no "shared 0-100% scale"
+    stage_mkts = [
+        _bin(99630, 'Will Keynote Speaker say "Foundry" during presentation?', 82, category="tech", res_days=60),
+        _bin(99631, 'Will Keynote Speaker say "Blackwell" during presentation?', 64, category="tech", res_days=60),
+        _bin(99632, 'Will Keynote Speaker say "Robotics" during presentation?', 31, category="tech", res_days=60),
+    ]
+    ss = _build_shared_scale_section("speaker", "TECH", stage_mkts, set(), require_cluster=False)
+    assert ss is not None
+    assert 2 <= len(ss["common_headline"].split()) <= 4, ss["common_headline"]
+    assert ss["common_headline"].lower() not in _BANNED_SECTION_HEADINGS
+    assert "stage remarks" in ss["common_headline"].lower(), ss["common_headline"]
+    assert "0–100% scale" not in ss["stat_caption"].lower() and "0-100%" not in ss["stat_caption"].lower()
+
+    # Check end-to-end page never emits any banned drawing heading or broken verb stem
+    all_page_mkts = [
+        _bin(99640, "Will Meridian Corp publicly testify before Congress by Mar 31 2027?", 95, category="tech", res_days=120),
+        _bin(99641, "Will Meridian Corp publicly testify before Congress by Jun 30 2027?", 96, category="tech", res_days=200),
+        _bin(99642, 'Will Meridian Corp say "Inference" on stage?', 78, category="tech", res_days=80),
+        _bin(99643, 'Will Meridian Corp say "Agentic" on stage?', 54, category="tech", res_days=80),
+        _bin(99644, 'Will Meridian Corp say "Photonic" on stage?', 22, category="tech", res_days=80),
+        _bin(99645, "Will Meridian Corp file antitrust appeal?", 11, category="tech", res_days=18),
+        _bin(99646, "Will Meridian Corp enter defense partnership?", 7, category="tech", res_days=25),
+    ]
+    res_page = propose_container_page_for_family("Meridian Corp", all_page_mkts, now=REF_NOW, kicker="TECH")
+    assert res_page["accepted"] is True, res_page
+    for sec in res_page["page"]["sections"]:
+        hl_low = sec["common_headline"].lower()
+        assert hl_low not in _BANNED_SECTION_HEADINGS, sec
+        assert 2 <= len(sec["common_headline"].split()) <= 4, sec
+        assert "shared 0" not in sec["stat_caption"].lower(), sec
+        assert not sec["stat_caption"].lower().startswith("meridian corp publicly testify"), sec
+
+    # 5. Covered core refusal: leftover remainder markets whose core is in covered_ids are refused
+    fed_overlap_mkts = [
+        _multi(99701, "Central Bank Dec meeting decision", {"Hold": 85, "Cut": 15}, category="economics", series="KXFED", vol=500000),
+        _multi(99702, "Central Bank Jan meeting decision", {"Hold": 70, "Cut": 30}, category="economics", series="KXFED", vol=400000),
+        _multi(99703, "Central Bank Mar meeting decision", {"Hold": 60, "Cut": 40}, category="economics", series="KXCBX", vol=30000),
+        _multi(99704, "Central Bank Apr meeting decision", {"Hold": 55, "Cut": 45}, category="economics", series="KXCBX", vol=25000),
+        _bin(99705, "Central Bank cuts before Jun 30 2027", 48, category="economics", series="KXCBY", res_days=200, vol=10000),
+        _bin(99706, "Central Bank cuts before Sep 30 2027", 72, category="economics", series="KXCBY", res_days=300, vol=9000),
+        _bin(99707, "Central Bank chair replaced in 2027", 12, category="economics", series="KXCBZ", res_days=20, vol=8000),
+        _bin(99708, "Central Bank dissents exceed 3", 9, category="economics", series="KXCBZ", res_days=25, vol=7000),
+    ]
+    out_overlap = propose_top_containers(
+        fed_overlap_mkts,
+        covered_ids={99701, 99702},
+        now=REF_NOW,
+        max_proposals=5,
+        audit_top_n=10,
+    )
+    assert out_overlap["count"] == 0, out_overlap
+    assert any(
+        a.get("refusal_reason") == "refused_core_already_in_public_set"
+        for a in out_overlap["ranked_audit"]
+    ), out_overlap["ranked_audit"]
+
+    # Also test topic_stem covered-core tie-breaker branch (no series grouping, equal volume)
+    stem_only_mkts = [
+        _bin(99721, "Will Meridian Corp announce merger before Q2?", 60, category="tech", res_days=40, vol=10000),
+        _bin(99722, "Will Meridian Corp spin off cloud unit?", 45, category="tech", res_days=60, vol=10000),
+        _bin(99723, "Will Meridian Corp buy chip startup?", 30, category="tech", res_days=90, vol=10000),
+        _bin(99724, "Will Meridian Corp move HQ to Austin?", 20, category="tech", res_days=120, vol=10000),
+        _bin(99725, "Will Meridian Corp split stock in 2027?", 15, category="tech", res_days=150, vol=10000),
+        _bin(99726, "Will Meridian Corp change auditor?", 10, category="tech", res_days=180, vol=10000),
+    ]
+    out_stem_overlap = propose_top_containers(
+        stem_only_mkts,
+        covered_ids={99721},
+        now=REF_NOW,
+        max_proposals=5,
+        audit_top_n=10,
+    )
+    assert out_stem_overlap["count"] == 0, out_stem_overlap
+    assert any(
+        a.get("refusal_reason") == "refused_core_already_in_public_set"
+        for a in out_stem_overlap["ranked_audit"]
+    ), out_stem_overlap["ranked_audit"]
+
+    # 6. Additional Nov 26 live-run rework guards (Point 2/3/4 + plain_bar_stack + twin dedup)
+    from app.utils.kit_container_page_builder import (
+        _build_plain_bar_stack_section,
+        _dedupe_twins,
+        _derive_section_headline,
+        _distinguishing_row_label,
+        _is_binary_market,
+        _template_signature,
+    )
+
+    partial_multi = {
+        "id": 99801,
+        "name": "When will Meridian Corp be added to the S&P 500?",
+        "mutually_exclusive": False,
+        "status": "open",
+        "outcomes": [
+            {"id": 1, "name": "June 30, 2027", "current_probability": 0.1055},
+            {"id": 2, "name": "December 31, 2027", "current_probability": None},
+        ],
+    }
+    assert _is_binary_market(partial_multi) is False
+    oin_guarded = _build_one_in_n_section("meridian", "TECH", [
+        partial_multi,
+        _bin(99802, "Will Meridian Corp announce default before 2028?", 11, category="tech"),
+        _bin(99803, "Will Meridian Corp enter robotics market in 2027?", 6, category="tech"),
+    ], set())
+    assert oin_guarded is not None
+    assert 99801 not in {it["provenance"]["market_id"] for it in oin_guarded["body"]["items"]}
+
+    lbl_subj = _distinguishing_row_label(
+        "Meridian criminally charges Vendor Alpha by December 31, 2026",
+        [
+            "Meridian criminally charges Vendor Alpha by December 31, 2026",
+            "Meridian criminally charges Vendor Beta by December 31, 2026",
+            "Meridian fines Vendor Gamma over deal in 2026",
+        ],
+    )
+    assert lbl_subj.startswith("Meridian "), lbl_subj
+
+    when_multi = {
+        "id": 99810,
+        "name": "When will Meridian release Data Set 13?",
+        "mutually_exclusive": False,
+        "status": "open",
+        "outcomes": [
+            {"id": 10, "name": "Before 2027", "current_probability": 0.0685},
+            {"id": 11, "name": "Before March", "current_probability": 0.03},
+        ],
+    }
+    all_winner_multi = {
+        "id": 99811,
+        "name": "Who will attend Meridian Annual Summit?",
+        "mutually_exclusive": False,
+        "status": "open",
+        "outcomes": [
+            {"id": 20, "name": "Speaker One", "current_probability": 1.0, "is_winner": True},
+            {"id": 21, "name": "Speaker Two", "current_probability": 1.0, "is_winner": True},
+            {"id": 22, "name": "Speaker Three", "current_probability": 1.0, "is_winner": True},
+        ],
+    }
+    assert _build_plain_bar_stack_section("meridian", "TECH", [when_multi], set(), now=REF_NOW) is None
+    assert _build_plain_bar_stack_section("meridian", "TECH", [all_winner_multi], set(), now=REF_NOW) is None
+
+    twin_a = _bin(99820, "Meridian fines Vendor Gamma over Groq deal in 2026", 8, group_id="polymarket:111", vol=100)
+    twin_b = _bin(99821, "Will the Meridian fine Vendor Gamma over the Groq deal in 2026?", 5, group_id="polymarket:222", vol=5000)
+    deduped = _dedupe_twins([twin_a, twin_b])
+    assert len(deduped) == 1 and deduped[0]["id"] == 99821, deduped
+
+    sig_lv = _template_signature({"name": "Will Meridian launch in Las Vegas, NV by December 31 2026?"})
+    sig_cl = _template_signature({"name": "Will Meridian launch in Charlotte, NC by December 31 2026?"})
+    assert sig_lv == sig_cl, (sig_lv, sig_cl)
+
+    for variant_name in ("dated_tiles", "shared_scale", "countdown", "one_in_n", "plain_bar_stack"):
+        hl_check = _derive_section_headline(variant_name, ["Arbitrary alpha beta", "Unrelated gamma delta"], "Meridian Outlook")
+        assert 2 <= len(hl_check.split()) <= 4, hl_check
+        assert hl_check.lower() not in {
+            "target dates", "key storylines", "this month", "outside scenarios", "open questions",
+        }, hl_check
+
+    # 7. Surgical polish regression checks (possessive quote stem, dangling headline endings, subject dedup)
+    from app.utils.container_proposer import _generic_stem_key
+
+    stem_poss = _generic_stem_key({"name": 'Will Oxford\'s 2026 Word of the Year contain "slop"?'})
+    assert stem_poss is None or (stem_poss[0] != "s_2026_word_of" and not stem_poss[0].startswith("s_")), stem_poss
+
+    hl_against = _derive_section_headline(
+        "dated_tiles",
+        [
+            "Meridian action against Sector A on Nov 26, 2026",
+            "Meridian action against Sector B by Nov 30, 2026",
+        ],
+        "Meridian Outlook",
+    )
+    assert not hl_against.lower().endswith((" against", " publicly")), hl_against
+
+    hl_visit = _derive_section_headline(
+        "casting_sheet",
+        ["Which countries will Meridian Exec visit in 2026?"],
+        "Meridian Exec",
+    )
+    assert "will" not in hl_visit.lower().split(), hl_visit
+
+    # Duplicate person/subject families (e.g. "Apex Prime" vs "Prime Outlook") collapse
+    dup_person_mkts = [
+        {**_bin(99901, "Will Apex Prime testify before Congress before Mar 31, 2027?", 82, category="politics", res_days=120, vol=80000), "external_id": None},
+        {**_bin(99902, "Will Apex Prime testify before Congress before Jun 30, 2027?", 91, category="politics", res_days=200, vol=80000), "external_id": None},
+        {**_bin(99903, "Will Apex Prime post statement on Tuesday?", 65, category="politics", res_days=10, vol=70000), "external_id": None},
+        {**_bin(99904, "Will Apex Prime attend energy summit this month?", 48, category="politics", res_days=18, vol=70000), "external_id": None},
+        {**_bin(99905, "Will Apex Prime win Nobel Prize in 2027?", 8, category="politics", res_days=180, vol=60000), "external_id": None},
+        {**_bin(99906, "Will Apex Prime merge with BetaGroup in 2027?", 6, category="politics", res_days=220, vol=60000), "external_id": None},
+        {**_bin(99921, "Will Prime testify before Senate before Mar 31, 2027?", 80, category="politics", res_days=120, vol=40000), "external_id": None},
+        {**_bin(99922, "Will Prime testify before Senate before Jun 30, 2027?", 90, category="politics", res_days=200, vol=40000), "external_id": None},
+        {**_bin(99923, "Will Prime sign border directive on Friday?", 62, category="politics", res_days=12, vol=30000), "external_id": None},
+        {**_bin(99924, "Will Prime host foreign summit this month?", 45, category="politics", res_days=20, vol=30000), "external_id": None},
+        {**_bin(99925, "Will Prime receive academy award in 2027?", 9, category="politics", res_days=180, vol=20000), "external_id": None},
+        {**_bin(99926, "Will Prime relocate headquarters in 2027?", 5, category="politics", res_days=220, vol=20000), "external_id": None},
+    ]
+    out_dup_person = propose_top_containers(dup_person_mkts, now=REF_NOW, max_proposals=5, audit_top_n=10)
+    assert out_dup_person["count"] == 1, out_dup_person["pages"]
+    assert any(
+        a.get("refusal_reason") == "refused_duplicate_page_subject"
+        for a in out_dup_person["ranked_audit"]
+    ), out_dup_person["ranked_audit"]
