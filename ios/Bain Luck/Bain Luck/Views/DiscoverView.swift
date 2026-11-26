@@ -3849,6 +3849,7 @@ struct NativeGroupCard: View {
     @State private var expanded = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @ScaledMetric(relativeTo: .caption2) private var eyebrowFontSize: CGFloat = 11
     @Environment(\.discoverGroupBundleArt12840) private var envBundleArt
     @Environment(\.discoverGroupOnOpenCollection13094) private var envOnOpenCollection
     @Environment(\.discoverSwipeTapGuard13668) private var tapGuard
@@ -4035,18 +4036,19 @@ struct NativeGroupCard: View {
     }
 
     private var groupHeaderContent: some View {
-        HStack(alignment: .top, spacing: 12) {
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        return HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(DiscoverBundleVisual12840.eyebrowEmoji(title: title, category: category)).accessibilityHidden(true)
                     Text(title.uppercased())
-                        .font(.caption2.weight(.bold))
-                        .tracking(0.8)
+                        .font(isAX ? .system(size: min(eyebrowFontSize, 18), weight: .bold) : .caption2.weight(.bold))
+                        .tracking(isAX ? 0 : 0.8)
                         .foregroundStyle(secondaryReadableInk)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 0.72 : 1.0)
+                        .lineLimit(isAX ? nil : 2)
+                        .minimumScaleFactor(isAX ? 0.85 : 1.0)
                         .fixedSize(horizontal: false, vertical: true)
-                    if sharedQuestion?.isEmpty != false {
+                    if !isAX && sharedQuestion?.isEmpty != false {
                         Text("\(items.count)")
                             .font(.caption2)
                             .foregroundStyle(secondaryReadableInk)
@@ -4060,7 +4062,19 @@ struct NativeGroupCard: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if canExpand {
+            if isAX && sharedQuestion?.isEmpty != false {
+                HStack(spacing: 6) {
+                    Text("\(items.count)")
+                        .font(.system(size: min(eyebrowFontSize, 18), weight: .semibold).monospacedDigit())
+                        .foregroundStyle(secondaryReadableInk)
+                    if canExpand {
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(mutedInk)
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                    }
+                }
+            } else if canExpand {
                 Image(systemName: "chevron.down")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(mutedInk)
@@ -5305,21 +5319,26 @@ private struct ShareSheet: View {
 
 struct MovementBadge: View {
     let movement: Double?
+    @ScaledMetric(relativeTo: .caption2) private var arrowSize: CGFloat = 7.5
+    @ScaledMetric(relativeTo: .caption2) private var textSize: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption2) private var hPad: CGFloat = 5
+    @ScaledMetric(relativeTo: .caption2) private var vPad: CGFloat = 2
 
     var body: some View {
         if let m = movement, abs(m) >= 0.01 {
             let up = m > 0
             HStack(spacing: 2) {
                 Image(systemName: up ? "arrow.up" : "arrow.down")
-                    .font(.system(size: 7, weight: .black))
+                    .font(.system(size: min(arrowSize, 14), weight: .black))
                 Text("\(abs(Int((m * 100).rounded())))%")
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .font(.system(size: min(textSize, 18), weight: .bold).monospacedDigit())
             }
             .foregroundStyle(up ? .green : .red)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+            .padding(.horizontal, min(hPad, 9))
+            .padding(.vertical, min(vPad, 4))
             .background((up ? Color.green : Color.red).opacity(0.15))
             .clipShape(Capsule())
+            .fixedSize()
         }
     }
 }

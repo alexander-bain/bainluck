@@ -96,6 +96,10 @@ struct PreferencesView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var interestNameSizeAX: CGFloat = 15
+    @ScaledMetric(relativeTo: .caption2) private var capsuleFontSizeAX: CGFloat = 11
+    @State private var interestsRowWidth: CGFloat = 0
 
     init() {
         _viewModel = StateObject(wrappedValue: PreferencesViewModel())
@@ -567,6 +571,9 @@ struct PreferencesView: View {
                     affinityCard(item: item)
                 }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
+                if w > 0 { interestsRowWidth = w }
+            }
             .padding(.horizontal)
 
             // Beyond Sports sub-header
@@ -586,6 +593,9 @@ struct PreferencesView: View {
                 ForEach(OnboardingSportsData.beyondSports) { item in
                     affinityCard(item: item)
                 }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
+                if w > 0 { interestsRowWidth = w }
             }
             .padding(.horizontal)
         }
@@ -607,76 +617,91 @@ struct PreferencesView: View {
         let currentLevel = viewModel.affinityLevel(for: item.key)
         let isActive = currentLevel != .nah
         let activeColor = affinityColor[currentLevel] ?? .gray
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        let stackVertical = isAX || (interestsRowWidth > 0 && interestsRowWidth < 315)
 
-        return HStack(spacing: AffinityRowMetrics.rowSpacing) {
-            // Emoji + name
-            HStack(spacing: AffinityRowMetrics.emojiNameSpacing) {
-                Text(item.emoji)
-                    .font(.title3)
-                    .frame(width: AffinityRowMetrics.emojiWidth)
+        return Group {
+            if stackVertical {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: AffinityRowMetrics.emojiNameSpacing) {
+                        Text(item.emoji)
+                            .font(.system(size: min(interestNameSizeAX * 1.15, 28)))
+                            .frame(minWidth: AffinityRowMetrics.emojiWidth)
 
-                // #6681 — the four capsules are `.fixedSize()` and the Spacer
-                // absorbs nothing, so the name is the only thing in this row
-                // that can give, and three of the 22 gave: "College Foo…",
-                // "College Basketball", "Entertainm…". The name is also the
-                // ONLY thing telling one row from the next — every row's
-                // capsules read Love/Big/Wild/Nah — so a truncated name is a
-                // row a reader cannot identify.
-                //
-                // A floor, not a size: `minimumScaleFactor` shrinks only the
-                // labels that would otherwise truncate, so 19 of 22 are
-                // untouched. Wrapping to two lines was the alternative and was
-                // weighed — it keeps full size but makes 3 of 22 rows taller,
-                // and the ragged rhythm costs more scanning than a slightly
-                // smaller label on three rows.
-                Text(item.name)
-                    .font(.subheadline)
-                    .fontWeight(isActive ? .semibold : .regular)
-                    .foregroundStyle(isActive ? .primary : .secondary)
-                    .lineLimit(2)
-                    .allowsTightening(true)
-                    .minimumScaleFactor(AffinityRowMetrics.nameMinimumScaleFactor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-
-            // Affinity capsules
-            HStack(spacing: AffinityRowMetrics.capsuleSpacing) {
-                ForEach(AffinityLevel.allCases, id: \.rawValue) { level in
-                    let selected = currentLevel == level
-                    let color = affinityColor[level] ?? .gray
-
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            viewModel.setAffinity(item.key, level: level)
-                        }
-                    } label: {
-                        Text(level.shortLabel)
-                            .font(.system(
-                                size: AffinityRowMetrics.capsuleFontSize,
-                                weight: selected ? .bold : .medium
-                            ))
-                            .lineLimit(1)
-                            .fixedSize()
-                            .padding(.horizontal, AffinityRowMetrics.capsuleHorizontalPadding)
-                            .padding(.vertical, 6)
-                            .foregroundStyle(selected ? .white : color.opacity(0.7))
-                            .background(
-                                selected
-                                    ? AnyShapeStyle(color)
-                                    : AnyShapeStyle(color.opacity(0.08))
+                        Text(item.name)
+                            .font(
+                                isAX
+                                    ? .system(size: min(interestNameSizeAX, 27), weight: isActive ? .semibold : .regular)
+                                    : .subheadline.weight(isActive ? .semibold : .regular)
                             )
-                            .clipShape(Capsule())
-                            .overlay(
-                                Capsule()
-                                    .stroke(
-                                        selected ? color.opacity(0.3) : color.opacity(0.12),
-                                        lineWidth: selected ? 1.5 : 0.5
-                                    )
-                            )
+                            .foregroundStyle(isActive ? .primary : .secondary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .buttonStyle(.plain)
+
+                    ViewThatFits(in: .horizontal) {
+                        affinityCapsulesRow(
+                            itemKey: item.key,
+                            currentLevel: currentLevel,
+                            fontSize: isAX ? min(capsuleFontSizeAX, 15) : AffinityRowMetrics.capsuleFontSize
+                        )
+                        VStack(alignment: .leading, spacing: 6) {
+                            affinityCapsulesSubset(
+                                itemKey: item.key,
+                                levels: Array(AffinityLevel.allCases.prefix(2)),
+                                currentLevel: currentLevel,
+                                fontSize: isAX ? min(capsuleFontSizeAX, 15) : AffinityRowMetrics.capsuleFontSize
+                            )
+                            affinityCapsulesSubset(
+                                itemKey: item.key,
+                                levels: Array(AffinityLevel.allCases.dropFirst(2)),
+                                currentLevel: currentLevel,
+                                fontSize: isAX ? min(capsuleFontSizeAX, 15) : AffinityRowMetrics.capsuleFontSize
+                            )
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: AffinityRowMetrics.rowSpacing) {
+                    // Emoji + name
+                    HStack(spacing: AffinityRowMetrics.emojiNameSpacing) {
+                        Text(item.emoji)
+                            .font(.title3)
+                            .frame(width: AffinityRowMetrics.emojiWidth)
+
+                        // #6681 — the four capsules are `.fixedSize()` and the Spacer
+                        // absorbs nothing, so the name is the only thing in this row
+                        // that can give, and three of the 22 gave: "College Foo…",
+                        // "College Basketball", "Entertainm…". The name is also the
+                        // ONLY thing telling one row from the next — every row's
+                        // capsules read Love/Big/Wild/Nah — so a truncated name is a
+                        // row a reader cannot identify.
+                        //
+                        // A floor, not a size: `minimumScaleFactor` shrinks only the
+                        // labels that would otherwise truncate, so 19 of 22 are
+                        // untouched. Wrapping to two lines was the alternative and was
+                        // weighed — it keeps full size but makes 3 of 22 rows taller,
+                        // and the ragged rhythm costs more scanning than a slightly
+                        // smaller label on three rows.
+                        Text(item.name)
+                            .font(.subheadline)
+                            .fontWeight(isActive ? .semibold : .regular)
+                            .foregroundStyle(isActive ? .primary : .secondary)
+                            .lineLimit(2)
+                            .allowsTightening(true)
+                            .minimumScaleFactor(AffinityRowMetrics.nameMinimumScaleFactor)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    // Affinity capsules
+                    affinityCapsulesRow(
+                        itemKey: item.key,
+                        currentLevel: currentLevel,
+                        fontSize: AffinityRowMetrics.capsuleFontSize
+                    )
                 }
             }
         }
@@ -696,6 +721,64 @@ struct PreferencesView: View {
                 )
         )
         .shadow(color: .black.opacity(isActive ? 0.04 : 0.02), radius: 4, x: 0, y: 2)
+    }
+
+    private func affinityCapsulesRow(
+        itemKey: String,
+        currentLevel: AffinityLevel,
+        fontSize: CGFloat
+    ) -> some View {
+        affinityCapsulesSubset(
+            itemKey: itemKey,
+            levels: AffinityLevel.allCases,
+            currentLevel: currentLevel,
+            fontSize: fontSize
+        )
+    }
+
+    private func affinityCapsulesSubset(
+        itemKey: String,
+        levels: [AffinityLevel],
+        currentLevel: AffinityLevel,
+        fontSize: CGFloat
+    ) -> some View {
+        HStack(spacing: AffinityRowMetrics.capsuleSpacing) {
+            ForEach(levels, id: \.rawValue) { level in
+                let selected = currentLevel == level
+                let color = affinityColor[level] ?? .gray
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        viewModel.setAffinity(itemKey, level: level)
+                    }
+                } label: {
+                    Text(level.shortLabel)
+                        .font(.system(
+                            size: fontSize,
+                            weight: selected ? .bold : .medium
+                        ))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, AffinityRowMetrics.capsuleHorizontalPadding)
+                        .padding(.vertical, 6)
+                        .foregroundStyle(selected ? .white : color.opacity(0.7))
+                        .background(
+                            selected
+                                ? AnyShapeStyle(color)
+                                : AnyShapeStyle(color.opacity(0.08))
+                        )
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(
+                                    selected ? color.opacity(0.3) : color.opacity(0.12),
+                                    lineWidth: selected ? 1.5 : 0.5
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     // MARK: - Actions Section

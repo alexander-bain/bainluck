@@ -104,6 +104,7 @@ struct NativeFuturesDiscoverCard: View {
     /// numeral and the `.headline` name beneath it move together instead of
     /// drifting apart.
     @ScaledMetric(relativeTo: .largeTitle) private var heroNumeralSize: CGFloat = 52
+    @ScaledMetric(relativeTo: .headline) private var cardTitleSizeAX: CGFloat = 17
 
     /// #6343 — the price-age reveal, open or closed. The phone has no hover, so
     /// the precise stamp arrives by tap; the state lives here rather than in the
@@ -338,7 +339,11 @@ struct NativeFuturesDiscoverCard: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text(data.name)
-                    .font(.headline.weight(.bold))
+                    .font(
+                        dynamicTypeSize.isAccessibilitySize
+                            ? .system(size: min(cardTitleSizeAX, 30), weight: .bold)
+                            : .headline.weight(.bold)
+                    )
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 4)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -398,13 +403,22 @@ struct NativeFuturesDiscoverCard: View {
                             )
                         }
                     }
+                    .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { newWidth in
+                        if newWidth > 0 {
+                            outcomeRowWidth = newWidth
+                        }
+                    }
                     .background(
                         GeometryReader { geo in
                             Color.clear.preference(
                                 key: FuturesOutcomeRowWidthKey.self, value: geo.size.width)
                         }
                     )
-                    .onPreferenceChange(FuturesOutcomeRowWidthKey.self) { outcomeRowWidth = $0 }
+                    .onPreferenceChange(FuturesOutcomeRowWidthKey.self) { newWidth in
+                        if newWidth > 0 {
+                            outcomeRowWidth = newWidth
+                        }
+                    }
                 }
 
                 // #2088 — the sentence a card carries when its numbers do not add
@@ -554,48 +568,90 @@ struct NativeFuturesDiscoverCard: View {
         hasAnyRowMark: Bool = false
     ) -> some View {
         let outcomeMark = data.resolvedSourceMark(for: outcome)
-        // #8213 — the spacing the model subtracts is the spacing the row is
-        // built with. Two literals that must agree are two numbers that drift.
-        return HStack(spacing: FuturesOutcomeRowColumns.interColumnSpacing) {
-            Text(outcome.name)
-                .font(.caption.weight(isLeader ? .semibold : .regular))
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(
-                    minWidth: FuturesOutcomeRowColumns.nameMinimum,
-                    maxWidth: columns.nameMaximum,
-                    alignment: .leading)
+        let nameLabel = Text(outcome.name)
+            .font(.caption.weight(isLeader ? .semibold : .regular))
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+        let barView = GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.12))
+                Capsule()
+                    .fill(isLeader ? Color.blue : Color.secondary.opacity(0.35))
+                    .frame(width: max(3, geo.size.width * (outcome.probability ?? 0)))
+            }
+        }
+        .frame(height: 7)
+        let percentLabel = Text(discoverFuturesCardPercentLabel(percent))
+            .font(.caption.weight(.bold).monospacedDigit())
+            .lineLimit(1)
+            .frame(width: columns.percentWidth, alignment: .trailing)
 
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.secondary.opacity(0.12))
-                    Capsule()
-                        .fill(isLeader ? Color.blue : Color.secondary.opacity(0.35))
-                        .frame(width: max(3, geo.size.width * (outcome.probability ?? 0)))
+        // #8213 / #13832 — at accessibility text sizes, stack the full outcome
+        // name above its bar and percentage so long names never break mid-word.
+        // Below accessibility sizes keep the 3-column HStack; before width settles
+        // (outcomeRowWidth <= 0), allow the name to expand instead of clamping to 60pt.
+        return Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 6) {
+                    nameLabel
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: FuturesOutcomeRowColumns.interColumnSpacing) {
+                        barView
+                        percentLabel
+                        if hasAnyRowMark {
+                            outcomeRowSourceMark(outcomeMark, outcome: outcome, percent: percent)
+                        }
+                    }
+                }
+            } else {
+                // #8213 — the spacing the model subtracts is the spacing the row is
+                // built with. Two literals that must agree are two numbers that drift.
+                HStack(spacing: FuturesOutcomeRowColumns.interColumnSpacing) {
+                    if outcomeRowWidth > 0 {
+                        nameLabel
+                            .layoutPriority(1)
+                            .frame(
+                                minWidth: FuturesOutcomeRowColumns.nameMinimum,
+                                maxWidth: columns.nameMaximum,
+                                alignment: .leading)
+                    } else {
+                        nameLabel
+                            .layoutPriority(1)
+                            .frame(
+                                minWidth: FuturesOutcomeRowColumns.nameMinimum,
+                                maxWidth: .infinity,
+                                alignment: .leading)
+                    }
+
+                    barView
+                    percentLabel
+
+                    if hasAnyRowMark {
+                        outcomeRowSourceMark(outcomeMark, outcome: outcome, percent: percent)
+                    }
                 }
             }
-            .frame(height: 7)
+        }
+    }
 
-            Text(discoverFuturesCardPercentLabel(percent))
-                .font(.caption.weight(.bold).monospacedDigit())
-                .lineLimit(1)
-                .frame(width: columns.percentWidth, alignment: .trailing)
-
-            if hasAnyRowMark {
-                if let mark = SourceMarkButton(
-                    outcomeMark,
-                    number: outcomeMark?.state == .settled ? nil : outcome.probability,
-                    renderedPercent: outcomeMark?.state == .settled ? nil : percent,
-                    subject: outcome.name,
-                    numberSize: 12,
-                    compactRow: true
-                ) {
-                    mark.buttonStyle(.borderless)
-                } else {
-                    Color.clear.frame(width: 22, height: 1)
-                }
-            }
+    @ViewBuilder
+    private func outcomeRowSourceMark(
+        _ outcomeMark: SourceMark?,
+        outcome: FeedFuturesOutcome,
+        percent: Int?
+    ) -> some View {
+        if let mark = SourceMarkButton(
+            outcomeMark,
+            number: outcomeMark?.state == .settled ? nil : outcome.probability,
+            renderedPercent: outcomeMark?.state == .settled ? nil : percent,
+            subject: outcome.name,
+            numberSize: 12,
+            compactRow: true
+        ) {
+            mark.buttonStyle(.borderless)
+        } else {
+            Color.clear.frame(width: 22, height: 1)
         }
     }
 
