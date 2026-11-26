@@ -10,6 +10,40 @@ import SwiftUI
 //
 // Zero model-written text in 1.0.8.
 
+/// #13770 part 2: Keep My Stuff rows readable on iPad without stretching full screen width.
+nonisolated enum MyStuffLandingLayout13770 {
+    static let singleColumnMaxWidth: CGFloat = 560
+    static let multiColumnMaxWidth: CGFloat = 880
+    static let cardSpacing: CGFloat = 12
+    static let twoColumnMinimumWidth: CGFloat = 700
+
+    static func columnCount(
+        availableWidth: CGFloat,
+        itemCount: Int,
+        isAccessibilitySize: Bool
+    ) -> Int {
+        guard !isAccessibilitySize,
+              itemCount >= 2,
+              availableWidth >= twoColumnMinimumWidth else {
+            return 1
+        }
+        return 2
+    }
+
+    static func containerMaxWidth(
+        availableWidth: CGFloat,
+        hasMultiItemSection: Bool,
+        isAccessibilitySize: Bool
+    ) -> CGFloat {
+        let cols = columnCount(
+            availableWidth: availableWidth,
+            itemCount: hasMultiItemSection ? 2 : 1,
+            isAccessibilitySize: isAccessibilitySize
+        )
+        return cols >= 2 ? multiColumnMaxWidth : singleColumnMaxWidth
+    }
+}
+
 struct MyStuffLandingView295A: View {
     @ObservedObject var landingVM: MyStuffLandingViewModel295A
     @Binding var path: NavigationPath
@@ -62,9 +96,31 @@ private struct MyStuffLandingBody295A: View {
     var onOpenChecklistRow364A: (FirstRunChecklistRowID364A) -> Void = { _ in }
 
     @AppStorage(FirstRunStorageKeys212A.earnedSignInDismissedKey) private var earnedSignInDismissed = false
+    @State private var measuredWidth: CGFloat = 0
     @Environment(\.firstRunChecklistStore364A) private var checklistStore
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var effectiveCanvasWidth: CGFloat {
+        if measuredWidth > 0 { return measuredWidth }
+        return horizontalSizeClass == .regular ? 834 : 390
+    }
+
+    private var hasAnyMultiItemSection: Bool {
+        landingVM.liveEvents.count >= 2
+            || (landingVM.nextEvents.count + landingVM.nextMarkets.count) >= 2
+            || landingVM.movedEntries.count >= 2
+            || landingVM.discoverItems.count >= 2
+    }
+
+    private var containerMaxWidth: CGFloat {
+        MyStuffLandingLayout13770.containerMaxWidth(
+            availableWidth: effectiveCanvasWidth,
+            hasMultiItemSection: hasAnyMultiItemSection,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
 
     private var cardSurface: Color {
         colorScheme == .dark ? Color.cardBackground : DS.cardBg
@@ -207,32 +263,35 @@ private struct MyStuffLandingBody295A: View {
 
                 // 1. Live now
                 if !landingVM.liveEvents.isEmpty {
-                    sectionBlock(
+                    sectionMasonryBlock(
                         title: liveSectionTitle,
                         systemImage: "circle.fill",
                         tint: .red,
                         count: landingVM.liveEvents.count,
-                        identifier: "myStuff295A.section.liveNow"
-                    ) {
-                        ForEach(landingVM.liveEvents, id: \.event.id) { pair in
-                            eventCardButton(pair.event, awayVerified: pair.awayVerified)
-                        }
+                        identifier: "myStuff295A.section.liveNow",
+                        items: landingVM.liveEvents.map(\.self)
+                    ) { pair in
+                        eventCardButton(pair.event, awayVerified: pair.awayVerified)
                     }
                 }
 
                 // 2. Next for you
-                if !landingVM.nextEvents.isEmpty || !landingVM.nextMarkets.isEmpty {
-                    sectionBlock(
+                let nextEntries: [NextSectionEntry13770] =
+                    landingVM.nextEvents.map { .event($0.event, awayVerified: $0.awayVerified) }
+                    + landingVM.nextMarkets.map { .market($0) }
+                if !nextEntries.isEmpty {
+                    sectionMasonryBlock(
                         title: "Next for you",
                         systemImage: "calendar",
                         tint: .blue,
-                        count: landingVM.nextEvents.count + landingVM.nextMarkets.count,
-                        identifier: "myStuff295A.section.nextForYou"
-                    ) {
-                        ForEach(landingVM.nextEvents, id: \.event.id) { pair in
-                            eventCardButton(pair.event, awayVerified: pair.awayVerified)
-                        }
-                        ForEach(landingVM.nextMarkets) { market in
+                        count: nextEntries.count,
+                        identifier: "myStuff295A.section.nextForYou",
+                        items: nextEntries
+                    ) { entry in
+                        switch entry {
+                        case .event(let event, let awayVerified):
+                            eventCardButton(event, awayVerified: awayVerified)
+                        case .market(let market):
                             marketCardButton(market)
                         }
                     }
@@ -240,16 +299,15 @@ private struct MyStuffLandingBody295A: View {
 
                 // 3. Moved since your last visit
                 if !landingVM.movedEntries.isEmpty {
-                    sectionBlock(
+                    sectionMasonryBlock(
                         title: "Moved since your last visit",
                         systemImage: "arrow.up.right.circle.fill",
                         tint: colorScheme == .dark ? DS.emerald : DS.greenReadable,
                         count: landingVM.movedEntries.count,
-                        identifier: "myStuff295A.section.moved"
-                    ) {
-                        ForEach(landingVM.movedEntries) { entry in
-                            movedEntryCard(entry)
-                        }
+                        identifier: "myStuff295A.section.moved",
+                        items: landingVM.movedEntries
+                    ) { entry in
+                        movedEntryCard(entry)
                     }
                 }
 
@@ -262,7 +320,7 @@ private struct MyStuffLandingBody295A: View {
                         count: nil,
                         identifier: "myStuff295A.section.fromDiscover"
                     ) {
-                        ForEach(landingVM.discoverItems) { item in
+                        masonryCards(items: landingVM.discoverItems) { item in
                             discoverPreviewCard(item)
                         }
 
@@ -284,6 +342,7 @@ private struct MyStuffLandingBody295A: View {
                             )
                             .contentShape(Rectangle())
                         }
+                        .frame(maxWidth: MyStuffLandingLayout13770.singleColumnMaxWidth)
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("myStuff295A.openAllDiscover")
                     }
@@ -305,6 +364,7 @@ private struct MyStuffLandingBody295A: View {
                                 .stroke(cardBorder, lineWidth: 1)
                         )
                     }
+                    .frame(maxWidth: MyStuffLandingLayout13770.singleColumnMaxWidth)
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("myStuff295A.openAllDiscover")
                 }
@@ -315,6 +375,7 @@ private struct MyStuffLandingBody295A: View {
                         onGoogleSignIn: onGoogleSignIn212A,
                         onDismissLocalOnly: { earnedSignInDismissed = true }
                     )
+                    .frame(maxWidth: MyStuffLandingLayout13770.singleColumnMaxWidth)
                 }
 
                 NavigationLink(value: Route.about) {
@@ -332,14 +393,22 @@ private struct MyStuffLandingBody295A: View {
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(cardSurface))
                     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(cardBorder, lineWidth: 1))
                 }
+                .frame(maxWidth: MyStuffLandingLayout13770.singleColumnMaxWidth)
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 48)
-            .frame(maxWidth: 760)
+            .frame(maxWidth: containerMaxWidth)
             .frame(maxWidth: .infinity)
         }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { measuredWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, w in measuredWidth = w }
+            }
+        )
         .background(colorScheme == .dark ? Color.groupedBackground : DS.surface)
         .refreshable {
             await onRefresh()
@@ -436,6 +505,64 @@ private struct MyStuffLandingBody295A: View {
     }
 
     // MARK: - Section Wrapper
+
+    private enum NextSectionEntry13770 {
+        case event(FeedEventData, awayVerified: Bool)
+        case market(MyStuffMarketItem295A)
+    }
+
+    private func sectionMasonryBlock<Item, RowContent: View>(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        count: Int?,
+        identifier: String,
+        items: [Item],
+        @ViewBuilder rowContent: @escaping (Item) -> RowContent
+    ) -> some View {
+        sectionBlock(
+            title: title,
+            systemImage: systemImage,
+            tint: tint,
+            count: count,
+            identifier: identifier
+        ) {
+            masonryCards(items: items, rowContent: rowContent)
+        }
+    }
+
+    @ViewBuilder
+    private func masonryCards<Item, RowContent: View>(
+        items: [Item],
+        @ViewBuilder rowContent: @escaping (Item) -> RowContent
+    ) -> some View {
+        let cols = MyStuffLandingLayout13770.columnCount(
+            availableWidth: effectiveCanvasWidth,
+            itemCount: items.count,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+        if cols >= 2 {
+            let columns = DiscoverMasonry.columns(cardCount: items.count, columnCount: cols)
+            HStack(alignment: .top, spacing: MyStuffLandingLayout13770.cardSpacing) {
+                ForEach(Array(columns.enumerated()), id: \.offset) { _, indices in
+                    VStack(spacing: MyStuffLandingLayout13770.cardSpacing) {
+                        ForEach(indices, id: \.self) { idx in
+                            rowContent(items[idx])
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    rowContent(item)
+                        .frame(maxWidth: MyStuffLandingLayout13770.singleColumnMaxWidth, alignment: .leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 
     private func sectionBlock<Content: View>(
         title: String,

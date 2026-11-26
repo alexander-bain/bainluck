@@ -695,6 +695,8 @@ struct MyStuffView: View {
                 }
             }
             .padding(.horizontal, 16)
+            .frame(maxWidth: sizeClass == .regular ? MyStuffLandingLayout13770.singleColumnMaxWidth : .infinity)
+            .frame(maxWidth: .infinity)
             .accessibilityIdentifier("myStuffPinnedContent")
         }
     }
