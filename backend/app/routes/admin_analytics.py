@@ -130,6 +130,124 @@ _FUNNEL_GUESS_EVENTS: frozenset[str] = frozenset({
 })
 _FUNNEL_SIGNUP_EVENTS: frozenset[str] = frozenset({"sign_up", "login"})
 
+_ONBOARDING_STAGES: tuple[tuple[str, str], ...] = (
+    ("start", "onboarding_start"),
+    ("step", "onboarding_step"),
+    ("complete", "onboarding_complete"),
+    ("skip", "onboarding_skip"),
+)
+# Blended funnel bars exclude `step` because iPhone fires onboarding_step on
+# screen view (including step 1) while web fires it on Next (#13314).
+_BLENDED_ONBOARDING_STAGES: tuple[tuple[str, str], ...] = (
+    ("start", "onboarding_start"),
+    ("complete", "onboarding_complete"),
+    ("skip", "onboarding_skip"),
+)
+_ONBOARDING_EVENT_TO_STAGE: dict[str, str] = {
+    ev: stage for stage, ev in _ONBOARDING_STAGES
+}
+
+
+def _build_onboarding_funnel(
+    events_data: list[dict[str, Any]],
+    platform_events: list[dict[str, Any]],
+    daily_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize consented onboarding_start -> complete / skip funnel (#13261 Row 4)."""
+    totals: dict[str, dict[str, int]] = {
+        stage: {"events": 0, "users": 0} for stage, _ in _ONBOARDING_STAGES
+    }
+    for row in events_data:
+        ev = str(row.get("eventName") or "").strip()
+        stage = _ONBOARDING_EVENT_TO_STAGE.get(ev)
+        if not stage:
+            continue
+        totals[stage]["events"] += int(row.get("eventCount", 0) or 0)
+        totals[stage]["users"] = max(
+            totals[stage]["users"], int(row.get("totalUsers", 0) or 0)
+        )
+
+    started_users = totals["start"]["users"]
+    stages_out: list[dict[str, Any]] = []
+    for stage, ev in _BLENDED_ONBOARDING_STAGES:
+        users = totals[stage]["users"]
+        if started_users == 0:
+            rate: float | None = None
+        elif stage == "start":
+            rate = 100.0
+        else:
+            rate = round(users / started_users * 100, 1)
+        stages_out.append(
+            {
+                "stage": stage,
+                "eventName": ev,
+                "events": totals[stage]["events"],
+                "users": users,
+                "rateFromStart": rate,
+            }
+        )
+
+    by_platform: dict[str, dict[str, Any]] = {}
+    for row in platform_events:
+        ev = str(row.get("eventName") or "").strip()
+        stage = _ONBOARDING_EVENT_TO_STAGE.get(ev)
+        if not stage:
+            continue
+        plat = _normalize_analytics_platform(row.get("platform"), ev)
+        bucket = by_platform.setdefault(
+            plat,
+            {
+                "platform": plat,
+                "start": 0,
+                "step": 0,
+                "complete": 0,
+                "skip": 0,
+            },
+        )
+        bucket[stage] = max(bucket[stage], int(row.get("totalUsers", 0) or 0))
+
+    daily_map: dict[str, dict[str, Any]] = {}
+    for row in daily_events:
+        ev = str(row.get("eventName") or "").strip()
+        stage = _ONBOARDING_EVENT_TO_STAGE.get(ev)
+        if not stage:
+            continue
+        day = str(row.get("date") or "").strip()
+        if not day:
+            continue
+        bucket = daily_map.setdefault(
+            day,
+            {"date": day, "start": 0, "step": 0, "complete": 0, "skip": 0},
+        )
+        bucket[stage] = max(bucket[stage], int(row.get("totalUsers", 0) or 0))
+
+    completed_users = totals["complete"]["users"]
+    skipped_users = totals["skip"]["users"]
+    left_without_finishing_or_skipping = max(
+        0, started_users - completed_users - skipped_users
+    )
+
+    return {
+        "summary": {
+            "startedUsers": started_users,
+            "steppedUsers": totals["step"]["users"],
+            "completedUsers": completed_users,
+            "skippedUsers": skipped_users,
+            "leftWithoutFinishingOrSkipping": left_without_finishing_or_skipping,
+            "completionRate": round(completed_users / started_users * 100, 1)
+            if started_users > 0
+            else None,
+            "skipRate": round(skipped_users / started_users * 100, 1)
+            if started_users > 0
+            else None,
+        },
+        "stages": stages_out,
+        "byPlatform": sorted(
+            by_platform.values(), key=lambda r: (-int(r["start"]), r["platform"])
+        ),
+        "dailyTrend": sorted(daily_map.values(), key=lambda r: r["date"]),
+    }
+
 
 _CANONICAL_PERIODS: dict[str, str] = {
     "7d": "7d",
@@ -988,9 +1106,16 @@ async def analytics_funnel(
             }
         platform_funnel[plat][stage] = max(platform_funnel[plat].get(stage, 0), users)
 
+    onboarding = _build_onboarding_funnel(
+        events_data=events_data,
+        platform_events=platform_events,
+        daily_events=daily_events,
+    )
+
     result = {
         "period": period,
         "funnel": funnel_steps,
+        "onboarding": onboarding,
         "eventBreakdown": sorted(event_breakdown, key=lambda e: -e["eventCount"]),
         "dailyTrend": sorted_daily,
         "byDevice": list(device_funnel.values()),

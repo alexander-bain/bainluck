@@ -98,9 +98,45 @@ interface FunnelEvent {
   totalUsers: number;
 }
 
+interface OnboardingStage {
+  stage: string;
+  eventName: string;
+  events: number;
+  users: number;
+  rateFromStart: number | null;
+}
+
+interface OnboardingFunnelData {
+  summary: {
+    startedUsers: number;
+    steppedUsers: number;
+    completedUsers: number;
+    skippedUsers: number;
+    leftWithoutFinishingOrSkipping?: number;
+    completionRate: number | null;
+    skipRate: number | null;
+  };
+  stages: OnboardingStage[];
+  byPlatform: Array<{
+    platform: string;
+    start: number;
+    step: number;
+    complete: number;
+    skip: number;
+  }>;
+  dailyTrend: Array<{
+    date: string;
+    start: number;
+    step: number;
+    complete: number;
+    skip: number;
+  }>;
+}
+
 interface FunnelData {
   period: string;
   funnel: FunnelStep[];
+  onboarding?: OnboardingFunnelData;
   eventBreakdown: FunnelEvent[];
   dailyTrend: Array<{
     date: string;
@@ -287,6 +323,20 @@ const STAGE_COLORS: Record<string, string> = {
   interact: "#f59e0b",
   guess: "#22c55e",
   signup: "#8b5cf6",
+};
+
+const ONBOARDING_STAGE_LABELS: Record<string, string> = {
+  start: "Start",
+  step: "Step",
+  complete: "Complete",
+  skip: "Skip",
+};
+
+const ONBOARDING_STAGE_COLORS: Record<string, string> = {
+  start: "#3b82f6",
+  step: "#0ea5e9",
+  complete: "#22c55e",
+  skip: "#f59e0b",
 };
 
 const SECTION_COLORS: Record<string, string> = {
@@ -768,6 +818,137 @@ function FunnelTab({ data }: { data: FunnelData }) {
           Conversion rates show drop-off between each stage.
         </p>
       </div>
+
+      {/* Onboarding funnel (#13261 Row 4) */}
+      {data.onboarding && (
+        <MetricSection
+          question="Where do new readers drop off in onboarding?"
+          status={
+            data.onboarding.summary.startedUsers === 0
+              ? "warning"
+              : (data.onboarding.summary.completionRate ?? 0) >= 50
+              ? "good"
+              : "warning"
+          }
+          summary={
+            data.onboarding.summary.startedUsers === 0
+              ? "No one started in this window."
+              : `${formatNum(data.onboarding.summary.startedUsers)} started · ` +
+                `${data.onboarding.summary.completionRate ?? 0}% completed · ` +
+                `${data.onboarding.summary.skipRate ?? 0}% skipped`
+          }
+          ideal="High onboarding_start -> onboarding_complete completion with low skip rate."
+          defaultExpanded
+        >
+          <div className="space-y-4">
+            <div className="space-y-2">
+              {data.onboarding.stages.map((st) => {
+                const maxUsers = data.onboarding?.summary.startedUsers || 1;
+                const widthPct =
+                  st.users > 0
+                    ? Math.max(8, Math.round((st.users / maxUsers) * 100))
+                    : 8;
+                return (
+                  <div key={st.stage} className="flex items-center gap-3">
+                    <span className="text-xs text-text-secondary w-20 text-right font-medium">
+                      {ONBOARDING_STAGE_LABELS[st.stage] || st.stage}
+                    </span>
+                    <div className="flex-1 relative">
+                      <div
+                        className="h-9 rounded-lg flex items-center px-3 transition-all"
+                        style={{
+                          width: widthPct + "%",
+                          backgroundColor:
+                            ONBOARDING_STAGE_COLORS[st.stage] || "#64748b",
+                          opacity: 0.85,
+                        }}
+                      >
+                        <span className="text-xs font-bold text-white">
+                          {formatNum(st.users)} users ({formatNum(st.events)})
+                        </span>
+                      </div>
+                    </div>
+                    <div className="w-20 text-right">
+                      <span className="text-xs font-medium text-text-secondary">
+                        {st.rateFromStart != null ? st.rateFromStart + "%" : "—"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {data.onboarding.summary.startedUsers > 0 && (() => {
+              const left =
+                data.onboarding.summary.leftWithoutFinishingOrSkipping ??
+                Math.max(
+                  0,
+                  data.onboarding.summary.startedUsers -
+                    data.onboarding.summary.completedUsers -
+                    data.onboarding.summary.skippedUsers
+                );
+              return (
+                <p className="text-[11px] text-text-muted">
+                  {formatNum(left)} left without finishing or skipping (the website sends a skip only when leaving inside the site; closing the tab sends nothing).
+                </p>
+              );
+            })()}
+
+            {data.onboarding.byPlatform.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-surface-border">
+                      <th className="text-left py-2 px-2 text-text-muted font-medium">
+                        Platform
+                      </th>
+                      <th className="text-right py-2 px-2 text-text-muted font-medium">
+                        Start
+                      </th>
+                      <th className="text-right py-2 px-2 text-text-muted font-medium">
+                        Step
+                      </th>
+                      <th className="text-right py-2 px-2 text-text-muted font-medium">
+                        Complete
+                      </th>
+                      <th className="text-right py-2 px-2 text-text-muted font-medium">
+                        Skip
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.onboarding.byPlatform.map((row) => (
+                      <tr
+                        key={row.platform}
+                        className="border-b border-surface-border/50"
+                      >
+                        <td className="py-1.5 px-2 font-mono text-text-secondary">
+                          {row.platform}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-text-primary font-medium">
+                          {formatNum(row.start)}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-text-primary">
+                          {formatNum(row.step)}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-text-primary">
+                          {formatNum(row.complete)}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-text-muted">
+                          {formatNum(row.skip)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-[11px] text-text-muted mt-2">
+                  Step is shown per platform only: iPhone sends onboarding_step when a step is shown (including step 1 at start); the website sends it when pressing Next.
+                </p>
+              </div>
+            )}
+          </div>
+        </MetricSection>
+      )}
 
       {/* Device breakdown */}
       {data.byDevice.length > 0 && (
