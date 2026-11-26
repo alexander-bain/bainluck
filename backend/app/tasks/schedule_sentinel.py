@@ -228,6 +228,7 @@ _TEAM_STOPWORDS = {"the", "fc", "sc", "cf", "afc", "club", "de"}
 #: _CLUB_NAME_ALIASES`); WHOLE NAME only, so it never touches another club.
 _WHOLE_NAME_FOLDS = {
     "los angeles fc": "lafc",
+    "internazionale": "inter milan",
 }
 
 #: #12083: ESPN's spelling of a college club -> ours, as whole phrases of the
