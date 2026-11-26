@@ -64,7 +64,7 @@ class _SqliteAsyncSession:
 
 
 @pytest_asyncio.fixture
-async def sqlite_client():
+async def sqlite_client(monkeypatch):
     conn = sqlite3.connect(":memory:")
     ddl = str(CreateTable(AnonymousInstallCount.__table__).compile(dialect=postgresql.dialect()))
     conn.execute(ddl)
@@ -75,12 +75,10 @@ async def sqlite_client():
 
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_db_rw] = _override_get_db
-    fixed_today = date(2026, 11, 26)
+    fixed_today = date(2026, 6, 15)
+    monkeypatch.setattr("app.routes.telemetry._utc_today", lambda: fixed_today)
 
-    with (
-        patch("app.main.init_db", new_callable=AsyncMock),
-        patch("app.routes.telemetry._utc_today", return_value=fixed_today),
-    ):
+    with patch("app.main.init_db", new_callable=AsyncMock):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -171,8 +169,8 @@ async def test_day_enforces_server_clock_and_plus_minus_one_day_window(sqlite_cl
         (fixed_today - timedelta(days=2)).isoformat(),
         (fixed_today + timedelta(days=2)).isoformat(),
         "2026-02-30",
-        "20261126",
-        "2026-11-26T00:00:00Z",
+        "20260615",
+        "2026-06-15T00:00:00Z",
         "",
     ):
         resp = await client.post(
@@ -264,7 +262,7 @@ async def test_closed_payload_rejects_extra_keys_unknown_events_and_wrong_types(
 
 
 @pytest.mark.asyncio
-async def test_db_failure_rolls_back_and_returns_503():
+async def test_db_failure_rolls_back_and_returns_503(monkeypatch):
     class _FailingSession:
         def __init__(self):
             self.rolled_back = False
@@ -285,11 +283,10 @@ async def test_db_failure_rolls_back_and_returns_503():
 
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_db_rw] = _override_get_db
+    fixed_today = date(2026, 6, 15)
+    monkeypatch.setattr("app.routes.telemetry._utc_today", lambda: fixed_today)
     try:
-        with (
-            patch("app.main.init_db", new_callable=AsyncMock),
-            patch("app.routes.telemetry._utc_today", return_value=date(2026, 11, 26)),
-        ):
+        with patch("app.main.init_db", new_callable=AsyncMock):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -298,7 +295,7 @@ async def test_db_failure_rolls_back_and_returns_503():
                     json={
                         "event": "previous_session_crashed",
                         "app_version": "1.0.8",
-                        "day": "2026-11-26",
+                        "day": fixed_today.isoformat(),
                     },
                 )
         assert resp.status_code == 503
