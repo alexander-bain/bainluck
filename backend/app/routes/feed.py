@@ -3589,22 +3589,71 @@ def _dedupe_futures_by_group_id(
         key=_rank_key,
         reverse=True,
     )
-    survivor_by_group: dict[str, dict] = {}
+    survivor_idx_by_group: dict[str, int] = {}
+    seen_member_keys_by_group: dict[str, set[str]] = {}
     kept: list[dict] = []
+
+    def _member_dedupe_key(entry: dict) -> str:
+        entry_data = entry.get("data") if isinstance(entry.get("data"), dict) else {}
+        mid = entry_data.get("id")
+        return f"{entry.get('type')}:{mid}" if mid is not None else f"obj:{id(entry)}"
+
     for item in sorted_items:
         data = item.get("data") or {}
         group_id = data.get("group_id")
         if group_id is not None:
             gid_str = str(group_id)
-            survivor = survivor_by_group.get(gid_str)
-            if survivor is not None:
+            survivor_idx = survivor_idx_by_group.get(gid_str)
+            if survivor_idx is not None:
                 # Preserve the dropped same-group sibling on the surviving card
                 # under a private key so the Discover-mode awards theme bundler
                 # (assemble_awards_theme_bundles) can reconstruct the full race.
-                # Stripped from the default-feed response in the serving path.
-                survivor.setdefault("_grouped_members", []).append(item)
+                # Clone survivor + list before mutating so dual-pool scoring never
+                # mutates a shared item dict across passes or repeats a market (#13805).
+                survivor = kept[survivor_idx]
+                seen_keys = seen_member_keys_by_group[gid_str]
+                members_copy = list(survivor.get("_grouped_members") or [])
+                candidates = [item] + [
+                    sub
+                    for sub in (item.get("_grouped_members") or [])
+                    if isinstance(sub, dict)
+                ]
+                for cand in candidates:
+                    ckey = _member_dedupe_key(cand)
+                    if ckey in seen_keys:
+                        continue
+                    seen_keys.add(ckey)
+                    cand_copy = dict(cand)
+                    cand_copy.pop("_grouped_members", None)
+                    members_copy.append(cand_copy)
+                survivor["_grouped_members"] = members_copy
                 continue
-            survivor_by_group[gid_str] = item
+
+            survivor_copy = dict(item)
+            existing_subs = [
+                sub
+                for sub in (item.get("_grouped_members") or [])
+                if isinstance(sub, dict)
+            ]
+            skey = _member_dedupe_key(survivor_copy)
+            seen_keys = {skey}
+            deduped_subs: list[dict] = []
+            for sub in existing_subs:
+                sub_key = _member_dedupe_key(sub)
+                if sub_key in seen_keys:
+                    continue
+                seen_keys.add(sub_key)
+                sub_copy = dict(sub)
+                sub_copy.pop("_grouped_members", None)
+                deduped_subs.append(sub_copy)
+            if deduped_subs:
+                survivor_copy["_grouped_members"] = deduped_subs
+            else:
+                survivor_copy.pop("_grouped_members", None)
+            survivor_idx_by_group[gid_str] = len(kept)
+            seen_member_keys_by_group[gid_str] = seen_keys
+            kept.append(survivor_copy)
+            continue
         kept.append(item)
     return kept
 
