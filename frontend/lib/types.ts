@@ -1735,6 +1735,8 @@ export interface OnboardingSubmission {
   rival_teams: { team_id: number }[];
   sport_affinities: Record<string, number>;
   raw_inputs: Record<string, unknown>;
+  /** Full-replace opt-in set only by the website wizard after loading saved state (#13779). */
+  replace?: boolean;
 }
 
 // Unified Feed types

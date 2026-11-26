@@ -384,6 +384,7 @@ class OnboardingRequest(BaseModel):
     rival_teams: list[TeamRef] = []
     sport_affinities: dict[str, float] = {}  # e.g., {"football": 1.0, "basketball": 0.3}
     raw_inputs: dict = {}  # Saved verbatim for debugging
+    replace: bool = False  # Full-replace opt-in for website wizard; default additive (#13779)
 
 
 class FavoriteItem(BaseModel):
@@ -568,11 +569,12 @@ async def submit_onboarding(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """
-    Save complete onboarding data. Replaces any existing onboarding-sourced
-    favorites and preferences.
+    Save onboarding data. Additive for signed-in users who already have
+    saved onboarding teams, category affinities, or a home location (#13779 / 427: A).
 
-    This is a batch endpoint — saves location, teams, sport affinities,
-    and raw inputs all at once.
+    Reopening the first-run checklist adds newly followed teams and unconfigured
+    categories without removing prior favorites, altering existing Preferences
+    category levels, or clearing home_location.
     """
     selections = (
         (body.local_teams, "local"),
@@ -608,25 +610,44 @@ async def submit_onboarding(
         }
     skipped = sorted(submitted - canonical_ids.keys())
 
-    # 1. Delete existing onboarding-sourced favorites
-    await db.execute(
-        delete(UserFavorite).where(
-            and_(
-                UserFavorite.user_id == user.id,
-                UserFavorite.source == "onboarding",
+    # 1. Replace existing onboarding-sourced favorites ONLY when the caller
+    #    explicitly sends the complete edited state (website setup wizard).
+    #    Default replace=False keeps earlier onboarding, Settings, and chip
+    #    follows intact (protecting both 1.0.7 and 1.0.8 checklist sits).
+    if body.replace:
+        await db.execute(
+            delete(UserFavorite).where(
+                and_(
+                    UserFavorite.user_id == user.id,
+                    UserFavorite.source == "onboarding",
+                )
             )
         )
+
+    existing_pairs: set[tuple[int, str]] = set(
+        (
+            await db.execute(
+                select(UserFavorite.team_id, UserFavorite.relation_type).where(
+                    UserFavorite.user_id == user.id
+                )
+            )
+        ).all()
     )
 
-    # 2. Insert new favorites
+    # 2. Insert new favorites (without duplicating already-stored team relations)
     # With the new constraint (user_id, team_id, relation_type), a team can have
-    # multiple relations (e.g., both "local" and "follow"). We track (team_id, relation_type)
-    # pairs to prevent exact duplicates within a single submission.
+    # multiple relations (e.g., both "local" and "follow"). We track both existing
+    # rows and (team_id, relation_type) pairs in this submission to prevent exact
+    # duplicates.
     seen_pairs: set[tuple[int, str]] = set()
     for refs, relation_type in selections:
         for ref in refs:
             canonical_id = canonical_ids.get(ref.team_id)
-            if canonical_id is None or (canonical_id, relation_type) in seen_pairs:
+            if (
+                canonical_id is None
+                or (canonical_id, relation_type) in seen_pairs
+                or (canonical_id, relation_type) in existing_pairs
+            ):
                 continue
             seen_pairs.add((canonical_id, relation_type))
             db.add(
@@ -642,17 +663,42 @@ async def submit_onboarding(
     # 3. Expand sport affinities to backend keys
     expanded_affinities = _expand_sport_affinities(body.sport_affinities)
 
-    # 4. Update preferences
+    # 4. Update preferences (additive when a record already exists)
     result = await db.execute(
         select(UserPreference).where(UserPreference.user_id == user.id)
     )
     prefs = result.scalar_one_or_none()
 
     if prefs:
-        prefs.home_location = body.home_location
-        prefs.sport_affinities = expanded_affinities
-        prefs.onboarding_completed = True
-        prefs.onboarding_raw = body.raw_inputs
+        if body.replace:
+            prefs.home_location = body.home_location
+            prefs.sport_affinities = expanded_affinities
+            prefs.onboarding_completed = True
+            prefs.onboarding_raw = body.raw_inputs
+        else:
+            if body.home_location is not None and body.home_location.strip():
+                prefs.home_location = body.home_location.strip()
+            existing_affinities = (
+                dict(prefs.sport_affinities)
+                if isinstance(prefs.sport_affinities, dict)
+                else {}
+            )
+            # Picking a category in the checklist may raise a low stored level,
+            # while untouched or higher stored levels stay unchanged (#13779).
+            for backend_key, weight in expanded_affinities.items():
+                stored = existing_affinities.get(backend_key)
+                if stored is None or weight > stored:
+                    existing_affinities[backend_key] = weight
+            prefs.sport_affinities = existing_affinities
+            prefs.onboarding_completed = True
+            if body.raw_inputs:
+                existing_raw = (
+                    dict(prefs.onboarding_raw)
+                    if isinstance(prefs.onboarding_raw, dict)
+                    else {}
+                )
+                existing_raw.update(body.raw_inputs)
+                prefs.onboarding_raw = existing_raw
     else:
         prefs = UserPreference(
             user_id=user.id,

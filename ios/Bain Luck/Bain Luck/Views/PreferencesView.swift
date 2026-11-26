@@ -427,10 +427,11 @@ struct PreferencesView: View {
             Button {
                 showOnboarding = true
             } label: {
-                Text("Set up your teams")
+                Text("Follow your teams")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
                     .background(Color.accentColor, in: Capsule())
@@ -519,9 +520,10 @@ struct PreferencesView: View {
             HStack(spacing: 8) {
                 Image(systemName: "pencil.circle.fill")
                     .font(.system(size: 16))
-                Text("Edit Teams")
+                Text("Edit what you follow")
                     .font(.subheadline)
                     .fontWeight(.semibold)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .foregroundStyle(Color.accentColor)
             .padding(.horizontal, 20)
@@ -543,6 +545,12 @@ struct PreferencesView: View {
                 title: "Your Interests",
                 count: viewModel.sportAffinities.filter { $0.value > 0 }.count
             )
+
+            Text("More or less of a whole category")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal)
 
             // Legend
             HStack(spacing: 8) {
@@ -702,13 +710,15 @@ struct PreferencesView: View {
                         .font(.system(size: 20))
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Redo Onboarding")
+                        Text("Open the checklist")
                             .font(.subheadline)
                             .fontWeight(.medium)
                             .foregroundStyle(.primary)
-                        Text("Start fresh with team selection and interests")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Follow teams and topics, pick sets, turn on alerts")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
