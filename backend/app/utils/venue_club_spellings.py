@@ -60,6 +60,25 @@ VENUE_CLUB_SPELLINGS: dict[str, str] = {
     # #13142: Women's college basketball spelling — Polymarket "Little Rock Trojans"
     # vs Odds API "Arkansas-Little Rock Trojans" (pair 15347844 / 15351848).
     "Little Rock Trojans": "Arkansas-Little Rock Trojans",
+    # #13594: UEFA Champions League / Europa League / Conference League club spellings
+    # split across Odds API, Polymarket, Kalshi, and ESPN.
+    "Internazionale": "Inter Milan",
+    "PFK Levski Sofia": "PFC Levski Sofia",
+    "Olympique de Marseille": "Marseille",
+    "Olympiakós SFP": "Olympiakos Piraeus",
+    "RU Saint-Gilloise": "Union Saint-Gilloise",
+    "KKS Lech Poznań": "Lech Poznań",
+    "Ferencvarosi": "Ferencváros TC",
+    "AC Sparta Praha": "Sparta Prague",
+    "Qairat FK": "FC Kairat",
+    "Heart of Midlothian": "Hearts",
+    "AS Monaco": "Monaco",
+    "FC København": "FC Copenhagen",
+    "Crvena Zvezda": "Red Star Belgrade",
+    "Kuopion PS": "KuPS Kuopio",
+    "K. Sint-Truidense VV": "Sint Truiden",
+    "HNK Hajduk Split": "Hajduk Split",
+    "Omonia Nicosia": "Omonoia FC",
 }
 
 #: Sport-scoped whole-name spellings where one side is a single city or club
@@ -84,6 +103,17 @@ LEAGUE_CLUB_SPELLINGS: dict[str, dict[str, str]] = {
         "Maccabi Tel-Aviv": "Maccabi Tel Aviv",
         "Hapoel Tel-Aviv": "Hapoel Tel Aviv",
         "ASVEL Lyon-Villeurbanne": "ASVEL Lyon Villeurbanne",
+    },
+    "soccer_uefa_europa_league": {
+        "AZ": "AZ Alkmaar",
+        "Olympiacos": "Olympiakos Piraeus",
+        "Milan": "AC Milan",
+    },
+    "soccer_netherlands_eredivisie": {
+        "AZ": "AZ Alkmaar",
+    },
+    "soccer_greece_super_league": {
+        "Olympiacos": "Olympiakos Piraeus",
     },
 }
 
