@@ -242,7 +242,11 @@ async def _read_candidates(
     order_by_id: bool = True,
 ) -> list:
     """Read up to ``limit`` untagged twin candidates matching ``time_predicate``."""
-    predicates: list[Any] = [time_predicate, not_a_proven_duplicate()]
+    predicates: list[Any] = [
+        time_predicate,
+        not_a_proven_duplicate(),
+        Event.status.notin_(list(RETIRED_STATUSES)),
+    ]
     if sport_keys is not None:
         predicates.append(Sport.key.in_(list(sport_keys)))
     elif sport_ids is not None:
@@ -277,7 +281,9 @@ async def serve_fold_absorbed_rows(db, event) -> list:
     return rows
 
 
-async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, bool]:
+async def serve_fold_absorbed_rows_with_completeness(
+    db, event, *, keep_page_survivor: bool = False
+) -> tuple[list, bool]:
     """``(rows, complete)``: the absorbed rows, and whether the fold ran whole.
 
     ``complete`` is False when the fold raised (the rows are then ``[]``, as
@@ -285,6 +291,13 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
     the cap could be missing. A caller that CERTIFIES its membership
     (#10090 `history_fold_revision`) must not certify either; every other
     caller reads only the rows.
+
+    When ``keep_page_survivor`` is True (used by single-event detail reads via
+    `load_unified_game_reads`), a page row that loses `_elect` to a non-retired
+    external twin (same-league, cross-board, or ``*_other``) retains the page
+    and absorbs that winning twin's cluster so detail and list endpoints agree.
+    Raw callers with ``keep_page_survivor=False`` keep `#3391` semantics where
+    only named-league rows losing to ``*_other`` mirror `_keep_page_survivor`.
 
     ``event`` must carry `Event.sport` loaded (every event-page route loads it);
     a row whose sport is not in memory cannot be keyed by league and folds
@@ -343,27 +356,33 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
         if survivor_id == event.id
     }
     flipped_ids = set(getattr(fold, "flipped_loser_ids", None) or ())
-    if not absorbed and not sport_key.endswith("_other"):
+    if not absorbed and (keep_page_survivor or not sport_key.endswith("_other")):
         winner_id = fold.survivor_of.get(event.id)
         winner = next((c for c in candidates if c.id == winner_id), None)
         winner_sk = loaded_sport_key(winner) if winner is not None else None
-        if winner_sk and winner_sk.endswith("_other"):
-            # Mirror `_keep_page_survivor`: when a named-league row loses `_elect`
-            # only to a `*_other` catch-all twin, the league list keeps the named
-            # row and folds the catch-all twin onto it; the event page must match.
+        if winner_sk and (keep_page_survivor or winner_sk.endswith("_other")):
+            # Mirror `_keep_page_survivor`: when `keep_page_survivor=True`
+            # (`load_unified_game_reads` single-event detail), or when a
+            # named-league row loses `_elect` only to a `*_other` catch-all
+            # twin (#13508), list endpoints keep the page row and fold the
+            # winning cluster onto it; detail must match (#13768).
             by_id = {c.id: c for c in candidates}
             other_losers = [
                 lid for lid, sid in fold.survivor_of.items()
                 if sid == winner_id and lid != event.id
             ]
-            same_league_losers = [
-                by_id[lid] for lid in other_losers
-                if lid in by_id and loaded_sport_key(by_id[lid]) == sport_key
-            ]
-            if (
-                not same_league_losers
-                or max([event, *same_league_losers], key=twin_identity_rank).id == event.id
-            ):
+            if keep_page_survivor:
+                allow_absorb = True
+            else:
+                same_league_losers = [
+                    by_id[lid] for lid in other_losers
+                    if lid in by_id and loaded_sport_key(by_id[lid]) == sport_key
+                ]
+                allow_absorb = (
+                    not same_league_losers
+                    or max([event, *same_league_losers], key=twin_identity_rank).id == event.id
+                )
+            if allow_absorb:
                 other_members = [winner_id, *other_losers]
                 event_flipped = event.id in flipped_ids
                 absorbed = set(other_members)
