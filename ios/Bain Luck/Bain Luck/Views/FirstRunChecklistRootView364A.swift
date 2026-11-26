@@ -387,9 +387,11 @@ struct FirstRunChecklistRootView364A: View {
     }
 
     private func finishAndDismiss() {
+        let wasAlreadyOnboarded = UserDefaults.standard.bool(forKey: FirstRunStorageKeys212A.onboardedKey)
         UserDefaults.standard.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
         checklistStore.syncFollowCount(followManager.subjects.count)
         persistMergedDiscoverPreferences()
+        AnonymousLifecycleCounts424A.shared.recordFirstRunFinished(wasAlreadyOnboarded: wasAlreadyOnboarded)
         followVM.finish(
             followManager: followManager,
             pinManager: pinManager,

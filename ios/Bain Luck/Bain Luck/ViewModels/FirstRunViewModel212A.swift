@@ -579,6 +579,7 @@ final class FirstRunViewModel212A: ObservableObject {
         authManager: AuthManager,
         onDismiss: () -> Void
     ) {
+        let wasAlreadyOnboarded = defaults.bool(forKey: FirstRunStorageKeys212A.onboardedKey)
         defaults.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
 
         var mergedInterests = (defaults.dictionary(forKey: FirstRunStorageKeys212A.localInterestsKey) as? [String: Double]) ?? [:]
@@ -654,6 +655,9 @@ final class FirstRunViewModel212A: ObservableObject {
                 await authManager?.refreshProfile()
             }
             isFinishing = false
+        }
+        if defaults === UserDefaults.standard {
+            AnonymousLifecycleCounts424A.shared.recordFirstRunFinished(wasAlreadyOnboarded: wasAlreadyOnboarded)
         }
         onDismiss()
     }

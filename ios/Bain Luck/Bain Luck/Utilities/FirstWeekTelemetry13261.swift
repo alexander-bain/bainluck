@@ -179,6 +179,42 @@ final class SessionOpenTracker13261 {
         )
     }
 
+    /// Ruling 417: C — when the first session backgrounds before the second-open
+    /// consent ask has appeared, persist the pending arrival + `session_open` into
+    /// the on-device held queue so relaunching to answer `Allow` preserves Day-1
+    /// arrival telemetry without duplicate emission.
+    func persistPendingToHeldQueueIfUnanswered(
+        needsChoice: () -> Bool = { TelemetryConsent.shared.needsChoice },
+        heldQueue: HeldAnalyticsQueue417C = .shared,
+        now: Date? = nil
+    ) {
+        guard !isGranted(), needsChoice(), launchRecorded, !emittedSessionOpen else { return }
+        if let link = pendingSharedLink {
+            _ = heldQueue.enqueue(
+                event: "shared_link_open",
+                parameters: [
+                    "entry_type": link.entryType,
+                    "destination_type": link.destinationType,
+                    "source": link.source,
+                    "medium": link.medium,
+                ],
+                now: now
+            )
+            pendingSharedLink = nil
+        }
+        emittedSessionOpen = true
+        _ = heldQueue.enqueue(
+            event: "session_open",
+            parameters: [
+                "is_first_session": pendingIsFirstSession,
+                "session_number": pendingSessionNumber,
+                "entry_type": pendingEntryType,
+                "first_screen": pendingFirstScreen,
+            ],
+            now: now
+        )
+    }
+
     func clearPending() {
         pendingSharedLink = nil
         launchRecorded = false

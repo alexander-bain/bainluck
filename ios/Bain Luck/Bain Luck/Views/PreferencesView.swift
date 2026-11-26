@@ -1198,9 +1198,26 @@ struct PreferencesView: View {
             sectionHeader(emoji: "\u{1F512}", title: "Privacy", count: nil)
             analyticsConsentRow
                 .padding(.horizontal)
+            anonymousCountsDisclosureRow
+                .padding(.horizontal)
             watchDiagnosticsInfoRow
                 .padding(.horizontal)
         }
+    }
+
+    private var anonymousCountsDisclosureRow: some View {
+        Text(AnonymousLifecycleCounts424A.privacyDisclosureSentence)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+            .accessibilityIdentifier("preferences.anonymousCountsDisclosure")
     }
 
     private var watchDiagnosticsInfoRow: some View {
@@ -1242,7 +1259,7 @@ struct PreferencesView: View {
         case .unknown, .saved:
             return analyticsConsentGranted
                 ? "Anonymous usage stats help us find what\u{2019}s broken"
-                : "Off \u{2014} no usage analytics or crash reports are sent"
+                : "Off \u{2014} optional usage analytics and crash reports are off"
         }
     }
 
