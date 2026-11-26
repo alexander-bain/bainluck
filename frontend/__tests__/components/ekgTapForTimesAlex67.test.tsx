@@ -213,7 +213,7 @@ describe("Alex 67 — the status's panel never comes back open by itself", () =>
   // live's R1 on #11839 (probe zzLiveProbeReopen11839, 38c24629): quiet unmounts
   // the button but the disclosure kept `open`, so a flapping connection brought
   // the panel back expanded at the next trouble with no tap.
-  const trouble = { label: "Price may be old", tone: "neutral" as const, breathes: false, announcement: "" };
+  const trouble = { label: "Probability may be old", tone: "neutral" as const, breathes: false, announcement: "" };
   const times = {
     priceObservedAt: OBSERVED_AT, priceConfirmedAt: null,
     scoreShown: false, scoreConfirmedAt: null, oldestFact: null, now: NOW,

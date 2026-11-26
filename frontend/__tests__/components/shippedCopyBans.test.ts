@@ -1453,3 +1453,78 @@ describe("production — the chunks a browser downloaded from bainluck.com", () 
     }
   });
 });
+
+describe("#13806 — Discover candidate grouping JSONs carry no banned copy in reader lines", () => {
+  const candidatesDir = path.resolve(__dirname, "../../../backend/data/groupings/candidates");
+  const readerKeys = new Set([
+    "title",
+    "subtitle",
+    "note",
+    "eyebrow",
+    "kicker",
+    "summary",
+    "headline",
+    "headline_predicate",
+    "caption",
+    "label",
+    "description",
+    "deck_label",
+    "footer",
+    "fallback_title",
+    "section_title",
+    "name",
+    "parent_name",
+    "card_image_alt",
+  ]);
+
+  function collectReaderLines(node: unknown, loc: string, out: Array<{ loc: string; text: string }>) {
+    if (Array.isArray(node)) {
+      node.forEach((item, idx) => collectReaderLines(item, `${loc}[${idx}]`, out));
+      return;
+    }
+    if (node && typeof node === "object") {
+      for (const [key, val] of Object.entries(node as Record<string, unknown>)) {
+        if (typeof val === "string") {
+          if (readerKeys.has(key)) {
+            out.push({ loc: `${loc}.${key}`, text: val });
+          }
+        } else {
+          collectReaderLines(val, `${loc}.${key}`, out);
+        }
+      }
+    }
+  }
+
+  it("rejects sample banned card lines (positive control)", () => {
+    const pricedHits = findBannedCopy("Games on this slate priced closest to a 50–50 toss-up.", ALL_COPY_BANS);
+    expect(pricedHits.map((h) => h.ban.id)).toContain("price-family");
+
+    const pricingHits = findBannedCopy(
+      "Pricing on SpaceX and OpenAI milestones shifted sharply over the past week.",
+      ALL_COPY_BANS
+    );
+    expect(pricingHits.map((h) => h.ban.id)).toContain("price-family");
+  });
+
+  it("finds zero banned-language hits across all reader-visible lines in backend/data/groupings/candidates/*.json", () => {
+    expect(fs.existsSync(candidatesDir)).toBe(true);
+    const files = fs.readdirSync(candidatesDir).filter((f) => f.endsWith(".json")).sort();
+    expect(files.length).toBeGreaterThan(0);
+
+    const failures: string[] = [];
+    for (const file of files) {
+      const parsed = JSON.parse(fs.readFileSync(path.join(candidatesDir, file), "utf8"));
+      const lines: Array<{ loc: string; text: string }> = [];
+      collectReaderLines(parsed, file, lines);
+      for (const { loc, text } of lines) {
+        const hits = findBannedCopy(text, ALL_COPY_BANS);
+        for (const hit of hits) {
+          failures.push(`${loc} [${hit.ban.id}: ${hit.matched}]: ${JSON.stringify(text)}`);
+        }
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(`Banned reader copy in groupings/candidates JSONs:\n  ${failures.join("\n  ")}`);
+    }
+  });
+});

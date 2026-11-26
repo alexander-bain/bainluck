@@ -35,7 +35,7 @@
         "key": "space_milestones",
         "title": "Moon & Mars Milestones",
         "item_noun": "milestones",
-        "note": "Moon landings, Mars missions, and commercial space milestones priced by the markets.",
+        "note": "Moon landings, Mars missions, and commercial space milestones tracked across open markets.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "space",
