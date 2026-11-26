@@ -95,6 +95,7 @@ struct PreferencesView: View {
     @StateObject private var viewModel: PreferencesViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -112,6 +113,14 @@ struct PreferencesView: View {
         _notificationAuthStatus = State(initialValue: notificationAuthStatusForTest)
         _pinGameAlertsStateForTest = State(initialValue: true)
     }
+
+    #if os(iOS)
+    init(appIconSwitcherForTest: AppIconSwitcher423A) {
+        _viewModel = StateObject(wrappedValue: PreferencesViewModel())
+        _appIconSwitcher = State(initialValue: appIconSwitcherForTest)
+        _selectedAppIconChoice = State(initialValue: appIconSwitcherForTest.activeChoice)
+    }
+    #endif
     #endif
     @State private var showOnboarding = false
     @State private var showDeleteConfirmation = false
@@ -137,6 +146,10 @@ struct PreferencesView: View {
     @State private var pinGameAlertsStateForTest = false
     #endif
     @State private var devSourcesOverlayEnabled = false
+    #if os(iOS)
+    @State private var appIconSwitcher = AppIconSwitcher423A.live
+    @State private var selectedAppIconChoice = AppIconSwitcher423A.live.activeChoice
+    #endif
 
     var body: some View {
         Group {
@@ -247,6 +260,9 @@ struct PreferencesView: View {
                     interestsSection
                 }
                 notificationsSection
+                #if os(iOS)
+                appIconSection
+                #endif
                 privacySection
                 if authManager.isAuthenticated || viewModel.prefs != nil {
                     actionsSection
@@ -264,6 +280,16 @@ struct PreferencesView: View {
             telemetryPersistence = TelemetryConsent.shared.persistence
             groupingMachineryEnabled = GroupingMachineryGate12288.isSwitchEnabled(for: authManager.user)
             devSourcesOverlayEnabled = DevSourcesOverlay11920.isSwitchEnabled(for: authManager.user)
+            #if os(iOS)
+            selectedAppIconChoice = appIconSwitcher.activeChoice
+            #endif
+        }
+        .onChange(of: scenePhase) { _, phase in
+            #if os(iOS)
+            if phase == .active {
+                selectedAppIconChoice = appIconSwitcher.activeChoice
+            }
+            #endif
         }
         .onChange(of: authManager.user?.id) { _, _ in
             groupingMachineryEnabled = GroupingMachineryGate12288.isSwitchEnabled(for: authManager.user)
@@ -960,6 +986,81 @@ struct PreferencesView: View {
         }
         return "We couldn't delete your account. Your account has not been deleted. Try again in a moment."
     }
+
+    #if os(iOS)
+    // MARK: - App Icon (#13767, 423: A)
+
+    private var appIconSection: some View {
+        VStack(spacing: 10) {
+            sectionHeader(emoji: "\u{1F3A8}", title: "App", count: nil)
+            appIconRow
+                .padding(.horizontal)
+        }
+    }
+
+    private var appIconRow: some View {
+        NavigationLink {
+            AppIconPickerView423A(switcher: appIconSwitcher) { choice in
+                selectedAppIconChoice = choice
+            }
+        } label: {
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            AppIconPreviewBadge423A(choice: selectedAppIconChoice, size: 36)
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("App icon")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(selectedAppIconChoice.displayName)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary.opacity(0.75))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        AppIconPreviewBadge423A(choice: selectedAppIconChoice, size: 32)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("App icon")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(selectedAppIconChoice.displayName)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary.opacity(0.75))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("preferences.appIconRow")
+    }
+    #endif
 
     // MARK: - Notifications
 
