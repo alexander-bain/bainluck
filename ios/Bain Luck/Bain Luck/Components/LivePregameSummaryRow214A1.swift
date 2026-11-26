@@ -175,6 +175,7 @@ struct LivePregameSummaryRow214A1: View {
     var minScale: CGFloat = 0.78
     var spokenText: String? = nil
     var allowsAccessibilityWrapping: Bool = true
+    var allowsStandardWrapping: Bool = false
     var accessibilityIdentifier: String = "live-pregame-summary-214a1"
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -206,7 +207,7 @@ struct LivePregameSummaryRow214A1: View {
     var body: some View {
         composedText
             .font(HeadlineStyleTable199.quietText(surface, monospacedDigits: true, scaledSize: scaledSize))
-            .lineLimit(allowsAccessibilityWrapping && dynamicTypeSize.isAccessibilitySize ? nil : 1)
+            .lineLimit((allowsStandardWrapping || (allowsAccessibilityWrapping && dynamicTypeSize.isAccessibilitySize)) ? nil : 1)
             .minimumScaleFactor(minScale)
             .allowsTightening(true)
             .truncationMode(.tail)
