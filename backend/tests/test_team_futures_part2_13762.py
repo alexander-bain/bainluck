@@ -291,7 +291,7 @@ async def test_q2_shared_redis_round_trip_and_expiry(monkeypatch):
     loaded = await tf_cache.read_award_outcomes_cache(1)
     assert loaded is not None
     ts_back, rows_back = loaded
-    assert ts_back == pytest.approx(written_ts)
+    assert ts_back == pytest.approx(written_ts, abs=0.01)
     assert len(rows_back) == 1
     o_b, m_b, sk_b = rows_back[0]
     assert sk_b == "basketball_nba"
@@ -392,7 +392,7 @@ async def test_q2_two_step_uses_shared_redis_across_workers_and_propagates_age(m
     assert res2 == res1
     assert not any("futures_markets.name ilike any" in s.lower() for s in executed_sqls)
     assert t2["screen_waves"] == 0
-    assert t2["_award_cached_at"] == pytest.approx(first_ts)
+    assert t2["_award_cached_at"] == pytest.approx(first_ts, abs=0.01)
 
 
 async def test_monkeypatch_guard_bypasses_screen_cache_on_real_pg(monkeypatch):
@@ -686,7 +686,7 @@ async def test_query_team_futures_assigns_15s_ttl_for_event_linked_and_60s_for_s
     t_hit: dict = {}
     await user_route._query_team_futures([100], db, limit=20, timings=t_hit)
     assert t_hit["screen_waves"] == 0
-    assert t_hit["_cache_expires_at"] == pytest.approx(now_wall + 5.0)
+    assert t_hit["_cache_expires_at"] == pytest.approx(now_wall + 5.0, abs=0.01)
 
     # +16s from write (902 expired at 15s, 901 still live until 60s): only 902 re-screens.
     user_route._award_outcomes_cache.clear()
@@ -743,8 +743,8 @@ async def test_oldest_piece_timestamp_beats_newer_award_copy(monkeypatch):
     t1: dict = {}
     res1 = await user_route._query_team_futures([100], db, limit=20, timings=t1)
     assert {it["market_id"] for it in res1["items"]} == {951, 952}
-    assert t1["_award_cached_at"] == pytest.approx(old_mkt_ts)
-    assert t1["_cache_expires_at"] == pytest.approx(old_mkt_ts + 60.0)
+    assert t1["_award_cached_at"] == pytest.approx(old_mkt_ts, abs=0.01)
+    assert t1["_cache_expires_at"] == pytest.approx(old_mkt_ts + 60.0, abs=0.01)
 
     # Also verify an older stats-only hit beats newer award & screen timestamps.
     user_route._award_outcomes_cache.clear()
@@ -759,6 +759,6 @@ async def test_oldest_piece_timestamp_beats_newer_award_copy(monkeypatch):
     )
     t2: dict = {}
     await user_route._query_team_futures([100], db, limit=20, timings=t2)
-    assert t2["_award_cached_at"] == pytest.approx(stats_old_ts)
-    assert t2["_cache_expires_at"] == pytest.approx(stats_old_ts + 60.0)
+    assert t2["_award_cached_at"] == pytest.approx(stats_old_ts, abs=0.01)
+    assert t2["_cache_expires_at"] == pytest.approx(stats_old_ts + 60.0, abs=0.01)
 
