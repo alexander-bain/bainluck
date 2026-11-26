@@ -6,14 +6,23 @@
 // names only the farthest person, only when they scored nothing on the card;
 // or someone dead on; or, when nobody earned one, sometimes the whole table.
 // It calls people by first name and reads correctly for one name or several.
+//
+// A TAP CARD NEVER GETS ONE (430: A). It is right or wrong, the answer screen
+// already says who got it, and five quick taps should not stop five times.
+//
+// TWO SETS ARE USED. `pack` is set two, fourteen sliders, kept as a helper: the
+// rules for a line are rules about sliders, and that set has every kind of
+// slider. `live` is the set on the page, whose first ten cards are taps.
 
-import { coinEntry, emptyEntry, fullGuess, packDuo, pointsFor } from "@/lib/guess/engine";
-import { GUESS_PACK as pack } from "@/lib/guess/pack";
+import { coinEntry, emptyEntry, fullGuess, isTap, optionCount, packDuo, pointsFor } from "@/lib/guess/engine";
+import { GUESS_PACK as live } from "@/lib/guess/pack";
 import { earnsLine, fillLine, isTableLine, roastFor, roastHistory, sayNames } from "@/lib/guess/roast";
-import type { ChanceCard, CountCard, DuoCard, PackCard, PlayerEntry } from "@/lib/guess/types";
+import type { ChanceCard, CountCard, DuoCard, GamePack, PackCard, PlayerEntry } from "@/lib/guess/types";
 
-function person(name: string, guesses: Record<number, number>): PlayerEntry {
-  const entry = emptyEntry(pack, name, "here");
+import { SLIDER_PACK as pack } from "../helpers/guessSliderSet";
+
+function person(name: string, guesses: Record<number, number>, set: GamePack = pack): PlayerEntry {
+  const entry = emptyEntry(set, name, "here");
   Object.entries(guesses).forEach(([i, g]) => {
     entry.guesses[Number(i)] = g;
   });
@@ -123,8 +132,12 @@ describe("/guess — who the line is about", () => {
     expect(roastFor(pack, DUO, [person("Ok", { [DUO]: packDuo(a > 50 ? a - 5 : a + 5, b > 50 ? b - 5 : b + 5) })], null, false)).toBeNull();
   });
 
-  it("every card's own lines fill completely, for one name and for several, in every direction it can be earned", () => {
-    pack.cards.forEach((card, i) => {
+  it.each([
+    ["the fourteen sliders", pack],
+    ["the live set", live],
+  ])("in %s, every slider's own lines fill completely, for one name and for several, in every direction they can be earned", (_label, set) => {
+    set.cards.forEach((card, i) => {
+      if (isTap(card)) return;
       const guesses: number[] = [];
       if (card.kind === "chance") {
         if (card.answer + 20 <= 100) guesses.push(Math.min(100, card.answer + 29));
@@ -140,7 +153,7 @@ describe("/guess — who the line is about", () => {
       expect({ card: card.id, earning: earning.length >= (card.kind === "duo" ? 2 : guesses.length) && earning.length > 0 }).toEqual({ card: card.id, earning: true });
       for (const guess of earning) {
         for (const names of [["Sam Lee"], ["Sam Lee", "Jo"], ["Sam Lee", "Jo", "Kit", "Di", "Ed"]]) {
-          const line = roastFor(pack, i, names.map((n) => person(n, { [i]: guess })), null, false);
+          const line = roastFor(set, i, names.map((n) => person(n, { [i]: guess }, set)), null, false);
           expect({ card: card.id, guess, got: line !== null }).toEqual({ card: card.id, guess, got: true });
           if (!line) continue;
           expect({ card: card.id, text: line.text, holes: /[{}]|undefined|NaN/.test(line.text) }).toEqual({ card: card.id, text: line.text, holes: false });
@@ -194,6 +207,7 @@ describe("/guess — playing alone, and the lines about the whole table", () => 
     // Ann two off and Bo five off on the first three cards: nobody far, nobody dead on.
     const off = (i: number, by: number): number => {
       const card = pack.cards[i];
+      if (isTap(card)) return fullGuess(card);
       if (card.kind === "chance") return card.answer + (card.answer > 50 ? -by : by);
       if (card.kind === "count") return card.answer + (by > 2 ? 2 : 1);
       return packDuo(card.parts[0].answer + (card.parts[0].answer > 50 ? -by : by), card.parts[1].answer + (card.parts[1].answer > 50 ? -by : by));
@@ -211,11 +225,13 @@ describe("/guess — playing alone, and the lines about the whole table", () => 
     // Ann is close on every other card and hopeless on the rest. Bo is always close.
     const toward = (answer: number, max: number, by: number) => (answer > max / 2 ? answer - by : answer + by);
     const close = (card: PackCard, by: number): number => {
+      if (isTap(card)) return fullGuess(card);
       if (card.kind === "chance") return toward(card.answer, 100, by);
       if (card.kind === "count") return toward(card.answer, card.max, 1);
       return packDuo(toward(card.parts[0].answer, 100, by), toward(card.parts[1].answer, 100, by));
     };
     const wayOff = (card: PackCard): number => {
+      if (isTap(card)) return (fullGuess(card) + 1) % optionCount(card);
       if (card.kind === "chance") return card.answer > 50 ? 0 : 100;
       if (card.kind === "count") return card.answer > card.max / 2 ? 0 : card.max;
       return packDuo(card.parts[0].answer > 50 ? 0 : 100, card.parts[1].answer > 50 ? 0 : 100);
@@ -237,6 +253,42 @@ describe("/guess — playing alone, and the lines about the whole table", () => 
     });
     once.forEach((l, i) => {
       if (i > 0) expect(isTableLine(l) && isTableLine(once[i - 1])).toBe(false);
+    });
+  });
+
+  it("a tap card never gets a line: not for a wrong tap, not when the Coin beats the table", () => {
+    const liveCoin = coinEntry(live);
+    live.cards.forEach((card, i) => {
+      if (!isTap(card)) return;
+      const right = fullGuess(card);
+      const wrong = (right + 1) % optionCount(card);
+      expect(earnsLine(card, wrong)).toBe(false);
+      for (const guess of [right, wrong]) {
+        const table = [person("Ann", { [i]: guess }, live), person("Bo", { [i]: guess }, live), person("Cy", { [i]: wrong }, live)];
+        expect({ card: card.id, guess, line: roastFor(live, i, table, liveCoin, false) }).toEqual({ card: card.id, guess, line: null });
+      }
+    });
+  });
+
+  it("in the live set the first line can only come once the sliders start", () => {
+    // Everyone taps wrong for ten cards, then one person is hopeless on every slider.
+    const firstSlider = live.cards.findIndex((c) => !isTap(c));
+    expect(firstSlider).toBe(10);
+    const wayOff = (card: PackCard): number => {
+      if (isTap(card)) return (fullGuess(card) + 1) % optionCount(card);
+      if (card.kind === "chance") return card.answer > 50 ? 0 : 100;
+      return 0;
+    };
+    const ann = person("Ann", {}, live);
+    const bo = person("Bo", {}, live);
+    live.cards.forEach((card, i) => {
+      ann.guesses[i] = wayOff(card);
+      bo.guesses[i] = isTap(card) ? wayOff(card) : fullGuess(card) + (fullGuess(card) > 50 ? -4 : 4);
+    });
+    const history = roastHistory(live, live.cards.length - 1, [ann, bo], coinEntry(live));
+    history.forEach((line, i) => {
+      if (i < firstSlider) expect({ at: i, line }).toEqual({ at: i, line: null });
+      else expect({ at: i, names: line?.names, rule: line?.rule }).toEqual({ at: i, names: ["Ann"], rule: "far" });
     });
   });
 

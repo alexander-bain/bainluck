@@ -1,10 +1,16 @@
 "use client";
 
-// The front of a card: its picture and the slider a player answers with.
+// The front of a card: its picture and the thing a player answers with.
 //
-// EVERY CARD IS A SLIDER (429: A). What changes from card to card is the
-// picture above the slider, because playtesting asked for "more visual
-// diversity between cards":
+// A TAP CARD (430: A) is answered with one tap, then locked in:
+//
+//   side      a picture of the subject, and two buttons: below 50%, above 50%
+//   versus    two things, one above the other: tap the more likely
+//   four      a picture of the subject, and four numbers: tap the world's
+//   leader    four names: tap the favorite
+//
+// A SLIDER CARD (429: A) changes its picture from card to card, because
+// playtesting asked for "more visual diversity between cards":
 //
 //   straight  a big picture of the subject
 //   given     the number you are told, drawn as a bar, above the one you guess
@@ -13,7 +19,7 @@
 //   duo       two sliders, one for each number
 
 import { duoParts, isValidGuess, packDuo, startGuess } from "@/lib/guess/engine";
-import type { ChanceCard, CountCard, DuoCard, PackCard } from "@/lib/guess/types";
+import type { ChanceCard, CountCard, DuoCard, FourCard, LeaderCard, PackCard, SideCard, VersusCard } from "@/lib/guess/types";
 
 export interface TopicTint {
   panel: string;
@@ -24,6 +30,8 @@ const TINTS: Record<string, TopicTint> = {
   Sports: { panel: "bg-emerald-50 border-emerald-200", chip: "bg-emerald-100 text-emerald-900" },
   "Screen and games": { panel: "bg-fuchsia-50 border-fuchsia-200", chip: "bg-fuchsia-100 text-fuchsia-900" },
   "Stars and sky": { panel: "bg-sky-50 border-sky-200", chip: "bg-sky-100 text-sky-900" },
+  Stars: { panel: "bg-fuchsia-50 border-fuchsia-200", chip: "bg-fuchsia-100 text-fuchsia-900" },
+  "Odd stuff": { panel: "bg-sky-50 border-sky-200", chip: "bg-sky-100 text-sky-900" },
 };
 
 export function tintFor(topic: string): TopicTint {
@@ -32,9 +40,140 @@ export function tintFor(topic: string): TopicTint {
 
 interface FaceProps {
   card: PackCard;
-  value: number;
+  /** The guess being made. `null` on a tap card until something is tapped. */
+  value: number | null;
   onChange: (value: number) => void;
 }
+
+// ---- tap cards --------------------------------------------------------------
+
+const TAP_BASE = "min-h-[64px] w-full rounded-3xl border-2 px-3 py-2 text-left transition-transform active:scale-95";
+const TAP_ON = "border-text-primary bg-text-primary text-white";
+const TAP_OFF = "border-surface-border bg-surface-card text-text-primary";
+
+/** One thing to tap. The one tapped turns solid; nothing is sent until Lock in. */
+function Tap({
+  place,
+  value,
+  onChange,
+  label,
+  children,
+  center,
+}: {
+  place: number;
+  value: number | null;
+  onChange: (value: number) => void;
+  label: string;
+  children: React.ReactNode;
+  center?: boolean;
+}) {
+  const on = value === place;
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      aria-label={label}
+      onClick={() => onChange(place)}
+      data-testid={`tap-${place}`}
+      className={`${TAP_BASE} ${on ? TAP_ON : TAP_OFF} ${center ? "text-center" : ""}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** The subject, drawn large, as on a plain slider card. */
+function SubjectPicture({ topic, emoji, extras }: { topic: string; emoji: string; extras: string[] }) {
+  const tint = tintFor(topic);
+  return (
+    <div className={`relative flex h-20 items-center justify-center overflow-hidden rounded-3xl border-2 ${tint.panel}`} aria-hidden="true">
+      <span className="absolute left-8 top-2 -rotate-12 text-3xl">{extras[0]}</span>
+      <span className="text-5xl">{emoji}</span>
+      <span className="absolute bottom-2 right-8 rotate-12 text-3xl">{extras[1]}</span>
+    </div>
+  );
+}
+
+function SideFace({ card, value, onChange }: { card: SideCard; value: number | null; onChange: (value: number) => void }) {
+  return (
+    <div className="space-y-2">
+      <SubjectPicture topic={card.topic} emoji={card.emoji} extras={card.extras} />
+      <div className="grid grid-cols-2 gap-2">
+        <Tap place={0} value={value} onChange={onChange} label="Below 50 percent" center>
+          <span className="block text-2xl" aria-hidden="true">
+            ⬇️
+          </span>
+          <span className="block text-lg font-black">Below 50%</span>
+          <span className={`block text-xs font-semibold ${value === 0 ? "text-white" : "text-text-secondary"}`}>less likely than not</span>
+        </Tap>
+        <Tap place={1} value={value} onChange={onChange} label="Above 50 percent" center>
+          <span className="block text-2xl" aria-hidden="true">
+            ⬆️
+          </span>
+          <span className="block text-lg font-black">Above 50%</span>
+          <span className={`block text-xs font-semibold ${value === 1 ? "text-white" : "text-text-secondary"}`}>more likely than not</span>
+        </Tap>
+      </div>
+    </div>
+  );
+}
+
+function VersusFace({ card, value, onChange }: { card: VersusCard; value: number | null; onChange: (value: number) => void }) {
+  return (
+    <div className="space-y-1.5">
+      {card.options.map((option, i) => (
+        <div key={option.label}>
+          {i === 1 && (
+            <div className="py-0.5 text-center text-xs font-black uppercase tracking-wide text-text-secondary" aria-hidden="true">
+              or
+            </div>
+          )}
+          <Tap place={i} value={value} onChange={onChange} label={option.label}>
+            <span className="flex items-center gap-3">
+              <span className="text-4xl" aria-hidden="true">
+                {option.emoji}
+              </span>
+              <span className="min-w-0 flex-1 text-base font-black leading-snug">{option.label}</span>
+            </span>
+          </Tap>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FourFace({ card, value, onChange }: { card: FourCard; value: number | null; onChange: (value: number) => void }) {
+  return (
+    <div className="space-y-2">
+      <SubjectPicture topic={card.topic} emoji={card.emoji} extras={card.extras} />
+      <div className="grid grid-cols-4 gap-1.5" data-testid="four-numbers">
+        {card.options.map((percent, i) => (
+          <Tap key={percent} place={i} value={value} onChange={onChange} label={`${percent} percent`} center>
+            <span className="block text-2xl font-black tabular-nums">{percent}%</span>
+          </Tap>
+        ))}
+      </div>
+      <p className="text-center text-xs font-semibold text-text-secondary">One of these four is what the world says.</p>
+    </div>
+  );
+}
+
+function LeaderFace({ card, value, onChange }: { card: LeaderCard; value: number | null; onChange: (value: number) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-2" data-testid="leader-options">
+      {card.options.map((option, i) => (
+        <Tap key={option.label} place={i} value={value} onChange={onChange} label={option.label} center>
+          <span className="block text-3xl" aria-hidden="true">
+            {option.emoji}
+          </span>
+          <span className="block text-sm font-black leading-tight">{option.label}</span>
+        </Tap>
+      ))}
+    </div>
+  );
+}
+
+// ---- slider cards -----------------------------------------------------------
 
 /** A number, the buttons that nudge it, and the slider under it. */
 function Dial({
@@ -267,14 +406,22 @@ function DuoFace({ card, value, onChange }: { card: DuoCard; value: number; onCh
 }
 
 export default function CardFace({ card, value, onChange }: FaceProps) {
-  // A guess left over from another card never reaches a slider.
+  // A guess left over from another card never reaches this one.
   const safe = isValidGuess(card, value) ? value : startGuess(card);
   switch (card.kind) {
+    case "side":
+      return <SideFace card={card} value={safe} onChange={onChange} />;
+    case "versus":
+      return <VersusFace card={card} value={safe} onChange={onChange} />;
+    case "four":
+      return <FourFace card={card} value={safe} onChange={onChange} />;
+    case "leader":
+      return <LeaderFace card={card} value={safe} onChange={onChange} />;
     case "chance":
-      return <ChanceFace card={card} value={safe} onChange={onChange} />;
+      return <ChanceFace card={card} value={safe ?? 50} onChange={onChange} />;
     case "count":
-      return <CountFace card={card} value={safe} onChange={onChange} />;
+      return <CountFace card={card} value={safe ?? 0} onChange={onChange} />;
     case "duo":
-      return <DuoFace card={card} value={safe} onChange={onChange} />;
+      return <DuoFace card={card} value={safe ?? 0} onChange={onChange} />;
   }
 }

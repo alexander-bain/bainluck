@@ -20,21 +20,23 @@
 //   • when nobody earned a line, a line about the table may show (everyone too
 //     high, three closest in a row, the Coin beat everybody), never on two
 //     cards running;
-//   • otherwise the card says nothing.
+//   • otherwise the card says nothing;
+//   • a TAP card (above or below, pick one of four) never gets a line.
 //
 // Lines call players by first name. Every template reads correctly for one
 // name or several: `{has}`, `{is}`, `{was}` and `{s}` follow the number of
 // names. `{d}` is how many points off the guess was.
 
-import { COIN_NAME, duoParts, isValidGuess, joinNames, missFor, pointsFor, spokenNames } from "./engine";
-import type { GamePack, PackCard, PlayerEntry, RoastLine } from "./types";
+import { COIN_NAME, duoParts, isTap, isValidGuess, joinNames, missFor, pointsFor, spokenNames } from "./engine";
+import type { GamePack, PackCard, PlayerEntry, RoastLine, SliderCard } from "./types";
 
 /** On a two-slider card, a miss this big on either slider earns a line even if the other slider scored. */
 const DUO_EARNED_MISS = 40;
 const HOWLER = 30;
 
-/** Whether a guess was bad enough for a line: it scored nothing. */
+/** Whether a slider guess was bad enough for a line: it scored nothing. A tap never earns one. */
 export function earnsLine(card: PackCard, guess: number): boolean {
+  if (isTap(card)) return false;
   if (pointsFor(card, guess) === 0) return true;
   return card.kind === "duo" && missFor(card, guess) >= DUO_EARNED_MISS;
 }
@@ -101,15 +103,15 @@ export function fillLine(
   });
 }
 
-function unit(card: PackCard): string {
+function unit(card: SliderCard): string {
   return card.kind === "count" ? "" : "%";
 }
 
-function shown(card: PackCard, value: number): string {
+function shown(card: SliderCard, value: number): string {
   return `${value}${unit(card)}`;
 }
 
-function exactLine(card: PackCard, slots: Slot[], index: number): RoastLine | null {
+function exactLine(card: SliderCard, slots: Slot[], index: number): RoastLine | null {
   if (card.kind === "duo") return null;
   const worst = Math.max(...slots.map((s) => missFor(card, s.guess)));
   if (card.kind === "chance" && worst >= HOWLER) return null;
@@ -127,7 +129,7 @@ function exactLine(card: PackCard, slots: Slot[], index: number): RoastLine | nu
   };
 }
 
-function farLine(card: PackCard, slots: Slot[]): RoastLine | null {
+function farLine(card: SliderCard, slots: Slot[]): RoastLine | null {
   // The farthest is whoever missed by most (on a two-slider card, on either slider).
   const worstMiss = Math.max(...slots.map((s) => missFor(card, s.guess)));
   const first = slots.find((s) => missFor(card, s.guess) === worstMiss) as Slot;
@@ -160,8 +162,7 @@ function farLine(card: PackCard, slots: Slot[]): RoastLine | null {
   return { text: fillLine(template, said, values, everyone), rule: "far", names };
 }
 
-function tableLine(pack: GamePack, index: number, people: PlayerEntry[], slots: Slot[], coin: PlayerEntry | null): RoastLine | null {
-  const card = pack.cards[index];
+function tableLine(pack: GamePack, index: number, card: SliderCard, people: PlayerEntry[], slots: Slot[], coin: PlayerEntry | null): RoastLine | null {
 
   if (coin) {
     const coinPoints = pointsFor(card, coin.guesses[index] ?? null);
@@ -216,6 +217,9 @@ export function roastFor(
   previousWasTable: boolean,
 ): RoastLine | null {
   const card = pack.cards[index];
+  // A tap card gets no line. It is right or wrong, the reveal already says who
+  // got it, and five quick taps should not stop five times to rate a joke.
+  if (isTap(card)) return null;
   const humans = people.filter((p) => p.name !== COIN_NAME);
   const spoken = spokenNames(humans.map((p) => p.name));
   const slots: Slot[] = humans
@@ -231,7 +235,7 @@ export function roastFor(
   const own = exactLine(card, slots, index) ?? farLine(card, slots);
   if (own) return own;
   if (previousWasTable) return null;
-  return tableLine(pack, index, humans, slots, coin);
+  return tableLine(pack, index, card, humans, slots, coin);
 }
 
 /** Every line of card `0..upTo`, in order, with the back-to-back rule applied. Lets any phone rebuild what was shown. */

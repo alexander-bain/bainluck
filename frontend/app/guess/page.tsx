@@ -1,8 +1,8 @@
 "use client";
 
-// /guess — GUESS THE CHANCE (425: C, 426: A). An unlisted page: a group plays
-// the same fourteen cards, each on their own phone and in their own time, and
-// the link they pass around carries everyone's guesses.
+// /guess — GUESS THE CHANCE (425: C, 426: A, 430: A). An unlisted page: a group
+// plays the same fifteen cards in three steps, each on their own phone and in
+// their own time, and the link they pass around carries everyone's guesses.
 //
 // FRONTEND-ONLY, AND NOTHING IS STORED. The cards and their numbers are a dated
 // set in `lib/guess/pack.ts`. A game lives in this browser and in the link. The

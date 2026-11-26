@@ -1,311 +1,398 @@
-// SET TWO for /guess (429: A).
+// SET THREE for /guess: THREE STEPS (430: A).
 //
-// GENERATED from a public read of Bain Luck's own pages taken Wed Nov 25, 12:02 PM PT. Every
+// GENERATED from a public read of Bain Luck's own pages taken Wed Nov 25, 8:12 PM PT. Every
 // number below was looked up by market and outcome when the set was built;
-// none was typed. Two answers are worked out from looked-up numbers: the "none
-// of the favorites" card is the rest of a field that adds to exactly 100, and
-// the count card counts teams above 50% with none on the line. The sentences,
-// the context lines and the roasts are written by hand. A set is a dated
-// edition: its numbers stay as they were read, and the page says when that was.
+// none was typed, and each is the percent the site itself prints. The
+// sentences, the context lines and the roasts are written by hand. A set is a
+// dated edition: its numbers stay as they were read, and the page says when.
 //
-// EVERY CARD IS A SLIDER. Ten restate one market (`flavor: "straight"`), kept
-// because the odd subjects are the fun. Four are ours (`ours: true`) and put
-// markets side by side: given this, guess that; none of the favorites; how
-// many of the 32; two numbers on one card. The marks people give at the end of
-// a round are kept with the flavor, and the share of ours goes up only as
-// those marks say it should.
+// Fifteen cards in three steps of five, easiest first:
+//   Easy    above or below 50% (`side`), and which of two is more likely (`versus`)
+//   Medium  pick the chance from four numbers (`four`), and pick the favorite (`leader`)
+//   Hard    slide to the chance (`chance`)
+//
+// The two `versus` cards are ours (`ours: true`): each puts two markets side
+// by side. Every other card restates one market and changes only how it is
+// answered. Nothing here was shown in an earlier round or set.
+//
+// `coinTaps` is what the Coin taps on the ten tap cards. It was drawn at random
+// when the set was built and kept only because it is an ordinary coin's result:
+// two or three right of the five two-way taps, one right of the five four-way.
 //
 // `__tests__/guess/guessPack.test.ts` holds this file to its rules.
 
 import type { GamePack } from "./types";
 
 export const GUESS_PACK: GamePack = {
-  "id": "2026-11-25-b",
-  "code": "b1",
-  "asOf": "Wed Nov 25, 12:02 PM PT",
-  "perRound": 7,
+  "id": "2026-11-25-c",
+  "code": "c1",
+  "asOf": "Wed Nov 25, 8:12 PM PT",
+  "perRound": 5,
+  "steps": [
+    {
+      "name": "Easy",
+      "how": "Above or below 50%? Which is more likely? One tap each."
+    },
+    {
+      "name": "Medium",
+      "how": "Pick one of four."
+    },
+    {
+      "name": "Hard",
+      "how": "Slide to the number. Closest wins."
+    }
+  ],
+  "coinTaps": [
+    0,
+    0,
+    0,
+    1,
+    1,
+    1,
+    3,
+    3,
+    1,
+    0,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
   "topics": [
     "Sports",
-    "Screen and games",
-    "Stars and sky"
+    "Stars",
+    "Odd stuff"
   ],
   "cards": [
     {
-      "kind": "chance",
-      "flavor": "straight",
-      "ours": false,
-      "topic": "Screen and games",
-      "emoji": "🏎️",
-      "extras": [
-        "🔥",
-        "👨‍👩‍👧‍👦"
-      ],
-      "prompt": "A new Fast & Furious film is officially announced in 2026",
-      "short": "A new Fast & Furious film",
-      "context": "The last main Fast & Furious film, Fast X, came out in 2023.",
-      "answer": 5,
-      "roastHigh": "{n} said {g}%. {n} believe{s} in one thing: family. The world says {w}%.",
-      "id": "h1"
-    },
-    {
-      "kind": "chance",
-      "flavor": "straight",
+      "kind": "side",
+      "flavor": "side",
       "ours": false,
       "topic": "Sports",
-      "emoji": "🦬",
+      "emoji": "⛳",
       "extras": [
-        "🏈",
-        "❄️"
-      ],
-      "prompt": "The Buffalo Bills finish as the AFC’s top seed",
-      "short": "Bills get the AFC’s top seed",
-      "context": "The top seed gets a week off, then home games in the playoffs.",
-      "answer": 52,
-      "roastHigh": "{n} said {g}%. Buffalo thanks {n}, and reminds {n} how January usually goes.",
-      "roastLow": "{n} said {g}%. {n} {has} seen how Buffalo’s Januarys end and {is} getting in early.",
-      "id": "h2"
-    },
-    {
-      "kind": "chance",
-      "flavor": "given",
-      "ours": true,
-      "topic": "Screen and games",
-      "emoji": "🎮",
-      "extras": [
-        "📖",
+        "🇺🇸",
         "🏆"
       ],
-      "given": {
-        "text": "The same game is 94% to win Game of the Year.",
-        "percent": 94,
-        "label": "Game of the Year",
-        "answerLabel": "Best Narrative"
-      },
-      "prompt": "Grand Theft Auto VI wins Best Narrative at The Game Awards",
-      "short": "GTA VI wins Best Narrative",
-      "context": "The Game Awards hand out both in December. Best Narrative is the prize for story.",
-      "answer": 81,
-      "roastLow": "{n} said {g}%. {n} skip{s} the cutscenes. The world says {w}%.",
-      "id": "h3"
+      "prompt": "Team USA wins the 2027 Ryder Cup",
+      "short": "USA wins the Ryder Cup",
+      "context": "Europe has won the last two. The 2027 matches are in Ireland, and a tie is possible.",
+      "answer": 40,
+      "id": "t1"
     },
     {
-      "kind": "chance",
-      "flavor": "straight",
-      "ours": false,
-      "topic": "Stars and sky",
-      "emoji": "🚀",
-      "extras": [
-        "🔴",
-        "🧑‍🚀"
-      ],
-      "prompt": "Starship carries people to Mars before 2030",
-      "short": "Starship takes people to Mars",
-      "context": "Starship is SpaceX’s giant rocket. No person has ever been to Mars.",
-      "answer": 12,
-      "roastHigh": "{n} said {g}%. {n} {has} already picked a window seat.",
-      "id": "h4"
-    },
-    {
-      "kind": "count",
-      "flavor": "count",
+      "kind": "versus",
+      "flavor": "versus",
       "ours": true,
       "topic": "Sports",
-      "emoji": "🏒",
-      "prompt": "How many of the 32 NHL teams are above 50% to make the playoffs?",
-      "short": "NHL teams above 50%",
-      "context": "Sixteen of the 32 teams make the playoffs. The regular season ends in April.",
-      "answer": 14,
-      "max": 32,
-      "step": 2,
-      "noun": "teams",
-      "roastLow": "{n} said {g}. The world is sure of {w}. {n} trust{s} nobody.",
-      "roastHigh": "{n} said {g}. There are 16 playoff spots, {n}.",
-      "id": "h5"
-    },
-    {
-      "kind": "chance",
-      "flavor": "straight",
-      "ours": false,
-      "topic": "Stars and sky",
-      "emoji": "🌊",
-      "extras": [
-        "💿",
-        "🎧"
+      "emoji": "🤼",
+      "prompt": "Which is more likely?",
+      "short": "Brady in the WWE, or Rondo at the Olympics",
+      "context": "Brady won seven Super Bowls. Rondo won NBA titles with the Celtics and the Lakers. Flag football joins the Olympics in 2028.",
+      "options": [
+        {
+          "label": "Rajon Rondo plays flag football at the 2028 Olympics",
+          "short": "Rondo at the Olympics",
+          "emoji": "🏈",
+          "percent": 15
+        },
+        {
+          "label": "Tom Brady fights in the WWE before 2028",
+          "short": "Brady in the WWE",
+          "emoji": "🤼",
+          "percent": 29
+        }
       ],
-      "prompt": "Frank Ocean releases a new album in 2027",
-      "short": "A Frank Ocean album in 2027",
-      "context": "His last album, Blonde, came out in 2016.",
-      "answer": 29,
-      "roastHigh": "{n} said {g}%. {n} {has} been saying that since 2016.",
-      "roastLow": "{n} said {g}%. {n} {has} been hurt before.",
-      "id": "h6"
+      "id": "t2"
     },
     {
-      "kind": "chance",
-      "flavor": "straight",
+      "kind": "side",
+      "flavor": "side",
+      "ours": false,
+      "topic": "Stars",
+      "emoji": "💒",
+      "extras": [
+        "🎤",
+        "🎬"
+      ],
+      "prompt": "Harry Styles and Zoë Kravitz are married before 2027",
+      "short": "Styles and Kravitz marry this year",
+      "context": "The singer and the actor were first linked in 2025. The year has five weeks left.",
+      "answer": 18,
+      "id": "t3"
+    },
+    {
+      "kind": "versus",
+      "flavor": "versus",
+      "ours": true,
+      "topic": "Odd stuff",
+      "emoji": "🌋",
+      "prompt": "Which is more likely?",
+      "short": "A supervolcano, or a Rihanna album",
+      "context": "Rihanna’s last album, Anti, came out in 2016. The last supervolcano eruption was about 26,000 years ago.",
+      "options": [
+        {
+          "label": "A supervolcano erupts before 2050",
+          "short": "A supervolcano",
+          "emoji": "🌋",
+          "percent": 31
+        },
+        {
+          "label": "Rihanna releases an album this year",
+          "short": "A Rihanna album",
+          "emoji": "💿",
+          "percent": 2
+        }
+      ],
+      "id": "t4"
+    },
+    {
+      "kind": "side",
+      "flavor": "side",
+      "ours": false,
+      "topic": "Odd stuff",
+      "emoji": "❄️",
+      "extras": [
+        "🌨️",
+        "🏙️"
+      ],
+      "prompt": "Boston gets more than two inches of snow in December",
+      "short": "Two inches of snow in Boston",
+      "context": "All the snow measured in Boston over the whole month counts.",
+      "answer": 62,
+      "id": "t5"
+    },
+    {
+      "kind": "four",
+      "flavor": "four",
+      "ours": false,
+      "topic": "Odd stuff",
+      "emoji": "📺",
+      "extras": [
+        "🏃",
+        "💯"
+      ],
+      "prompt": "IShowSpeed reaches 100 million YouTube subscribers before 2029",
+      "short": "IShowSpeed hits 100 million",
+      "context": "IShowSpeed is a streamer. Only a few channels have ever passed 100 million subscribers.",
+      "answer": 51,
+      "options": [
+        12,
+        25,
+        38,
+        51
+      ],
+      "id": "t6"
+    },
+    {
+      "kind": "leader",
+      "flavor": "leader",
+      "ours": false,
+      "topic": "Stars",
+      "emoji": "🎤",
+      "prompt": "Who is most likely to perform at the Super Bowl halftime show?",
+      "sub": "Not counting Jay-Z, who is all but certain.",
+      "short": "Halftime show guests",
+      "independent": true,
+      "context": "The show is on February 14, 2027. More than one of these four can be on that stage.",
+      "options": [
+        {
+          "label": "Eminem",
+          "short": "Eminem",
+          "emoji": "🎧",
+          "percent": 24
+        },
+        {
+          "label": "Justin Timberlake",
+          "short": "Timberlake",
+          "emoji": "🕺",
+          "percent": 40
+        },
+        {
+          "label": "Beyoncé",
+          "short": "Beyoncé",
+          "emoji": "👑",
+          "percent": 70
+        },
+        {
+          "label": "Pharrell Williams",
+          "short": "Pharrell",
+          "emoji": "🎩",
+          "percent": 43
+        }
+      ],
+      "id": "t7"
+    },
+    {
+      "kind": "four",
+      "flavor": "four",
       "ours": false,
       "topic": "Sports",
       "emoji": "🏈",
       "extras": [
-        "🌉",
-        "🥇"
+        "🧢",
+        "🏟️"
       ],
-      "prompt": "The San Francisco 49ers finish as the NFC’s top seed",
-      "short": "49ers get the NFC’s top seed",
-      "context": "The top seed gets a week off, then home games in the playoffs.",
-      "answer": 69,
-      "roastLow": "{n} said {g}%. The world says {w}%. {n} {has} a grudge, and it is showing.",
-      "roastHigh": "{n} said {g}%. {n} {has} already taken the week off with them.",
-      "id": "h7"
+      "prompt": "The New England Patriots make the playoffs",
+      "short": "Patriots make the playoffs",
+      "context": "Fourteen of the 32 NFL teams get in. The regular season ends in early January.",
+      "answer": 30,
+      "options": [
+        30,
+        45,
+        60,
+        75
+      ],
+      "id": "t8"
+    },
+    {
+      "kind": "leader",
+      "flavor": "leader",
+      "ours": false,
+      "topic": "Sports",
+      "emoji": "🏈",
+      "prompt": "Who is the favorite to win the NFC South?",
+      "short": "NFC South favorite",
+      "independent": false,
+      "context": "Four teams, one division title. The regular season ends in early January.",
+      "options": [
+        {
+          "label": "Falcons",
+          "short": "Falcons",
+          "emoji": "🦅",
+          "percent": 10
+        },
+        {
+          "label": "Panthers",
+          "short": "Panthers",
+          "emoji": "🐆",
+          "percent": 53
+        },
+        {
+          "label": "Saints",
+          "short": "Saints",
+          "emoji": "⚜️",
+          "percent": 8
+        },
+        {
+          "label": "Buccaneers",
+          "short": "Buccaneers",
+          "emoji": "🏴‍☠️",
+          "percent": 27
+        }
+      ],
+      "id": "t9"
+    },
+    {
+      "kind": "four",
+      "flavor": "four",
+      "ours": false,
+      "topic": "Stars",
+      "emoji": "🎬",
+      "extras": [
+        "🌟",
+        "🏆"
+      ],
+      "prompt": "Zendaya is nominated for Best Actress at the Oscars",
+      "short": "Zendaya gets an Oscar nomination",
+      "context": "Nominations for the 99th Academy Awards come out in January.",
+      "answer": 36,
+      "options": [
+        8,
+        22,
+        36,
+        57
+      ],
+      "id": "t10"
     },
     {
       "kind": "chance",
       "flavor": "straight",
       "ours": false,
-      "topic": "Stars and sky",
+      "topic": "Stars",
+      "emoji": "👯",
+      "extras": [
+        "📸",
+        "🤝"
+      ],
+      "prompt": "Blake Lively and Taylor Swift are seen together in public this year",
+      "short": "Lively and Swift seen together",
+      "context": "The two were close friends for years. The year has five weeks left.",
+      "answer": 9,
+      "roastHigh": "{n} said {g}%. {n} still believe{s} in best friends forever. The world says {w}%.",
+      "id": "t11"
+    },
+    {
+      "kind": "chance",
+      "flavor": "straight",
+      "ours": false,
+      "topic": "Sports",
+      "emoji": "🐻",
+      "extras": [
+        "🏒",
+        "🥅"
+      ],
+      "prompt": "The Boston Bruins make the playoffs",
+      "short": "Bruins make the playoffs",
+      "context": "Sixteen of the 32 NHL teams make the playoffs. The regular season ends in April.",
+      "answer": 71,
+      "roastHigh": "{n} said {g}%. {n} {has} already cleared the calendar for May.",
+      "roastLow": "{n} said {g}%. Nobody tell Boston what {n} said.",
+      "id": "t12"
+    },
+    {
+      "kind": "chance",
+      "flavor": "straight",
+      "ours": false,
+      "topic": "Stars",
       "emoji": "💍",
       "extras": [
         "🎬",
-        "💄"
+        "🎵"
       ],
-      "prompt": "Timothée Chalamet and Kylie Jenner get engaged in 2026",
-      "short": "Chalamet and Jenner get engaged",
-      "context": "The actor and the makeup mogul were first linked in 2023.",
-      "answer": 11,
-      "roastHigh": "{n} said {g}%. The year is nearly over, {n}. That is a fast ring.",
-      "id": "h8"
-    },
-    {
-      "kind": "chance",
-      "flavor": "rest",
-      "ours": true,
-      "topic": "Sports",
-      "emoji": "🏀",
-      "extras": [
-        "🏆",
-        "🤷"
-      ],
-      "prompt": "The NBA champion is not the Spurs, the Thunder or the 76ers",
-      "sub": "Those are the three favorites.",
-      "short": "None of the three NBA favorites",
-      "context": "Thirty teams are playing for it. The three favorites together come to less than half.",
-      "answer": 57,
-      "parts": [
-        {
-          "label": "Spurs",
-          "percent": 20
-        },
-        {
-          "label": "Thunder",
-          "percent": 12
-        },
-        {
-          "label": "76ers",
-          "percent": 11
-        }
-      ],
-      "roastLow": "{n} said {g}%. Three teams, {n}. Twenty-seven others are also trying.",
-      "roastHigh": "{n} said {g}%. The Spurs would like a word with {n}.",
-      "id": "h9"
+      "prompt": "Sydney Sweeney and Scooter Braun get engaged this year",
+      "short": "Sweeney and Braun get engaged",
+      "context": "The actor and the music manager were first linked in 2025. The year has five weeks left.",
+      "answer": 24,
+      "roastHigh": "{n} said {g}%. {n} {has} already picked an outfit for the wedding.",
+      "roastLow": "{n} said {g}%. {n} think{s} love is dead. The world says {w}%.",
+      "id": "t13"
     },
     {
       "kind": "chance",
       "flavor": "straight",
       "ours": false,
       "topic": "Sports",
-      "emoji": "🐯",
-      "extras": [
-        "🏈",
-        "🎯"
-      ],
-      "prompt": "Joe Burrow leads the NFL in passing touchdowns",
-      "short": "Burrow leads in passing touchdowns",
-      "context": "Burrow is the Cincinnati Bengals’ quarterback. The regular season ends in early January.",
-      "answer": 78,
-      "roastLow": "{n} said {g}%. {n} {has} not looked at a box score since September. The world says {w}%.",
-      "roastHigh": "{n} said {g}%. {n} would like the season stopped now, please.",
-      "id": "h10"
-    },
-    {
-      "kind": "chance",
-      "flavor": "straight",
-      "ours": false,
-      "topic": "Stars and sky",
-      "emoji": "❄️",
-      "extras": [
-        "🎄",
-        "🌆"
-      ],
-      "prompt": "It snows in Chicago on Christmas Day",
-      "short": "Snow in Chicago on Christmas",
-      "context": "Any measurable snowfall in Chicago on December 25 counts.",
-      "answer": 33,
-      "roastHigh": "{n} said {g}%. {n} {is} dreaming of a white Christmas. The world is awake.",
-      "roastLow": "{n} said {g}%. It is Chicago, in December, {n}.",
-      "id": "h11"
-    },
-    {
-      "kind": "duo",
-      "flavor": "duo",
-      "ours": true,
-      "topic": "Screen and games",
-      "emoji": "🎬",
-      "prompt": "Avengers: Doomsday. One movie, two chances.",
-      "sub": "Slide both.",
-      "short": "Avengers: Doomsday, twice",
-      "context": "The movie opens in mid-December. Google usually publishes its list of the year’s top searches in early December.",
-      "parts": [
-        {
-          "label": "It has the biggest opening weekend of 2026",
-          "short": "the opening weekend",
-          "emoji": "🍿",
-          "answer": 92
-        },
-        {
-          "label": "It is Google’s most-searched movie of 2026",
-          "short": "the Google one",
-          "emoji": "🔎",
-          "answer": 6
-        }
-      ],
-      "roastFlip": "{n} had it winning Google but not the weekend. The world has that the other way round.",
-      "roastFar": "{n} missed {part} by {d}. Doomsday came early for {n}.",
-      "id": "h12"
-    },
-    {
-      "kind": "chance",
-      "flavor": "straight",
-      "ours": false,
-      "topic": "Sports",
-      "emoji": "☘️",
+      "emoji": "👑",
       "extras": [
         "🏀",
-        "🪑"
+        "⏳"
       ],
-      "prompt": "Payton Pritchard wins Sixth Man of the Year",
-      "short": "Pritchard wins Sixth Man",
-      "context": "Pritchard plays for the Boston Celtics. He won this award in 2025.",
-      "answer": 20,
-      "roastHigh": "{n} said {g}%. {n} would also like him to start.",
-      "roastLow": "{n} said {g}%. Somebody tell {n} he already has one.",
-      "id": "h13"
+      "prompt": "LeBron James retires before the 2027–28 NBA season",
+      "short": "LeBron retires after this season",
+      "context": "James turns 42 on December 30. He entered the NBA in 2003.",
+      "answer": 42,
+      "roastHigh": "{n} said {g}%. {n} {has} been calling it his last year since 2020.",
+      "roastLow": "{n} said {g}%. {n} think{s} he plays until his grandkids are in the league.",
+      "id": "t14"
     },
     {
       "kind": "chance",
       "flavor": "straight",
       "ours": false,
-      "topic": "Stars and sky",
-      "emoji": "🎤",
+      "topic": "Odd stuff",
+      "emoji": "🎮",
       "extras": [
-        "📰",
-        "✨"
+        "🖥️",
+        "🚗"
       ],
-      "prompt": "Taylor Swift is named Time’s Person of the Decade",
-      "short": "Swift is Person of the Decade",
-      "context": "She was Time’s Person of the Year in 2023.",
-      "answer": 14,
-      "roastHigh": "{n} said {g}%. {n} {has} been making friendship bracelets about it.",
-      "id": "h14"
+      "prompt": "Grand Theft Auto VI comes out on PC before 2028",
+      "short": "GTA VI on PC before 2028",
+      "context": "Rockstar has announced GTA VI for consoles only so far. Its last two big games took more than a year to reach PC.",
+      "answer": 90,
+      "roastLow": "{n} said {g}%. {n} think{s} PC players can wait. They always do. The world says {w}%.",
+      "id": "t15"
     }
   ]
 };

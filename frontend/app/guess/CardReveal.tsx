@@ -1,7 +1,17 @@
 "use client";
 
-// The back of a card: what the world thinks, with every player's guess on the
-// same line so the misses can be seen at a glance.
+// The back of a card: what the world thinks, with every player's guess beside
+// it so the hits and misses can be seen at a glance.
+//
+// A tap card lists what could be tapped, marks the right one, and puts each
+// player's initial on the one they tapped:
+//
+//   side      the world's number, then "above 50%" and "below 50%"
+//   versus    the two things, each with its number as a bar
+//   four      the world's number, then the four numbers that were offered
+//   leader    the four names, strongest first, each with its number as a bar
+//
+// A slider card puts every guess on one line:
 //
 //   chance    the world's number on a 0-to-100 line
 //   given     the same, plus the two numbers side by side as bars
@@ -9,8 +19,8 @@
 //   count     the world's count on a 0-to-max line, and the dots
 //   duo       two lines, one for each number
 
-import { duoParts } from "@/lib/guess/engine";
-import type { ChanceCard, CountCard, DuoCard, PackCard } from "@/lib/guess/types";
+import { duoParts, fullGuess } from "@/lib/guess/engine";
+import type { ChanceCard, CountCard, DuoCard, FourCard, LeaderCard, PackCard, SideCard, VersusCard } from "@/lib/guess/types";
 
 /** One player's answer on this card, with the color they wear everywhere on the page. */
 export interface RevealSlot {
@@ -158,8 +168,165 @@ function DuoReveal({ card, slots }: { card: DuoCard; slots: RevealSlot[] }) {
   );
 }
 
+// ---- tap cards --------------------------------------------------------------
+
+interface ChoiceRow {
+  place: number;
+  label: string;
+  emoji?: string;
+  /** The world's percent for this choice, or null when the choice is not a percent of its own. */
+  percent: number | null;
+}
+
+/** What could be tapped, the right one marked, and who tapped what. */
+function ChoiceRows({ rows, right, slots }: { rows: ChoiceRow[]; right: number; slots: RevealSlot[] }) {
+  return (
+    <ul className="space-y-1.5" data-testid="choices">
+      {rows.map((row) => {
+        const won = row.place === right;
+        const who = slots.filter((s) => s.guess === row.place);
+        return (
+          <li
+            key={row.place}
+            data-right={won ? "yes" : undefined}
+            className={`rounded-2xl border-2 bg-surface-card px-3 py-2 ${won ? "border-text-primary" : "border-surface-border"}`}
+          >
+            <div className="flex items-center gap-2">
+              {row.emoji && (
+                <span className="text-xl" aria-hidden="true">
+                  {row.emoji}
+                </span>
+              )}
+              <span className={`min-w-0 flex-1 text-sm leading-snug text-text-primary ${won ? "font-black" : "font-semibold"}`}>
+                {row.label}
+                {won && <span className="ml-1.5 whitespace-nowrap text-xs font-black text-text-primary">✓ right</span>}
+              </span>
+              {row.percent !== null && <span className="shrink-0 text-base font-black tabular-nums text-text-primary">{row.percent}%</span>}
+            </div>
+            {row.percent !== null && (
+              <span className="mt-1 block h-2 overflow-hidden rounded-full bg-surface-elevated" aria-hidden="true">
+                <span className={`block h-full rounded-full ${won ? "bg-accent-brand" : "bg-text-muted"}`} style={{ width: `${Math.max(2, row.percent)}%` }} />
+              </span>
+            )}
+            {who.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {who.map((s) => (
+                  <span key={s.name} className="flex items-center gap-1 rounded-full bg-surface-elevated py-0.5 pl-1 pr-2 text-[11px] font-bold text-text-primary">
+                    <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-black text-white ${s.dot}`} aria-hidden="true">
+                      {initial(s.name)}
+                    </span>
+                    {s.name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function WorldNumber({ percent }: { percent: number }) {
+  return (
+    <div className="text-center">
+      <div className="text-xs font-bold uppercase tracking-wide text-text-secondary">The world says</div>
+      <div className="text-5xl font-black tabular-nums text-text-primary" data-testid="world-number">
+        {percent}%
+      </div>
+    </div>
+  );
+}
+
+function SideReveal({ card, slots }: { card: SideCard; slots: RevealSlot[] }) {
+  return (
+    <div className="space-y-2">
+      <WorldNumber percent={card.answer} />
+      <ChoiceRows
+        right={fullGuess(card)}
+        slots={slots}
+        rows={[
+          { place: 1, label: "Above 50%", emoji: "⬆️", percent: null },
+          { place: 0, label: "Below 50%", emoji: "⬇️", percent: null },
+        ]}
+      />
+    </div>
+  );
+}
+
+function VersusReveal({ card, slots }: { card: VersusCard; slots: RevealSlot[] }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-center text-xs font-bold uppercase tracking-wide text-text-secondary">The world says</div>
+      <ChoiceRows
+        right={fullGuess(card)}
+        slots={slots}
+        rows={card.options.map((option, place) => ({ place, label: option.label, emoji: option.emoji, percent: option.percent }))}
+      />
+    </div>
+  );
+}
+
+function FourReveal({ card, slots }: { card: FourCard; slots: RevealSlot[] }) {
+  const right = fullGuess(card);
+  return (
+    <div className="space-y-2">
+      <WorldNumber percent={card.answer} />
+      <ul className="grid grid-cols-4 gap-1.5" data-testid="choices">
+        {card.options.map((percent, place) => {
+          const won = place === right;
+          const who = slots.filter((s) => s.guess === place);
+          return (
+            <li
+              key={percent}
+              data-right={won ? "yes" : undefined}
+              className={`flex min-h-[64px] flex-col items-center rounded-2xl border-2 px-1 py-1.5 ${
+                won ? "border-text-primary bg-text-primary text-white" : "border-surface-border bg-surface-card text-text-primary"
+              }`}
+            >
+              <span className="text-lg font-black tabular-nums">{percent}%</span>
+              <span className="mt-1 flex flex-wrap justify-center gap-0.5">
+                {who.map((s) => (
+                  <span
+                    key={s.name}
+                    title={s.name}
+                    className={`flex h-5 w-5 items-center justify-center rounded-full border border-white text-[10px] font-black text-white ${s.dot}`}
+                  >
+                    {initial(s.name)}
+                  </span>
+                ))}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function LeaderReveal({ card, slots }: { card: LeaderCard; slots: RevealSlot[] }) {
+  const rows = card.options
+    .map((option, place) => ({ place, label: option.label, emoji: option.emoji, percent: option.percent }))
+    .sort((a, b) => b.percent - a.percent);
+  return (
+    <div className="space-y-2">
+      <div className="text-center text-xs font-bold uppercase tracking-wide text-text-secondary">The world says</div>
+      <ChoiceRows right={fullGuess(card)} slots={slots} rows={rows} />
+      {card.independent && <p className="text-center text-xs font-semibold text-text-secondary">Each is its own chance. More than one can happen.</p>}
+    </div>
+  );
+}
+
 export default function CardReveal({ card, slots }: { card: PackCard; slots: RevealSlot[] }) {
   switch (card.kind) {
+    case "side":
+      return <SideReveal card={card} slots={slots} />;
+    case "versus":
+      return <VersusReveal card={card} slots={slots} />;
+    case "four":
+      return <FourReveal card={card} slots={slots} />;
+    case "leader":
+      return <LeaderReveal card={card} slots={slots} />;
     case "chance":
       return <ChanceReveal card={card} slots={slots} />;
     case "count":
