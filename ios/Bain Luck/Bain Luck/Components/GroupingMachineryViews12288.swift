@@ -7,7 +7,8 @@ import SwiftUI
 // - Zero topic-specific code: dispatches strictly on `formId` and served atom shapes.
 // - Three rows then "Show all" (`effectiveVisibleLimit <= 3`).
 // - Ladder, range, rate, and count markets in ascending numerical order (Direction 228).
-// - Real verified art or nothing — never placeholder letters / monogram initials.
+// - When at least one sibling row has verified art, an artless sibling draws its
+//   initials in the same circle (Ruling 387: A); all-text cards draw no icons.
 // - Full text wrapping at largest Dynamic Type sizes (zero `"…"` truncation).
 
 private struct MachineryPreloadedImagesKey12288: EnvironmentKey {
@@ -106,13 +107,16 @@ enum MachineryDateFormatting12288 {
 }
 
 /// Renders verified art (`team_logo`, `tmdb_poster`, `tmdb_headshot`, `person`) when `art.verifiedURL`
-/// is present; renders `EmptyView()` otherwise — NEVER placeholder letters or monogram circles.
+/// is present. When a sibling row has a picture (`reservesWidthWhenEmpty == true`) and this row lacks
+/// one, draws its initials in the same circle (Ruling 387: A); otherwise renders `EmptyView()`.
 struct MachinerySubjectArtView: View {
     let art: MachinerySubjectArt?
     var width: CGFloat = 34
     var height: CGFloat = 34
     var reservesWidthWhenEmpty: Bool = false
     var emptySlotIsPoster: Bool = false
+    var subjectName: String? = nil
+    var defaultSubjectKind: String? = nil
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.machineryPreloadedImages12288) private var preloadedImages
 
@@ -122,6 +126,25 @@ struct MachinerySubjectArtView: View {
 
     private var borderColor: Color {
         colorScheme == .dark ? Color.white.opacity(0.14) : DS.border
+    }
+
+    /// Resolves server-provided initials (`art.initials`) or extracts the trailing entity
+    /// after `"Role · Entity"` / full `subjectName` via canonical `KitInitials366B`.
+    private var resolvedInitialsTarget: (raw: String, kind: String?)? {
+        if let provided = art?.initials?.trimmingCharacters(in: .whitespacesAndNewlines), !provided.isEmpty {
+            return (provided, art?.kind ?? defaultSubjectKind)
+        }
+        guard let rawName = subjectName?.trimmingCharacters(in: .whitespacesAndNewlines), !rawName.isEmpty else {
+            return nil
+        }
+        let subject: String = {
+            if let dotRange = rawName.range(of: " · ", options: .backwards) {
+                let tail = String(rawName[dotRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !tail.isEmpty { return tail }
+            }
+            return rawName
+        }()
+        return (subject, art?.kind ?? defaultSubjectKind)
     }
 
     @ViewBuilder
@@ -138,7 +161,15 @@ struct MachinerySubjectArtView: View {
                         case .success(let image):
                             styledImage(image, art: art, width: w, height: h)
                         default:
-                            blankSlot(art: art, width: w, height: h)
+                            if let target = resolvedInitialsTarget {
+                                KitInitialsCircle366B(
+                                    name: target.raw,
+                                    subjectKind: target.kind,
+                                    box: CGSize(width: w, height: h)
+                                )
+                            } else {
+                                blankSlot(art: art, width: w, height: h)
+                            }
                         }
                     }
                 }
@@ -155,9 +186,18 @@ struct MachinerySubjectArtView: View {
             .accessibilityHidden(true)
         } else if reservesWidthWhenEmpty {
             let w = emptySlotIsPoster ? width : max(width, height)
-            Color.clear
-                .frame(width: w, height: 1)
-                .accessibilityHidden(true)
+            let h = emptySlotIsPoster ? height : max(width, height)
+            if let target = resolvedInitialsTarget {
+                KitInitialsCircle366B(
+                    name: target.raw,
+                    subjectKind: target.kind,
+                    box: CGSize(width: w, height: h)
+                )
+            } else {
+                Color.clear
+                    .frame(width: w, height: 1)
+                    .accessibilityHidden(true)
+            }
         }
     }
 
@@ -807,9 +847,10 @@ private struct MachineryCoinFlipSectionView: View {
                         }
 
                         if dynamicTypeSize >= .xxxLarge {
+                            let rowHasArt = (item.awayArt?.verifiedURL != nil) || (item.homeArt?.verifiedURL != nil)
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 10) {
-                                    MachinerySubjectArtView(art: item.awayArt, width: 32, height: 32)
+                                    MachinerySubjectArtView(art: item.awayArt, width: 32, height: 32, reservesWidthWhenEmpty: rowHasArt, subjectName: item.awayShort, defaultSubjectKind: "team")
                                     Text(item.awayShort)
                                         .font(.system(size: min(teamSize, 24), weight: .semibold))
                                         .foregroundStyle(primaryInk)
@@ -825,7 +866,7 @@ private struct MachineryCoinFlipSectionView: View {
                                     }
                                 }
                                 HStack(spacing: 10) {
-                                    MachinerySubjectArtView(art: item.homeArt, width: 32, height: 32)
+                                    MachinerySubjectArtView(art: item.homeArt, width: 32, height: 32, reservesWidthWhenEmpty: rowHasArt, subjectName: item.homeShort, defaultSubjectKind: "team")
                                     Text(item.homeShort)
                                         .font(.system(size: min(teamSize, 24), weight: .semibold))
                                         .foregroundStyle(primaryInk)
@@ -842,9 +883,10 @@ private struct MachineryCoinFlipSectionView: View {
                                 }
                             }
                         } else {
+                            let rowHasArt = (item.awayArt?.verifiedURL != nil) || (item.homeArt?.verifiedURL != nil)
                             HStack(alignment: .center, spacing: 8) {
                                 HStack(spacing: 8) {
-                                    MachinerySubjectArtView(art: item.awayArt, width: 32, height: 32)
+                                    MachinerySubjectArtView(art: item.awayArt, width: 32, height: 32, reservesWidthWhenEmpty: rowHasArt, subjectName: item.awayShort, defaultSubjectKind: "team")
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(item.awayShort)
                                             .font(.system(size: min(teamSize, 22), weight: .semibold))
@@ -882,7 +924,7 @@ private struct MachineryCoinFlipSectionView: View {
                                             }
                                         }
                                     }
-                                    MachinerySubjectArtView(art: item.homeArt, width: 32, height: 32)
+                                    MachinerySubjectArtView(art: item.homeArt, width: 32, height: 32, reservesWidthWhenEmpty: rowHasArt, subjectName: item.homeShort, defaultSubjectKind: "team")
                                 }
                                 .frame(maxWidth: .infinity, alignment: .trailing)
                             }
@@ -1268,7 +1310,9 @@ private struct MachineryContenderSpotlightSectionView: View {
                                 rank: idx + 1,
                                 outcome: o,
                                 marketId: lead.marketId,
-                                marketTitle: lead.title
+                                marketTitle: lead.title,
+                                reservesArtSlot: topHasArt,
+                                listUsesPoster: topUsesPoster
                             )
                         }
                         .buttonStyle(.plain)
@@ -1288,7 +1332,8 @@ private struct MachineryContenderSpotlightSectionView: View {
                                     width: chasersUsePoster ? 28 : 32,
                                     height: rowIsPoster ? 40 : 32,
                                     reservesWidthWhenEmpty: chasersHaveArt,
-                                    emptySlotIsPoster: chasersUsePoster
+                                    emptySlotIsPoster: chasersUsePoster,
+                                    subjectName: o.name
                                 )
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(o.name)
@@ -1347,10 +1392,13 @@ private struct MachineryContenderSpotlightSectionView: View {
         rank: Int,
         outcome: MachineryOutcomeVisual,
         marketId: Int,
-        marketTitle: String
+        marketTitle: String,
+        reservesArtSlot: Bool = false,
+        listUsesPoster: Bool = false
     ) -> some View {
         let barColor = MachineryColorContrast12288.singleAccent(outcome.art?.accentColor, scheme: colorScheme)
         let resolvedMark = MachinerySourceMarkResolver11920.outcomeMark(for: outcome, marketId: marketId, members: members)
+        let rowIsPoster = outcome.art?.isPoster ?? listUsesPoster
         return VStack(spacing: 6) {
             HStack(spacing: 2) {
                 Text("#\(rank)")
@@ -1367,8 +1415,11 @@ private struct MachineryContenderSpotlightSectionView: View {
 
             MachinerySubjectArtView(
                 art: outcome.art,
-                width: outcome.art?.isPoster == true ? 44 : 48,
-                height: outcome.art?.isPoster == true ? 64 : 48
+                width: listUsesPoster ? 44 : 48,
+                height: rowIsPoster ? 64 : 48,
+                reservesWidthWhenEmpty: reservesArtSlot,
+                emptySlotIsPoster: listUsesPoster,
+                subjectName: outcome.name
             )
 
             Text(outcome.name)
@@ -1421,7 +1472,8 @@ private struct MachineryContenderSpotlightSectionView: View {
                 width: listUsesPoster ? 44 : 48,
                 height: rowIsPoster ? 64 : 48,
                 reservesWidthWhenEmpty: reservesArtSlot,
-                emptySlotIsPoster: listUsesPoster
+                emptySlotIsPoster: listUsesPoster,
+                subjectName: outcome.name
             )
             VStack(alignment: .leading, spacing: 3) {
                 Text("#\(rank) · \(outcome.name)")
@@ -1525,7 +1577,8 @@ private struct MachinerySiblingFieldsSectionView: View {
                                             width: 28,
                                             height: rowIsPoster ? 38 : 28,
                                             reservesWidthWhenEmpty: listHasArt,
-                                            emptySlotIsPoster: true
+                                            emptySlotIsPoster: true,
+                                            subjectName: o.name
                                         )
                                     }
                                     VStack(alignment: .leading, spacing: 4) {
@@ -1621,11 +1674,15 @@ private struct MachineryBenchmarkStripSectionView: View {
                         let yesMark = MachinerySourceMarkResolver11920.outcomeMark(for: yes, marketId: market.marketId, members: members)
                         NavigationLink(value: Route.futuresDetail(id: market.marketId)) {
                             HStack(alignment: .center, spacing: 10) {
+                                let benchSubjectName = ["yes", "no"].contains(yes.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+                                    ? market.title
+                                    : yes.name
                                 MachinerySubjectArtView(
                                     art: yes.art,
                                     width: 28,
                                     height: 28,
-                                    reservesWidthWhenEmpty: listHasArt
+                                    reservesWidthWhenEmpty: listHasArt,
+                                    subjectName: benchSubjectName
                                 )
                                 Text(market.title)
                                     .font(.system(size: min(rowSize, 21), weight: .medium))
@@ -1868,11 +1925,12 @@ struct MachineryDiscoverCardView: View {
     }
 
     private func singleLineEventRowsList(_ rows: [MachineryEventVisualItem]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let listHasArt = rows.contains { ($0.awayArt?.verifiedURL != nil) || ($0.homeArt?.verifiedURL != nil) }
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { idx, r in
                 HStack(alignment: .center, spacing: 8) {
                     HStack(spacing: 6) {
-                        MachinerySubjectArtView(art: r.awayArt, width: 26, height: 26)
+                        MachinerySubjectArtView(art: r.awayArt, width: 26, height: 26, reservesWidthWhenEmpty: listHasArt, subjectName: r.awayShort, defaultSubjectKind: "team")
                         Text(r.awayShort)
                             .font(.system(size: min(rowSize, 20), weight: .semibold))
                             .foregroundStyle(primaryInk)
@@ -1883,7 +1941,7 @@ struct MachineryDiscoverCardView: View {
                             .foregroundStyle(secondaryInk)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
-                        MachinerySubjectArtView(art: r.homeArt, width: 26, height: 26)
+                        MachinerySubjectArtView(art: r.homeArt, width: 26, height: 26, reservesWidthWhenEmpty: listHasArt, subjectName: r.homeShort, defaultSubjectKind: "team")
                         Text(r.homeShort)
                             .font(.system(size: min(rowSize, 20), weight: .semibold))
                             .foregroundStyle(primaryInk)
@@ -1915,11 +1973,12 @@ struct MachineryDiscoverCardView: View {
     }
 
     private func stackedEventRowsList(_ rows: [MachineryEventVisualItem]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let listHasArt = rows.contains { ($0.awayArt?.verifiedURL != nil) || ($0.homeArt?.verifiedURL != nil) }
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { idx, r in
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .center, spacing: 8) {
-                        MachinerySubjectArtView(art: r.awayArt, width: 24, height: 24)
+                        MachinerySubjectArtView(art: r.awayArt, width: 24, height: 24, reservesWidthWhenEmpty: listHasArt, subjectName: r.awayShort, defaultSubjectKind: "team")
                         Text(r.awayShort)
                             .font(.system(size: min(rowSize, 22), weight: .semibold))
                             .foregroundStyle(primaryInk)
@@ -1936,7 +1995,7 @@ struct MachineryDiscoverCardView: View {
                         }
                     }
                     HStack(alignment: .center, spacing: 8) {
-                        MachinerySubjectArtView(art: r.homeArt, width: 24, height: 24)
+                        MachinerySubjectArtView(art: r.homeArt, width: 24, height: 24, reservesWidthWhenEmpty: listHasArt, subjectName: r.homeShort, defaultSubjectKind: "team")
                         (Text("at ").foregroundStyle(secondaryInk) + Text(r.homeShort).foregroundStyle(primaryInk))
                             .font(.system(size: min(rowSize, 22), weight: .semibold))
                             .fixedSize(horizontal: false, vertical: true)
@@ -1983,7 +2042,8 @@ struct MachineryDiscoverCardView: View {
                             width: listUsesPoster ? 28 : 32,
                             height: rowIsPoster ? 40 : 32,
                             reservesWidthWhenEmpty: listHasArt,
-                            emptySlotIsPoster: listUsesPoster
+                            emptySlotIsPoster: listUsesPoster,
+                            subjectName: o.name
                         )
                     }
                     VStack(alignment: .leading, spacing: 5) {
