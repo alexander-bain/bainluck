@@ -18,6 +18,12 @@ struct TelemetryConsentPrompt: View {
     /// Called once a choice is recorded, with the resulting durability.
     var onChoice: (ConsentPersistence) -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var allowButtonForeground: Color {
+        colorScheme == .dark ? Color(hex: "#0F172A") : .white
+    }
+
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
@@ -29,6 +35,7 @@ struct TelemetryConsentPrompt: View {
 
                         Text("Help us find what\u{2019}s broken?")
                             .font(.title3.weight(.bold))
+                            .foregroundStyle(DS.textPrimary)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
 
@@ -37,13 +44,13 @@ struct TelemetryConsentPrompt: View {
                             + "what crashes. No names, no emails, and never what you search for."
                         )
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
                         Text(AnonymousLifecycleCounts424A.privacyDisclosureSentence)
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
 
@@ -56,10 +63,11 @@ struct TelemetryConsentPrompt: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 14)
-                                    .background(Color.accentColor)
-                                    .foregroundStyle(.white)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                                    .background(DS.blueReadable)
+                                    .foregroundStyle(allowButtonForeground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             }
+                            .buttonStyle(.plain)
 
                             Button {
                                 choose(.none)
@@ -69,26 +77,31 @@ struct TelemetryConsentPrompt: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 14)
-                                    .background(Color.cardBackground)
-                                    .foregroundStyle(.primary)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                                    .background(DS.trackBg)
+                                    .foregroundStyle(DS.textPrimary)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                                     .overlay(
-                                        RoundedRectangle(cornerRadius: 14)
-                                            .stroke(Color.barTrack.opacity(0.5), lineWidth: 1)
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .stroke(DS.border, lineWidth: 1)
                                     )
                             }
+                            .buttonStyle(.plain)
                         }
 
                         Text("You can change this any time in Preferences.")
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(DS.textSecondaryReadable)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(24)
-                    .frame(maxWidth: 420)
-                    .background(Color.groupedBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .frame(maxWidth: 460)
+                    .background(DS.cardBg)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(DS.border, lineWidth: 1)
+                    )
                     .padding(24)
 
                     Spacer(minLength: 0)
@@ -97,6 +110,7 @@ struct TelemetryConsentPrompt: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
+        .background(DS.surface.ignoresSafeArea())
         .interactiveDismissDisabled()
     }
 
