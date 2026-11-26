@@ -2469,6 +2469,130 @@ def _stage_stem(market_title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", stem.lower()).strip()
 
 
+_GRID_OPEN_STATUSES: frozenset[str] = frozenset({"open", "active", "live", "trading"})
+_GRID_MONTH_NUM: dict[str, int] = {
+    "january": 1,
+    "jan": 1,
+    "february": 2,
+    "feb": 2,
+    "march": 3,
+    "mar": 3,
+    "april": 4,
+    "apr": 4,
+    "may": 5,
+    "june": 6,
+    "jun": 6,
+    "july": 7,
+    "jul": 7,
+    "august": 8,
+    "aug": 8,
+    "september": 9,
+    "sept": 9,
+    "sep": 9,
+    "october": 10,
+    "oct": 10,
+    "november": 11,
+    "nov": 11,
+    "december": 12,
+    "dec": 12,
+}
+_GRID_MONTH_NAME: dict[int, str] = {
+    1: "January",
+    2: "February",
+    3: "March",
+    4: "April",
+    5: "May",
+    6: "June",
+    7: "July",
+    8: "August",
+    9: "September",
+    10: "October",
+    11: "November",
+    12: "December",
+}
+_GRID_MONTH_YEAR_RE = re.compile(
+    r"\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|"
+    r"august|aug|september|sept|sep|october|oct|november|nov|december|dec)\s+(20\d{2})\b",
+    re.IGNORECASE,
+)
+_GRID_END_OF_YEAR_RE = re.compile(r"\bend\s+of\s+(20\d{2})\b", re.IGNORECASE)
+
+
+def _is_open_grid_market(m: dict[str, Any]) -> bool:
+    """Return True iff the grid market has not resolved/closed (#13631)."""
+    card = m.get("card") or {}
+    status = str(card.get("status") or m.get("status") or "").strip().lower()
+    if status and status not in _GRID_OPEN_STATUSES:
+        return False
+    if card.get("is_resolved") is True:
+        return False
+    if any(card.get(k) for k in ("winner", "settled_at", "result")):
+        return False
+    return True
+
+
+def _extract_market_target_ym(m: dict[str, Any]) -> tuple[int, int] | None:
+    """Resolve ``(year, month)`` deadline from title or US-aligned ``resolution_date``."""
+    card = m.get("card") or {}
+    title = str(card.get("name") or "").strip()
+    match_my = _GRID_MONTH_YEAR_RE.search(title)
+    if match_my:
+        month_num = _GRID_MONTH_NUM.get(match_my.group(1).lower())
+        if month_num is not None:
+            return (int(match_my.group(2)), month_num)
+    match_eoy = _GRID_END_OF_YEAR_RE.search(title)
+    if match_eoy:
+        return (int(match_eoy.group(1)), 12)
+    raw_res = card.get("resolution_date")
+    if raw_res:
+        try:
+            dt = datetime.fromisoformat(str(raw_res).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            dt_utc = dt.astimezone(timezone.utc)
+            if dt_utc.hour < 6:
+                dt_utc = dt_utc - timedelta(days=1)
+            return (dt_utc.year, dt_utc.month)
+        except ValueError:
+            pass
+    return None
+
+
+def _select_ladder_rungs(
+    ordered_keys: list[str],
+    cols: list[tuple[str, str, dict[str, tuple[str, int]]]],
+    limit: int,
+    ladder_key_fn: Any,
+) -> list[str]:
+    """Keep all rungs up to ``limit``; when trimming, drop only the least likely (#13631)."""
+    if len(ordered_keys) <= limit:
+        return ordered_keys
+    by_peak_prob = sorted(
+        ordered_keys,
+        key=lambda nk: (
+            -max((col[2][nk][1] for col in cols if nk in col[2]), default=-1),
+            -(cols[0][2][nk][1] if nk in cols[0][2] else -1),
+            ladder_key_fn(nk),
+        ),
+    )
+    return sorted(by_peak_prob[:limit], key=ladder_key_fn)
+
+
+def _fed_outcome_phrase(name: str, *, capitalize: bool) -> str:
+    raw = (name or "").strip()
+    low = raw.lower()
+    if low == "no change":
+        return "No change" if capitalize else "no change"
+    if low.startswith(("a ", "an ", "the ")):
+        return (raw[0].upper() + raw[1:]) if capitalize else low
+    article = "A" if capitalize else "a"
+    return f"{article} {low}" if low else raw
+
+
+def _fmt_fed_pct(pct: int) -> str:
+    return "<1%" if pct <= 0 else f"{pct}%"
+
+
 def _try_build_scoreboard_grid(
     *,
     slug: str,
@@ -2517,14 +2641,44 @@ def _try_build_scoreboard_grid(
     top5_ms = [m for m in all_markets if re.search(r"\btop\s+5\b", _market_name(m), re.IGNORECASE)]
     qual_m = next((m for m in all_markets if "playoff qualifiers" in _market_name(m).lower()), None)
     champ_m = next((m for m in all_markets if "national championship winner" in _market_name(m).lower()), None)
+    largest_1_ms = [
+        m
+        for m in all_markets
+        if re.search(r"\blargest\s+company\b", _market_name(m), re.IGNORECASE)
+        and not re.search(r"\b(?:2nd|3rd|4th)\s+largest\b", _market_name(m), re.IGNORECASE)
+    ]
+    largest_2_ms = [
+        m for m in all_markets if re.search(r"\b2nd\s+largest\s+company\b", _market_name(m), re.IGNORECASE)
+    ]
+    largest_3_ms = [
+        m for m in all_markets if re.search(r"\b3rd\s+largest\s+company\b", _market_name(m), re.IGNORECASE)
+    ]
+    ai_overall_m = next((m for m in all_markets if re.search(r"\bbest\s+ai\b", _market_name(m), re.IGNORECASE)), None)
+    ai_coding_m = next((m for m in all_markets if re.search(r"\bbest\s+coding\s+model\b", _market_name(m), re.IGNORECASE)), None)
+    ai_arena_m = next((m for m in all_markets if "1550" in _market_name(m) or "text arena" in _market_name(m).lower()), None)
+    fed_dec_m = next(
+        (m for m in all_markets if re.search(r"\bfed\s+decision\s+in\s+december\b", _market_name(m), re.IGNORECASE)),
+        None,
+    )
+    fed_jan_m = next(
+        (m for m in all_markets if re.search(r"\bfed\s+decision\s+in\s+january\b", _market_name(m), re.IGNORECASE)),
+        None,
+    )
 
     market_cols: list[tuple[str, str, dict[str, tuple[str, int]]]] = []
     col1_order: dict[str, int] = {}
     row_secondary: dict[str, str] = {}
+    selected_markets: list[dict[str, Any]] = []
+    shared_target_ym: tuple[int, int] | None = None
+    require_pictures = True
+    allow_shared_partial = False
+    highlight_col_peaks = False
+    max_rows_limit = 4
     leading_label: str
 
     if winner_election_m is not None and len(nominee_ms) >= 2:
         is_single_race = True
+        selected_markets = [winner_election_m, *nominee_ms]
         out_p: dict[str, tuple[str, int]] = {}
         for idx_o, o in enumerate(_market_outcomes(winner_election_m)):
             nm = str(o.get("name") or "").strip()
@@ -2548,6 +2702,7 @@ def _try_build_scoreboard_grid(
         leading_label = "Candidate"
     elif len(rank1_ms) >= 3 and len(top5_ms) >= 3:
         is_single_race = False
+        selected_markets = [*rank1_ms, *top5_ms]
         col1: dict[str, tuple[str, int]] = {}
         col2: dict[str, tuple[str, int]] = {}
         for idx_m, m in enumerate(rank1_ms):
@@ -2588,6 +2743,7 @@ def _try_build_scoreboard_grid(
                 break
         if pair is None:
             pair = (all_markets[0], all_markets[1])
+        selected_markets = [pair[0], pair[1]]
         for m in pair:
             c = m.get("card") or {}
             m_id = str(c.get("id") or len(market_cols) + 1)
@@ -2618,6 +2774,7 @@ def _try_build_scoreboard_grid(
         )
     elif qual_m is not None and champ_m is not None:
         is_single_race = True
+        selected_markets = [champ_m, qual_m]
         for m, col_label in ((champ_m, "National"), (qual_m, "Playoff")):
             c = m.get("card") or {}
             m_id = str(c.get("id") or len(market_cols) + 1)
@@ -2632,93 +2789,265 @@ def _try_build_scoreboard_grid(
                         col1_order[nk] = idx_o
             market_cols.append((m_id, col_label, out_map))
         leading_label = "Team"
+    elif largest_1_ms and largest_2_ms and largest_3_ms:
+        matching_triples: list[tuple[tuple[int, int], dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+        for m1 in largest_1_ms:
+            ym1 = _extract_market_target_ym(m1)
+            if ym1 is None:
+                continue
+            for m2 in largest_2_ms:
+                ym2 = _extract_market_target_ym(m2)
+                if ym2 != ym1:
+                    continue
+                for m3 in largest_3_ms:
+                    ym3 = _extract_market_target_ym(m3)
+                    if ym3 == ym1:
+                        matching_triples.append((ym1, m1, m2, m3))
+        if not matching_triples:
+            return (
+                None,
+                "Largest-company markets span mismatched dates; refusing unlabeled cross-date grid",
+            )
+        matching_triples.sort(key=lambda t: t[0], reverse=True)
+        shared_target_ym, largest_1_m, largest_2_m, largest_3_m = matching_triples[0]
+        selected_markets = [largest_1_m, largest_2_m, largest_3_m]
+        is_single_race = True
+        for col_idx, (m, col_label) in enumerate(
+            ((largest_1_m, "1st"), (largest_2_m, "2nd"), (largest_3_m, "3rd"))
+        ):
+            c = m.get("card") or {}
+            m_id = str(c.get("id") or len(market_cols) + 1)
+            out_map = {}
+            for idx_o, o in enumerate(c.get("top_outcomes") or []):
+                nm = str(o.get("name") or "").strip()
+                pct = _safe_pct(o.get("probability"), o.get("rendered_percent"))
+                if nm and pct is not None and nm.lower() != "tie":
+                    nk = _norm_entity_match(nm)
+                    if nk not in out_map:
+                        out_map[nk] = (nm, pct)
+                        if col_idx == 0:
+                            col1_order[nk] = idx_o
+            market_cols.append((m_id, col_label, out_map))
+        highlight_col_peaks = True
+        leading_label = "Company"
+    elif ai_overall_m is not None and ai_coding_m is not None and ai_arena_m is not None:
+        is_single_race = True
+        selected_markets = [ai_overall_m, ai_coding_m, ai_arena_m]
+        ai_lab_aliases: dict[str, tuple[str, str]] = {
+            "gemini": ("google", "Google"),
+            "google": ("google", "Google"),
+            "claude": ("anthropic", "Anthropic"),
+            "anthropic": ("anthropic", "Anthropic"),
+            "chatgpt": ("openai", "OpenAI"),
+            "openai": ("openai", "OpenAI"),
+            "grok": ("xai", "xAI"),
+            "xai": ("xai", "xAI"),
+        }
+        for col_idx, (m, col_label) in enumerate(
+            ((ai_overall_m, "Overall"), (ai_coding_m, "Coding"), (ai_arena_m, "First to 1550"))
+        ):
+            c = m.get("card") or {}
+            m_id = str(c.get("id") or len(market_cols) + 1)
+            out_map = {}
+            for idx_o, o in enumerate(c.get("top_outcomes") or []):
+                raw_nm = str(o.get("name") or "").strip()
+                pct = _safe_pct(o.get("probability"), o.get("rendered_percent"))
+                if not raw_nm or pct is None or raw_nm.lower() == "tie":
+                    continue
+                nk_raw = _norm_entity_match(raw_nm)
+                nk, disp_nm = ai_lab_aliases.get(nk_raw, (nk_raw, raw_nm))
+                if nk in out_map:
+                    prev_disp, prev_pct = out_map[nk]
+                    out_map[nk] = (prev_disp, min(100, prev_pct + pct))
+                else:
+                    out_map[nk] = (disp_nm, pct)
+                    if col_idx == 0:
+                        col1_order[nk] = idx_o
+            market_cols.append((m_id, col_label, out_map))
+        max_rows_limit = 3
+        highlight_col_peaks = True
+        leading_label = "Lab"
+    elif fed_dec_m is not None and fed_jan_m is not None:
+        is_single_race = False
+        selected_markets = [fed_dec_m, fed_jan_m]
+        require_pictures = False
+        highlight_col_peaks = True
+        max_rows_limit = 5
+        for col_idx, (m, col_label) in enumerate(
+            ((fed_dec_m, "Dec meeting"), (fed_jan_m, "Jan meeting"))
+        ):
+            c = m.get("card") or {}
+            m_id = str(c.get("id") or len(market_cols) + 1)
+            out_map = {}
+            for idx_o, o in enumerate(c.get("top_outcomes") or []):
+                nm = str(o.get("name") or "").strip()
+                pct = _safe_pct(o.get("probability"), o.get("rendered_percent"))
+                if nm and pct is not None and nm.lower() != "tie":
+                    nk = _norm_entity_match(nm)
+                    if nk not in out_map:
+                        out_map[nk] = (nm, pct)
+                        if col_idx == 0:
+                            col1_order[nk] = idx_o
+            market_cols.append((m_id, col_label, out_map))
+        leading_label = "Decision"
     else:
         return None, None
+
+    if selected_markets and any(not _is_open_grid_market(m) for m in selected_markets):
+        return None, "Grid column market is not open (settled/closed); keeping today's card"
 
     if len(market_cols) < 2:
         return None, None
 
-    c0, c1 = market_cols[0], market_cols[1]
-    col1_ordered = sorted(c0[2].keys(), key=lambda nk: (-c0[2][nk][1], col1_order.get(nk, 999), nk))
+    active_cols = market_cols[:3]
+    c0 = active_cols[0]
+    if leading_label == "Decision":
+        def _fed_ladder_key(nk: str) -> tuple[int, int, str]:
+            if "half" in nk and "cut" in nk:
+                return (0, 0, nk)
+            if "quarter" in nk and "cut" in nk:
+                return (1, 0, nk)
+            if "no change" in nk or "unchanged" in nk or "hold" in nk:
+                return (2, 0, nk)
+            if "quarter" in nk and ("increase" in nk or "hike" in nk):
+                return (3, 0, nk)
+            if "half" in nk and ("increase" in nk or "hike" in nk):
+                return (4, 0, nk)
+            return (5, -c0[2][nk][1], nk)
+
+        col1_ordered = sorted(c0[2].keys(), key=_fed_ladder_key)
+    else:
+        col1_ordered = sorted(c0[2].keys(), key=lambda nk: (-c0[2][nk][1], col1_order.get(nk, 999), nk))
     if len(col1_ordered) < 3:
         return None, f"Primary market ({c0[1]!r}) has fewer than 3 contenders"
 
-    shared_keys = [nk for nk in col1_ordered if nk in c1[2]]
+    shared_keys = [nk for nk in col1_ordered if all(nk in col[2] for col in active_cols[1:])]
     if len(shared_keys) < 3:
         return (
             None,
-            f"Paired markets ({c0[1]!r} vs {c1[1]!r}) share only {len(shared_keys)} overlapping contenders in top outcomes (need >= 3)",
+            f"Paired markets ({c0[1]!r} vs {active_cols[1][1]!r}) share only {len(shared_keys)} overlapping contenders in top outcomes (need >= 3)",
         )
 
-    # Strict Column-1 ranking: never silently skip a top-4 contender missing from Column 2
-    top_col1 = col1_ordered[:4] if len(col1_ordered) >= 4 else col1_ordered[:3]
-    missing_in_col2 = [c0[2][nk][0] for nk in top_col1 if nk not in c1[2]]
-    if missing_in_col2:
+    # Strict Column-1 ranking: never silently skip a top contender missing from sibling columns
+    if leading_label == "Decision":
+        top_col1 = _select_ladder_rungs(col1_ordered, active_cols, max_rows_limit, _fed_ladder_key)
+    else:
+        top_col1 = col1_ordered[:max_rows_limit] if len(col1_ordered) >= max_rows_limit else col1_ordered[:3]
+    missing_in_other = [
+        (c0[2][nk][0], col[1])
+        for nk in top_col1
+        for col in active_cols[1:]
+        if nk not in col[2]
+    ]
+    if missing_in_other and not allow_shared_partial:
+        miss_nm, miss_col = missing_in_other[0]
         return (
             None,
-            f"Column 1 top-{len(top_col1)} contender {missing_in_col2[0]!r} has no {c1[1]!r} number; keeping today's card",
+            f"Column 1 top-{len(top_col1)} contender {miss_nm!r} has no {miss_col!r} number; keeping today's card",
         )
     shown_keys = top_col1
 
     pre_art_by_norm: dict[str, dict[str, Any]] = {}
-    for sec in secs:
-        for it in (sec.get("visual_block") or {}).get("items") or []:
-            for oc in it.get("outcomes") or []:
-                art_d = oc.get("art")
-                if isinstance(art_d, dict) and _is_valid_image_url(art_d.get("url")) and art_d.get("kind") != "monogram":
-                    nk_o = _norm_entity_match(str(oc.get("name") or ""))
-                    if nk_o and nk_o not in pre_art_by_norm:
-                        pre_art_by_norm[nk_o] = art_d
+    if require_pictures:
+        for sec in secs:
+            for it in (sec.get("visual_block") or {}).get("items") or []:
+                for oc in it.get("outcomes") or []:
+                    art_d = oc.get("art")
+                    if isinstance(art_d, dict) and _is_valid_image_url(art_d.get("url")) and art_d.get("kind") != "monogram":
+                        nk_o = _norm_entity_match(str(oc.get("name") or ""))
+                        if nk_o and nk_o not in pre_art_by_norm:
+                            pre_art_by_norm[nk_o] = art_d
 
-    resolved_meta: list[tuple[str, str, str | None, str]] = []
-    for nk in shown_keys:
-        nm = c0[2][nk][0]
-        raw_art = pre_art_by_norm.get(nk)
-        url, s_kind, _acc, host_err = _resolve_row_picture(nm, raw_art, resolver)
-        if host_err:
-            return None, host_err
-        if url is None and leading_label == "Team":
-            cfp_url, _cfp_color = _resolve_logo_and_color(nm, resolver=resolver)
-            if _is_valid_image_url(cfp_url):
-                url = cfp_url
-                s_kind = "team"
-        if url and s_kind == "person" and not _has_first_and_last_name(nm):
-            return None, f"Person row {nm!r} requires first & last name"
-        resolved_meta.append((nk, nm, url, s_kind))
+    col_peaks = [
+        max((col[2][nk][1] for nk in shown_keys if nk in col[2]), default=0)
+        for col in active_cols
+    ]
 
-    if not any(u for _nk, _nm, u, _sk in resolved_meta):
-        return None, f"No grid cell entity on {common!r} has a verified non-monogram picture"
+    # Scoped inside kit_v1_set_builder so public cards (#13605) are untouched; Microsoft/NVIDIA render as MS/NV circles (#13631 Fable review).
+    _kit_company_logos: dict[str, str] = {
+        "apple": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Apple_logo_black.svg/330px-Apple_logo_black.svg.png",
+        "apple inc": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Apple_logo_black.svg/330px-Apple_logo_black.svg.png",
+        "apple inc.": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Apple_logo_black.svg/330px-Apple_logo_black.svg.png",
+        "google": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/330px-Google_%22G%22_logo.svg.png",
+        "alphabet": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/330px-Google_%22G%22_logo.svg.png",
+        "alphabet inc": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/330px-Google_%22G%22_logo.svg.png",
+        "amazon": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4a/Amazon_icon.svg/330px-Amazon_icon.svg.png",
+        "amazon.com": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4a/Amazon_icon.svg/330px-Amazon_icon.svg.png",
+        "anthropic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/330px-Claude_AI_symbol.svg.png",
+        "claude": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/330px-Claude_AI_symbol.svg.png",
+        "openai": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/OpenAI_logo_2025_%28symbol%29.svg/330px-OpenAI_logo_2025_%28symbol%29.svg.png",
+        "chatgpt": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/OpenAI_logo_2025_%28symbol%29.svg/330px-OpenAI_logo_2025_%28symbol%29.svg.png",
+        "xai": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/93/XAI_Logo.svg/330px-XAI_Logo.svg.png",
+        "grok": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/93/XAI_Logo.svg/330px-XAI_Logo.svg.png",
+    }
+    _kit_company_initials: dict[str, str] = {
+        "microsoft": "MS",
+        "microsoft corporation": "MS",
+        "nvidia": "NV",
+        "nvidia corporation": "NV",
+    }
+
+    resolved_meta: list[tuple[str, str, str | None, str, str | None]] = []
+    if require_pictures:
+        for nk in shown_keys:
+            nm = c0[2][nk][0]
+            if leading_label in {"Company", "Lab"}:
+                if init := _kit_company_initials.get(nk):
+                    resolved_meta.append((nk, nm, None, "organization", init))
+                    continue
+                if comp_url := _kit_company_logos.get(nk):
+                    resolved_meta.append((nk, nm, comp_url, "organization", None))
+                    continue
+            raw_art = pre_art_by_norm.get(nk)
+            url, s_kind, _acc, host_err = _resolve_row_picture(nm, raw_art, resolver)
+            if host_err:
+                return None, host_err
+            if url is None and leading_label == "Team":
+                cfp_url, _cfp_color = _resolve_logo_and_color(nm, resolver=resolver)
+                if _is_valid_image_url(cfp_url):
+                    url = cfp_url
+                    s_kind = "team"
+            if url and s_kind == "person" and not _has_first_and_last_name(nm):
+                return None, f"Person row {nm!r} requires first & last name"
+            resolved_meta.append((nk, nm, url, s_kind, None))
+
+        if not any(u for _nk, _nm, u, _sk, _init in resolved_meta):
+            return None, f"No grid cell entity on {common!r} has a verified non-monogram picture"
+    else:
+        for nk in shown_keys:
+            resolved_meta.append((nk, c0[2][nk][0], None, "topic", None))
 
     rows: list[dict[str, Any]] = []
     top_row_kind = "topic"
-    for rank_idx, (nk, nm, url, s_kind) in enumerate(resolved_meta, 1):
+    for rank_idx, (nk, nm, url, s_kind, custom_init) in enumerate(resolved_meta, 1):
         if rank_idx == 1:
             top_row_kind = s_kind
 
         leading: list[dict[str, Any]] = []
         if is_single_race:
             leading.append(_mark_word(str(rank_idx), style="rank", tone="muted", width="xs"))
-        if url:
-            leading.append(
-                _mark_picture(
-                    url=str(url),
-                    alt=nm,
-                    subject_kind=s_kind,
-                    size="sm",
-                    contain=(s_kind not in {"person", "film"}),
+        if require_pictures:
+            if url:
+                leading.append(
+                    _mark_picture(
+                        url=str(url),
+                        alt=nm,
+                        subject_kind=s_kind,
+                        size="sm",
+                        contain=(s_kind not in {"person", "film"}),
+                    )
                 )
-            )
-        else:
-            leading.append(
-                _mark_picture(
-                    url=None,
-                    initials=_initials_for_label(nm),
-                    alt=nm,
-                    subject_kind=s_kind,
-                    size="sm",
-                    contain=True,
+            else:
+                leading.append(
+                    _mark_picture(
+                        url=None,
+                        initials=custom_init or _initials_for_label(nm),
+                        alt=nm,
+                        subject_kind=s_kind,
+                        size="sm",
+                        contain=True,
+                    )
                 )
-            )
         leading.append(
             _mark_word(
                 nm,
@@ -2740,17 +3069,24 @@ def _try_build_scoreboard_grid(
                         "marks": [
                             _mark_tile(
                                 shade=round(out_map[nk][1] / 100.0, 2),
-                                center_label=f"{out_map[nk][1]}%",
-                                muted=False,
+                                center_label="<1%" if out_map[nk][1] <= 0 else f"{out_map[nk][1]}%",
+                                muted=(out_map[nk][1] <= 0),
+                                highlight_role=(
+                                    "column_peak"
+                                    if (highlight_col_peaks or len(active_cols) >= 3)
+                                    and out_map[nk][1] > 0
+                                    and out_map[nk][1] == col_peaks[c_idx]
+                                    else None
+                                ),
                             )
                         ],
                     }
-                    for col_key, _col_label, out_map in market_cols[:2]
+                    for c_idx, (col_key, _col_label, out_map) in enumerate(active_cols)
                 ],
             }
         )
 
-    cols = [{"key": ck, "label": cl} for ck, cl, _ in market_cols[:2]]
+    cols = [{"key": ck, "label": cl} for ck, cl, _ in active_cols]
     grid_body = {
         "leading_label": leading_label,
         "show_column_headers": True,
@@ -2758,7 +3094,45 @@ def _try_build_scoreboard_grid(
         "columns": cols,
         "rows": rows,
     }
-    if not stat or _is_boilerplate_stat(stat.lower()) or _caption_has_unshown_numbers(stat, grid_body, len(rows)):
+    if leading_label == "Decision" and len(active_cols) >= 2:
+        ranked_fed = sorted(
+            [k for k in shown_keys if k in c0[2] and k in active_cols[1][2]],
+            key=lambda k: (-c0[2][k][1], -active_cols[1][2][k][1]),
+        )
+        if len(ranked_fed) >= 2:
+            top_nk, sec_nk = ranked_fed[0], ranked_fed[1]
+            top_nm, top_dec = c0[2][top_nk]
+            top_jan = active_cols[1][2][top_nk][1]
+            sec_nm, sec_dec = c0[2][sec_nk]
+            sec_jan = active_cols[1][2][sec_nk][1]
+            stat = (
+                f"{_fed_outcome_phrase(top_nm, capitalize=True)} is {_fmt_fed_pct(top_dec)} for December "
+                f"and {_fmt_fed_pct(top_jan)} for January; "
+                f"{_fed_outcome_phrase(sec_nm, capitalize=False)} is {_fmt_fed_pct(sec_dec)} "
+                f"and {_fmt_fed_pct(sec_jan)}."
+            )
+    elif leading_label == "Lab" and len(shown_keys) >= 2:
+        ranked_ai = sorted([k for k in shown_keys if k in c0[2]], key=lambda k: -c0[2][k][1])
+        top_nm, top_p0 = c0[2][ranked_ai[0]]
+        sec_nm, sec_p0 = c0[2][ranked_ai[1]]
+        if top_p0 == sec_p0:
+            stat = f"{top_nm} and {sec_nm} are tied at {top_p0}% to have the best AI at the end of 2026."
+        else:
+            stat = f"{top_nm} is {top_p0}% to have the best AI at the end of 2026, ahead of {sec_nm} ({sec_p0}%)."
+    elif leading_label == "Company" and len(shown_keys) >= 2:
+        ranked_co = sorted([k for k in shown_keys if k in c0[2]], key=lambda k: -c0[2][k][1])
+        top_nm, top_p0 = c0[2][ranked_co[0]]
+        sec_nm, sec_p0 = c0[2][ranked_co[1]]
+        ym_txt = (
+            f" at the end of {_GRID_MONTH_NAME[shared_target_ym[1]]} {shared_target_ym[0]}"
+            if shared_target_ym
+            else ""
+        )
+        if top_p0 == sec_p0:
+            stat = f"{top_nm} and {sec_nm} are tied at {top_p0}% to be the largest company{ym_txt}."
+        else:
+            stat = f"{top_nm} is {top_p0}% to be the largest company{ym_txt}, ahead of {sec_nm} ({sec_p0}%)."
+    elif not stat or _is_boilerplate_stat(stat.lower()) or _caption_has_unshown_numbers(stat, grid_body, len(rows)):
         top_pair_rows = [c0[2][k] for k in shown_keys if k in c0[2]]
         stat = _ranked_fallback_caption(
             top_pair_rows,

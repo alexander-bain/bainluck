@@ -940,6 +940,317 @@ def test_v7_387a_388a_389c_live_caption_and_split_bar_parity() -> None:
     assert split_bar["segments"][0]["color"] != split_bar["segments"][1]["color"]
 
 
+def test_three_kept_grid_suited_sets_render_as_scoreboard_grid() -> None:
+    """Item 8 / #13631 rework: Big Tech date match, AI First to 1550 + alias sum, Fed 5-row ladder & wording."""
+    resolver = _default_art_resolver()
+
+    def _market(
+        mid: int,
+        title: str,
+        outs: list[tuple[str, int, float]],
+        *,
+        status: str = "open",
+        resolution_date: str | None = None,
+    ) -> dict:
+        card: dict = {
+            "id": mid,
+            "name": title,
+            "status": status,
+            "top_outcomes": [
+                {"name": nm, "rendered_percent": pct, "probability": prob}
+                for nm, pct, prob in outs
+            ],
+        }
+        if resolution_date is not None:
+            card["resolution_date"] = resolution_date
+        return {"type": "market", "card": card}
+
+    # 1a. Mismatched dates (1st Dec vs 2nd/3rd Nov) refuse unlabeled cross-date grid.
+    big_tech_mismatched = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:machinery-ai-and-big-tech-race", "title": "The AI & Big Tech Race", "roundup": {"kicker": "TECH · BUSINESS"}}},
+        {
+            "container": {"id": 3784574905, "slug": "machinery-ai-and-big-tech-race", "title": "The AI & Big Tech Race", "source_count": 1},
+            "sections": [
+                {
+                    "class": "ai_and_big_tech_race",
+                    "members": [
+                        _market(113318, "Largest Company end of December 2026?", [("Apple", 90, 0.90), ("NVIDIA", 9, 0.09), ("Microsoft", 1, 0.005), ("Alphabet", 1, 0.004)]),
+                        _market(68806125, "2nd Largest Company end of November 2026?", [("Microsoft", 48, 0.48), ("NVIDIA", 46, 0.46), ("Alphabet", 5, 0.05), ("Apple", 1, 0.01)]),
+                        _market(68806126, "3rd Largest Company end of November 2026?", [("Microsoft", 50, 0.50), ("NVIDIA", 32, 0.32), ("Alphabet", 16, 0.16), ("Apple", 1, 0.01)]),
+                    ],
+                }
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert big_tech_mismatched["fits"] is False
+    assert "mismatched dates" in (big_tech_mismatched.get("refusal_reason") or "").lower()
+
+    # 1b. Same-date Big Tech triple (all end of December 2026) succeeds with logos & MS/NV circles.
+    big_tech = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:machinery-ai-and-big-tech-race", "title": "The AI & Big Tech Race", "roundup": {"kicker": "TECH · BUSINESS"}}},
+        {
+            "container": {"id": 3784574905, "slug": "machinery-ai-and-big-tech-race", "title": "The AI & Big Tech Race", "source_count": 1},
+            "sections": [
+                {
+                    "class": "ai_and_big_tech_race",
+                    "members": [
+                        _market(113318, "Largest Company end of December 2026?", [("Apple", 84, 0.8425), ("NVIDIA", 15, 0.1505), ("Microsoft", 1, 0.0045), ("Alphabet", 1, 0.0035)]),
+                        _market(68806127, "2nd Largest Company end of December 2026?", [("NVIDIA", 82, 0.8167), ("Microsoft", 15, 0.1465), ("Alphabet", 2, 0.0189), ("Apple", 1, 0.0133)]),
+                        _market(68806128, "3rd Largest Company end of December 2026?", [("Microsoft", 64, 0.6338), ("Alphabet", 19, 0.1848), ("NVIDIA", 13, 0.1268), ("Apple", 1, 0.0131)]),
+                    ],
+                }
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert big_tech["fits"] is True, big_tech
+    assert big_tech["layout"] == "grid" and big_tech["variant"] == "scoreboard_grid"
+    assert [c["label"] for c in big_tech["kit_card"]["body"]["columns"]] == ["1st", "2nd", "3rd"]
+    assert "December 2026" in big_tech["stat_caption"]
+    bt_rows = big_tech["kit_card"]["body"]["rows"]
+    assert len(bt_rows) == 4
+    bt_pics = {next(m["text"] for m in r["leading"] if m.get("style") == "row"): next(m for m in r["leading"] if m["mark"] == "picture") for r in bt_rows}
+    assert bt_pics["Apple"]["url"] and bt_pics["Alphabet"]["url"]
+    assert bt_pics["NVIDIA"]["url"] is None and bt_pics["NVIDIA"]["initials"] == "NV"
+    assert bt_pics["Microsoft"]["url"] is None and bt_pics["Microsoft"]["initials"] == "MS"
+    assert validate_kit_v1_card(big_tech["kit_card"])[0]
+
+    # 2. AI Model Leaderboard: First to 1550 column, exact col-0 caption, alias summing (Gemini + Google = 70%).
+    ai_lb = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:machinery-ai-model-leaderboard-2026", "title": "The 2026 AI Model Leaderboard", "roundup": {"kicker": "TECH · AI"}}},
+        {
+            "container": {"id": 4001, "slug": "machinery-ai-model-leaderboard-2026", "title": "The 2026 AI Model Leaderboard", "source_count": 1},
+            "sections": [
+                {
+                    "class": "ai_model_leaderboard_2026",
+                    "members": [
+                        _market(109596, "Best AI at the end of 2026?", [("Gemini", 72, 0.72), ("Claude", 21, 0.21), ("ChatGPT", 4, 0.04), ("Grok", 1, 0.01)]),
+                        _market(109623, "Which AI company will have the best coding model at the end of 2026?", [("Anthropic", 57, 0.57), ("Google", 25, 0.25), ("OpenAI", 16, 0.16)]),
+                        _market(109322, "Which AI will be the first to hit 1550 on Text Arena?", [("Gemini", 50, 0.50), ("Google", 20, 0.20), ("Claude", 14, 0.14), ("ChatGPT", 5, 0.05)]),
+                    ],
+                }
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert ai_lb["fits"] is True, ai_lb
+    assert [c["label"] for c in ai_lb["kit_card"]["body"]["columns"]] == ["Overall", "Coding", "First to 1550"]
+    assert ai_lb["stat_caption"] == "Google is 72% to have the best AI at the end of 2026, ahead of Anthropic (21%)."
+    google_row = next(r for r in ai_lb["kit_card"]["body"]["rows"] if any(m.get("text") == "Google" for m in r["leading"]))
+    assert google_row["cells"][2]["marks"][0]["center_label"] == "70%"
+    assert validate_kit_v1_card(ai_lb["kit_card"])[0]
+
+    # 3. Fed & U.S. Macro: all 5 outcomes kept (never drop 2% hike while showing <1% cuts), Dec/Jan meeting labels & exact phrasing.
+    fed = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:machinery-fed-and-macro", "title": "Fed & U.S. Macro", "roundup": {"kicker": "ECONOMICS · FEDERAL RESERVE"}}},
+        {
+            "container": {"id": 3913944771, "slug": "machinery-fed-and-macro", "title": "Fed & U.S. Macro", "source_count": 1},
+            "sections": [
+                {
+                    "class": "jan_fomc",
+                    "members": [
+                        _market(
+                            57574217,
+                            "Fed Decision in January?",
+                            [
+                                ("Quarter-point increase", 51, 0.5117),
+                                ("No change", 46, 0.4570),
+                                ("Quarter-point cut", 1, 0.0164),
+                                ("Half-point or larger cut", 1, 0.0075),
+                                ("Half-point or larger increase", 1, 0.0075),
+                            ],
+                        ),
+                    ],
+                },
+                {
+                    "class": "rate_path",
+                    "members": [
+                        _market(
+                            57574250,
+                            "Fed Decision in December?",
+                            [
+                                ("Quarter-point increase", 93, 0.9299),
+                                ("No change", 5, 0.0438),
+                                ("Half-point or larger increase", 2, 0.0224),
+                                ("Quarter-point cut", 0, 0.0025),
+                                ("Half-point or larger cut", 0, 0.0015),
+                            ],
+                        ),
+                    ],
+                },
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert fed["fits"] is True, fed
+    assert [c["label"] for c in fed["kit_card"]["body"]["columns"]] == ["Dec meeting", "Jan meeting"]
+    fed_rows = fed["kit_card"]["body"]["rows"]
+    assert [next(m["text"] for m in r["leading"] if m.get("style") == "row") for r in fed_rows] == [
+        "Half-point or larger cut",
+        "Quarter-point cut",
+        "No change",
+        "Quarter-point increase",
+        "Half-point or larger increase",
+    ]
+    assert all(all(m.get("style") != "rank" for m in r["leading"]) for r in fed_rows)
+    assert fed["stat_caption"] == "A quarter-point increase is 93% for December and 51% for January; no change is 5% and 46%."
+    assert "FOMC" not in json.dumps(fed["kit_card"])
+    fed_blob = json.dumps(fed["kit_card"])
+    assert "<1%" in fed_blob
+    assert '"center_label": "0%"' not in fed_blob
+    assert validate_kit_v1_card(fed["kit_card"])[0]
+
+
+def test_13631_fed_overflow_drops_least_likely_and_no_change_lead_no_repeat() -> None:
+    resolver = _default_art_resolver()
+
+    def _market(mid: int, title: str, outs: list[tuple[str, int, float]], status: str = "open") -> dict:
+        return {
+            "type": "market",
+            "card": {
+                "id": mid,
+                "name": title,
+                "status": status,
+                "top_outcomes": [
+                    {"name": nm, "rendered_percent": pct, "probability": prob}
+                    for nm, pct, prob in outs
+                ],
+            },
+        }
+
+    # 6-outcome ladder: must keep top-5 by peak probability (2% Half-point increase kept, 0% extra cut dropped).
+    fed_6 = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:fed6", "title": "Fed 6", "roundup": {"kicker": "ECONOMICS"}}},
+        {
+            "container": {"id": 9901, "slug": "fed-6", "title": "Fed 6", "source_count": 1},
+            "sections": [
+                {
+                    "class": "rate_path",
+                    "members": [
+                        _market(
+                            1,
+                            "Fed Decision in December?",
+                            [
+                                ("Quarter-point increase", 93, 0.93),
+                                ("No change", 5, 0.05),
+                                ("Half-point or larger increase", 2, 0.02),
+                                ("Quarter-point cut", 0, 0.002),
+                                ("Half-point or larger cut", 0, 0.001),
+                                ("Three-quarter-point cut", 0, 0.0),
+                            ],
+                        ),
+                        _market(
+                            2,
+                            "Fed Decision in January?",
+                            [
+                                ("Quarter-point increase", 51, 0.51),
+                                ("No change", 46, 0.46),
+                                ("Half-point or larger increase", 1, 0.01),
+                                ("Quarter-point cut", 1, 0.01),
+                                ("Half-point or larger cut", 1, 0.01),
+                                ("Three-quarter-point cut", 0, 0.0),
+                            ],
+                        ),
+                    ],
+                }
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert fed_6["fits"] is True
+    labels_6 = [next(m["text"] for m in r["leading"] if m.get("style") == "row") for r in fed_6["kit_card"]["body"]["rows"]]
+    assert len(labels_6) == 5
+    assert "Half-point or larger increase" in labels_6
+    assert "Three-quarter-point cut" not in labels_6
+
+    # When No change leads December, caption does not repeat No change twice.
+    fed_nc = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:fednc", "title": "Fed NC", "roundup": {"kicker": "ECONOMICS"}}},
+        {
+            "container": {"id": 9902, "slug": "fed-nc", "title": "Fed NC", "source_count": 1},
+            "sections": [
+                {
+                    "class": "rate_path",
+                    "members": [
+                        _market(1, "Fed Decision in December?", [("No change", 60, 0.60), ("Quarter-point increase", 35, 0.35), ("Quarter-point cut", 5, 0.05)]),
+                        _market(2, "Fed Decision in January?", [("No change", 55, 0.55), ("Quarter-point increase", 40, 0.40), ("Quarter-point cut", 5, 0.05)]),
+                    ],
+                }
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert fed_nc["fits"] is True
+    assert fed_nc["stat_caption"] == "No change is 60% for December and 55% for January; a quarter-point increase is 35% and 40%."
+    assert fed_nc["stat_caption"].lower().count("no change") == 1
+
+
+def test_13631_settled_or_closed_column_market_refuses_grid() -> None:
+    resolver = _default_art_resolver()
+
+    def _market(mid: int, title: str, outs: list[tuple[str, int, float]], status: str = "open") -> dict:
+        return {
+            "type": "market",
+            "card": {
+                "id": mid,
+                "name": title,
+                "status": status,
+                "top_outcomes": [
+                    {"name": nm, "rendered_percent": pct, "probability": prob}
+                    for nm, pct, prob in outs
+                ],
+            },
+        }
+
+    fed_settled = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:fed-settled", "title": "Fed", "roundup": {"kicker": "ECONOMICS"}}},
+        {
+            "container": {"id": 9903, "slug": "fed-settled", "title": "Fed", "source_count": 1},
+            "sections": [
+                {
+                    "class": "rate_path",
+                    "members": [
+                        _market(1, "Fed Decision in December?", [("Quarter-point increase", 100, 1.0), ("No change", 0, 0.0), ("Quarter-point cut", 0, 0.0)], status="settled"),
+                        _market(2, "Fed Decision in January?", [("Quarter-point increase", 51, 0.51), ("No change", 46, 0.46), ("Quarter-point cut", 3, 0.03)], status="open"),
+                    ],
+                }
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert fed_settled["fits"] is False
+    assert "not open" in (fed_settled.get("refusal_reason") or "").lower()
+
+    big_tech_closed = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:bt-closed", "title": "Big Tech", "roundup": {"kicker": "TECH"}}},
+        {
+            "container": {"id": 9904, "slug": "bt-closed", "title": "Big Tech", "source_count": 1},
+            "sections": [
+                {
+                    "class": "race",
+                    "members": [
+                        _market(1, "Largest Company end of December 2026?", [("Apple", 84, 0.84), ("NVIDIA", 15, 0.15), ("Microsoft", 1, 0.01)]),
+                        _market(2, "2nd Largest Company end of December 2026?", [("NVIDIA", 82, 0.82), ("Microsoft", 15, 0.15), ("Apple", 3, 0.03)], status="closed"),
+                        _market(3, "3rd Largest Company end of December 2026?", [("Microsoft", 64, 0.64), ("Alphabet", 19, 0.19), ("NVIDIA", 13, 0.13), ("Apple", 4, 0.04)]),
+                    ],
+                }
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert big_tech_closed["fits"] is False
+    assert "not open" in (big_tech_closed.get("refusal_reason") or "").lower()
+
+
 def test_fable_point1_captions_rank_by_highest_prob_and_handle_ties() -> None:
     # Set 35 Fed scale-ordered rows (cut 2%, hold 45%, hike 53%) must caption the 53% leader.
     fed_bundle = {
