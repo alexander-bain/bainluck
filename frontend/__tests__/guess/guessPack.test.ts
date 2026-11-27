@@ -33,10 +33,9 @@ import {
   stepMax,
   stepRange,
 } from "@/lib/guess/engine";
-import { GUESS_PACK } from "@/lib/guess/pack";
+import { GUESS_PACKS } from "@/lib/guess/packs";
 import type { PackCard } from "@/lib/guess/types";
 
-const cards = GUESS_PACK.cards;
 
 /** The miss on a chance card at which a line is earned: the guess scored nothing. */
 const EARNED_MISS = 20;
@@ -72,7 +71,11 @@ function percentsOf(card: PackCard): number[] {
   return [];
 }
 
-describe("/guess — the set", () => {
+// Every set that has been live is held to the same rules, because a link opens
+// the set it was made on and that set is still played (445: A).
+describe.each(GUESS_PACKS.map((p) => [p.code, p] as const))("/guess — set %s", (_code, GUESS_PACK) => {
+  const cards = GUESS_PACK.cards;
+
   it("has three full steps of five, unique ids, and at least three cards for every topic", () => {
     expect(GUESS_PACK.steps.length).toBe(3);
     expect(GUESS_PACK.perRound).toBe(5);

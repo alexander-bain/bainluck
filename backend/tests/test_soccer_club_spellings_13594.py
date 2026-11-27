@@ -211,3 +211,106 @@ def test_league_scoped_az_and_milan_do_not_bleed_across_sports():
 def test_schedule_sentinel_recognizes_internazionale():
     assert name_similarity("Internazionale", "Inter Milan") == 1.0
     assert name_similarity("AC Milan", "Inter Milan") < 0.60
+
+
+def test_az_sparta_catchall_and_monaco_hearts_fc_suffix_fold():
+    # Pair 1: UEL AZ Alkmaar @ Sparta Prague vs catch-all soccer_other AZ @ AC Sparta Praha
+    az_uel = _event(
+        10,
+        "soccer_uefa_europa_league",
+        "AZ Alkmaar",
+        "Sparta Prague",
+        {"betting": {"home": 0.45, "away": 0.55}},
+    )
+    az_other = _event(
+        11,
+        "soccer_other",
+        "AZ",
+        "AC Sparta Praha",
+        {"kalshi": {"home": 0.44, "away": 0.56}},
+    )
+    az_other.sport_id = 2
+    res1 = fold_twin_events([az_uel, az_other])
+    assert len(res1.events) == 1
+    assert res1.events[0].id == 10
+
+    # Pair 2: UECL AS Monaco @ Hearts vs UECL AS Monaco FC @ Heart of Midlothian FC
+    monaco_canon = _event(
+        20,
+        "soccer_uefa_europa_conference_league",
+        "AS Monaco",
+        "Hearts",
+        {"betting": {"home": 0.25, "away": 0.75}},
+    )
+    monaco_fc = _event(
+        21,
+        "soccer_uefa_europa_conference_league",
+        "AS Monaco FC",
+        "Heart of Midlothian FC",
+        {"polymarket": {"home": 0.26, "away": 0.74}},
+    )
+    res2 = fold_twin_events([monaco_canon, monaco_fc])
+    assert len(res2.events) == 1
+    assert res2.events[0].id == 20
+    assert names_match("Heart of Midlothian FC", "Hearts")
+    assert names_match("AS Monaco FC", "AS Monaco")
+
+
+def test_az_catchall_refuses_different_squad_or_different_minute():
+    az_uel = _event(
+        30,
+        "soccer_uefa_europa_league",
+        "AZ Alkmaar",
+        "Sparta Prague",
+        {"betting": {"home": 0.45, "away": 0.55}},
+    )
+    jong_az = _event(
+        31,
+        "soccer_other",
+        "Jong AZ",
+        "AC Sparta Praha",
+        {"kalshi": {"home": 0.44, "away": 0.56}},
+    )
+    jong_az.sport_id = 2
+    assert len(fold_twin_events([az_uel, jong_az]).events) == 2
+
+    az_late = _event(
+        32,
+        "soccer_other",
+        "AZ",
+        "AC Sparta Praha",
+        {"kalshi": {"home": 0.44, "away": 0.56}},
+    )
+    az_late.sport_id = 2
+    az_late.commence_time = datetime(2026, 6, 15, 19, 45, tzinfo=timezone.utc)
+    assert len(fold_twin_events([az_uel, az_late]).events) == 2
+
+
+def test_catchall_requires_both_sides_to_match_at_same_minute():
+    """Home-side-only or away-side-only matches on a catch-all game stay two separate games."""
+    az_uel = _event(
+        40,
+        "soccer_uefa_europa_league",
+        "AZ Alkmaar",
+        "Sparta Prague",
+        {"betting": {"home": 0.45, "away": 0.55}},
+    )
+    home_only = _event(
+        41,
+        "soccer_other",
+        "FC Utrecht",
+        "AC Sparta Praha",
+        {"kalshi": {"home": 0.44, "away": 0.56}},
+    )
+    home_only.sport_id = 2
+    assert len(fold_twin_events([az_uel, home_only]).events) == 2
+
+    away_only = _event(
+        42,
+        "soccer_other",
+        "AZ",
+        "SK Slavia Praha",
+        {"kalshi": {"home": 0.44, "away": 0.56}},
+    )
+    away_only.sport_id = 2
+    assert len(fold_twin_events([az_uel, away_only]).events) == 2

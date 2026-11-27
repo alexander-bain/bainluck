@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     Numeric,
     SmallInteger,
     String,
@@ -3928,4 +3929,56 @@ class RetiredTeamRedirect(Base):
             "sport_id",
             "retired_name",
         ),
+    )
+
+
+class GuessDailyEdition(Base):
+    """One PT calendar day's frozen /guess pack resolved from open markets (#12619, 443: A)."""
+
+    __tablename__ = "guess_daily_editions"
+
+    day_pt: Mapped[date] = mapped_column(Date, primary_key=True)
+    edition_code: Mapped[str] = mapped_column(String(6), nullable=False, unique=True)
+    frozen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    pack_json: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+    source_snapshot: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+
+
+class GuessGroupEntry(Base):
+    """One finished daily /guess entry inside a single group link (#12619, 443: A).
+
+    Stores ONLY day_pt, group_code, nickname(+lower), 15 answers, per-step
+    decision times, and nullable moderation hidden_at — zero user/account/
+    device/IP/address/score columns.
+    """
+
+    __tablename__ = "guess_group_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    day_pt: Mapped[date] = mapped_column(Date, nullable=False)
+    group_code: Mapped[str] = mapped_column(String(24), nullable=False)
+    nickname: Mapped[str] = mapped_column(String(12), nullable=False)
+    nickname_lower: Mapped[str] = mapped_column(String(12), nullable=False)
+    answers: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+    step_times: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+    hidden_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "day_pt",
+            "group_code",
+            "nickname_lower",
+            name="uq_guess_group_entries_day_group_nick",
+        ),
+        Index("ix_guess_group_entries_day_group", "day_pt", "group_code"),
     )

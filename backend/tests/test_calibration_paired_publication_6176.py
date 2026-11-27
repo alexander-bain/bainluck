@@ -22,9 +22,9 @@ than a hand-written imitation of them.
 from __future__ import annotations
 
 import asyncio
+import asyncio.events
 import inspect
 import json
-import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -556,93 +556,157 @@ class _RealSessionHarness:
             await asyncio.wait(pending, timeout=timeout)
 
 
+class _VirtualSelector:
+    """Wraps a real selector so pure-timer awaits advance a virtual clock instead of sleeping."""
+
+    def __init__(self, inner, advance):
+        self._inner = inner
+        self._advance = advance
+
+    def select(self, timeout=None):
+        ready = self._inner.select(0)
+        if ready:
+            return ready
+        if timeout is None:
+            raise RuntimeError("VirtualClockEventLoop stalled with no scheduled timers")
+        if timeout > 0:
+            self._advance(timeout)
+        return []
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class _VirtualClockEventLoop(asyncio.SelectorEventLoop):
+    """SelectorEventLoop whose monotonic clock advances deterministically on timer waits."""
+
+    def __init__(self):
+        self._virtual_now = 0.0
+        super().__init__()
+        self._clock_resolution = max(self._clock_resolution, 1e-9)
+        self._selector = _VirtualSelector(self._selector, self._advance)
+
+    def _advance(self, delta: float) -> None:
+        self._virtual_now += delta
+
+    def time(self) -> float:
+        return self._virtual_now
+
+
+def _run_virtual(coro_fn):
+    """Execute an async test body on a fresh fixed-clock event loop."""
+    loop = _VirtualClockEventLoop()
+    try:
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(coro_fn())
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        return result, loop.time()
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
 class TestTheWallIncludesTheTeardown:
-    @pytest.mark.asyncio
-    async def test_a_slow_teardown_is_cut_and_reaped_not_left_running(self, monkeypatch):
+    def test_virtual_clock_advances_without_sleeping(self):
+        _, virtual_elapsed = _run_virtual(lambda: asyncio.sleep(5.0))
+        assert virtual_elapsed == pytest.approx(5.0)
+
+    def test_a_slow_teardown_is_cut_and_reaped_not_left_running(self, monkeypatch):
         harness = _RealSessionHarness(monkeypatch, close_s=1.0, dispose_s=1.0)
         monkeypatch.setattr(cpp, "COLLECT_BUDGET_S", 0.05)
         monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.05)
 
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-        block = await cpp.build_paired_accuracy(generated_at="GEN")
-        elapsed = loop.time() - started
+        async def _run():
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            block = await cpp.build_paired_accuracy(generated_at="GEN")
+            elapsed = loop.time() - started
 
-        assert block["status"] == cpp.STATUS_UNAVAILABLE and block["reason"] == cpp.REASON_TIMEOUT
-        assert elapsed < 0.5, f"the publish waited {elapsed:.2f}s on a 0.10s wall"
-        assert "connection cut and teardown reaped" in block["detail"]
-        assert harness.log == ["set", "set", "execute", "terminate"], "the socket was not cut"
+            assert block["status"] == cpp.STATUS_UNAVAILABLE and block["reason"] == cpp.REASON_TIMEOUT
+            assert elapsed < 0.5, f"the publish waited {elapsed:.2f}s on a 0.10s wall"
+            assert "connection cut and teardown reaped" in block["detail"]
+            assert harness.log == ["set", "set", "execute", "terminate"], "the socket was not cut"
 
-        # Reaped, not abandoned: the 1s close AND the 1s dispose behind it are
-        # both cancelled within a few ticks. One cancellation would interrupt
-        # the close and then wait out the whole dispose.
-        await harness.drain(timeout=0.25)
-        assert not cpp._ABANDONED, "the teardown outlived its reap"
-        assert loop.time() - started < 0.5
-        assert harness.log == ["set", "set", "execute", "terminate"], "it queried or waited on"
+            # Reaped, not abandoned: the 1s close AND the 1s dispose behind it are
+            # both cancelled within a few ticks. One cancellation would interrupt
+            # the close and then wait out the whole dispose.
+            await harness.drain(timeout=0.25)
+            assert not cpp._ABANDONED, "the teardown outlived its reap"
+            assert loop.time() - started < 0.5
+            assert harness.log == ["set", "set", "execute", "terminate"], "it queried or waited on"
 
-    @pytest.mark.asyncio
-    async def test_without_a_driver_the_repeated_cancel_still_bounds_it(self, monkeypatch):
+        _run_virtual(_run)
+
+    def test_without_a_driver_the_repeated_cancel_still_bounds_it(self, monkeypatch):
         harness = _RealSessionHarness(monkeypatch, close_s=1.0, dispose_s=1.0, driver=False)
         monkeypatch.setattr(cpp, "COLLECT_BUDGET_S", 0.05)
         monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.05)
 
-        started = asyncio.get_running_loop().time()
-        block = await cpp.build_paired_accuracy()
-        await harness.drain(timeout=0.25)
+        async def _run():
+            started = asyncio.get_running_loop().time()
+            block = await cpp.build_paired_accuracy()
+            await harness.drain(timeout=0.25)
 
-        assert block["reason"] == cpp.REASON_TIMEOUT
-        assert not cpp._ABANDONED
-        assert asyncio.get_running_loop().time() - started < 0.5
-        assert harness.log == ["set", "set", "execute"]
+            assert block["reason"] == cpp.REASON_TIMEOUT
+            assert not cpp._ABANDONED
+            assert asyncio.get_running_loop().time() - started < 0.5
+            assert harness.log == ["set", "set", "execute"]
 
-    @pytest.mark.asyncio
-    async def test_a_prompt_teardown_finishes_inside_the_wall(self, monkeypatch):
+        _run_virtual(_run)
+
+    def test_a_prompt_teardown_finishes_inside_the_wall(self, monkeypatch):
         harness = _RealSessionHarness(monkeypatch)
         monkeypatch.setattr(cpp, "COLLECT_BUDGET_S", 0.05)
         monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 1.0)
 
-        block = await cpp.build_paired_accuracy()
+        async def _run():
+            block = await cpp.build_paired_accuracy()
 
-        assert block["reason"] == cpp.REASON_TIMEOUT
-        assert "session closed" in block["detail"]
-        assert harness.log == ["set", "set", "execute", "close", "dispose"], "closed before returning"
-        assert not cpp._ABANDONED
+            assert block["reason"] == cpp.REASON_TIMEOUT
+            assert "session closed" in block["detail"]
+            assert harness.log == ["set", "set", "execute", "close", "dispose"], "closed before returning"
+            assert not cpp._ABANDONED
 
-    @pytest.mark.asyncio
-    async def test_a_cancelled_caller_propagates_and_stops_the_queries(self, monkeypatch):
+        _run_virtual(_run)
+
+    def test_a_cancelled_caller_propagates_and_stops_the_queries(self, monkeypatch):
         harness = _RealSessionHarness(monkeypatch, close_s=0.05, dispose_s=0.05)
 
-        task = asyncio.ensure_future(cpp.build_paired_accuracy())
-        await asyncio.sleep(0.02)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        async def _run():
+            task = asyncio.ensure_future(cpp.build_paired_accuracy())
+            await asyncio.sleep(0.02)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
 
-        await harness.drain()
-        assert harness.log == ["set", "set", "execute", "close", "dispose"], (
-            "the collection kept querying, or was never closed, after its caller left"
-        )
-        assert not cpp._ABANDONED
+            await harness.drain()
+            assert harness.log == ["set", "set", "execute", "close", "dispose"], (
+                "the collection kept querying, or was never closed, after its caller left"
+            )
+            assert not cpp._ABANDONED
 
-    @pytest.mark.asyncio
-    async def test_a_cancelled_callers_slow_teardown_is_reaped_after_its_share(self, monkeypatch):
+        _run_virtual(_run)
+
+    def test_a_cancelled_callers_slow_teardown_is_reaped_after_its_share(self, monkeypatch):
         harness = _RealSessionHarness(monkeypatch, close_s=1.0, dispose_s=1.0)
         monkeypatch.setattr(cpp, "CLEANUP_BUDGET_S", 0.1)
 
-        loop = asyncio.get_running_loop()
-        task = asyncio.ensure_future(cpp.build_paired_accuracy())
-        await asyncio.sleep(0.02)
-        cancelled_at = loop.time()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert loop.time() - cancelled_at < 0.05, "the cancelled caller was held"
+        async def _run():
+            loop = asyncio.get_running_loop()
+            task = asyncio.ensure_future(cpp.build_paired_accuracy())
+            await asyncio.sleep(0.02)
+            cancelled_at = loop.time()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert loop.time() - cancelled_at < 0.05, "the cancelled caller was held"
 
-        await harness.drain(timeout=0.5)
-        assert not cpp._ABANDONED
-        assert loop.time() - cancelled_at < 0.4, "teardown outlived cleanup + reap"
-        assert harness.log == ["set", "set", "execute", "terminate"]
+            await harness.drain(timeout=0.5)
+            assert not cpp._ABANDONED
+            assert loop.time() - cancelled_at < 0.4, "teardown outlived cleanup + reap"
+            assert harness.log == ["set", "set", "execute", "terminate"]
+
+        _run_virtual(_run)
 
 
 class TestTheCutClosesTheSocket:
@@ -692,12 +756,22 @@ class TestTheCutClosesTheSocket:
 # ---------------------------------------------------------------------------
 
 
-def _run_task_boundary(main):
+def _run_task_boundary(monkeypatch, main):
     from app.tasks import base
 
-    started = time.monotonic()
-    result = base.run_async(main())
-    return result, time.monotonic() - started
+    loop = _VirtualClockEventLoop()
+    created = 0
+
+    def _new_loop():
+        nonlocal created
+        created += 1
+        assert created == 1, "asyncio.run requested more than one event loop"
+        return loop
+
+    with monkeypatch.context() as mp:
+        mp.setattr(asyncio.events, "new_event_loop", _new_loop)
+        result = base.run_async(main())
+    return result, loop.time()
 
 
 class TestTheRealRunAsyncBoundary:
@@ -719,7 +793,7 @@ class TestTheRealRunAsyncBoundary:
             published.append(block["reason"])
             return block
 
-        block, elapsed = _run_task_boundary(build_then_publish)
+        block, elapsed = _run_task_boundary(monkeypatch, build_then_publish)
 
         assert published == [cpp.REASON_TIMEOUT], "the core coroutine did not reach its publish"
         assert block["status"] == cpp.STATUS_UNAVAILABLE
@@ -750,7 +824,7 @@ class TestTheRealRunAsyncBoundary:
                 return "cancelled"
             return "not cancelled"
 
-        outcome, elapsed = _run_task_boundary(caller_leaves)
+        outcome, elapsed = _run_task_boundary(monkeypatch, caller_leaves)
 
         assert outcome == "cancelled"
         assert elapsed < 0.35, f"run_async returned {elapsed:.3f}s; cancel + 0.10s cleanup"
@@ -766,7 +840,7 @@ class TestTheRealRunAsyncBoundary:
         async def build():
             return await cpp.build_paired_accuracy()
 
-        block, elapsed = _run_task_boundary(build)
+        block, elapsed = _run_task_boundary(monkeypatch, build)
 
         assert block["reason"] == cpp.REASON_TIMEOUT
         assert elapsed < 0.3
@@ -797,7 +871,7 @@ class TestTheRealRunAsyncBoundary:
         session.connection = connection
         monkeypatch.setattr(base, "get_task_session", _session_factory(session, {}))
 
-        block, elapsed = _run_task_boundary(lambda: cpp.build_paired_accuracy())
+        block, elapsed = _run_task_boundary(monkeypatch, lambda: cpp.build_paired_accuracy())
 
         assert block["reason"] == cpp.REASON_NO_ELIGIBLE_EVENTS
         assert len(session.calls) == 3, "reading the driver issued a statement"

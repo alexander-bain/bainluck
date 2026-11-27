@@ -52,14 +52,14 @@ function Track({ answer, max, marks, ends }: { answer: number; max: number; mark
         {marks.map((mark) => (
           <div
             key={mark.name}
-            className={`absolute top-4 flex h-6 w-6 -translate-x-1/2 items-center justify-center rounded-full border-2 border-white text-[11px] font-black text-white ${mark.dot}`}
+            className={`absolute top-4 flex h-6 w-6 -translate-x-1/2 items-center justify-center rounded-full border-2 border-white text-xs font-black text-white ${mark.dot}`}
             style={{ left: at(mark.value) }}
           >
             {initial(mark.name)}
           </div>
         ))}
       </div>
-      <div className="mx-3 flex justify-between text-[11px] font-semibold text-text-secondary">
+      <div className="mx-3 flex justify-between text-xs font-semibold text-text-secondary">
         <span>{ends[0]}</span>
         <span>{ends[1]}</span>
         <span>{ends[2]}</span>
@@ -73,7 +73,7 @@ const PERCENT_ENDS: [string, string, string] = ["0%", "50%", "100%"];
 function BarRow({ label, percent, strong }: { label: string; percent: number; strong: boolean }) {
   return (
     <div className="flex items-center gap-2">
-      <span className={`w-28 shrink-0 text-xs leading-tight text-text-primary ${strong ? "font-black" : "font-semibold"}`}>{label}</span>
+      <span className={`w-28 shrink-0 text-sm leading-tight text-text-primary ${strong ? "font-black" : "font-semibold"}`}>{label}</span>
       <span className="block h-3 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-elevated">
         <span className={`block h-full rounded-full ${strong ? "bg-accent-brand" : "bg-text-muted"}`} style={{ width: `${Math.max(2, percent)}%` }} />
       </span>
@@ -86,7 +86,7 @@ function ChanceReveal({ card, slots }: { card: ChanceCard; slots: RevealSlot[] }
   return (
     <div className="space-y-2">
       <div className="text-center">
-        <div className="text-xs font-bold uppercase tracking-wide text-text-secondary">The world says</div>
+        <div className="text-sm font-bold uppercase tracking-wide text-text-secondary">The world says</div>
         <div className="text-5xl font-black tabular-nums text-text-primary" data-testid="world-number">
           {card.answer}%
         </div>
@@ -115,7 +115,7 @@ function CountReveal({ card, slots }: { card: CountCard; slots: RevealSlot[] }) 
   return (
     <div className="space-y-3">
       <div className="text-center">
-        <div className="text-xs font-bold uppercase tracking-wide text-text-secondary">The world counts</div>
+        <div className="text-sm font-bold uppercase tracking-wide text-text-secondary">The world counts</div>
         <div className="text-5xl font-black tabular-nums text-text-primary" data-testid="world-number">
           {card.answer}
         </div>
@@ -144,7 +144,7 @@ function CountReveal({ card, slots }: { card: CountCard; slots: RevealSlot[] }) 
 function DuoReveal({ card, slots }: { card: DuoCard; slots: RevealSlot[] }) {
   return (
     <div className="space-y-3">
-      <div className="text-center text-xs font-bold uppercase tracking-wide text-text-secondary">The world says</div>
+      <div className="text-center text-sm font-bold uppercase tracking-wide text-text-secondary">The world says</div>
       {card.parts.map((part, i) => (
         <div key={part.label} className="rounded-2xl border-2 border-surface-border bg-surface-card px-1 pb-2 pt-3">
           <div className="flex items-center gap-2 px-2">
@@ -199,7 +199,7 @@ function ChoiceRows({ rows, right, slots }: { rows: ChoiceRow[]; right: number; 
               )}
               <span className={`min-w-0 flex-1 text-sm leading-snug text-text-primary ${won ? "font-black" : "font-semibold"}`}>
                 {row.label}
-                {won && <span className="ml-1.5 whitespace-nowrap text-xs font-black text-text-primary">✓ right</span>}
+                {won && <span className="ml-1.5 whitespace-nowrap text-sm font-black text-text-primary">✓ right</span>}
               </span>
               {row.percent !== null && <span className="shrink-0 text-base font-black tabular-nums text-text-primary">{row.percent}%</span>}
             </div>
@@ -211,8 +211,8 @@ function ChoiceRows({ rows, right, slots }: { rows: ChoiceRow[]; right: number; 
             {who.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {who.map((s) => (
-                  <span key={s.name} className="flex items-center gap-1 rounded-full bg-surface-elevated py-0.5 pl-1 pr-2 text-[11px] font-bold text-text-primary">
-                    <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-black text-white ${s.dot}`} aria-hidden="true">
+                  <span key={s.name} className="flex items-center gap-1 rounded-full bg-surface-elevated py-0.5 pl-1 pr-2 text-xs font-bold text-text-primary">
+                    <span className={`flex h-4 w-4 items-center justify-center rounded-full text-xs font-black text-white ${s.dot}`} aria-hidden="true">
                       {initial(s.name)}
                     </span>
                     {s.name}
@@ -230,7 +230,7 @@ function ChoiceRows({ rows, right, slots }: { rows: ChoiceRow[]; right: number; 
 function WorldNumber({ percent }: { percent: number }) {
   return (
     <div className="text-center">
-      <div className="text-xs font-bold uppercase tracking-wide text-text-secondary">The world says</div>
+      <div className="text-sm font-bold uppercase tracking-wide text-text-secondary">The world says</div>
       <div className="text-5xl font-black tabular-nums text-text-primary" data-testid="world-number">
         {percent}%
       </div>
@@ -257,7 +257,7 @@ function SideReveal({ card, slots }: { card: SideCard; slots: RevealSlot[] }) {
 function VersusReveal({ card, slots }: { card: VersusCard; slots: RevealSlot[] }) {
   return (
     <div className="space-y-2">
-      <div className="text-center text-xs font-bold uppercase tracking-wide text-text-secondary">The world says</div>
+      <div className="text-center text-sm font-bold uppercase tracking-wide text-text-secondary">The world says</div>
       <ChoiceRows
         right={fullGuess(card)}
         slots={slots}
@@ -290,7 +290,7 @@ function FourReveal({ card, slots }: { card: FourCard; slots: RevealSlot[] }) {
                   <span
                     key={s.name}
                     title={s.name}
-                    className={`flex h-5 w-5 items-center justify-center rounded-full border border-white text-[10px] font-black text-white ${s.dot}`}
+                    className={`flex h-5 w-5 items-center justify-center rounded-full border border-white text-xs font-black text-white ${s.dot}`}
                   >
                     {initial(s.name)}
                   </span>
@@ -310,9 +310,9 @@ function LeaderReveal({ card, slots }: { card: LeaderCard; slots: RevealSlot[] }
     .sort((a, b) => b.percent - a.percent);
   return (
     <div className="space-y-2">
-      <div className="text-center text-xs font-bold uppercase tracking-wide text-text-secondary">The world says</div>
+      <div className="text-center text-sm font-bold uppercase tracking-wide text-text-secondary">The world says</div>
       <ChoiceRows right={fullGuess(card)} slots={slots} rows={rows} />
-      {card.independent && <p className="text-center text-xs font-semibold text-text-secondary">Each is its own chance. More than one can happen.</p>}
+      {card.independent && <p className="text-center text-sm font-semibold text-text-secondary">Each is its own chance. More than one can happen.</p>}
     </div>
   );
 }

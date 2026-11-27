@@ -21,13 +21,13 @@ MIGRATION-CLASS (D45): merges on Alex's word.
 
 Reversible. The undo line is
 
-    alembic downgrade fm_open_indexes_12818
+    alembic downgrade guess_daily_boards_443a
 
 which drops the table and its two indexes. Until the app build that sends ships,
 the table is empty; after it, the rows are diagnostics with a 30-day life.
 
 Revision ID: metrickit_payloads_12309
-Revises: fm_open_indexes_12818
+Revises: guess_daily_boards_443a
 Create Date: 2026-11-09
 """
 
@@ -38,7 +38,7 @@ from sqlalchemy.dialects import postgresql
 # revision identifiers, used by Alembic.
 # Gotcha #1: revision ids stay <= 32 characters (this one is 24).
 revision = "metrickit_payloads_12309"
-down_revision = "fm_open_indexes_12818"
+down_revision = "guess_daily_boards_443a"
 branch_labels = None
 depends_on = None
 

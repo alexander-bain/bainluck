@@ -1884,6 +1884,23 @@ def is_us_state_legislative_district(title: str) -> bool:
     return bool(_STATE_LEGISLATIVE_DISTRICT_RE.search(title))
 
 
+_US_NAMED_ELECTION_OFFICE_RE = re.compile(
+    rf"\b(?:{_US_STATE_ALT})(?:['’]s)?\s+(?:(?:state|u\.?s\.?|united states)\s+)?"
+    r"(?:house|senate|assembly|governor|gubernatorial|lieutenant governor|"
+    r"attorney general|secretary of state|mayor(?:al)?)\b"
+    r"|\b(?:u\.?s\.?|united states)(?:['’]s)?\s+(?:(?:19|20)\d{2}\s+)?"
+    r"(?:president(?:ial)?|house|senate|congress(?:ional)?)\b",
+    re.IGNORECASE,
+)
+
+
+def names_us_election_office(title: str) -> bool:
+    """Recognize a U.S. office from its jurisdiction and name."""
+    return is_us_state_legislative_district(title) or bool(
+        _US_NAMED_ELECTION_OFFICE_RE.search(title)
+    )
+
+
 # `AK-AL`, `TX-32` — a US congressional district, as ONE copy for the same
 # reason `_US_STATE_ALT` above is one copy. #6936: this file carried the shape
 # TWICE, and the second copy (the first alternative of
