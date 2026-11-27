@@ -9,7 +9,7 @@ step_times). Zero account, device, IP, address, or client-score columns.
 Both tables are swept after 30 days.
 
 Revision ID: guess_daily_boards_443a
-Revises: anon_install_counts_434a
+Revises: fm_open_indexes_12818
 """
 
 import sqlalchemy as sa
@@ -17,7 +17,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "guess_daily_boards_443a"
-down_revision = "anon_install_counts_434a"
+down_revision = "fm_open_indexes_12818"
 branch_labels = None
 depends_on = None
 
