@@ -37,7 +37,7 @@ TWO_WAY_POINTS = 10
 FOUR_WAY_POINTS = 15
 DUO_BASE = 101
 MAX_CARD_SECONDS = 120
-MAX_OUTCOME_AGE = timedelta(hours=24)
+MAX_OUTCOME_AGE = timedelta(hours=48)
 
 SIDE_GAP = 8
 VERSUS_GAP = 8
@@ -597,7 +597,7 @@ def resolve_card_from_markets(
                 "probability": raw_prob,
                 "percent": pct,
                 "representation": rep,
-                "last_updated": lu_iso,
+                "outcome_last_updated": lu_iso,
             }
         )
         return card, provenance
@@ -636,7 +636,7 @@ def resolve_card_from_markets(
                     "probability": raw_prob,
                     "percent": pct,
                     "representation": rep,
-                    "last_updated": lu_iso,
+                    "outcome_last_updated": lu_iso,
                 }
             )
         if abs(built_opts[0]["percent"] - built_opts[1]["percent"]) < VERSUS_GAP:
@@ -678,7 +678,7 @@ def resolve_card_from_markets(
                 "probability": raw_prob,
                 "percent": pct,
                 "representation": rep,
-                "last_updated": lu_iso,
+                "outcome_last_updated": lu_iso,
             }
         )
         return card, provenance
@@ -718,7 +718,7 @@ def resolve_card_from_markets(
                     "probability": raw_prob,
                     "percent": pct,
                     "representation": rep,
-                    "last_updated": lu_iso,
+                    "outcome_last_updated": lu_iso,
                 }
             )
         if len({o["label"] for o in built_opts}) != 4:
@@ -780,7 +780,7 @@ def resolve_card_from_markets(
                 "probability": raw_prob,
                 "percent": pct,
                 "representation": rep,
-                "last_updated": lu_iso,
+                "outcome_last_updated": lu_iso,
             }
         )
         return card, provenance

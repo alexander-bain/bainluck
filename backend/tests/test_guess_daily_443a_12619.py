@@ -1061,28 +1061,28 @@ async def test_daily_entry_ceiling_returns_429_and_logs_once_per_day(guess_test_
     assert replay.status_code == 200
 
 
-def test_stale_24h_last_updated_guards_primaries_spares_multi_outcome_and_missing():
-    """Fable 11:56 AM PT (#12619) staleness guard: >24h or missing/unreadable last_updated is refused."""
+def test_stale_48h_last_updated_guards_primaries_spares_multi_outcome_and_missing():
+    """Fable 12:02 PM PT (#12619) staleness guard: >48h or missing/unreadable last_updated is refused."""
     from app.utils.guess_daily import GuessEditionUnavailableError, MAX_OUTCOME_AGE
 
-    assert MAX_OUTCOME_AGE == timedelta(hours=24)
+    assert MAX_OUTCOME_AGE == timedelta(hours=48)
     sched = _fixture_schedule()
     day_sched = sched["days"]["2026-11-27"]
     freeze_at = datetime(2026, 11, 27, 16, 0, tzinfo=timezone.utc)
-    fresh_23h = (freeze_at - timedelta(hours=23)).isoformat()
-    boundary_24h = (freeze_at - timedelta(hours=24)).isoformat()
-    stale_24h1s = (freeze_at - timedelta(hours=24, seconds=1)).isoformat()
-    stale_25h = (freeze_at - timedelta(hours=25)).isoformat()
+    fresh_47h = (freeze_at - timedelta(hours=47)).isoformat()
+    boundary_48h = (freeze_at - timedelta(hours=48)).isoformat()
+    stale_48h1s = (freeze_at - timedelta(hours=48, seconds=1)).isoformat()
+    stale_49h = (freeze_at - timedelta(hours=49)).isoformat()
 
-    # 1. Primary 23h and exact 24h00m00s old are kept; 25h and 24h00m01s swap to spare with swapped_reason.
-    for kept_ts in (fresh_23h, boundary_24h):
+    # 1. Primary 47h and exact 48h00m00s old are kept; 49h and 48h00m01s swap to spare with swapped_reason.
+    for kept_ts in (fresh_47h, boundary_48h):
         details_kept = _baseline_details()
         details_kept[1001]["outcomes"][0]["last_updated"] = kept_ts
         pack_kept, prov_kept = build_daily_pack(date(2026, 11, 27), day_sched, details_kept, freeze_at)
         assert pack_kept["cards"][0]["id"] == "e1"
-        assert prov_kept[0]["last_updated"] == kept_ts
+        assert prov_kept[0]["outcome_last_updated"] == kept_ts
 
-    for stale_ts in (stale_25h, stale_24h1s):
+    for stale_ts in (stale_49h, stale_48h1s):
         details_stale = _baseline_details()
         details_stale[1001]["outcomes"][0]["last_updated"] = stale_ts
         pack_swapped, prov_swapped = build_daily_pack(date(2026, 11, 27), day_sched, details_stale, freeze_at)
@@ -1092,10 +1092,10 @@ def test_stale_24h_last_updated_guards_primaries_spares_multi_outcome_and_missin
         assert se1_prov[0]["swapped_from_slot"] == "e1"
         assert se1_prov[0]["swapped_reason"].startswith("stale_last_updated:1001:")
 
-    # 2. Stale spare (25h) is skipped for the next fresh spare; if no fresh spare remains, freeze fails cleanly.
+    # 2. Stale spare (49h) is skipped for the next fresh spare; if no fresh spare remains, freeze fails cleanly.
     details_spare_skip = _baseline_details()
-    details_spare_skip[1007]["outcomes"][0]["last_updated"] = stale_25h  # e5 (>50) stale -> se1 needed
-    details_spare_skip[1020]["outcomes"][0]["last_updated"] = stale_25h  # se1 also stale -> must skip to se2 (>50)
+    details_spare_skip[1007]["outcomes"][0]["last_updated"] = stale_49h  # e5 (>50) stale -> se1 needed
+    details_spare_skip[1020]["outcomes"][0]["last_updated"] = stale_49h  # se1 also stale -> must skip to se2 (>50)
     pack_skip, prov_skip = build_daily_pack(date(2026, 11, 27), day_sched, details_spare_skip, freeze_at)
     assert pack_skip["cards"][4]["id"] == "se2"
     se2_prov = next(p for p in prov_skip if p["card_id"] == "se2")
@@ -1103,30 +1103,30 @@ def test_stale_24h_last_updated_guards_primaries_spares_multi_outcome_and_missin
     assert se2_prov["swapped_reason"].startswith("stale_last_updated:1007:")
 
     details_spare_exhausted = _baseline_details()
-    details_spare_exhausted[1001]["outcomes"][0]["last_updated"] = stale_25h
-    details_spare_exhausted[1020]["outcomes"][0]["last_updated"] = stale_25h
-    details_spare_exhausted[1021]["outcomes"][0]["last_updated"] = stale_25h
+    details_spare_exhausted[1001]["outcomes"][0]["last_updated"] = stale_49h
+    details_spare_exhausted[1020]["outcomes"][0]["last_updated"] = stale_49h
+    details_spare_exhausted[1021]["outcomes"][0]["last_updated"] = stale_49h
     with pytest.raises(GuessEditionUnavailableError):
         build_daily_pack(date(2026, 11, 27), day_sched, details_spare_exhausted, freeze_at)
 
-    # 3. Multi-outcome & multi-market cards (versus, four, leader) are refused when ANY printed outcome is >24h old.
+    # 3. Multi-outcome & multi-market cards (versus, four, leader) are refused when ANY printed outcome is >48h old.
     versus_tmpl = day_sched["step_cards"]["easy"][1]  # e2 uses 1002 & 1003
     details_v_bad = _baseline_details()
-    details_v_bad[1003]["outcomes"][0]["last_updated"] = stale_25h  # 2nd leg stale, 1st leg fresh
+    details_v_bad[1003]["outcomes"][0]["last_updated"] = stale_49h  # 2nd leg stale, 1st leg fresh
     reasons_v: list[str] = []
     assert resolve_card_from_markets(versus_tmpl, details_v_bad, freeze_at, day_seed="2026-11-27", refusal_reasons_out=reasons_v) is None
     assert any(r.startswith("stale_last_updated:1003:") for r in reasons_v), reasons_v
 
     four_tmpl = day_sched["step_cards"]["medium"][1]  # m2 uses 1009
     details_f_bad = _baseline_details()
-    details_f_bad[1009]["outcomes"][0]["last_updated"] = stale_25h
+    details_f_bad[1009]["outcomes"][0]["last_updated"] = stale_49h
     reasons_f: list[str] = []
     assert resolve_card_from_markets(four_tmpl, details_f_bad, freeze_at, day_seed="2026-11-27", refusal_reasons_out=reasons_f) is None
     assert any(r.startswith("stale_last_updated:1009:") for r in reasons_f), reasons_f
 
     leader_tmpl = day_sched["step_cards"]["medium"][0]  # m1 uses 1008 with 4 outcomes
     details_l_bad = _baseline_details()
-    details_l_bad[1008]["outcomes"][2]["last_updated"] = stale_25h  # 3rd of 4 outcomes stale
+    details_l_bad[1008]["outcomes"][2]["last_updated"] = stale_49h  # 3rd of 4 outcomes stale
     reasons_l: list[str] = []
     assert resolve_card_from_markets(leader_tmpl, details_l_bad, freeze_at, day_seed="2026-11-27", refusal_reasons_out=reasons_l) is None
     assert any(r.startswith("stale_last_updated:1008:") for r in reasons_l), reasons_l
