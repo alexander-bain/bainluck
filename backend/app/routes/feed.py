@@ -20,9 +20,10 @@ import time
 import unicodedata
 import weakref
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
+from math import isfinite
 from typing import Any, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -144,6 +145,7 @@ from app.utils.graded_card import (
     card_sum_reason,
     duel_percents_by_side,
     rendered_card_percents,
+    rendered_percent,
 )
 from app.utils.prematch_reading import (
     PREMATCH_PRIOR_SHARED_NAMESPACE,
@@ -273,6 +275,7 @@ from app.utils.feed_cache import (
     feed_page_base_built_at,
     feed_page_base_cache_key,
     feed_page_base_enabled,
+    feed_page_base_fallback_limits,
     feed_page_base_last_good_key,
     feed_page_base_last_good_max_age_s,
     feed_response_cache_key,
@@ -343,6 +346,7 @@ from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.futures_field_coverage import (
     field_leader_is_unsupported,
     field_winner_places,
+    greatest_trusted_ask_ceiling,
     has_limited_field_price_coverage,
 )
 from app.utils.futures_unsupported_price import row_carries_a_verdict
@@ -354,6 +358,8 @@ from app.utils.outcome_display import (
     drop_dominant_field_outcomes,
     drop_incoherent_ladder_outcomes,
     ladder_treatment_collapsed,
+    mark_kalshi_ask_ceilings,
+    open_kalshi_yes_bid,
 )
 from app.utils.not_trading import market_not_trading
 from app.utils.discover_game_reason import (
@@ -5427,10 +5433,32 @@ async def get_feed(
             else:
                 _base_raw, _base_status, _base_body = None, None, None
                 _used_machinery_page_base = False
-                if _include_machinery_feed and not _include_machinery_preview:
-                    _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
+                _candidate_pb_keys = [_page_base_key] + [
+                    feed_page_base_cache_key(
+                        **{**_page_base_shape, "limit": _fb_limit}
+                    )
+                    for _fb_limit in feed_page_base_fallback_limits(
+                        limit=limit,
+                        include_events=include_events,
+                        include_futures=include_futures,
+                    )
+                ]
+                for _cand_pb_key in _candidate_pb_keys:
+                    if _include_machinery_feed and not _include_machinery_preview:
+                        _mach_pb_key = feed_machinery_page_base_key(_cand_pb_key)
+                        _base_raw, _base_status = await _read_shared_feed_cache(
+                            _shared_redis, _mach_pb_key
+                        )
+                        _base_body = (
+                            _safe_cache_payload(_base_raw)
+                            if _base_raw is not None
+                            else None
+                        )
+                        if _base_body is not None:
+                            _used_machinery_page_base = True
+                            break
                     _base_raw, _base_status = await _read_shared_feed_cache(
-                        _shared_redis, _mach_pb_key
+                        _shared_redis, _cand_pb_key
                     )
                     _base_body = (
                         _safe_cache_payload(_base_raw)
@@ -5438,16 +5466,7 @@ async def get_feed(
                         else None
                     )
                     if _base_body is not None:
-                        _used_machinery_page_base = True
-                if _base_body is None:
-                    _base_raw, _base_status = await _read_shared_feed_cache(
-                        _shared_redis, _page_base_key
-                    )
-                    _base_body = (
-                        _safe_cache_payload(_base_raw)
-                        if _base_raw is not None
-                        else None
-                    )
+                        break
             if (
                 _base_body is not None
                 and _include_machinery_feed
@@ -9350,7 +9369,10 @@ def _field_has_withheld_legs(
     withheld = _resolve_withheld_ids(market, withheld_ids)
     if withheld:
         withheld_ids = set(withheld)
-        if any(getattr(o, "id", None) in withheld_ids for o in outcomes):
+        if any(
+            getattr(o, "id", None) in withheld_ids and open_kalshi_yes_bid(market, o) != 0
+            for o in outcomes
+        ):
             return True
     # The page's second union term. Reached even when the arms named nothing,
     # which is the whole of the residual: on all five specimens above the arms
@@ -9365,7 +9387,8 @@ _NO_MARKET_DICT: dict = {}
 
 
 def _withhold_unsupported_field_leader(
-    item: dict, market, screened_outcomes: list, *, field_incomplete: bool
+    item: dict, market, screened_outcomes: list, *, field_incomplete: bool,
+    stale_outcome_ids: Collection[int] = (),
 ) -> None:
     """Keep the market link when the full screened field cannot support a leader."""
     data = item["data"]
@@ -9390,17 +9413,40 @@ def _withhold_unsupported_field_leader(
     }
     if places is not None:
         places -= sum(graded.values())
+    open_prices = {
+        outcome.id: outcome.current_probability
+        for outcome in screened_outcomes if outcome.id not in graded
+    }
+    missing_price_ceiling = None
+    if places == 1 and getattr(market, "source", None) == "kalshi":
+        priced_ids = {
+            outcome_id for outcome_id, probability in open_prices.items()
+            if probability is not None and isfinite(probability) and 0 <= probability <= 1
+        }
+        missing = [
+            outcome for outcome in field_outcomes
+            if outcome.id not in graded and outcome.id not in priced_ids
+        ]
+        if any(open_kalshi_yes_bid(market, outcome) == 0 for outcome in missing):
+            field_incomplete = True
+            missing_price_ceiling = greatest_trusted_ask_ceiling(
+                getattr(outcome, "current_yes_ask", None)
+                if outcome.id not in stale_outcome_ids and open_kalshi_yes_bid(market, outcome) == 0
+                else None
+                for outcome in missing
+            )
     incomplete = field_leader_is_unsupported(
-        (outcome.current_probability for outcome in screened_outcomes if outcome.id not in graded),
+        open_prices.values(),
         places,
         open_outcome_count=len(field_outcomes) - len(graded),
         omitted_contender=field_incomplete,
+        missing_price_ceiling=missing_price_ceiling,
     )
     data["field_price_coverage_incomplete"] = incomplete
     if not incomplete:
         return
 
-    notice = "Limited price coverage"
+    notice = "No recent probability"
     item.update(headline=None, reason=notice, context_summary=notice)
     data.update(
         top_outcomes=[],
@@ -9612,9 +9658,21 @@ def _market_exclusivity(market) -> bool | None:
     return getattr(market, "mutually_exclusive", None)
 
 
+def _feed_display_rows(outcomes: list, market=None) -> list[dict]:
+    rows = [
+        {"id": getattr(o, "id", None), "name": getattr(o, "name", ""),
+         "probability": o.current_probability, "is_winner": getattr(o, "is_winner", None),
+         "resolution_source": getattr(o, "resolution_source", None)}
+        for o in outcomes
+    ]
+    if getattr(market, "source", None) == "kalshi":
+        mark_kalshi_ask_ceilings(market, rows, {o.id: o for o in outcomes})
+    return rows
+
+
 def _feed_display_scale(
     all_sorted_outcomes: list, question: str | None = None, *,
-    mutually_exclusive: bool | None = None, field_complete: bool = True,
+    mutually_exclusive: bool | None = None, field_complete: bool = True, market=None,
 ) -> float:
     """The detail page's full-field divisor, before the card preview (#11995)."""
     from app.utils.outcome_display import display_probability_divisor
@@ -9622,10 +9680,7 @@ def _feed_display_scale(
     if _outcomes_are_cumulative_ladder(all_sorted_outcomes, question):
         return 1.0
     return display_probability_divisor(
-        [{"name": getattr(o, "name", ""), "probability": o.current_probability,
-          "is_winner": getattr(o, "is_winner", None),
-          "resolution_source": getattr(o, "resolution_source", None)}
-         for o in all_sorted_outcomes],
+        _feed_display_rows(all_sorted_outcomes, market),
         mutually_exclusive=mutually_exclusive,
         field_complete=field_complete, question=question,
     ) or 1.0
@@ -9835,23 +9890,20 @@ def _is_even_two_way_board(
 def _normalize_feed_probabilities(
     top_outcomes: list[dict], all_sorted_outcomes: list,
     question: str | None = None, *, mutually_exclusive: bool | None = None,
-    field_complete: bool = True,
+    field_complete: bool = True, market=None,
 ) -> list[dict]:
     """Normalize and allocate over the whole field, then project the preview."""
     from app.utils.outcome_display import normalize_display_probs
 
-    full = [{"id": getattr(o, "id", None), "name": getattr(o, "name", ""),
-             "probability": o.current_probability,
-             "is_winner": getattr(o, "is_winner", None),
-             "resolution_source": getattr(o, "resolution_source", None)}
-            for o in all_sorted_outcomes]
+    full = _feed_display_rows(all_sorted_outcomes, market)
     normalize_display_probs(full, mutually_exclusive=mutually_exclusive,
                             field_complete=field_complete, question=question)
+    book_backed = mutually_exclusive is True and any("kalshi_no_bid" in row for row in full)
     by_id = {o["id"]: o for o in full if o["id"] is not None}
     by_name = {o["name"]: o for o in full}
     scale = _feed_display_scale(all_sorted_outcomes, question,
                                 mutually_exclusive=mutually_exclusive,
-                                field_complete=field_complete)
+                                field_complete=field_complete, market=market)
     for o in top_outcomes:
         row = by_id.get(o.get("id")) or by_name.get(o.get("name"))
         if row is not None:
@@ -9864,6 +9916,10 @@ def _normalize_feed_probabilities(
             )
             if "rendered_percent" in row:
                 o["rendered_percent"] = row["rendered_percent"]
+            elif book_backed:
+                # Round the supported field's unscaled rows before the card's
+                # two-row preview can treat them as complementary sides.
+                o["rendered_percent"] = rendered_percent(row["probability"])
         elif mutually_exclusive is None:
             o["probability"] = _scale_display_probability(o.get("probability"), scale)
     return top_outcomes
@@ -9871,13 +9927,13 @@ def _normalize_feed_probabilities(
 
 def _annotate_distribution_allocations(
     card: dict, outcomes: list, question: str | None, *,
-    mutually_exclusive: bool | None, field_complete: bool,
+    mutually_exclusive: bool | None, field_complete: bool, market=None,
 ) -> None:
     """Copy the full field's shared whole numbers after classification (#11995)."""
     rows = _normalize_feed_probabilities(
         [{"id": o.id, "name": o.name, "probability": o.current_probability} for o in outcomes],
         outcomes, question, mutually_exclusive=mutually_exclusive,
-        field_complete=field_complete,
+        field_complete=field_complete, market=market,
     )
     by_id = {row["id"]: row.get("rendered_percent") for row in rows}
     by_label = {_card_outcome_name(o): by_id.get(o.id) for o in outcomes}
@@ -14809,6 +14865,7 @@ async def _score_sports_mode_futures(
             market.name,
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
+            market=market,
         )
         display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
         _display_comparisons = normalized_field_comparisons(
@@ -14970,6 +15027,7 @@ async def _score_sports_mode_futures(
             market.name,
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
+            market=market,
         )
         mark_futures_card_rows(market, top_outcomes_data)
         _full_field_rendered = bool(top_outcomes_data) and all(
@@ -15199,6 +15257,7 @@ async def _score_sports_mode_futures(
             discover_card, card_outcomes, market.name,
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
+            market=market,
         )
 
         futures_data = {
@@ -15356,7 +15415,8 @@ async def _score_sports_mode_futures(
             "outcome_names": [str(n) for n in outcome_names],
         }
         _withhold_unsupported_field_leader(
-            item, market, card_outcomes, field_incomplete=_field_incomplete
+            item, market, card_outcomes, field_incomplete=_field_incomplete,
+            stale_outcome_ids=_stale_ids,
         )
         scored_items.append(item)
 
@@ -16692,6 +16752,7 @@ async def _score_futures(
                 market.name,
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
+                market=market,
             )
             display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
             _display_comparisons = normalized_field_comparisons(
@@ -16964,6 +17025,7 @@ async def _score_futures(
                 market.name,
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
+                market=market,
             )
             mark_futures_card_rows(market, top_outcomes_data)
             _full_field_rendered = bool(top_outcomes_data) and all(
@@ -17529,6 +17591,7 @@ async def _score_futures(
                 discover_card, card_outcomes, market.name,
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
+                market=market,
             )
 
             futures_data = {
@@ -17734,7 +17797,8 @@ async def _score_futures(
                 item["recycled"] = True
 
             _withhold_unsupported_field_leader(
-                item, market, card_outcomes, field_incomplete=_field_incomplete
+                item, market, card_outcomes, field_incomplete=_field_incomplete,
+                stale_outcome_ids=_stale_ids,
             )
             scored_items.append(item)
             # LAT-P105: on the fused path `scored_items` is the RELAXED pool, so

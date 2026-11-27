@@ -580,6 +580,7 @@ class _KalshiPriceOwner:
         # overlay again: the linked settlement writer leaves `last_updated`
         # alone, so no stored row would ever read as newer than the quote.
         self.settled_market_ids: set[int] = set()
+        self.ask_ceilings: dict[int, tuple[int, str, float]] = {}
         # #10090 (Argon Rank 3): linked outcomes the refresher's headline read
         # leaves out (`kalshi_headline_aux_ticker`), kept IN PLACE by the
         # consumer with its maps. A live game writes them in its own phase
@@ -613,6 +614,52 @@ class _KalshiPriceOwner:
         # non-live transaction can write live input beside it. The consumer
         # points it at its flush wake (`serve_live_beside`).
         self.input_wake = asyncio.Event()
+
+    async def flush_ask_ceilings(
+        self, get_task_session, buffer_lock, blend_refresher, stats, *, final_drain: bool,
+    ) -> None:
+        from app.tasks.kalshi import record_kalshi_ask_ceilings
+        from app.tasks.live_blend_refresh import forget_preview_outcomes
+        from app.utils.futures_rank import rerank_market_field_skip_locked_stmt
+
+        async with buffer_lock:
+            pending = dict(self.ask_ceilings)
+        if not pending:
+            return
+        self.flush_work += 1
+        by_market: dict[int, dict[str, float]] = {}
+        for market_id, ticker, ask in pending.values():
+            if market_id not in self.settled_market_ids:
+                by_market.setdefault(market_id, {})[ticker] = ask
+        withdrawn: list[int] = []
+        try:
+            async with get_task_session() as session:
+                if not final_drain:
+                    await session.execute(SET_LOCK_TIMEOUT_SQL)
+                for market_id, offers in sorted(by_market.items()):
+                    observations = await record_kalshi_ask_ceilings(
+                        session, market_id, offers, observed_at=datetime.now(timezone.utc),
+                        changed_only=True,
+                    )
+                    if not observations:
+                        continue
+                    withdrawn.extend(observations)
+                    await session.execute(rerank_market_field_skip_locked_stmt(market_id))
+                    queue_market_change(
+                        session, market_id=market_id, source="kalshi",
+                        outcome_observed_at=observations,
+                    )
+        except Exception:
+            stats["errors"] += 1
+            logger.exception("Kalshi WS: ask ceiling write deferred")
+            return
+        finally:
+            forget_preview_outcomes(blend_refresher, withdrawn)
+        async with buffer_lock:
+            for outcome_id, book in pending.items():
+                if self.ask_ceilings.get(outcome_id) is book:
+                    del self.ask_ceilings[outcome_id]
+        await blend_refresher.publish_market_changes(session)
 
     def held_events(self, refresher):
         """#10090 — the events the run's refresh is still stamping.
@@ -1146,7 +1193,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         Event, FuturesMarket, FuturesOutcome,
     )
     from app.services.kalshi_ws import KalshiWebSocket
-    from app.tasks.kalshi import _kalshi_yes_probability  # #8753
+    from app.tasks.kalshi import _kalshi_yes_probability
     from app.tasks.live_blend_refresh import (
         HeldRowQuotes, LiveBlendRefresher, TailReceipts, adopt_handed_off, event_ids_for_outcomes,
         LOOP_REAP_TIMEOUT_S, OwedChartCustody, hand_off_pending, reap_stopped_loops,
@@ -1756,6 +1803,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # owner's reader (a rig's tuple), the frozen copy.
             return beside[4]() if len(beside) > 4 else beside[1]
 
+        if beside is None and prices.ask_ceilings:
+            await prices.flush_ask_ceilings(
+                get_task_session, buffer_lock, blend_refresher, stats, final_drain=final_drain,
+            )
         async with buffer_lock:
             if beside is None:
                 batch = dict(price_buffer)
@@ -3061,7 +3112,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             for attempt in range(FINAL_FLUSH_ATTEMPTS):
                 await flush_prices(final_drain=True)
                 async with buffer_lock:
-                    if not price_buffer:
+                    if not price_buffer and not prices.ask_ceilings:
                         return
                 if attempt + 1 < FINAL_FLUSH_ATTEMPTS:
                     stats["final_flush_retries"] += 1
@@ -3071,7 +3122,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # the runner relaunch a consumer the process is stopping), but the
             # prices it strands must be REPORTED on the way out rather than
             # vanishing at the silent `errors=0, requeued=0` CERT-659 measured.
-            stranded = len(price_buffer)
+            stranded = len(price_buffer) + len(prices.ask_ceilings)
             if stranded:
                 stats["final_flush_dropped"] += stranded
                 logger.error(
@@ -3081,7 +3132,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 )
             raise
         async with buffer_lock:
-            stranded = len(price_buffer)
+            stranded = len(price_buffer) + len(prices.ask_ceilings)
         if stranded:
             # Loud: this is the one place a price genuinely cannot be retried
             # again, so it must never be inferable only from a silence.
@@ -3171,6 +3222,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         return True
 
     async def handle_ticker(msg: dict, client=None):
+        from app.utils.kalshi_empty_book import ask_with_zero_bid
+
         exact_trace = getattr(tail_receipts, "exact_trace", None)
         ticker = (msg.get("market_ticker") or msg.get("ticker", "")).upper()
         if client is not None:
@@ -3207,8 +3260,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # three exclusive legs of that card summed to 139%. The poll that wrote
         # the same row two minutes earlier would have stored the 0.77 midpoint;
         # the socket, being faster, won every time. One price policy per venue:
-        # tight book → midpoint, else a trade the book does not refute, else a
-        # longshot ask, else nothing (a wide book with no trade is not a price).
+        # tight book → midpoint, else a trade the book does not refute. An ask
+        # without that trade evidence supplies only a ceiling.
         prob = _kalshi_yes_probability(yes_bid, yes_ask, last_price)
         if (globals().get("KALSHI_WS_GAME_LAST_TRADE", False) and prob is not None
                 and ticker in ticker_to_ids and _is_team_game_ticker(ticker)
@@ -3228,6 +3281,29 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # drew a spike every minute (Dolphins-Patriots 11/01: Kalshi's
             # stamps flipped 0.35/0.36 every ~20 s). Those keep the midpoint.
             prob = last_price
+        ask_ceiling = ask_with_zero_bid(yes_bid, yes_ask) if prob is None else None
+        if ask_ceiling is not None and market_id not in prices.settled_market_ids:
+            async with buffer_lock:
+                price_buffer.pop(outcome_id, None)
+                input_marks.pop(outcome_id, None)
+                primary_quote_custody.receive(outcome_id, {})
+                prices.ask_ceilings[outcome_id] = (market_id, ticker, ask_ceiling)
+                preview = getattr(blend_refresher, "market_preview", None)
+                if preview is not None:
+                    preview.forget((outcome_id,))
+                held = getattr(blend_refresher, "held_quotes", None)
+                if held is not None:
+                    held.release((outcome_id,))
+                if getattr(blend_refresher, "preview_events", ()):
+                    note_observation_continuity(outcome_id, ticker, None)
+                flush_wake.set()
+            if exact_trace is not None:
+                with contextlib.suppress(Exception):
+                    exact_trace.decided(
+                        msg, reason="ASK_CEILING", market=market_id, outcome=outcome_id,
+                        event=event_id_by_outcome.get(outcome_id), probability=None,
+                    )
+            return
         # The socket's historical open bounds, kept: a terminal 0 or 1 is
         # settlement's to write (`handle_lifecycle`), never a streamed tick's.
         if prob is None or not 0 < prob < 1:
@@ -3245,6 +3321,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             return
 
         async with buffer_lock:
+            prices.ask_ceilings.pop(outcome_id, None)
             primary_quote_custody.receive(outcome_id, msg)
             price_buffer[outcome_id] = (prob, yes_bid, yes_ask)
             # #10090: the buffered price, to a held market's readers now (no I/O

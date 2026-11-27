@@ -965,7 +965,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
             stat_caption="Georgia leads the college football national championship at 34%, with SEC contenders across the same board",
             source_count=2,
             route_slug="college-football-national-championship",
-            footnote="Shaded cells show served chances across both title races.",
+            footnote="Shaded cells show each team's chance in both title races.",
             disclosure="2 more in this set",
             body={
                 "leading_label": "Contender",

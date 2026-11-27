@@ -552,7 +552,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
     func testOpenFieldWithCoverageNoticeDoesNotEnterAFreshPage() throws {
         let card = """
         {
-          "type": "futures", "score": 80, "context_summary": "Limited price coverage",
+          "type": "futures", "score": 80, "context_summary": "Limited probability coverage",
           "data": { "id": 65677910, "name": "NBA Cup finalists", "status": "open",
                     "top_outcomes": [], "outcome_count": 28, "field_price_coverage_incomplete": true }
         }

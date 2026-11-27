@@ -382,8 +382,9 @@ RESOLVED_VOID_SELECT_SQL = """
 #: most of them markets that are still trading normally. `yes_bid = 0 AND
 #: yes_ask = 1` is the EMPTY BOOK: both sides gone, which is what a venue leaves
 #: behind when it stops trading a market. It is the same signature the reader
-#: sees as a stuck 99%/1% ladder, because `_kalshi_yes_probability` falls through
-#: an empty book to the last trade. Measured precision on the 48 above: 41/48.
+#: can see as a stuck 99%/1% ladder when the stored number comes from the last
+#: trade. The shared price rule only accepts a trade the latest book supports.
+#: Measured precision on the 48 above: 41/48.
 #: It is a screen, not a verdict — the venue read still decides, and a market
 #: whose book is merely thin costs one question and no write.
 #:

@@ -32,7 +32,7 @@ Two aphorisms from ``docs/doctrine.md`` are load-bearing here:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
@@ -155,7 +155,17 @@ def live_write_is_premature(
     """
     if event_commence is None or now is None:
         return False
-    return event_commence > now + grace
+    commence_utc = (
+        event_commence.replace(tzinfo=timezone.utc)
+        if event_commence.tzinfo is None
+        else event_commence.astimezone(timezone.utc)
+    )
+    now_utc = (
+        now.replace(tzinfo=timezone.utc)
+        if now.tzinfo is None
+        else now.astimezone(timezone.utc)
+    )
+    return commence_utc > now_utc + grace
 
 
 def clockless_write_defers_to_authority(

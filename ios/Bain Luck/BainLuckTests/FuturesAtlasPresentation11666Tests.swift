@@ -80,6 +80,55 @@ final class FuturesAtlasPresentation11666Tests: XCTestCase {
         return try! makeDecoder().decode(FuturesMarketDetail.self, from: data)
     }
 
+    func testNoRecentProbabilitiesFoldWithoutHidingGradesOrHistoricalIdentities() {
+        var outcomes = [
+            makeOutcomeDict(id: 1, name: "Leader", probability: 0.81),
+            makeOutcomeDict(id: 2, name: "Second", probability: 0.10),
+            makeOutcomeDict(id: 3, name: "Third", probability: 0.05),
+            makeOutcomeDict(id: 4, name: "Fourth", probability: 0.04),
+        ]
+        for id in 5...50 {
+            outcomes.append(makeOutcomeDict(id: id, name: "Player \(id)", probability: nil, openingProbability: 0.02))
+        }
+        let market = makeMarket(id: 65521771, name: "Points Per Game Leader", outcomes: outcomes)
+        let page = FuturesAtlasPresentation11666.build(market: market, now: referenceNow)
+        XCTAssertEqual(FuturesAtlasPresentation11666.firstScreenHeadlineRows192A(for: page.body).map(\.id), [1, 2, 3, 4])
+        XCTAssertEqual(page.body.foldedNames.count, 46)
+        XCTAssertTrue(page.body.foldedNames.contains("Player 50"))
+        XCTAssertNil(FuturesAtlasPresentation11666.allFieldLinkLabel192A(market: market, body: page.body))
+        XCTAssertEqual(FuturesAtlasPresentation11666.withheldCurrentOutcomeIds(presentation: page), Set(5...50))
+
+        var out = makeOutcomeDict(id: 51, name: "Eliminated", probability: nil)
+        out["is_out"] = true
+        let marketWithResult = makeMarket(id: 65521771, name: market.name, outcomes: outcomes + [out])
+        let pageWithResult = FuturesAtlasPresentation11666.build(market: marketWithResult, now: referenceNow)
+        XCTAssertEqual(pageWithResult.body.listedRows.last?.displayValue, .out)
+        XCTAssertEqual(pageWithResult.body.foldedNames.count, 46)
+        XCTAssertEqual(
+            FuturesAtlasPresentation11666.allFieldLinkLabel192A(market: marketWithResult, body: pageWithResult.body),
+            "All 5 outcomes ›"
+        )
+
+        let emptyField = makeMarket(id: 65521771, name: market.name, outcomes: Array(outcomes.dropFirst(4)))
+        let emptyPage = FuturesAtlasPresentation11666.build(market: emptyField, now: referenceNow)
+        XCTAssertNil(emptyPage.header.selectedOutcomeName)
+        XCTAssertNil(emptyPage.header.openingChanceText)
+        XCTAssertTrue(FuturesAtlasPresentation11666.firstScreenHeadlineRows192A(for: emptyPage.body).isEmpty)
+        XCTAssertEqual(emptyPage.body.foldedNames.count, 46)
+    }
+
+    @MainActor
+    func testDisclosureUsesSingularAndNamesAnEntirelyUnpricedField() {
+        XCTAssertEqual(
+            NoRecentProbabilityOutcomes(names: ["One player"], hasListedOutcomes: true).summary,
+            "1 other: no recent probability"
+        )
+        XCTAssertEqual(
+            NoRecentProbabilityOutcomes(names: ["Player A", "Player B"], hasListedOutcomes: false).summary,
+            "No recent probability"
+        )
+    }
+
     // MARK: - 1. Multi-Outcome Mutually-Exclusive Field (108629 — Closest Governor Race)
 
     func testMutuallyExclusiveFieldBuildsTopThreeLeadersAndFullFieldSheet() {

@@ -181,6 +181,7 @@ async def _sync_mlb_win_probability():
                         is_completed=(
                             getattr(event, "status", None) in ("completed", "closed")
                         ),
+                        commence_time=getattr(event, "commence_time", None),
                     )
 
                     if is_new:

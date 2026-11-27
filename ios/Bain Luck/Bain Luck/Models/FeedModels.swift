@@ -1023,6 +1023,12 @@ extension FeedEventData {
 nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     var fullFieldRendered: Bool? = nil
     var fieldPriceCoverageIncomplete: Bool? = nil
+
+    var withdrawnProbabilityNotice: String? {
+        guard status == "open", fieldPriceCoverageIncomplete == true else { return nil }
+        return EventAtlasStates11666.noRecentPrice
+    }
+
     let id: Int
     /// Fresh leaf identity; older cached feed bodies may omit it.
     var externalId: String? = nil
@@ -1189,8 +1195,29 @@ nonisolated struct FeedDiscoverThresholdPoint: Decodable, Identifiable, Sendable
     let direction: String?
     let probability: Double?
     let needsSiblingMarkets: Bool?
+    var movement: Double? = nil
 
     var id: String { label }
+
+    init(
+        source: String?,
+        label: String,
+        value: Double?,
+        unit: String?,
+        direction: String?,
+        probability: Double?,
+        needsSiblingMarkets: Bool?,
+        movement: Double? = nil
+    ) {
+        self.source = source
+        self.label = label
+        self.value = value
+        self.unit = unit
+        self.direction = direction
+        self.probability = probability
+        self.needsSiblingMarkets = needsSiblingMarkets
+        self.movement = movement
+    }
 }
 
 /// Single outcome row for distribution-style cards.

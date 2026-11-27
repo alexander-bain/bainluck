@@ -46,6 +46,7 @@ def field_leader_is_unsupported(
     *,
     open_outcome_count: int,
     omitted_contender: bool,
+    missing_price_ceiling: float | None = None,
 ) -> bool:
     """Use the whole screened field, never the top rows or a rescaled sum."""
     if remaining_places is not None and remaining_places <= 0:
@@ -64,7 +65,24 @@ def field_leader_is_unsupported(
         return True
     # Half the field's mass is a floor. In a partial field even above that
     # floor, the unaccounted mass can still hide a favorite or a tied leader.
-    return omitted_contender and remaining_places - total >= max(priced)
+    leader = max(priced)
+    return (
+        omitted_contender
+        and remaining_places - total >= leader
+        and (missing_price_ceiling is None or missing_price_ceiling >= leader)
+    )
+
+
+def greatest_trusted_ask_ceiling(asks: Iterable[float | Decimal | None]) -> float | None:
+    """Bound all missing prices only when every missing row has a usable ask."""
+    from app.utils.kalshi_empty_book import ASK_ONLY_TRUSTED_MAX
+
+    greatest = None
+    for ask in asks:
+        if ask is None or not isfinite(ask) or not 0 < ask <= ASK_ONLY_TRUSTED_MAX:
+            return None
+        greatest = max(greatest or 0, float(ask))
+    return greatest
 
 
 def grouped_field_leader_is_unsupported(
@@ -94,13 +112,18 @@ def grouped_field_leader_is_unsupported(
 
     places = field_winner_places(detail["name"], detail.get("mutually_exclusive"), expected_winners)
     open_prices = []
+    missing_asks = []
     for row in outcomes:
-        settled = (row.get("source_mark") or {}).get("state") == "settled"
-        if settled or row_carries_a_verdict(row.get("resolution_source")):
+        source_state = (row.get("source_mark") or {}).get("state")
+        if source_state == "settled" or row_carries_a_verdict(row.get("resolution_source")):
             if places is not None and row.get("is_winner") is True:
                 places -= 1
         else:
-            open_prices.append(row["probability"])
+            probability = row["probability"]
+            no_bid = detail["source"] == "kalshi" and row.get("kalshi_no_bid")
+            if probability is None or not isfinite(probability) or not 0 <= probability <= 1:
+                missing_asks.append(row.get("ask_ceiling") if no_bid else None)
+            open_prices.append(probability)
     # The full set has already received its verified prices. A previously
     # withheld row can have an accepted price after the venue composition.
     return field_leader_is_unsupported(
@@ -108,4 +131,5 @@ def grouped_field_leader_is_unsupported(
         places,
         open_outcome_count=len(open_prices),
         omitted_contender=False,
+        missing_price_ceiling=greatest_trusted_ask_ceiling(missing_asks) if places == 1 else None,
     )

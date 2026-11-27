@@ -41,7 +41,7 @@ describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367
 
     expect(rendered[0]).toContain("Georgia");
     expect(rendered[0]).toContain(">4<");
-    expect(rendered[0]).toContain("Shaded cells show served chances");
+    expect(rendered[0]).toContain("Shaded cells show each team&#x27;s chance");
     expect(rendered[1]).toContain("by Dec 31");
     expect(rendered[1]).toContain("81%");
     expect(rendered[1]).toContain("US–Iran ceasefire");

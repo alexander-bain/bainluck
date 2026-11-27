@@ -900,19 +900,20 @@ async def test_game_markets_a_stale_alias_slot_from_the_previous_release_is_refu
     from app.utils import game_markets_cache as gmc
 
     await _seed(pg_engine)
-    monkeypatch.setenv("HEROKU_RELEASE_VERSION", "v-before-6975")
-    stale = gmc.stamp(_empty_ghost_book(), source_status="scheduled")
-    # The write is the SEEDING of this test, not one of its claims, so it lives
-    # outside the assert: `python -O` strips assert statements, and an assert
-    # that both seeds and checks would leave the slot unwritten while every
-    # assertion below still passed — a green test of nothing (`py/side-effect-in-assert`).
-    wrote_stale_slot = gmc.write(GHOST, stale, fake_redis)
-    assert wrote_stale_slot, "the fake did not take the slot"
-    assert (
-        gmc.read(GHOST, fake_redis)[1] == "live"
-    ), "precondition: the slot serves on its own build"
+    with monkeypatch.context() as old_version:
+        old_version.setattr(gmc, "current_cache_version", lambda: "v-before-6975")
+        stale = gmc.stamp(_empty_ghost_book(), source_status="scheduled")
+        # The write is the SEEDING of this test, not one of its claims, so it lives
+        # outside the assert: `python -O` strips assert statements, and an assert
+        # that both seeds and checks would leave the slot unwritten while every
+        # assertion below still passed — a green test of nothing (`py/side-effect-in-assert`).
+        wrote_stale_slot = gmc.write(GHOST, stale, fake_redis)
+        assert wrote_stale_slot, "the fake did not take the slot"
+        assert (
+            gmc.read(GHOST, fake_redis)[1] == "live"
+        ), "precondition: the slot serves on its own build"
 
-    monkeypatch.setenv("HEROKU_RELEASE_VERSION", "v-with-6975")
+    monkeypatch.setattr(gmc, "current_cache_version", lambda: "v-with-6975")
     assert gmc.read(GHOST, fake_redis)[1] == "stale_build"
 
     ghost = await _get(client, f"/api/events/{GHOST}/game-markets")

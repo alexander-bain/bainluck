@@ -399,7 +399,7 @@ def select_cross_domain_yardsticks(
         revision_ids=contrib_ids,
         sections=(
             {
-                "title": f"Events priced near {best_center}%",
+                "title": f"Events near {best_center}%",
                 "context_line": context_line,
                 "member_ids": contrib_ids,
                 "members": members,

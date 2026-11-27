@@ -31,6 +31,7 @@ from collect import (
     safe_comment,
     floor_changed,
     authorize_publication,
+    read_now_lines_issue,
     read_published,
     publish_asset,
     GitHub,
@@ -111,32 +112,78 @@ class GitHubRequestTests(unittest.TestCase):
 
 
 class FactoryCollectorTests(unittest.TestCase):
-    def test_collects_recent_now_posts_across_pacific_midnight(self):
-        now = instant("2026-11-22T08:05:00Z")
-        post_at = "2026-11-22T07:59:00Z"
+    def test_reads_now_lines_issue_from_the_checked_out_commit_in_a_sparse_checkout(self):
+        with (
+            patch("collect.Path.read_text", side_effect=FileNotFoundError),
+            patch("collect.git", return_value="13580") as git,
+        ):
+            self.assertEqual(read_now_lines_issue(), 13580)
+        git.assert_called_once_with("show", "HEAD:.github/now-lines-issue.txt")
+
+    def test_rejects_invalid_now_lines_issue_numbers(self):
+        for raw in ("", "0", "-1", "#13580", "13580\n12779"):
+            with (
+                self.subTest(raw=raw),
+                patch("collect.Path.read_text", return_value=raw),
+                self.assertRaisesRegex(ValueError, "Invalid issue number"),
+            ):
+                read_now_lines_issue()
+
+    def test_reads_now_cutover_once_and_keeps_recent_posts_across_pacific_midnight(self):
+        now = instant("2026-11-25T08:05:00Z")
+        post_at = "2026-11-25T07:59:00Z"
+        cutover_posts = json.loads((FIXTURES / "now-13580-cutover.json").read_text())
+        recent_posts = [
+            {
+                "body": "Builder F: Waiting on #13346.",
+                "created_at": post_at,
+                "author_association": "OWNER",
+            },
+            {
+                "body": "Builder F now: retaking the iPad screenshots from build 5852",
+                "created_at": "2026-11-25T06:40:00Z",
+                "author_association": "MEMBER",
+            },
+        ]
         api = MagicMock()
         api.public_json.return_value = {"status": "ok", "commit": "server"}
-        api.pages.return_value = [
-            {"body": "Builder F: Waiting on #13346.", "created_at": post_at, "author_association": "OWNER"},
-            {"body": "Builder F now: retaking the iPad screenshots from build 5852",
-             "created_at": "2026-11-22T06:40:00Z", "author_association": "MEMBER"},
-        ]
-        api.request.side_effect = lambda endpoint: {"workflow_runs": []} if "/actions/" in endpoint else []
+        api.pages.side_effect = [cutover_posts + recent_posts, recent_posts]
+        api.request.side_effect = lambda endpoint: (
+            {"workflow_runs": []} if "/actions/" in endpoint else []
+        )
         receipts = [
             {"line": "Website", "commit": "web", "at": iso(now)},
             {"line": "Apps", "commit": "apps", "at": iso(now)},
         ]
         git_output = {"rev-parse": "server", "show": iso(now), "rev-list": "web\napps\nserver"}
+        previous = {"generated_at": "2026-11-25T08:00:00Z", "signals": {}}
         with (
             patch("collect.datetime") as clock,
-            patch("collect.history_signals", return_value=(receipts, {}, [], None)),
+            patch(
+                "collect.history_signals",
+                side_effect=lambda *_: (receipts.copy(), {}, [], None),
+            ),
             patch("collect.git", side_effect=lambda command, *args: git_output[command]),
+            patch("collect.Path.read_text", return_value="13580\n"),
         ):
             clock.now.return_value = now
-            snapshot = collect(api, open_summaries=[])
-        api.pages.assert_called_once_with("issues/12779/comments?since=2026-11-22T05:05:00Z")
-        self.assertEqual(snapshot["crew_posts"], {"F": {"at": post_at, "waiting_on": 13346}})
-        self.assertEqual(snapshot["lane_updates"]["F"]["at"], "2026-11-22T06:40:00Z")
+            first = collect(api, previous, open_summaries=[])
+            published = build(first, previous)
+            clock.now.return_value = now + timedelta(minutes=5)
+            second = collect(api, published, open_summaries=[])
+        self.assertEqual(api.pages.call_args_list, [
+            call("issues/13580/comments?since=2026-11-24T05:00:00Z"),
+            call("issues/13580/comments?since=2026-11-25T05:10:00Z"),
+        ])
+        self.assertEqual(published["signals"]["now_lines_issue"], 13580)
+        self.assertEqual(first["commands"], [
+            {"kind": "merging", "line": "Server", "numbers": [13539],
+             "at": "2026-11-24T05:32:00Z", "resolved": False},
+            {"kind": "live", "line": "Server", "numbers": [13539], "at": "2026-11-24T06:03:12Z"},
+        ])
+        self.assertEqual(second["commands"], first["commands"])
+        self.assertEqual(second["crew_posts"], {"F": {"at": post_at, "waiting_on": 13346}})
+        self.assertEqual(second["lane_updates"]["F"]["at"], "2026-11-25T06:40:00Z")
 
     def test_13444_stays_held_while_failed_master_attempt_is_rerun(self):
         fixture = json.loads((FIXTURES / "master-retry-nov22.json").read_text())

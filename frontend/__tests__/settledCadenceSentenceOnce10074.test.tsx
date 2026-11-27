@@ -1,13 +1,13 @@
 /**
- * #10074 — A SETTLED BOARD SAID "Final — prices no longer update" TWICE.
+ * #10074 — A SETTLED BOARD SAID "Final — probabilities no longer update" TWICE.
  *
  * `bainluck.com/futures/60544002` at 390px, 2026-10-01 13:34Z, Probability Trend card:
  *
  *     1W  1M  All
- *     Final — prices no longer update
+ *     Final — probabilities no longer update
  *        [icon]
- *     Limited price history available
- *     Final — prices no longer update
+ *     Limited probability history available
+ *     Final — probabilities no longer update
  *
  * The served `/history` (same minute): `sparse: true`, ONE outcome with ONE point
  * (`bookmaker: settlement`, 1.0). The page hands the range controls the cadence
@@ -57,7 +57,7 @@ jest.mock("@/components/Analytics", () => ({
 import FuturesDetailPage from "../app/futures/[id]/page";
 import { FuturesChart } from "@/components/FuturesChart";
 
-const CADENCE = "Final — prices no longer update";
+const CADENCE = "Final — probabilities no longer update";
 
 function count(html: string, needle: string): number {
   return html.split(needle).length - 1;
@@ -131,13 +131,13 @@ function render(market: unknown, history: unknown): string {
 describe("#10074 the settled cadence sentence prints once", () => {
   it("the specimen prints it exactly once, beside the empty-chart line", () => {
     const html = render(settledBoard("resolved"), servedHistory(true));
-    expect(html).toContain("Limited price history available");
+    expect(html).toContain("Limited probability history available");
     expect(count(html, CADENCE)).toBe(1);
   });
 
   it("CONTROL: not sparse ⇒ the header is silent and the chart keeps its own line", () => {
     const html = render(settledBoard("resolved"), servedHistory(false));
-    expect(html).toContain("Limited price history available");
+    expect(html).toContain("Limited probability history available");
     expect(count(html, CADENCE)).toBe(1);
   });
 
@@ -169,7 +169,7 @@ describe("FuturesChart cadenceNoteShown", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       <FuturesChart historyData={thin as any} selectedOutcomes={new Set([1])} onToggleOutcome={() => {}} settled cadenceNoteShown />,
     );
-    expect(html).toContain("Limited price history available");
+    expect(html).toContain("Limited probability history available");
     expect(count(html, CADENCE)).toBe(0);
   });
 });

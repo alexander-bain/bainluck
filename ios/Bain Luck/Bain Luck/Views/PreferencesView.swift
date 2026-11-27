@@ -95,7 +95,11 @@ struct PreferencesView: View {
     @StateObject private var viewModel: PreferencesViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
+    @ScaledMetric(relativeTo: .subheadline) private var interestNameSizeAX: CGFloat = 15
+    @ScaledMetric(relativeTo: .caption2) private var capsuleFontSizeAX: CGFloat = 11
+    @State private var interestsRowWidth: CGFloat = 0
 
     init() {
         _viewModel = StateObject(wrappedValue: PreferencesViewModel())
@@ -112,6 +116,14 @@ struct PreferencesView: View {
         _notificationAuthStatus = State(initialValue: notificationAuthStatusForTest)
         _pinGameAlertsStateForTest = State(initialValue: true)
     }
+
+    #if os(iOS)
+    init(appIconSwitcherForTest: AppIconSwitcher423A) {
+        _viewModel = StateObject(wrappedValue: PreferencesViewModel())
+        _appIconSwitcher = State(initialValue: appIconSwitcherForTest)
+        _selectedAppIconChoice = State(initialValue: appIconSwitcherForTest.activeChoice)
+    }
+    #endif
     #endif
     @State private var showOnboarding = false
     @State private var showDeleteConfirmation = false
@@ -137,6 +149,10 @@ struct PreferencesView: View {
     @State private var pinGameAlertsStateForTest = false
     #endif
     @State private var devSourcesOverlayEnabled = false
+    #if os(iOS)
+    @State private var appIconSwitcher = AppIconSwitcher423A.live
+    @State private var selectedAppIconChoice = AppIconSwitcher423A.live.activeChoice
+    #endif
 
     var body: some View {
         Group {
@@ -189,12 +205,12 @@ struct PreferencesView: View {
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingView()
+            OnboardingView(entryPoint: "preferences")
                 .environmentObject(authManager)
         }
         #else
         .sheet(isPresented: $showOnboarding) {
-            OnboardingView()
+            OnboardingView(entryPoint: "preferences")
                 .environmentObject(authManager)
                 .frame(minWidth: 500, minHeight: 400)
         }
@@ -247,6 +263,9 @@ struct PreferencesView: View {
                     interestsSection
                 }
                 notificationsSection
+                #if os(iOS)
+                appIconSection
+                #endif
                 privacySection
                 if authManager.isAuthenticated || viewModel.prefs != nil {
                     actionsSection
@@ -264,6 +283,16 @@ struct PreferencesView: View {
             telemetryPersistence = TelemetryConsent.shared.persistence
             groupingMachineryEnabled = GroupingMachineryGate12288.isSwitchEnabled(for: authManager.user)
             devSourcesOverlayEnabled = DevSourcesOverlay11920.isSwitchEnabled(for: authManager.user)
+            #if os(iOS)
+            selectedAppIconChoice = appIconSwitcher.activeChoice
+            #endif
+        }
+        .onChange(of: scenePhase) { _, phase in
+            #if os(iOS)
+            if phase == .active {
+                selectedAppIconChoice = appIconSwitcher.activeChoice
+            }
+            #endif
         }
         .onChange(of: authManager.user?.id) { _, _ in
             groupingMachineryEnabled = GroupingMachineryGate12288.isSwitchEnabled(for: authManager.user)
@@ -567,6 +596,9 @@ struct PreferencesView: View {
                     affinityCard(item: item)
                 }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
+                if w > 0 { interestsRowWidth = w }
+            }
             .padding(.horizontal)
 
             // Beyond Sports sub-header
@@ -586,6 +618,9 @@ struct PreferencesView: View {
                 ForEach(OnboardingSportsData.beyondSports) { item in
                     affinityCard(item: item)
                 }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
+                if w > 0 { interestsRowWidth = w }
             }
             .padding(.horizontal)
         }
@@ -607,77 +642,96 @@ struct PreferencesView: View {
         let currentLevel = viewModel.affinityLevel(for: item.key)
         let isActive = currentLevel != .nah
         let activeColor = affinityColor[currentLevel] ?? .gray
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        // #6681 + #13832: keep the 1-line AffinityRowMetrics layout first (and
+        // active at 390pt+ where the row width >= 345pt) so the #6681 guard and
+        // 402pt width arithmetic hold unchanged, while stacking cleanly below 345pt
+        // (e.g. 320pt) and at accessibility sizes so long names never break mid-word.
+        let stackVertical = isAX || (interestsRowWidth > 0 && interestsRowWidth < 345)
 
-        return HStack(spacing: AffinityRowMetrics.rowSpacing) {
-            // Emoji + name
-            HStack(spacing: AffinityRowMetrics.emojiNameSpacing) {
-                Text(item.emoji)
-                    .font(.title3)
-                    .frame(width: AffinityRowMetrics.emojiWidth)
+        return Group {
+            if !stackVertical {
+                HStack(spacing: AffinityRowMetrics.rowSpacing) {
+                    // Emoji + name
+                    HStack(spacing: AffinityRowMetrics.emojiNameSpacing) {
+                        Text(item.emoji)
+                            .font(.title3)
+                            .frame(width: AffinityRowMetrics.emojiWidth)
 
-                // #6681 — the four capsules are `.fixedSize()` and the Spacer
-                // absorbs nothing, so the name is the only thing in this row
-                // that can give, and three of the 22 gave: "College Foo…",
-                // "College Basketball", "Entertainm…". The name is also the
-                // ONLY thing telling one row from the next — every row's
-                // capsules read Love/Big/Wild/Nah — so a truncated name is a
-                // row a reader cannot identify.
-                //
-                // A floor, not a size: `minimumScaleFactor` shrinks only the
-                // labels that would otherwise truncate, so 19 of 22 are
-                // untouched. Wrapping to two lines was the alternative and was
-                // weighed — it keeps full size but makes 3 of 22 rows taller,
-                // and the ragged rhythm costs more scanning than a slightly
-                // smaller label on three rows.
-                Text(item.name)
-                    .font(.subheadline)
-                    .fontWeight(isActive ? .semibold : .regular)
-                    .foregroundStyle(isActive ? .primary : .secondary)
-                    .lineLimit(2)
-                    .allowsTightening(true)
-                    .minimumScaleFactor(AffinityRowMetrics.nameMinimumScaleFactor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-
-            // Affinity capsules
-            HStack(spacing: AffinityRowMetrics.capsuleSpacing) {
-                ForEach(AffinityLevel.allCases, id: \.rawValue) { level in
-                    let selected = currentLevel == level
-                    let color = affinityColor[level] ?? .gray
-
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            viewModel.setAffinity(item.key, level: level)
-                        }
-                    } label: {
-                        Text(level.shortLabel)
-                            .font(.system(
-                                size: AffinityRowMetrics.capsuleFontSize,
-                                weight: selected ? .bold : .medium
-                            ))
-                            .lineLimit(1)
-                            .fixedSize()
-                            .padding(.horizontal, AffinityRowMetrics.capsuleHorizontalPadding)
-                            .padding(.vertical, 6)
-                            .foregroundStyle(selected ? .white : color.opacity(0.7))
-                            .background(
-                                selected
-                                    ? AnyShapeStyle(color)
-                                    : AnyShapeStyle(color.opacity(0.08))
-                            )
-                            .clipShape(Capsule())
-                            .overlay(
-                                Capsule()
-                                    .stroke(
-                                        selected ? color.opacity(0.3) : color.opacity(0.12),
-                                        lineWidth: selected ? 1.5 : 0.5
-                                    )
-                            )
+                        // #6681 — the four capsules are `.fixedSize()` and the Spacer
+                        // absorbs nothing, so the name is the only thing in this row
+                        // that can give, and three of the 22 gave: "College Foo…",
+                        // "College Basketball", "Entertainm…". The name is also the
+                        // ONLY thing telling one row from the next — every row's
+                        // capsules read Love/Big/Wild/Nah — so a truncated name is a
+                        // row a reader cannot identify.
+                        //
+                        // A floor, not a size: `minimumScaleFactor` shrinks only the
+                        // labels that would otherwise truncate, so 19 of 22 are
+                        // untouched. Wrapping to two lines was the alternative and was
+                        // weighed — it keeps full size but makes 3 of 22 rows taller,
+                        // and the ragged rhythm costs more scanning than a slightly
+                        // smaller label on three rows.
+                        Text(item.name)
+                            .font(.subheadline)
+                            .fontWeight(isActive ? .semibold : .regular)
+                            .foregroundStyle(isActive ? .primary : .secondary)
+                            .lineLimit(2)
+                            .allowsTightening(true)
+                            .minimumScaleFactor(AffinityRowMetrics.nameMinimumScaleFactor)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .buttonStyle(.plain)
+
+                    Spacer()
+
+                    // Affinity capsules
+                    affinityCapsulesRow(
+                        itemKey: item.key,
+                        currentLevel: currentLevel,
+                        isAccessibility: false
+                    )
                 }
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: AffinityRowMetrics.emojiNameSpacing) {
+                        Text(item.emoji)
+                            .font(.system(size: min(interestNameSizeAX * 1.15, 28)))
+                            .frame(minWidth: AffinityRowMetrics.emojiWidth)
+
+                        Text(item.name)
+                            .font(
+                                isAX
+                                    ? .system(size: min(interestNameSizeAX, 27), weight: isActive ? .semibold : .regular)
+                                    : .subheadline.weight(isActive ? .semibold : .regular)
+                            )
+                            .foregroundStyle(isActive ? .primary : .secondary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    ViewThatFits(in: .horizontal) {
+                        affinityCapsulesRow(
+                            itemKey: item.key,
+                            currentLevel: currentLevel,
+                            isAccessibility: isAX
+                        )
+                        VStack(alignment: .leading, spacing: 6) {
+                            affinityCapsulesSubset(
+                                itemKey: item.key,
+                                levels: Array(AffinityLevel.allCases.prefix(2)),
+                                currentLevel: currentLevel,
+                                isAccessibility: isAX
+                            )
+                            affinityCapsulesSubset(
+                                itemKey: item.key,
+                                levels: Array(AffinityLevel.allCases.dropFirst(2)),
+                                currentLevel: currentLevel,
+                                isAccessibility: isAX
+                            )
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.horizontal, AffinityRowMetrics.cardHorizontalPadding)
@@ -696,6 +750,71 @@ struct PreferencesView: View {
                 )
         )
         .shadow(color: .black.opacity(isActive ? 0.04 : 0.02), radius: 4, x: 0, y: 2)
+    }
+
+    private func affinityCapsulesRow(
+        itemKey: String,
+        currentLevel: AffinityLevel,
+        isAccessibility: Bool
+    ) -> some View {
+        affinityCapsulesSubset(
+            itemKey: itemKey,
+            levels: AffinityLevel.allCases,
+            currentLevel: currentLevel,
+            isAccessibility: isAccessibility
+        )
+    }
+
+    private func affinityCapsulesSubset(
+        itemKey: String,
+        levels: [AffinityLevel],
+        currentLevel: AffinityLevel,
+        isAccessibility: Bool
+    ) -> some View {
+        HStack(spacing: AffinityRowMetrics.capsuleSpacing) {
+            ForEach(levels, id: \.rawValue) { level in
+                let selected = currentLevel == level
+                let color = affinityColor[level] ?? .gray
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        viewModel.setAffinity(itemKey, level: level)
+                    }
+                } label: {
+                    Text(level.shortLabel)
+                        .font(
+                            isAccessibility
+                                ? .system(
+                                    size: min(capsuleFontSizeAX, 15),
+                                    weight: selected ? .bold : .medium
+                                )
+                                : .system(
+                                    size: AffinityRowMetrics.capsuleFontSize,
+                                    weight: selected ? .bold : .medium
+                                )
+                        )
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, AffinityRowMetrics.capsuleHorizontalPadding)
+                        .padding(.vertical, 6)
+                        .foregroundStyle(selected ? .white : color.opacity(0.7))
+                        .background(
+                            selected
+                                ? AnyShapeStyle(color)
+                                : AnyShapeStyle(color.opacity(0.08))
+                        )
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(
+                                    selected ? color.opacity(0.3) : color.opacity(0.12),
+                                    lineWidth: selected ? 1.5 : 0.5
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     // MARK: - Actions Section
@@ -970,6 +1089,81 @@ struct PreferencesView: View {
         }
         return "We couldn't delete your account. Your account has not been deleted. Try again in a moment."
     }
+
+    #if os(iOS)
+    // MARK: - App Icon (#13767, 423: A)
+
+    private var appIconSection: some View {
+        VStack(spacing: 10) {
+            sectionHeader(emoji: "\u{1F3A8}", title: "App", count: nil)
+            appIconRow
+                .padding(.horizontal)
+        }
+    }
+
+    private var appIconRow: some View {
+        NavigationLink {
+            AppIconPickerView423A(switcher: appIconSwitcher) { choice in
+                selectedAppIconChoice = choice
+            }
+        } label: {
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            AppIconPreviewBadge423A(choice: selectedAppIconChoice, size: 36)
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("App icon")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(selectedAppIconChoice.displayName)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary.opacity(0.75))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        AppIconPreviewBadge423A(choice: selectedAppIconChoice, size: 32)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("App icon")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(selectedAppIconChoice.displayName)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary.opacity(0.75))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("preferences.appIconRow")
+    }
+    #endif
 
     // MARK: - Notifications
 

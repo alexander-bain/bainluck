@@ -548,6 +548,7 @@ class TestMissingMemberLookupBelowFour13544:
                 )
             ],
             pretagged=pretagged,
+            known_sets=(),
             now=FROZEN_NOW,
         )
         assert len(res["validated_sets"]) == 2

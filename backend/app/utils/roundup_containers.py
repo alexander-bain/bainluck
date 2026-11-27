@@ -228,6 +228,7 @@ class RoundupMembers:
     children: tuple[dict[str, Any], ...] = ()
     paired_metric_set: Optional[dict[str, Any]] = None
     machinery_card: Optional[dict[str, Any]] = None
+    unpriced_outcomes: tuple[dict[str, Any], ...] = ()
     covered_market_ids: tuple[int, ...] = ()
 
     def __init__(
@@ -250,6 +251,7 @@ class RoundupMembers:
         children: Sequence[Mapping[str, Any]] = (),
         paired_metric_set: Optional[Mapping[str, Any]] = None,
         machinery_card: Optional[Mapping[str, Any]] = None,
+        unpriced_outcomes: Sequence[Mapping[str, Any]] = (),
         covered_market_ids: Sequence[int] = (),
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
@@ -308,6 +310,15 @@ class RoundupMembers:
             copy.deepcopy(dict(machinery_card))
             if isinstance(machinery_card, Mapping)
             else None,
+        )
+        object.__setattr__(
+            self,
+            "unpriced_outcomes",
+            tuple(
+                copy.deepcopy(dict(u))
+                for u in (unpriced_outcomes or ())
+                if isinstance(u, Mapping)
+            ),
         )
         object.__setattr__(
             self,
@@ -494,7 +505,7 @@ class RoundupProducer:
             "tag",
             tag if tag is not None else str(category).upper(),
         )
-        object.__setattr__(self, "kicker", str(kicker or "Round-up"))
+        object.__setattr__(self, "kicker", str(kicker) if kicker is not None else "Round-up")
         object.__setattr__(
             self,
             "story_key",
@@ -922,6 +933,9 @@ def compose_roundup_feed_item(
         roundup_contract["paired_metric_set"] = copy.deepcopy(members.paired_metric_set)
     if getattr(members, "machinery_card", None) is not None:
         roundup_contract["machinery_card"] = copy.deepcopy(members.machinery_card)
+    unpriced_outcomes = list(getattr(members, "unpriced_outcomes", None) or ())
+    if unpriced_outcomes:
+        roundup_contract["unpriced_outcomes"] = copy.deepcopy(unpriced_outcomes)
     context_summary_val: Optional[str] = None
     if members.sections and isinstance(members.sections[0], Mapping):
         sec_ctx = str(members.sections[0].get("context_line") or "").strip()
