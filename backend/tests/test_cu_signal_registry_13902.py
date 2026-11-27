@@ -13,6 +13,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DOC_PATH = REPO_ROOT / "docs" / "content-understanding-signals.md"
 
 _CONSUMER_RE = re.compile(r"`((?:backend|frontend)/[^`:]+):([A-Za-z_][A-Za-z0-9_.]*)`")
+_TEST_FILE_RE = re.compile(r"`(backend/tests/[^`:]+\.py)`")
+_FORBIDDEN_READER_WRITER = "enrich_cu_v2_profiles"
 
 
 def _extract_writer_profile_keys() -> set[str]:
@@ -92,9 +94,15 @@ def _validate_signal_registry(writer_keys: set[str], rows: dict[str, dict[str, s
             if not row.get(col):
                 errors.append(f"Row {field_key!r} is missing required column {col!r}")
         reader_text = row.get("Reader (`file:symbol`)", "")
+        if _FORBIDDEN_READER_WRITER in reader_text:
+            errors.append(f"Row {field_key!r} lists writer {_FORBIDDEN_READER_WRITER} as its own Reader")
         for rel_path, symbol in _CONSUMER_RE.findall(reader_text):
             if rel_path.endswith(".py") and not _symbol_exists_in_file(rel_path, symbol):
                 errors.append(f"Row {field_key!r} names missing consumer {rel_path}:{symbol}")
+        test_text = row.get("Test", "")
+        for test_rel_path in _TEST_FILE_RE.findall(test_text):
+            if not (REPO_ROOT / test_rel_path).exists():
+                errors.append(f"Row {field_key!r} names missing test file {test_rel_path}")
     return errors
 
 
@@ -121,3 +129,21 @@ def test_negative_controls_catch_undocumented_field_and_phantom_consumer():
     }
     errors_consumer = _validate_signal_registry(writer_keys, broken_rows)
     assert any("nonexistent_cu_consumer_xyz" in err for err in errors_consumer)
+
+    # Control 3: doc row lists a test file that is not in the tree.
+    broken_test_rows = dict(rows)
+    broken_test_rows["geography"] = {
+        **rows["geography"],
+        "Test": "`backend/tests/test_missing_registry_file_xyz.py`",
+    }
+    errors_test_file = _validate_signal_registry(writer_keys, broken_test_rows)
+    assert any("test_missing_registry_file_xyz.py" in err for err in errors_test_file)
+
+    # Control 4: doc row names enrich_cu_v2_profiles as its own Reader.
+    broken_self_reader = dict(rows)
+    broken_self_reader["subjects"] = {
+        **rows["subjects"],
+        "Reader (`file:symbol`)": "`backend/app/tasks/enrich_markets.py:enrich_cu_v2_profiles`",
+    }
+    errors_self_reader = _validate_signal_registry(writer_keys, broken_self_reader)
+    assert any("enrich_cu_v2_profiles" in err for err in errors_self_reader)
