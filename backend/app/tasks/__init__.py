@@ -918,6 +918,8 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     # #13606 Part 1: bounded 5-event/run materializer; keep off the 2-slot
     # `heavy` calibration lane.
     "app.tasks.materialize_finished_event_charts",
+    # #12619 / 443: A: daily /guess 30-day retention sweep + PT pack freeze.
+    "app.tasks.guess_daily_maintenance",
 }
 
 # The heavy lane = the calibration/precompute cache-warmer family PLUS the
@@ -8005,6 +8007,13 @@ def precompute_admin_link_rate(self):
     return _tracked_run("precompute_admin_link_rate", _precompute_admin_link_rate())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.guess_daily_maintenance")
+def guess_daily_maintenance(self):
+    """Sweep >30d /guess editions & group entries and pre-freeze today's PT pack (#12619, 443: A)."""
+    from app.tasks.guess_daily import run_guess_daily_maintenance
+    return _tracked_run("guess_daily_maintenance", run_guess_daily_maintenance())
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.precompute_admin_matured_linkage")
 def precompute_admin_matured_linkage(self):
     """Precompute the matured-linkage metric into Redis (Queue #220/221 Item 2)."""
@@ -10779,6 +10788,12 @@ celery_app.conf.beat_schedule = {
         # Matured-linkage headline (Item 2).
         # C-1 / B-15 (2026-11-06): hourly at :11, TTL 2 h — as audit-all above.
         "schedule": crontab(minute=11),
+        "options": {"queue": "background"},
+    },
+    # #12619 / 443: A — sweep >30d /guess rows and freeze today's PT challenge at 08:05 UTC.
+    "guess-daily-maintenance": {
+        "task": "app.tasks.guess_daily_maintenance",
+        "schedule": crontab(minute=5, hour=8),
         "options": {"queue": "background"},
     },
 }
