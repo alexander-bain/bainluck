@@ -8142,6 +8142,32 @@ def deliver_activitykit_starts():
     return result
 
 
+@celery_app.task(name="app.tasks.deliver_game_alerts", soft_time_limit=60,
+                 time_limit=90, max_retries=0)
+def deliver_game_alerts():
+    """One default-off sweep of 1.0.8 plain APNs game alerts (#13081 / 258-261: A)."""
+    from app.tasks.game_alerts import run_game_alerts_dispatch
+
+    result = run_async(run_game_alerts_dispatch())
+    if result["terminal"] in {"failed", "partial"}:
+        logger.warning("Game alerts dispatch incomplete: %s", result)
+        raise RuntimeError("Game alerts dispatch incomplete")
+    return result
+
+
+@celery_app.task(name="app.tasks.purge_expired_appclip_devices", soft_time_limit=30,
+                 time_limit=45, max_retries=0)
+def purge_expired_appclip_devices():
+    """Hourly clean-up of expired 8-hour App Clip device rows (#13081, #13079)."""
+    from app.tasks.game_alerts import run_purge_expired_appclip_devices
+
+    result = run_async(run_purge_expired_appclip_devices())
+    if result["terminal"] in {"failed", "partial"}:
+        logger.warning("App Clip device purge incomplete: %s", result)
+        raise RuntimeError("App Clip device purge incomplete")
+    return result
+
+
 @celery_app.task(name="app.tasks.probe_live_tennis_scores", soft_time_limit=45,
                  time_limit=60, max_retries=0)
 def probe_live_tennis_scores():
@@ -8168,6 +8194,19 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.deliver_activitykit_starts",
         "schedule": 30.0,
         "options": {"queue": "realtime", "expires": 25},
+    },
+    "game-alerts-push": {
+        # #13081 (Rulings 258-261: A): default-off plain APNs game alerts
+        # (Starts, Close Late, Final). Zero DB/HTTP I/O while GAME_ALERTS_PUSH_ENABLED != true.
+        "task": "app.tasks.deliver_game_alerts",
+        "schedule": 30.0,
+        "options": {"queue": "realtime", "expires": 25},
+    },
+    "purge-expired-appclip-devices": {
+        # #13081 / #13079: delete App Clip push_devices rows older than Apple's 8h ephemeral window.
+        "task": "app.tasks.purge_expired_appclip_devices",
+        "schedule": crontab(minute=17),
+        "options": {"queue": "realtime", "expires": 3000},
     },
     "probe-live-tennis-scores": {
         # #13000 (Ruling 257: B): read-only coverage probe of livetennisapi.com,
