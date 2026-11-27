@@ -67,7 +67,8 @@ DISCOVER_LLM_SCHEMA_VERSION = 1
 # persisted validation reasons. Unclassified markets still face the volume/tier bar.
 # rev 8 (#1809): grounded aliases must be unique and compatible with the mention.
 # rev 9 (#1809): use schedule-backed local game dates, state districts, and drop payout-date copies.
-CU_WRITER_REV = 9
+# rev 10 (#1809): ground election days and fixture geography, and reject settlement-day copies in sports too.
+CU_WRITER_REV = 10
 CU_V2_SCHEMA_VERSION = 2
 #: Per-run spend ceiling for ``enrich_cu_v2_profiles`` (USD).
 CU_V2_COST_CAP_USD = 30.0
@@ -1603,6 +1604,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                    fm.resolution_date, fm.market_metadata,
                    fm.event_id AS linked_game_id, e.commence_time AS linked_start,
                    e.commence_time_source AS start_source, league.key AS linked_league,
+                   COALESCE(home_team.name, e.home_team_name) AS linked_home_name,
+                   COALESCE(away_team.name, e.away_team_name) AS linked_away_name,
+                   home_league.key AS linked_home_league, away_league.key AS linked_away_league,
                    (SELECT json_agg(json_build_object(
                        'name', fo.name,
                        'prob', fo.current_probability,
@@ -1615,6 +1619,10 @@ async def enrich_cu_v2_profiles(limit: int = 125):
             FROM futures_markets fm
             LEFT JOIN events e ON e.id = fm.event_id
             LEFT JOIN sports league ON league.id = e.sport_id
+            LEFT JOIN teams home_team ON home_team.id = e.home_team_id
+            LEFT JOIN teams away_team ON away_team.id = e.away_team_id
+            LEFT JOIN sports home_league ON home_league.id = home_team.sport_id
+            LEFT JOIN sports away_league ON away_league.id = away_team.sport_id
             WHERE fm.status = 'open'
               AND fm.llm_sport_category IS DISTINCT FROM 'crypto'
               AND (fm.llm_sport_category = ANY(:cats) OR fm.volume_24h >= 5000 OR fm.market_tier <= 3)
@@ -1661,6 +1669,8 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     linked_start=r.get("linked_start"),
                     start_source=r.get("start_source"),
                     linked_league=r.get("linked_league"),
+                    home_team=(r.get("linked_home_name"), r.get("linked_home_league")),
+                    away_team=(r.get("linked_away_name"), r.get("linked_away_league")),
                 ),
             })
             if len(work_items) >= limit:
@@ -1808,8 +1818,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     "series_key": _cu_series_key(raw.get("series_key")),
                     "temporal_class": raw.get("temporal"),
                     "event_date": cu_unlinked_event_date(
-                        raw.get("event_date"), settlement_at,
-                        category=item["category"], topic=raw.get("topic"),
+                        raw.get("event_date"), settlement_at
                     ),
                     "recurrence": raw.get("recurrence"),
                     "stakes": raw.get("stakes"),
