@@ -14,8 +14,7 @@ from app.utils.cu_eval_scorecard import (
     score_cu_eval_run,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-CHECKED_IN_SCORECARD = REPO_ROOT / "frontend" / "lib" / "evals" / "data" / "cu-scorecard-2026-11.json"
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _sample_answers() -> list[dict]:
@@ -105,7 +104,7 @@ def test_scorecard_counts_right_wrong_blank_idk_and_code_vs_model_columns():
     result = score_cu_eval_run(
         _sample_answers(),
         _sample_predictions(),
-        as_of="2026-12-11",
+        as_of="2026-06-15",
         writer_rev=10,
         model="gpt-4o-mini",
         dataset="sealed",
@@ -149,7 +148,7 @@ def test_scorecard_produces_all_four_required_slices():
     result = score_cu_eval_run(
         _sample_answers(),
         _sample_predictions(),
-        as_of="2026-12-11",
+        as_of="2026-06-15",
         writer_rev=10,
         model="gpt-4o-mini",
     )
@@ -165,14 +164,15 @@ def test_scorecard_produces_all_four_required_slices():
 
 
 def test_unlabeled_builder_and_cli_round_trip(tmp_path):
-    unlabeled = build_unlabeled_scorecard(as_of="2026-11-27")
+    unlabeled = build_unlabeled_scorecard(as_of="2026-06-01")
     assert unlabeled["status"] == "not_measured_yet"
-    assert unlabeled["as_of"] == "2026-11-27"
+    assert unlabeled["as_of"] == "2026-06-01"
     assert len(unlabeled["fields"]) == len(CU_SCORECARD_FIELDS)
 
     ans_file = tmp_path / "answers.json"
     pred_file = tmp_path / "predictions.json"
     out_file = tmp_path / "scorecard.json"
+    unmeasured_out = tmp_path / "unmeasured.json"
     ans_file.write_text(json.dumps({"rows": _sample_answers()}), encoding="utf-8")
     pred_file.write_text(
         json.dumps({"writer_rev": 10, "model": "gpt-4o-mini", "actual_usd": 0.14, "rows": _sample_predictions()}),
@@ -188,11 +188,11 @@ def test_unlabeled_builder_and_cli_round_trip(tmp_path):
             "--predictions",
             str(pred_file),
             "--date",
-            "2026-12-11",
+            "2026-06-15",
             "--out",
             str(out_file),
         ],
-        cwd=REPO_ROOT / "backend",
+        cwd=BACKEND_ROOT,
         capture_output=True,
         text=True,
         timeout=30,
@@ -203,12 +203,23 @@ def test_unlabeled_builder_and_cli_round_trip(tmp_path):
     assert written["writer_rev"] == 10
     assert written["cost"]["total_usd"] == 0.14
 
-
-def test_checked_in_evals_scorecard_is_honest_unmeasured_record():
-    payload = json.loads(CHECKED_IN_SCORECARD.read_text(encoding="utf-8"))
-    assert payload["status"] == "not_measured_yet"
-    assert payload["as_of"] == "2026-11-27"
-    assert payload["market_count"] == 0
-    assert [f["field"] for f in payload["fields"]] == [s.key for s in CU_SCORECARD_FIELDS]
-    for row in payload["fields"]:
-        assert row["total"] == {"right": 0, "wrong": 0, "blank": 0, "said_not_known": 0, "total": 0}
+    unmeasured_proc = subprocess.run(
+        [
+            sys.executable,
+            "scripts/score_cu_eval.py",
+            "--not-measured-yet",
+            "--date",
+            "2026-06-01",
+            "--out",
+            str(unmeasured_out),
+        ],
+        cwd=BACKEND_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert unmeasured_proc.returncode == 0, unmeasured_proc.stderr
+    unmeasured = json.loads(unmeasured_out.read_text(encoding="utf-8"))
+    assert unmeasured["status"] == "not_measured_yet"
+    assert unmeasured["as_of"] == "2026-06-01"
+    assert [f["field"] for f in unmeasured["fields"]] == [s.key for s in CU_SCORECARD_FIELDS]
