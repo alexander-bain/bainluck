@@ -1,47 +1,62 @@
-// The one line shown after each card.
+// The one line shown after a card.
 //
-// THE RULE, from playtesting: a line is about the person who was FARTHEST from
-// the answer, or about someone who was DEAD ON. Never about anyone in between,
-// and never about whoever happens to be leading. Three rounds of testing found
-// that a line aimed at the leader read as random, and that plain praise was not
-// funny. So:
+// WHO IT IS ABOUT, from playtesting: the person who was FARTHEST from the
+// answer, or someone who was DEAD ON. Never anyone in between, and never
+// whoever happens to be leading.
 //
-//   slider cards   someone dead on gets the line, unless somebody else missed
-//                  by 30 or more (a howler beats a bullseye); otherwise the
-//                  farthest person gets the card's own line, if they missed by
-//                  enough to deserve it;
-//   pick cards     everyone who made the worst pick is named together;
-//   order cards    everyone with the fewest pairs right.
+// WHEN IT SHOWS (429: A). The first set on the live page showed a line on
+// nearly every card, and eleven of twelve got the lowest rating: "the roasting
+// was not funny or entertaining". The lines that had been laughed at in the
+// file versions were short and turned on the subject itself. So a line now has
+// to be earned:
 //
-// When nobody earned a line, an "event" line may show instead (everyone too
-// high, three good cards running, the Coin beat everybody), but never on two
-// cards in a row. When there is nothing true and specific to say, the card
-// shows no line at all.
+//   • someone dead on gets one, unless somebody else missed by 30 or more;
+//   • otherwise the farthest person gets the card's own line, but only if they
+//     scored NOTHING on the card (a miss of 20 or more on a chance card). In
+//     real play the farthest of three people is 12 or more off on four cards in
+//     five, so a lower bar would put a line back on nearly every card;
+//   • a two-slider card counts a miss of 40 or more on either slider as well,
+//     and has its own line for having the two the wrong way round;
+//   • when nobody earned a line, a line about the table may show (everyone too
+//     high, three closest in a row, the Coin beat everybody), never on two
+//     cards running;
+//   • otherwise the card says nothing;
+//   • a TAP card (above or below, pick one of four) never gets a line.
 //
-// Every template is written so it reads correctly for one name or several:
-// `{has}`, `{is}`, `{was}` and `{s}` follow the number of names.
+// Lines call players by first name. Every template reads correctly for one
+// name or several: `{has}`, `{is}`, `{was}` and `{s}` follow the number of
+// names. `{d}` is how many points off the guess was.
 
-import { COIN_NAME, joinNames, pairsRight, pointsFor } from "./engine";
-import type { GamePack, PackCard, PlayerEntry, RoastLine } from "./types";
+import { COIN_NAME, duoParts, isTap, isValidGuess, joinNames, missFor, pointsFor, spokenNames } from "./engine";
+import type { GamePack, PackCard, PlayerEntry, RoastLine, SliderCard } from "./types";
 
-const CHANCE_FAR = 10;
-const CHANCE_HOWLER = 30;
-const COUNT_FAR = 2;
+/** On a two-slider card, a miss this big on either slider earns a line even if the other slider scored. */
+const DUO_EARNED_MISS = 40;
+const HOWLER = 30;
+
+/** Whether a slider guess was bad enough for a line: it scored nothing. A tap never earns one. */
+export function earnsLine(card: PackCard, guess: number): boolean {
+  if (isTap(card)) return false;
+  if (pointsFor(card, guess) === 0) return true;
+  return card.kind === "duo" && missFor(card, guess) >= DUO_EARNED_MISS;
+}
 
 const EXACT_LINES = [
-  "{n} hit it on the nose: {w}. Everybody else may take a moment.",
-  "{n} said {g}. The world says {w}. Suspicious.",
-  "Dead on, {n}. Nobody likes a show-off.",
+  "{n} said {g}. The world says {w}. Either {n} {is} a genius or {n} {is} the world.",
+  "Dead on at {g}. {n} {has} clearly played this before.",
+  "{n} matched the world to the point. Check {n} for notes.",
 ];
 
-const HOT_LINE = "{n} {has} landed three cards running. Somebody check {n} for notes.";
-const COLD_LINE = "{n} {has} scored nothing three cards running. It can only go up.";
-const ALL_HIGH_LINE = "Every one of you guessed too high. The world was not that excited.";
-const ALL_LOW_LINE = "Every one of you guessed too low. The world believed and you did not.";
-const COIN_LINE = "The Coin beat {n} on that one. It has never heard of any of this.";
+const HOT_LINE = "{n} {has} been the closest three cards running. Somebody check {n}’s phone.";
+const ALL_HIGH_LINE = "Every one of you guessed too high. In this room, everything happens.";
+const ALL_LOW_LINE = "Every one of you guessed too low. According to this room, nothing ever happens.";
+const COIN_LINE = "The Coin beat {n} on that one. It was not even listening.";
 
 interface Slot {
+  /** The player's whole name, as the game keeps it. */
   name: string;
+  /** What a line calls them. */
+  said: string;
   guess: number;
   points: number;
 }
@@ -88,161 +103,139 @@ export function fillLine(
   });
 }
 
-function unit(card: PackCard): string {
-  return card.kind === "chance" ? "%" : "";
+function unit(card: SliderCard): string {
+  return card.kind === "count" ? "" : "%";
 }
 
-/** How bad a pick is: 0 for the answer, larger the farther it sits from what was asked for. */
-export function pickBadness(card: PackCard, option: number): number {
-  if (card.kind === "ladder") return Math.abs(option - card.answer);
-  if (card.kind !== "pick") return 0;
-  const picked = card.options[option]?.percent ?? 0;
-  const answer = card.options[card.answer]?.percent ?? 0;
-  if (card.flavor === "longshot") return picked - answer;
-  if (card.flavor === "match") return Math.abs(picked - (card.target ?? 0)) - Math.abs(answer - (card.target ?? 0));
-  return answer - picked;
+function shown(card: SliderCard, value: number): string {
+  return `${value}${unit(card)}`;
 }
 
-function sliderLine(card: PackCard, slots: Slot[], index: number): RoastLine | null {
-  if (card.kind !== "chance" && card.kind !== "count") return null;
-  const far = card.kind === "chance" ? CHANCE_FAR : COUNT_FAR;
-  const misses = slots.map((s) => Math.abs(s.guess - card.answer));
-  const worst = Math.max(...misses);
-  const exact = slots.filter((_, i) => misses[i] === 0);
+function exactLine(card: SliderCard, slots: Slot[], index: number): RoastLine | null {
+  if (card.kind === "duo") return null;
+  const worst = Math.max(...slots.map((s) => missFor(card, s.guess)));
+  if (card.kind === "chance" && worst >= HOWLER) return null;
+  const exact = slots.filter((s) => s.guess === card.answer);
+  if (exact.length === 0) return null;
+  return {
+    text: fillLine(
+      EXACT_LINES[index % EXACT_LINES.length],
+      exact.map((s) => s.said),
+      { g: shown(card, card.answer), w: shown(card, card.answer) },
+      exact.length === slots.length,
+    ),
+    rule: "exact",
+    names: exact.map((s) => s.name),
+  };
+}
 
-  if (exact.length > 0 && !(card.kind === "chance" && worst >= CHANCE_HOWLER)) {
-    const names = exact.map((s) => s.name);
+function farLine(card: SliderCard, slots: Slot[]): RoastLine | null {
+  // The farthest is whoever missed by most (on a two-slider card, on either slider).
+  const worstMiss = Math.max(...slots.map((s) => missFor(card, s.guess)));
+  const first = slots.find((s) => missFor(card, s.guess) === worstMiss) as Slot;
+  if (!earnsLine(card, first.guess)) return null;
+  // People who made the very same guess are named together.
+  const group = slots.filter((s) => s.guess === first.guess);
+  const names = group.map((s) => s.name);
+  const said = group.map((s) => s.said);
+  const everyone = group.length === slots.length;
+
+  if (card.kind === "duo") {
+    const [a, b] = duoParts(first.guess);
+    const [wa, wb] = [card.parts[0].answer, card.parts[1].answer];
+    const flipped = a !== b && wa !== wb && a > b !== wa > wb;
+    if (flipped && card.roastFlip) {
+      return { text: fillLine(card.roastFlip, said, { d: worstMiss }, everyone), rule: "flip", names };
+    }
+    const second = Math.abs(b - wb) > Math.abs(a - wa);
+    const part = card.parts[second ? 1 : 0];
     return {
-      text: fillLine(
-        EXACT_LINES[index % EXACT_LINES.length],
-        names,
-        { g: `${exact[0].guess}${unit(card)}`, w: `${card.answer}${unit(card)}` },
-        names.length === slots.length,
-      ),
-      rule: "exact",
+      text: fillLine(card.roastFar, said, { part: part.short, g: `${second ? b : a}%`, w: `${part.answer}%`, d: worstMiss }, everyone),
+      rule: "far",
       names,
     };
   }
-  if (worst < far) return null;
 
-  // Everyone who shares the worst miss AND the same guess is named together.
-  const first = slots[misses.indexOf(worst)];
-  const group = slots.filter((s, i) => misses[i] === worst && s.guess === first.guess);
+  const values = { g: first.guess, w: card.answer, d: worstMiss };
   const template = first.guess > card.answer ? card.roastHigh : card.roastLow;
-  const names = group.map((s) => s.name);
-  return {
-    text: fillLine(template ?? "{n} said {g}. The world says {w}.", names, { g: first.guess, w: card.answer }, names.length === slots.length),
-    rule: "far",
-    names,
-  };
+  if (!template) return null;
+  return { text: fillLine(template, said, values, everyone), rule: "far", names };
 }
 
-function pickLine(card: PackCard, slots: Slot[]): RoastLine | null {
-  if (card.kind !== "pick" && card.kind !== "ladder") return null;
-  const wrong = slots.filter((s) => s.guess !== card.answer);
-  if (wrong.length === 0) return null;
-  let worst = wrong[0];
-  for (const s of wrong) {
-    if (pickBadness(card, s.guess) > pickBadness(card, worst.guess)) worst = s;
-  }
-  const group = wrong.filter((s) => s.guess === worst.guess);
-  const names = group.map((s) => s.name);
-  const picked = card.options[worst.guess];
-  const answer = card.options[card.answer];
-  return {
-    text: fillLine(
-      card.roastWrong,
-      names,
-      { pick: picked?.short ?? "", pp: picked?.percent ?? "", w: answer?.percent ?? "" },
-      names.length === slots.length,
-    ),
-    rule: "wrong",
-    names,
-  };
-}
+function tableLine(pack: GamePack, index: number, card: SliderCard, people: PlayerEntry[], slots: Slot[], coin: PlayerEntry | null): RoastLine | null {
 
-function orderLine(card: PackCard, slots: Slot[]): RoastLine | null {
-  if (card.kind !== "order") return null;
-  const right = slots.map((s) => pairsRight(card, s.guess));
-  const fewest = Math.min(...right);
-  if (fewest >= 3) return null;
-  const names = slots.filter((_, i) => right[i] === fewest).map((s) => s.name);
-  return { text: fillLine(card.roastWrong, names, {}, names.length === slots.length), rule: "wrong", names };
-}
-
-function eventLine(
-  pack: GamePack,
-  index: number,
-  people: PlayerEntry[],
-  slots: Slot[],
-  coin: PlayerEntry | null,
-): RoastLine | null {
-  const card = pack.cards[index];
-
-  if (coin && slots.length > 0) {
+  if (coin) {
     const coinPoints = pointsFor(card, coin.guesses[index] ?? null);
-    const bestPerson = Math.max(...slots.map((s) => s.points));
-    if (coinPoints > bestPerson && coinPoints - bestPerson >= 5) {
-      const names = slots.map((s) => s.name);
-      return { text: fillLine(COIN_LINE, names, {}, true), rule: "coin", names };
+    const best = Math.max(...slots.map((s) => s.points));
+    if (coinPoints - best >= 5) {
+      return { text: fillLine(COIN_LINE, slots.map((s) => s.said), {}, true), rule: "coin", names: slots.map((s) => s.name) };
     }
   }
 
   if (card.kind === "chance" && slots.length >= 2) {
-    if (slots.every((s) => s.guess - card.answer >= 5)) {
-      return { text: ALL_HIGH_LINE, rule: "allhigh", names: slots.map((s) => s.name) };
-    }
-    if (slots.every((s) => card.answer - s.guess >= 5)) {
-      return { text: ALL_LOW_LINE, rule: "alllow", names: slots.map((s) => s.name) };
-    }
+    if (slots.every((s) => s.guess - card.answer >= 5)) return { text: ALL_HIGH_LINE, rule: "allhigh", names: slots.map((s) => s.name) };
+    if (slots.every((s) => card.answer - s.guess >= 5)) return { text: ALL_LOW_LINE, rule: "alllow", names: slots.map((s) => s.name) };
   }
 
-  if (index >= 2) {
-    const lastThree = (p: PlayerEntry) =>
-      [index - 2, index - 1, index].map((i) => (p.guesses[i] === null ? null : pointsFor(pack.cards[i], p.guesses[i])));
-    const hot = people.filter((p) => lastThree(p).every((v) => v !== null && v >= 15));
-    if (hot.length > 0 && hot.length < Math.max(2, people.length)) {
-      const names = hot.map((p) => p.name);
-      return { text: fillLine(HOT_LINE, names), rule: "hot", names };
-    }
-    const cold = people.filter((p) => lastThree(p).every((v) => v === 0));
-    if (cold.length > 0 && cold.length < Math.max(2, people.length)) {
-      const names = cold.map((p) => p.name);
-      return { text: fillLine(COLD_LINE, names), rule: "cold", names };
+  if (index >= 2 && people.length >= 2) {
+    // The one player who was closest, alone, on each of the last three cards.
+    const closestOn = (i: number): string | null => {
+      const scored = people
+        .filter((p) => isValidGuess(pack.cards[i], p.guesses[i] ?? null))
+        .map((p) => ({ name: p.name, points: pointsFor(pack.cards[i], p.guesses[i]) }));
+      if (scored.length < 2) return null;
+      const top = Math.max(...scored.map((s) => s.points));
+      const winners = scored.filter((s) => s.points === top);
+      return winners.length === 1 ? winners[0].name : null;
+    };
+    const three = [closestOn(index - 2), closestOn(index - 1), closestOn(index)];
+    if (three[0] !== null && three[0] === three[1] && three[1] === three[2]) {
+      const slot = slots.find((s) => s.name === three[0]);
+      if (slot) return { text: fillLine(HOT_LINE, [slot.said]), rule: "hot", names: [slot.name] };
     }
   }
   return null;
 }
 
-const EVENT_RULES: RoastLine["rule"][] = ["coin", "allhigh", "alllow", "hot", "cold"];
+const TABLE_RULES: RoastLine["rule"][] = ["coin", "allhigh", "alllow", "hot"];
 
-export function isEventLine(line: RoastLine | null): boolean {
-  return line !== null && EVENT_RULES.includes(line.rule);
+export function isTableLine(line: RoastLine | null): boolean {
+  return line !== null && TABLE_RULES.includes(line.rule);
 }
 
 /**
  * The line for card `index`, or null. `people` are the human players (never the
  * Coin) in the order they joined; only those who answered the card count.
- * `coin` is passed only when the Coin is on the board. `previousWasEvent`
- * keeps event lines from showing on two cards in a row.
+ * `coin` is passed only when the Coin is on the board. `previousWasTable`
+ * keeps lines about the whole table from showing on two cards in a row.
  */
 export function roastFor(
   pack: GamePack,
   index: number,
   people: PlayerEntry[],
   coin: PlayerEntry | null,
-  previousWasEvent: boolean,
+  previousWasTable: boolean,
 ): RoastLine | null {
   const card = pack.cards[index];
-  const slots: Slot[] = people
-    .filter((p) => p.name !== COIN_NAME && p.guesses[index] !== null && p.guesses[index] !== undefined)
-    .map((p) => ({ name: p.name, guess: p.guesses[index] as number, points: pointsFor(card, p.guesses[index]) }));
+  // A tap card gets no line. It is right or wrong, the reveal already says who
+  // got it, and five quick taps should not stop five times to rate a joke.
+  if (isTap(card)) return null;
+  const humans = people.filter((p) => p.name !== COIN_NAME);
+  const spoken = spokenNames(humans.map((p) => p.name));
+  const slots: Slot[] = humans
+    .filter((p) => isValidGuess(card, p.guesses[index] ?? null))
+    .map((p) => ({
+      name: p.name,
+      said: spoken.get(p.name) ?? p.name,
+      guess: p.guesses[index] as number,
+      points: pointsFor(card, p.guesses[index]),
+    }));
   if (slots.length === 0) return null;
 
-  const own = sliderLine(card, slots, index) ?? pickLine(card, slots) ?? orderLine(card, slots);
+  const own = exactLine(card, slots, index) ?? farLine(card, slots);
   if (own) return own;
-  if (previousWasEvent) return null;
-  return eventLine(pack, index, people, slots, coin);
+  if (previousWasTable) return null;
+  return tableLine(pack, index, card, humans, slots, coin);
 }
 
 /** Every line of card `0..upTo`, in order, with the back-to-back rule applied. Lets any phone rebuild what was shown. */
@@ -254,7 +247,7 @@ export function roastHistory(
 ): (RoastLine | null)[] {
   const out: (RoastLine | null)[] = [];
   for (let i = 0; i <= upTo && i < pack.cards.length; i += 1) {
-    out.push(roastFor(pack, i, people, coin, i > 0 && isEventLine(out[i - 1])));
+    out.push(roastFor(pack, i, people, coin, i > 0 && isTableLine(out[i - 1])));
   }
   return out;
 }

@@ -23,7 +23,7 @@
       {
         "key": "closest_games",
         "title": "Coin-Flip Matchups",
-        "note": "Games on this slate priced closest to a 50–50 toss-up.",
+        "note": "Games on this slate closest to a 50–50 toss-up.",
         "atom_query": {
           "kind": "events",
           "sport_key": "basketball_nba",
@@ -37,7 +37,7 @@
       {
         "key": "prop_leaders",
         "title": "Season Stat Leaders",
-        "note": "Players priced highest across open NBA per-game leader markets.",
+        "note": "Players with the highest probabilities across open NBA per-game leader markets.",
         "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",
@@ -75,7 +75,7 @@
       {
         "key": "mvp_race",
         "title": "MVP Contenders",
-        "note": "Leading players priced highest in the regular-season MVP race.",
+        "note": "Leading players with the highest probabilities in the regular-season MVP race.",
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["mvp", "winner"],
@@ -104,7 +104,7 @@
       {
         "key": "award_races",
         "title": "Season Award Races",
-        "note": "Open NBA individual award fields priced closest at the top.",
+        "note": "Open NBA individual award fields with the tightest race at the top.",
         "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",

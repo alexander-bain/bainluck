@@ -2305,7 +2305,7 @@ def _price_is_unaccepted_offer(outcome) -> bool:
     every one of them: `yes_bid 0.0000 / yes_ask 0.1000`, and `last_price 0.0000`
     in every snapshot the market has ever had. Nobody has bid on any golfer in this
     tournament and nobody has ever traded one. The 10% is Kalshi's ask — the
-    `_kalshi_yes_probability` ask-only arm publishing an unaccepted offer as a
+    former `_kalshi_yes_probability` fallback publishing an unaccepted offer as a
     probability, which is this queue's "a number never written, something else shown
     in its place".
 

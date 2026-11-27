@@ -20,6 +20,8 @@ import XCTest
 /// prices arrive", which is the same defect.
 final class FuturesRowSaysNothingAboutAbsence5872Tests: XCTestCase {
 
+    private let pricedBranch = "if let outcomes = market.topOutcomes?.filter({ $0.probability != nil }), !outcomes.isEmpty {"
+
     private func browseSource() throws -> String {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // BainLuckTests
@@ -82,7 +84,7 @@ final class FuturesRowSaysNothingAboutAbsence5872Tests: XCTestCase {
     func testAPricedRowStillDrawsItsOutcomes() throws {
         let code = try browseCode()
         XCTAssertTrue(
-            code.contains("if let outcomes = market.topOutcomes, !outcomes.isEmpty {"),
+            code.contains(pricedBranch),
             "the priced branch's own condition is gone")
         XCTAssertTrue(
             code.contains("FuturesBrowseOutcomeRow(outcome: outcome, tint: category.color)"),
@@ -95,7 +97,7 @@ final class FuturesRowSaysNothingAboutAbsence5872Tests: XCTestCase {
     /// something back where nothing belongs.
     func testTheUnpricedBranchHasNoElse() throws {
         let code = try browseCode()
-        guard let branch = code.range(of: "if let outcomes = market.topOutcomes, !outcomes.isEmpty {") else {
+        guard let branch = code.range(of: pricedBranch) else {
             return XCTFail("the branch this test is about is gone; testAPricedRowStillDrawsItsOutcomes says why")
         }
         // The 400 characters after the branch opens comfortably cover its body

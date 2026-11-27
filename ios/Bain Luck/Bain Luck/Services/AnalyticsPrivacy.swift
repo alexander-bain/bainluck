@@ -251,7 +251,7 @@ enum AnalyticsPrivacy {
         "query_hash", "query_length", "query_word_count",
         // Screens / navigation
         "screen_name", "page_type", "click_type", "from_page", "to_page",
-        "days_since_last", "session_number",
+        "days_since_last", "session_number", "occurred_at_epoch",
         "is_first_session", "entry_type", "first_screen", "destination_type", "medium",
         // Follow & pin (#13261)
         "relation_type",
@@ -259,7 +259,7 @@ enum AnalyticsPrivacy {
         "event_id", "market_id", "item_id", "item_type", "result_type",
         "sport", "category", "status", "entry_method", "range", "surface", "source",
         // Auth / onboarding
-        "method", "step", "step_name", "teams_count",
+        "method", "entry_point", "step", "step_name", "teams_count",
         "last_step_completed", "last_step_name",
         "error_domain", "error_code", "underlying_domain", "underlying_code",
         // Discover interaction

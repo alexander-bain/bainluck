@@ -235,25 +235,25 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "M17",
         "L2 serves a fresh primary slot built by a DIFFERENT release",
         CACHE,
-        "        if payload_is_current_build(primary):\n            return with_availability(primary, AVAILABILITY_LIVE), \"live\"",
+        "        if payload_is_current_version(primary):\n            return with_availability(primary, AVAILABILITY_LIVE), \"live\"",
         "        if True:\n            return with_availability(primary, AVAILABILITY_LIVE), \"live\"",
     ),
     (
         "M18",
         "the mirror becomes a SECOND DOOR for the same dead build's bytes",
         CACHE,
-        "    if not payload_is_current_build(mirror):",
+        "    if not payload_is_current_version(mirror):",
         "    if False:",
     ),
     (
         "M19",
         "the fail-open goes — an unknown running build kills the cache everywhere",
         CACHE,
-        "    running = current_build_id()\n    if not running or running == UNKNOWN_BUILD:\n        return True",
+        "    running = current_cache_version()\n    if not running or running == UNKNOWN_BUILD:\n        return True",
         # 🔴 THE REPLACEMENT NEUTERS THE CONDITION RATHER THAN DELETING THE
         # BLOCK, AND IT HAS TO STAY MULTI-LINE. The obvious form of this mutant
         # is to drop the two guard lines, leaving the bare
-        # `running = current_build_id()` — and that reddens CI on the branch
+        # `running = current_cache_version()` — and that reddens CI on the branch
         # that adds it, in `scan_mutation_residue.py` Pass B, against THIS FILE.
         #
         # Pass B's test is `repl in text and needle not in text`. A registry
@@ -263,7 +263,7 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         # found verbatim, and reads as a mutant copied outside its target.
         # M16 and M17 escape it by being multi-line, M18 by being under 24
         # chars, and this one is the shape that has neither defence.
-        "    running = current_build_id()\n    if False:\n        return True",
+        "    running = current_cache_version()\n    if False:\n        return True",
     ),
 ]
 

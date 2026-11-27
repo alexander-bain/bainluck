@@ -124,7 +124,7 @@ def test_final_statuses_match_the_in_memory_tier_s_own_definition():
         events_route._game_markets_cache[1] = (
             stale_for_a_live_game,
             status,
-            events_route._current_build_id(),
+            gmc.current_cache_version(),
             {"x": 1},
         )
         assert events_route._read_game_markets_memo(1) == {"x": 1}

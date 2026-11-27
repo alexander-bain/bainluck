@@ -218,8 +218,8 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
     (
         "M15",
         ROUTE,
-        "L1 serves an entry built by a DIFFERENT release, at any age",
-        """    if cached_build != _current_build_id():\n        return None\n    age = _time.time() - cached_at""",
+        "L1 serves an entry built by a DIFFERENT cache version, at any age",
+        """    if cached_version != rfc.current_cache_version():\n        return None\n    age = _time.time() - cached_at""",
         """    if False:\n        return None\n    age = _time.time() - cached_at""",
     ),
     (
@@ -249,8 +249,8 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
     (
         "M19",
         MODULE,
-        "the stored payload stops naming its build — the check goes blind",
-        '''    envelope[SOURCE_STATUS_FIELD] = str(source_status or "")\n    envelope[BUILD_FIELD] = current_build_id()''',
+        "the stored payload stops naming its version — the check goes blind",
+        '''    envelope[SOURCE_STATUS_FIELD] = str(source_status or "")\n    envelope[BUILD_FIELD] = current_cache_version()''',
         # Multi-line, so Pass B cannot read the replacement as a loose mutant.
         # An empty build reads as "cannot tell" and `payload_is_current_build`
         # fails OPEN on it — which is correct, and is exactly why a writer that

@@ -69,7 +69,8 @@ nonisolated enum HeadlineCellFit12822 {
         nowFontSize: CGFloat,
         secondProminentFontSize: CGFloat,
         secondRegularFontSize: CGFloat,
-        headerFontSize: CGFloat
+        headerFontSize: CGFloat,
+        quietFontSize: CGFloat = HeadlineStyleTable199.quietTextBaseSize(.page)
     ) -> ResolvedLayout {
         let cols = model.columns
         guard !cols.isEmpty else {
@@ -104,6 +105,9 @@ nonisolated enum HeadlineCellFit12822 {
             return cols[idx].role == .now ? 8 : 0
         }
 
+        let cappedQuietFont: CGFloat = min(quietFontSize, isAccessibilitySize ? 18 : 13)
+        var noticeSingleLineWidths = [CGFloat](repeating: 0, count: cols.count)
+
         let naturalWidths: [CGFloat] = cols.enumerated().map { idx, col in
             guard isActiveCol[idx] else { return 0 }
             let hasSup = model.rows.contains { row in
@@ -122,9 +126,15 @@ nonisolated enum HeadlineCellFit12822 {
                 isManyColumnScoreboard: manyCols,
                 hasSuperscript: hasSup
             )
+            var noticeTwoLineW: CGFloat = 0
             for row in model.rows where idx < row.cells.count {
                 let text = row.cells[idx]
-                if !text.isEmpty {
+                guard !text.isEmpty else { continue }
+                if (col.role == .now || col.role == .chance) && row.quietNoticeColumns.contains(idx) {
+                    let singleW = ceil(measureWidth(text, fontSize: cappedQuietFont, weight: .medium, rounded: false, monospacedDigits: false))
+                    noticeSingleLineWidths[idx] = max(noticeSingleLineWidths[idx], singleW)
+                    noticeTwoLineW = max(noticeTwoLineW, optimalTwoLineWidth(text, fontSize: cappedQuietFont))
+                } else {
                     candidates.append(text)
                 }
             }
@@ -135,7 +145,7 @@ nonisolated enum HeadlineCellFit12822 {
                     let maxCell = candidates.map {
                         measureWidth($0, fontSize: cappedNow, weight: .black, rounded: true, monospacedDigits: true)
                     }.max() ?? 0
-                    return maxCell
+                    return max(maxCell, noticeTwoLineW)
 
                 case .score, .projected, .pregame:
                     let maxCell = candidates.map {
@@ -196,10 +206,24 @@ nonisolated enum HeadlineCellFit12822 {
             ? usableWidth
             : max(usableWidth - minIdentityReservation, 100)
 
-        if naturalTotal <= columnRowBudget {
+        let stackedAwareWidths: [CGFloat] = {
+            guard stacksVertically else { return naturalWidths }
+            var adjusted = naturalWidths
+            for idx in adjusted.indices where noticeSingleLineWidths[idx] > adjusted[idx] {
+                let otherSum = adjusted.enumerated()
+                    .filter { $0.offset != idx }
+                    .reduce(CGFloat(0)) { $0 + $1.element }
+                let roomForNotice = max(adjusted[idx], columnRowBudget - otherSum - naturalGaps)
+                adjusted[idx] = min(noticeSingleLineWidths[idx], roomForNotice)
+            }
+            return adjusted
+        }()
+        let resolvedNaturalSum = stackedAwareWidths.reduce(0, +)
+
+        if resolvedNaturalSum + naturalGaps <= columnRowBudget {
             return ResolvedLayout(
                 stacksRowsVertically: stacksVertically,
-                columnWidths: naturalWidths,
+                columnWidths: stackedAwareWidths,
                 columnSpacing: naturalSpacing,
                 extraLeadingGaps: naturalExtraGaps,
                 fontScale: 1.0
@@ -234,6 +258,22 @@ nonisolated enum HeadlineCellFit12822 {
             extraLeadingGaps: tightExtraGaps,
             fontScale: ratio
         )
+    }
+
+    private static func optimalTwoLineWidth(_ text: String, fontSize: CGFloat) -> CGFloat {
+        let words = text.split(separator: " ").map(String.init)
+        guard words.count > 1 else {
+            return ceil(measureWidth(text, fontSize: fontSize, weight: .medium, rounded: false, monospacedDigits: false))
+        }
+        var best = CGFloat.greatestFiniteMagnitude
+        for split in 1..<words.count {
+            let line1 = words[..<split].joined(separator: " ")
+            let line2 = words[split...].joined(separator: " ")
+            let w1 = measureWidth(line1, fontSize: fontSize, weight: .medium, rounded: false, monospacedDigits: false)
+            let w2 = measureWidth(line2, fontSize: fontSize, weight: .medium, rounded: false, monospacedDigits: false)
+            best = min(best, ceil(max(w1, w2)))
+        }
+        return best
     }
 
     static func measureWidth(

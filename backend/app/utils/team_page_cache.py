@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -158,24 +159,42 @@ async def read_team_page_cache(scope_key: int, norm_id: str) -> dict | None:
     return copy.deepcopy(payload)
 
 
-async def write_team_page_cache(scope_key: int, norm_id: str, payload: dict) -> None:
-    """Write team page payload to L1 and shared Redis (fail-open on errors)."""
-    ttl = ttl_for_team_payload(payload)
+async def write_team_page_cache(
+    scope_key: int,
+    norm_id: str,
+    payload: dict,
+    *,
+    max_expires_at: float | None = None,
+    oldest_source_ts: float | None = None,
+) -> None:
+    """Write team page payload to L1 and shared Redis, clamped to piece freshness."""
+    base_ttl = float(ttl_for_team_payload(payload))
+    now_wall = time.time()
+    eff_expires_at = now_wall + base_ttl
+    if max_expires_at is not None:
+        eff_expires_at = min(eff_expires_at, float(max_expires_at))
+    elif oldest_source_ts is not None:
+        eff_expires_at = min(eff_expires_at, float(oldest_source_ts) + base_ttl)
+    rem = min(base_ttl, eff_expires_at - now_wall)
+    if rem <= 0.0:
+        return
+
     key = (scope_key, norm_id)
-    _store_l1(key, time.monotonic() + ttl, payload)
+    _store_l1(key, time.monotonic() + rem, payload)
 
     if not os.getenv("REDIS_URL", "").strip():
         return
 
     try:
         encoded = json.dumps(
-            {"ts": time.time(), "ttl": ttl, "payload": payload},
+            {"ts": now_wall, "ttl": rem, "payload": payload},
             default=str,
         )
+        redis_ttl = max(1, int(math.ceil(rem)))
         client = await get_shared_async_redis()
         redis_key = f"{TEAM_PAGE_REDIS_PREFIX}{norm_id}"
         await bounded_redis_call(
-            lambda: client.setex(redis_key, ttl, encoded),
+            lambda: client.setex(redis_key, redis_ttl, encoded),
             deadline_ms=TEAM_PAGE_REDIS_DEADLINE_MS,
         )
     except Exception:

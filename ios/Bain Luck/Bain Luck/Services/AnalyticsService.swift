@@ -31,10 +31,27 @@ enum AnalyticsService {
         // analytics transmission still requires the unchanged consent boundary.
         SportsLoadLocalTrace.capture(name, parameters)
         #endif
-        guard TelemetryConsent.shared.isGranted else { return }
+        guard TelemetryConsent.shared.isGranted else {
+            // Ruling 417: C — hold unanswered first-session events locally (zero
+            // network traffic, scrubbed by AnalyticsPrivacy before hitting disk)
+            // until Allow or No thanks / 30-day expiry. Watch companion events carry
+            // an authorizationEpoch and stay excluded here.
+            if authorizationEpoch == nil, TelemetryConsent.shared.needsChoice {
+                HeldAnalyticsQueue417C.shared.enqueue(event: name, parameters: parameters)
+            }
+            return
+        }
         guard let sanitized = AnalyticsPrivacy.sanitize(event: name, parameters: parameters) else {
             return
         }
+        emitSanitized(name: name, sanitized: sanitized, authorizationEpoch: authorizationEpoch)
+    }
+
+    private nonisolated static func emitSanitized(
+        name: String,
+        sanitized: [String: Any],
+        authorizationEpoch: UUID? = nil
+    ) {
         if let authorizationEpoch {
             TelemetryConsent.shared.withAnalyticsAuthorization(epoch: authorizationEpoch) {
                 if let emitter = eventEmitterForTests {
@@ -49,6 +66,24 @@ enum AnalyticsService {
             } else {
                 Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
             }
+        }
+    }
+
+    /// Ruling 417: C — flush held pre-consent events once in chronological order
+    /// with their original `occurred_at_epoch` immediately after Allow is granted.
+    nonisolated static func flushHeldEventsIfConsented(
+        queue: HeldAnalyticsQueue417C = .shared
+    ) {
+        guard TelemetryConsent.shared.isGranted else { return }
+        let heldEvents = queue.drainForFlush()
+        for held in heldEvents {
+            guard let sanitized = AnalyticsPrivacy.sanitize(
+                event: held.name,
+                parameters: held.foundationParametersWithOccurredAt()
+            ) else {
+                continue
+            }
+            emitSanitized(name: held.name, sanitized: sanitized)
         }
     }
 

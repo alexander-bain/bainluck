@@ -579,17 +579,52 @@ final class FirstRunViewModel212A: ObservableObject {
         authManager: AuthManager,
         onDismiss: () -> Void
     ) {
+        let wasAlreadyOnboarded = defaults.bool(forKey: FirstRunStorageKeys212A.onboardedKey)
         defaults.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
 
-        if !categoryInterests.isEmpty {
-            defaults.set(categoryInterests, forKey: FirstRunStorageKeys212A.localInterestsKey)
+        var mergedInterests = (defaults.dictionary(forKey: FirstRunStorageKeys212A.localInterestsKey) as? [String: Double]) ?? [:]
+        // Picking a category in the checklist can raise a low stored level, while
+        // untouched or higher stored levels stay put (#13779 / Fable ask #2).
+        for (cat, weight) in categoryInterests {
+            if let existing = mergedInterests[cat] {
+                if weight > existing {
+                    mergedInterests[cat] = weight
+                }
+            } else {
+                mergedInterests[cat] = weight
+            }
+        }
+        if !mergedInterests.isEmpty {
+            defaults.set(mergedInterests, forKey: FirstRunStorageKeys212A.localInterestsKey)
+        }
+
+        let existingPrefs = FirstRunPreferences212A.load(defaults: defaults)
+        var mergedCategories = Set(existingPrefs.boostedCategories)
+        var mergedTerms = Set(existingPrefs.boostedTerms)
+        var mergedMarketIds = Set(existingPrefs.boostedMarketIds)
+        for (cat, weight) in categoryInterests where weight > 0.5 {
+            mergedCategories.insert(cat)
+        }
+        mergedTerms.formUnion(boostedTerms)
+        mergedMarketIds.formUnion(pickedMarketIds)
+
+        let addedNewBoost = mergedCategories != Set(existingPrefs.boostedCategories)
+            || mergedTerms != Set(existingPrefs.boostedTerms)
+            || mergedMarketIds != Set(existingPrefs.boostedMarketIds)
+        let savedAtEpoch: TimeInterval?
+        if mergedCategories.isEmpty && mergedTerms.isEmpty && mergedMarketIds.isEmpty {
+            savedAtEpoch = existingPrefs.savedAtEpoch
+        } else if let priorEpoch = existingPrefs.savedAtEpoch, !addedNewBoost {
+            savedAtEpoch = priorEpoch
+        } else {
+            savedAtEpoch = Date().timeIntervalSince1970
         }
 
         let prefs = FirstRunPreferences212A(
-            boostedCategories: Array(Set(categoryInterests.filter { $0.value > 0.5 }.keys)).sorted(),
-            boostedTerms: boostedTerms,
-            boostedMarketIds: Array(pickedMarketIds).sorted(),
-            savedAtEpoch: Date().timeIntervalSince1970
+            boostedCategories: Array(mergedCategories).sorted(),
+            boostedTerms: Array(mergedTerms).sorted(),
+            boostedMarketIds: Array(mergedMarketIds).sorted(),
+            savedAtEpoch: savedAtEpoch
         )
         prefs.save(defaults: defaults)
 
@@ -620,6 +655,9 @@ final class FirstRunViewModel212A: ObservableObject {
                 await authManager?.refreshProfile()
             }
             isFinishing = false
+        }
+        if defaults === UserDefaults.standard {
+            AnonymousLifecycleCounts424A.shared.recordFirstRunFinished(wasAlreadyOnboarded: wasAlreadyOnboarded)
         }
         onDismiss()
     }

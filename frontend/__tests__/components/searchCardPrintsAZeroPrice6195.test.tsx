@@ -53,16 +53,10 @@
  * `open` — which is why the card takes its numeric branch at all and does not
  * print the `Won`/`Lost` verdicts of #5552 over these legs.
  *
- * Absent is not zero (ruling 051). The null control is the other half of the
- * claim: this ship makes a PRICED-AT-NOTHING leg print a number, and it must
- * leave a leg we hold no price for printing a dash.
+ * Absent is not zero (ruling 051). A stored zero still prints 0%, and the
+ * card leaves out a leg with no probability under rulings 250: A and 418: A.
  *
- * ## Mutation-checked 3/3, with the counts, because this file is a PIN
- *
- * The render is already correct, so every assertion here is green on arrival and
- * none of them is red-first. A characterisation test that was never observed to
- * fail is indistinguishable from one that cannot, so each guarded line was broken
- * in turn and the kills recorded:
+ * ## Original formatter mutation results
  *
  *   | mutant | edit | failed |
  *   |---|---|---|
@@ -70,11 +64,9 @@
  *   | M2 | `probabilityParts`: drop `&& prob > 0` from the `<1%` clamp | 3/4 |
  *   | M3 | `formatProbability`: return `"0%"` for null instead of `"-"` | 1/4 |
  *
- * M2 leaves "prints no dash" green on purpose — `<1%` is not a dash, and that
- * test is aimed at the erasure, not the inflation. M3 is killed by the ruling-051
- * control and by NOTHING ELSE, which is the evidence that the control is
- * load-bearing rather than decorative: delete it and a build that prints "0%"
- * over a price we do not have ships green.
+ * M2 leaves "prints no dash" green because that test covers erasure.
+ * The original M3 exercised the formatter's missing-number cell. The current
+ * card control asserts the name is absent and all three stored zeros stay.
  */
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -147,7 +139,7 @@ const SPECIMEN: FuturesOutcome[] = [
  * inline style is `width:0%` for exactly the legs under test, so
  * `expect(html).toContain("0%")` passes on a card that prints five dashes — it
  * would be an assertion that cannot fail, which is worse than no assertion.
- * Read the cell, and prove the reader is holding five of them before reading any.
+ * Read the cells directly so the row count and the printed values are both tested.
  */
 function probabilityCells(m: FuturesMarket): string[] {
   const html = renderToStaticMarkup(<FuturesCard market={m} />);
@@ -206,27 +198,17 @@ describe("#6195 — the web search card prints a stored zero as a number", () =>
     }
   });
 
-  it("still prints a dash for a leg we hold NO price for (absent is not zero)", () => {
-    // Ruling 051. The one distinction this ship must not flatten — without it the
-    // whole file is satisfied by `formatProbability` returning "0%" for anything.
-    //
-    // FIVE legs, not the specimen's six, and that is not a convenience: the card
-    // slices to five leader-first (#2789), and an unpriced leg sorts to the BOTTOM,
-    // so on a six-row market it is the row the slice drops. Written as six, this
-    // control renders `["99%", "0%", "0%", "0%", "0%"]` and asserts nothing about
-    // absence at all — it passes against a build that prints "0%" for null, which
-    // is the precise defect it exists to catch. Measured, not reasoned: that is the
-    // array this test returned before the fixture was shortened.
-    const withNull = [
+  it("omits an unpriced leg and prints 0% for the three stored zeros", () => {
+    const withNull = market([
       SPECIMEN[0],
       outcome(89617306, "NBA Finals", null),
       ...SPECIMEN.slice(2, 5),
-    ];
-    const cells = probabilityCells(market(withNull));
-    expect(cells).toHaveLength(5);
-    expect(cells.filter((c) => c === "-")).toHaveLength(1);
-    // And the OTHER zeros are untouched by their neighbour's absence.
-    expect(cells.filter((c) => c === "0%")).toHaveLength(3);
+    ]);
+
+    expect(renderToStaticMarkup(<FuturesCard market={withNull} />)).not.toContain(
+      "NBA Finals",
+    );
+    expect(probabilityCells(withNull)).toEqual(["99%", "0%", "0%", "0%"]);
   });
 
   it("keeps UX-P046's floor: a small-but-real price is <1%, never 0%", () => {

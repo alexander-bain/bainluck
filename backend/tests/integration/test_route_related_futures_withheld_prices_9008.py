@@ -13,12 +13,13 @@ SYNTHETIC ROWS, LABELLED: a football fixture so the harness's sport net
 applies unchanged (the #8848 file's shape); every id and price is invented.
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tests.integration.test_route_related_futures import _make_market, _MockResult
+from tests.integration.test_route_related_futures import _make_event, _make_market, _MockResult
 from tests.integration.test_route_related_futures_cfl_7851 import (
     _football_event,
     _get,
@@ -143,6 +144,38 @@ async def test_a_refused_rail_leg_leaves_and_its_priced_sibling_stays(monkeypatc
     body, _ = await _body(monkeypatch, {HALF: {DUKE_HALF}})
     assert _rail_ids(body) == {STAN_HALF}
     assert body["total_count"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bid", [0.0, 0.20])
+async def test_season_outlook_omits_a_qualifier_with_no_buyer(monkeypatch, bid):
+    event_id = next(_EVENT_IDS)
+    event = _make_event(
+        id=event_id,
+        home_team="Belmont Bruins",
+        away_team="St. Bonaventure Bonnies",
+        status="scheduled",
+        sport_key="basketball_ncaab",
+    )
+    market = _make_market(id=13785914, name="Men's Championship Game Qualifiers", source="kalshi")
+    market.external_id = "KXMARMADROUND-27T2"
+    market.category = "basketball"
+    market.group_id = None
+    market.market_metadata = {}
+    market.mutually_exclusive = False
+    market.last_updated = datetime.now(timezone.utc)
+    outcome = _outcome(137859141, market, "St. Bonaventure Bonnies", 0.21)
+    outcome.external_id = "KXMARMADROUND-27T2-SBU"
+    outcome.last_updated = market.last_updated
+    outcome.current_yes_bid = bid
+    outcome.current_yes_ask = 0.22 if bid else 0.21
+    outcome.resolution_source = None
+    outcome.is_winner = None
+    market.outcomes = [outcome]
+    body = await _get(monkeypatch, _session(event, [market], [outcome], []), event_id)
+    rows = body["home_team_futures"] + body["away_team_futures"]
+    entries = [row for row in rows if row.get("market_id") == market.id]
+    assert [row["probability"] for row in entries] == ([0.21] if bid else [])
 
 
 @pytest.mark.asyncio

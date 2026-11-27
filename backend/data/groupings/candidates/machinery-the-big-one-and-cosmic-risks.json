@@ -41,7 +41,7 @@
         "fallback_title": "Near-Earth Meteor Strike Risks",
         "item_noun": "charts",
         "preserve_note": true,
-        "note": "This chart tracks how markets price a 5-kiloton meteor strike in 2026 over the past week.",
+        "note": "This chart tracks the probability of a 5-kiloton meteor strike in 2026 over the past week.",
         "atom_query": {
           "kind": "market_history",
           "fun_sub_tag": "batch9-cosmic-history",

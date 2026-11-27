@@ -51,9 +51,16 @@ struct DiscoverSwipeState: Equatable, Sendable {
     private(set) var axisLatched = false
     private(set) var isHorizontal = false
 
-    /// Card opacity. Clamped at 0: `1 - 400/300` is negative at full exit.
+    /// Card opacity. Right drags keep the card solid because right-swipe keeps the card (#13769 / 420: D);
+    /// left drags fade as the card exits.
     var opacity: Double {
-        removing ? 0 : max(0, 1.0 - Double(abs(offset)) / Double(Self.fadeDistance))
+        if removing { return 0 }
+        guard offset < 0 else { return 1.0 }
+        return max(0, 1.0 - Double(-offset) / Double(Self.fadeDistance))
+    }
+
+    var trayProgress: Double {
+        min(Double(abs(offset)) / Double(Self.commitDistance), 1.0)
     }
 
     var overlayOpacity: Double {
@@ -86,12 +93,22 @@ struct DiscoverSwipeState: Equatable, Sendable {
 
     /// Resolve the gesture. Always clears the per-gesture axis latch, whether the
     /// drag committed or sprang back.
+    ///
+    /// Per ruling 420: D (#13769), a committed right swipe (`outcome == .right`)
+    /// keeps the card on screen (`offset = 0`, `removing = false`) while filling
+    /// its Like heart; only a committed left swipe exits off-screen.
     mutating func end(width: CGFloat) -> DiscoverSwipeOutcome {
         let outcome: DiscoverSwipeOutcome
         if commits(width: width) {
-            outcome = width > 0 ? .right : .left
-            offset = width > 0 ? Self.exitOffset : -Self.exitOffset
-            removing = true
+            if width > 0 {
+                outcome = .right
+                offset = 0
+                removing = false
+            } else {
+                outcome = .left
+                offset = -Self.exitOffset
+                removing = true
+            }
         } else {
             outcome = .none
             offset = 0

@@ -3775,6 +3775,38 @@ class ClientTimingEvent(Base):
     )
 
 
+class AnonymousInstallCount(Base):
+    """434: A / 424: A — daily aggregate install lifecycle counts (#13261).
+
+    Stores ONLY summed daily counts keyed by ``(day, app_version, event)`` for
+    the three pre-consent lifecycle milestones (``first_open``,
+    ``first_run_finished``, ``previous_session_crashed``). Zero per-event rows,
+    zero IP addresses, and zero user/device/install identifiers by construction.
+    """
+
+    __tablename__ = "anonymous_install_counts"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True, nullable=False)
+    app_version: Mapped[str] = mapped_column(
+        String(16), primary_key=True, nullable=False
+    )
+    event: Mapped[str] = mapped_column(String(32), primary_key=True, nullable=False)
+    count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "event IN ('first_open', 'first_run_finished', 'previous_session_crashed')",
+            name="ck_anon_install_counts_event",
+        ),
+        CheckConstraint(
+            "count >= 0",
+            name="ck_anon_install_counts_count_nonneg",
+        ),
+    )
+
+
 class OpenFuturesOutcome(Base):
     """#4437 Decide 89-A: the outcome NAMES of open markets, and nothing else.
 

@@ -168,4 +168,62 @@ describe("363: A blind decks grading helpers and pages", () => {
     );
     expect(feContainersRaw).toBe(beContainersRaw);
   });
+
+  test("#13551 Friday 11-card light blind forms deck is uniform, unlabelled, and key stays out of repo", () => {
+    const feDataDir = path.join(process.cwd(), "data");
+    const beDataDir = path.resolve(process.cwd(), "..", "backend", "data", "discover");
+    const nov27Raw = fs.readFileSync(
+      path.join(feDataDir, "forms_blind_deck_public_2026_11_27.json"),
+      "utf-8",
+    );
+    const nov27 = JSON.parse(nov27Raw);
+
+    expect(nov27.deck_id).toBe("forms-blind-deck-2026-11-27");
+    expect(nov27.blind).toBe(true);
+    expect(nov27.color_scheme).toBe("light");
+    expect(nov27.image_width_px).toBe(780);
+    expect(nov27.css_width_px).toBe(390);
+    expect(nov27.sealed_checksum_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(nov27.forms).toHaveLength(11);
+
+    const lowered = nov27Raw.toLowerCase();
+    for (const secretKey of [
+      "form_id",
+      "display_name",
+      "source_slug",
+      "kit",
+      "anchor",
+      "candidate",
+      "scoreboard",
+      "dated_tiles",
+      "one_in_n",
+      "casting_sheet",
+      "bond",
+      "elon",
+      "cfb",
+      "ceasefire",
+    ]) {
+      expect(lowered).not.toContain(secretKey);
+    }
+
+    const ids = new Set<string>();
+    const urls = new Set<string>();
+    for (const item of nov27.forms) {
+      expect(Object.keys(item).sort()).toEqual(["height_px", "image_url", "item_id", "width_px"]);
+      expect(item.item_id).toMatch(/^s\d{2}$/);
+      expect(item.width_px).toBe(780);
+      expect(item.height_px).toBeGreaterThan(200);
+      expect(item.image_url).toContain("/forms-deck-2026-11-27/card-");
+      ids.add(item.item_id);
+      urls.add(item.image_url);
+    }
+    expect(ids.size).toBe(11);
+    expect(urls.size).toBe(11);
+
+    const leaked = [
+      ...fs.readdirSync(feDataDir),
+      ...fs.readdirSync(beDataDir),
+    ].filter((name) => name.includes("2026_11_27") && name.includes("key"));
+    expect(leaked).toEqual([]);
+  });
 });

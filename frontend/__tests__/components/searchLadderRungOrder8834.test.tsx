@@ -105,6 +105,12 @@ describe("C2 — FuturesCard keeps a ladder's served order", () => {
     expect(highlighted(html)).toEqual(["Above 4.00%"]);
   });
 
+  test("an open card skips a rung that has no current reading", () => {
+    const rows = SERVED_WINDOW.map((row, i) => i === 1 ? { ...row, probability: null } : row);
+    expect(labels(renderCard(market("Fed funds rate after Oct 2026 meeting?", rows))))
+      .toEqual(["Above 3.50%", "Above 4.00%", "Above 4.25%", "Above 4.50%"]);
+  });
+
   test("control: an entity field is still drawn leader-first with the top row highlighted", () => {
     const field = renderCard(market("Next Fed chair?", FIELD, 1));
     expect(labels(field)).toEqual(["Kevin Warsh", "Kevin Hassett", "Christopher Waller"]);

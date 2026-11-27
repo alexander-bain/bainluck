@@ -504,6 +504,7 @@ struct MachineryHistoryChartCardView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.timeZone) private var timeZone
     @ScaledMetric(relativeTo: .caption) private var titleSize: CGFloat = 13
     @ScaledMetric(relativeTo: .caption2) private var metaSize: CGFloat = 11
 
@@ -532,11 +533,29 @@ struct MachineryHistoryChartCardView: View {
     private var yMid: Int { Int((Double(yMin + yMax) / 2.0).rounded()) }
 
     var body: some View {
+        if chart.hasMovingSeries {
+            chartCardBody
+        }
+    }
+
+    @ViewBuilder
+    private var chartCardBody: some View {
         let spanText = MachineryDateFormatting12288.shortSpan(chart.startIso, chart.endIso)
         let shownSeries = Array(chart.series.prefix(3))
         let seriesHexes = MachineryChartSeriesPalette12288.resolvedHexes(
             for: shownSeries,
             isDark: colorScheme == .dark
+        )
+        let resolvedStartIso = chart.startIso.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (shownSeries.compactMap(\.points.first?.t).first ?? "")
+            : chart.startIso
+        let resolvedEndIso = chart.endIso.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (shownSeries.compactMap(\.points.last?.t).last ?? "")
+            : chart.endIso
+        let xAxisLabels = DiscoverCardChartRules13773.axisEndLabels(
+            startIso: resolvedStartIso,
+            endIso: resolvedEndIso,
+            timeZone: timeZone
         )
         let content = VStack(alignment: .leading, spacing: 8) {
             if dynamicTypeSize >= .xxxLarge {
@@ -688,6 +707,22 @@ struct MachineryHistoryChartCardView: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Probability trend chart for \(chart.title)")
+
+            if let xAxisLabels {
+                HStack(spacing: 8) {
+                    Text(xAxisLabels.start)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                    Spacer(minLength: 6)
+                    Text(xAxisLabels.end)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .foregroundStyle(secondaryInk)
+                .padding(.leading, 40)
+                .accessibilityIdentifier("machinery.historyChart.xAxis")
+            }
         }
 
         if compact {
@@ -1829,6 +1864,7 @@ struct MachineryDiscoverCardView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.machineryPreloadedImages12288) private var preloadedImages
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
     @ScaledMetric(relativeTo: .caption2) private var kickerSize: CGFloat = 11
     @ScaledMetric(relativeTo: .headline) private var titleSize: CGFloat = 17
     @ScaledMetric(relativeTo: .subheadline) private var rowSize: CGFloat = 14
@@ -1909,26 +1945,33 @@ struct MachineryDiscoverCardView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+
+        VStack(spacing: 0) {
+            if let onOpenContainer {
+                Button {
+                    onOpenContainer(card.slug, card.title)
+                } label: {
+                    content.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                NavigationLink(value: Route.containerHub(slug: card.slug, name: card.title)) {
+                    content.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 16, verticalPadding: 8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBgColor)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(borderColor, lineWidth: 1))
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.04), radius: 6, x: 0, y: 2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("discover.machineryCard.\(card.slug)")
-
-        if let onOpenContainer {
-            Button {
-                onOpenContainer(card.slug, card.title)
-            } label: {
-                content.contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        } else {
-            NavigationLink(value: Route.containerHub(slug: card.slug, name: card.title)) {
-                content.contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
     }
 
     @ViewBuilder

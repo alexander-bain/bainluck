@@ -268,7 +268,7 @@ struct MyStuffView: View {
             PinManagementView().environmentObject(pinManager)
         }
         .sheet(item: $checklistStepToOpen364A) { row in
-            FirstRunChecklistRootView364A(initialStep: row)
+            FirstRunChecklistRootView364A(initialStep: row, entryPoint: "my_stuff_banner")
                 .environmentObject(authManager)
                 .environmentObject(pinManager)
                 .environment(\.followManager295A, followManager)
@@ -482,12 +482,12 @@ struct MyStuffView: View {
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingView()
+            OnboardingView(entryPoint: "my_stuff")
                 .environmentObject(authManager)
         }
         #else
         .sheet(isPresented: $showOnboarding) {
-            OnboardingView()
+            OnboardingView(entryPoint: "my_stuff")
                 .environmentObject(authManager)
                 .frame(minWidth: 500, minHeight: 400)
         }
@@ -695,6 +695,8 @@ struct MyStuffView: View {
                 }
             }
             .padding(.horizontal, 16)
+            .frame(maxWidth: sizeClass == .regular ? MyStuffLandingLayout13770.singleColumnMaxWidth : .infinity)
+            .frame(maxWidth: .infinity)
             .accessibilityIdentifier("myStuffPinnedContent")
         }
     }

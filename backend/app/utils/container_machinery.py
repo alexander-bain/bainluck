@@ -2047,14 +2047,20 @@ def _canonical_market_outcome_map(
 
     rows: list[dict[str, Any]] = []
     already_has_rendered = False
+    field_complete = True
+    book_backed = False
+    has_no_bid = False
     for idx, o in enumerate(raw_outcomes):
         if not isinstance(o, Mapping):
             continue
         name = str(o.get("name") or o.get("outcome_name") or "").strip()
         if not name or is_placeholder_outcome_name(name) or _PLACEHOLDER_OUTCOME_RE.match(name):
             continue
+        book_backed |= "kalshi_no_bid" in o
+        has_no_bid |= bool(o.get("kalshi_no_bid"))
         prob = o.get("probability")
         if not isinstance(prob, (int, float)) or not math.isfinite(float(prob)):
+            field_complete &= bool(o.get("kalshi_no_bid"))
             continue
         p = float(prob)
         if p <= 0.0 or p >= 1.0:
@@ -2073,17 +2079,20 @@ def _canonical_market_outcome_map(
             }
         )
 
-    raw_sum = sum(float(r["probability"]) for r in rows)
-    if rows and not already_has_rendered and mutually_exclusive and raw_sum > 1.005:
+    supported_sum = math.fsum(float(r["probability"]) for r in rows if not r.get("kalshi_no_bid"))
+    if (
+        rows and not already_has_rendered and mutually_exclusive
+        and (supported_sum > 1.005 or (book_backed and (supported_sum >= 1 or not has_no_bid)))
+    ):
         normalize_display_probs(
             rows,
             key="probability",
             mutually_exclusive=True,
-            field_complete=True,
+            field_complete=field_complete,
             question=question,
         )
 
-    card_pcts = rendered_card_percents([r.get("probability") for r in rows])
+    card_pcts = [] if book_backed else rendered_card_percents([r.get("probability") for r in rows])
     by_oid: dict[int, int] = {}
     by_key: dict[str, int] = {}
     for idx, r in enumerate(rows):
@@ -3679,7 +3688,11 @@ async def _load_snapshot_from_db(
                     if fm.id not in paired_stage_mids:
                         continue
                 d_outs = list(detail.get("outcomes") or ())
-                card_pcts = rendered_card_percents([row.get("probability") for row in d_outs])
+                card_pcts = (
+                    []
+                    if any("kalshi_no_bid" in row for row in d_outs)
+                    else rendered_card_percents([row.get("probability") for row in d_outs])
+                )
                 by_oid: dict[int, int] = {}
                 by_key: dict[str, int] = {}
                 by_fold: dict[str, tuple[float, int, int]] = {}
@@ -3726,6 +3739,10 @@ async def _load_snapshot_from_db(
                             "opening_probability": row.get("opening_probability"),
                             "image_url": img_by_oid.get(oid),
                             "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,
+                            **(
+                                {"kalshi_no_bid": row["kalshi_no_bid"]}
+                                if "kalshi_no_bid" in row else {}
+                            ),
                         }
                     )
                 mpn = {

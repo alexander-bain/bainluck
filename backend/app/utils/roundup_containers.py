@@ -494,7 +494,7 @@ class RoundupProducer:
             "tag",
             tag if tag is not None else str(category).upper(),
         )
-        object.__setattr__(self, "kicker", str(kicker or "Round-up"))
+        object.__setattr__(self, "kicker", str(kicker) if kicker is not None else "Round-up")
         object.__setattr__(
             self,
             "story_key",

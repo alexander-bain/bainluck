@@ -82,7 +82,19 @@ from app.utils.sport_keys import (
     is_season_variant,
     sport_family_key,
 )
+from app.utils.futures_price_screen import (
+    withheld_price_outcome_ids_for_markets as _CANONICAL_WITHHELD_PRICE_FN,
+)
 from app.utils.statement_timeout import is_statement_timeout
+from app.utils.team_futures_shared_cache import (
+    MARKET_CACHE_TTL_EVENT_SECONDS,
+    MARKET_CACHE_TTL_SEASON_SECONDS,
+    read_award_outcomes_cache,
+    read_market_stats_and_screen,
+    team_futures_shared_cache_enabled,
+    write_award_outcomes_cache,
+    write_market_stats_and_screen,
+)
 from app.utils.team_linking import given_name_before_city
 from app.utils.team_page_cache import is_real_pg_engine
 from app.utils.team_short_name import is_college_sport, school_label
@@ -384,6 +396,7 @@ class OnboardingRequest(BaseModel):
     rival_teams: list[TeamRef] = []
     sport_affinities: dict[str, float] = {}  # e.g., {"football": 1.0, "basketball": 0.3}
     raw_inputs: dict = {}  # Saved verbatim for debugging
+    replace: bool = False  # Full-replace opt-in for website wizard; default additive (#13779)
 
 
 class FavoriteItem(BaseModel):
@@ -568,11 +581,12 @@ async def submit_onboarding(
     db: AsyncSession = Depends(get_db_rw),
 ):
     """
-    Save complete onboarding data. Replaces any existing onboarding-sourced
-    favorites and preferences.
+    Save onboarding data. Additive for signed-in users who already have
+    saved onboarding teams, category affinities, or a home location (#13779 / 427: A).
 
-    This is a batch endpoint — saves location, teams, sport affinities,
-    and raw inputs all at once.
+    Reopening the first-run checklist adds newly followed teams and unconfigured
+    categories without removing prior favorites, altering existing Preferences
+    category levels, or clearing home_location.
     """
     selections = (
         (body.local_teams, "local"),
@@ -608,25 +622,44 @@ async def submit_onboarding(
         }
     skipped = sorted(submitted - canonical_ids.keys())
 
-    # 1. Delete existing onboarding-sourced favorites
-    await db.execute(
-        delete(UserFavorite).where(
-            and_(
-                UserFavorite.user_id == user.id,
-                UserFavorite.source == "onboarding",
+    # 1. Replace existing onboarding-sourced favorites ONLY when the caller
+    #    explicitly sends the complete edited state (website setup wizard).
+    #    Default replace=False keeps earlier onboarding, Settings, and chip
+    #    follows intact (protecting both 1.0.7 and 1.0.8 checklist sits).
+    if body.replace:
+        await db.execute(
+            delete(UserFavorite).where(
+                and_(
+                    UserFavorite.user_id == user.id,
+                    UserFavorite.source == "onboarding",
+                )
             )
         )
+
+    existing_pairs: set[tuple[int, str]] = set(
+        (
+            await db.execute(
+                select(UserFavorite.team_id, UserFavorite.relation_type).where(
+                    UserFavorite.user_id == user.id
+                )
+            )
+        ).all()
     )
 
-    # 2. Insert new favorites
+    # 2. Insert new favorites (without duplicating already-stored team relations)
     # With the new constraint (user_id, team_id, relation_type), a team can have
-    # multiple relations (e.g., both "local" and "follow"). We track (team_id, relation_type)
-    # pairs to prevent exact duplicates within a single submission.
+    # multiple relations (e.g., both "local" and "follow"). We track both existing
+    # rows and (team_id, relation_type) pairs in this submission to prevent exact
+    # duplicates.
     seen_pairs: set[tuple[int, str]] = set()
     for refs, relation_type in selections:
         for ref in refs:
             canonical_id = canonical_ids.get(ref.team_id)
-            if canonical_id is None or (canonical_id, relation_type) in seen_pairs:
+            if (
+                canonical_id is None
+                or (canonical_id, relation_type) in seen_pairs
+                or (canonical_id, relation_type) in existing_pairs
+            ):
                 continue
             seen_pairs.add((canonical_id, relation_type))
             db.add(
@@ -642,17 +675,42 @@ async def submit_onboarding(
     # 3. Expand sport affinities to backend keys
     expanded_affinities = _expand_sport_affinities(body.sport_affinities)
 
-    # 4. Update preferences
+    # 4. Update preferences (additive when a record already exists)
     result = await db.execute(
         select(UserPreference).where(UserPreference.user_id == user.id)
     )
     prefs = result.scalar_one_or_none()
 
     if prefs:
-        prefs.home_location = body.home_location
-        prefs.sport_affinities = expanded_affinities
-        prefs.onboarding_completed = True
-        prefs.onboarding_raw = body.raw_inputs
+        if body.replace:
+            prefs.home_location = body.home_location
+            prefs.sport_affinities = expanded_affinities
+            prefs.onboarding_completed = True
+            prefs.onboarding_raw = body.raw_inputs
+        else:
+            if body.home_location is not None and body.home_location.strip():
+                prefs.home_location = body.home_location.strip()
+            existing_affinities = (
+                dict(prefs.sport_affinities)
+                if isinstance(prefs.sport_affinities, dict)
+                else {}
+            )
+            # Picking a category in the checklist may raise a low stored level,
+            # while untouched or higher stored levels stay unchanged (#13779).
+            for backend_key, weight in expanded_affinities.items():
+                stored = existing_affinities.get(backend_key)
+                if stored is None or weight > stored:
+                    existing_affinities[backend_key] = weight
+            prefs.sport_affinities = existing_affinities
+            prefs.onboarding_completed = True
+            if body.raw_inputs:
+                existing_raw = (
+                    dict(prefs.onboarding_raw)
+                    if isinstance(prefs.onboarding_raw, dict)
+                    else {}
+                )
+                existing_raw.update(body.raw_inputs)
+                prefs.onboarding_raw = existing_raw
     else:
         prefs = UserPreference(
             user_id=user.id,
@@ -1928,6 +1986,18 @@ class _LiteScreenMarket:
         self.outcomes: list[_LiteScreenOutcome] = []
 
 
+def _derive_market_stats_from_outcomes(outcomes: Any) -> tuple[int, float | None]:
+    """Compute ``(outcome_total, field_prob_sum)`` matching SQL ``COUNT(*), SUM(prob)``."""
+    if not outcomes:
+        return (0, None)
+    prob_sum: float | None = None
+    for o in outcomes:
+        p = getattr(o, "current_probability", None)
+        if p is not None:
+            prob_sum = (prob_sum or 0.0) + float(p)
+    return (len(outcomes), prob_sum)
+
+
 async def _load_pg_screen_wave(db: AsyncSession, wave_ids: list[int]) -> list[_LiteScreenMarket]:
     """Fetch minimal screen columns via two flat tuple queries (no ORM IdentityMap overhead)."""
     m_rows = (
@@ -2646,24 +2716,73 @@ async def _query_team_futures(
                         if cached_award is not None and (_now_mono - cached_award[0]) < _AWARD_OUTCOMES_TTL:
                             _award_wall_ts, rows2 = cached_award[1], cached_award[2]
                         else:
-                            award_pats = [f"%{kw}%" for kw in _AWARD_KEYWORDS]
-                            award_cond = FuturesMarket.name.ilike(any_(literal(award_pats, ARRAY(Text))))
-                            query2 = (
-                                select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
-                                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-                                .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
-                                .where(and_(*market_base_filters, award_cond))
-                                .order_by(FuturesOutcome.current_probability.desc().nulls_last(), FuturesOutcome.id.asc())
-                                .limit(500)
-                                .options(_outcome_load_opts, _market_load_opts)
+                            _shared_cache_on_q2 = is_real_pg_engine(db) and team_futures_shared_cache_enabled()
+                            shared_award = (
+                                await read_award_outcomes_cache(_eng_key)
+                                if _shared_cache_on_q2
+                                else None
                             )
-                            raw_award = (await db.execute(query2)).all()
-                            rows2 = _snapshot_award_rows(raw_award)
-                            _award_wall_ts = time.time()
-                            if len(_award_outcomes_cache) >= _AWARD_OUTCOMES_CACHE_MAX:
-                                oldest_ak = min(_award_outcomes_cache, key=lambda k: _award_outcomes_cache[k][0])
-                                del _award_outcomes_cache[oldest_ak]
-                            _award_outcomes_cache[_eng_key] = (time.monotonic(), _award_wall_ts, rows2)
+                            if shared_award is not None:
+                                _award_wall_ts, rows2 = shared_award
+                                _age = max(0.0, time.time() - _award_wall_ts)
+                                if len(_award_outcomes_cache) >= _AWARD_OUTCOMES_CACHE_MAX:
+                                    oldest_ak = min(_award_outcomes_cache, key=lambda k: _award_outcomes_cache[k][0])
+                                    del _award_outcomes_cache[oldest_ak]
+                                _award_outcomes_cache[_eng_key] = (time.monotonic() - _age, _award_wall_ts, rows2)
+                            else:
+                                award_pats = [f"%{kw}%" for kw in _AWARD_KEYWORDS]
+                                award_cond = FuturesMarket.name.ilike(any_(literal(award_pats, ARRAY(Text))))
+                                if is_real_pg_engine(db):
+                                    # Two-step pre-filter keeps PG from scanning futures_outcomes
+                                    # by current_probability DESC before filtering award markets.
+                                    award_mids = list(
+                                        (
+                                            await db.execute(
+                                                select(FuturesMarket.id).where(*market_base_filters, award_cond)
+                                            )
+                                        ).scalars().all()
+                                    )
+                                    if not award_mids:
+                                        raw_award = []
+                                    else:
+                                        award_mids_param = bindparam(
+                                            "award_mids", value=award_mids, type_=ARRAY(Integer)
+                                        )
+                                        query2 = (
+                                            select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
+                                            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                                            .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
+                                            .where(FuturesOutcome.market_id == any_(award_mids_param))
+                                            .order_by(
+                                                FuturesOutcome.current_probability.desc().nulls_last(),
+                                                FuturesOutcome.id.asc(),
+                                            )
+                                            .limit(500)
+                                            .options(_outcome_load_opts, _market_load_opts)
+                                        )
+                                        raw_award = (await db.execute(query2)).all()
+                                else:
+                                    query2 = (
+                                        select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
+                                        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                                        .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
+                                        .where(and_(*market_base_filters, award_cond))
+                                        .order_by(
+                                            FuturesOutcome.current_probability.desc().nulls_last(),
+                                            FuturesOutcome.id.asc(),
+                                        )
+                                        .limit(500)
+                                        .options(_outcome_load_opts, _market_load_opts)
+                                    )
+                                    raw_award = (await db.execute(query2)).all()
+                                rows2 = _snapshot_award_rows(raw_award)
+                                _award_wall_ts = time.time()
+                                if len(_award_outcomes_cache) >= _AWARD_OUTCOMES_CACHE_MAX:
+                                    oldest_ak = min(_award_outcomes_cache, key=lambda k: _award_outcomes_cache[k][0])
+                                    del _award_outcomes_cache[oldest_ak]
+                                _award_outcomes_cache[_eng_key] = (time.monotonic(), _award_wall_ts, rows2)
+                                if _shared_cache_on_q2:
+                                    await write_award_outcomes_cache(_eng_key, _award_wall_ts, rows2)
             else:
                 award_keywords = [
                     "MVP", "Player of the Year", "Rookie of the Year",
@@ -2818,25 +2937,270 @@ async def _query_team_futures(
             matched_rows.append((_o, _m, _sk, _matched))
             matched_oids_by_market.setdefault(_m.id, set()).add(_o.id)
 
-        # #1197 / #13552: scoped per-market stats ONLY for markets that matched a team.
+        # #1197 / #13552 / #13762: scoped per-market stats & screen with shared L1+Redis cache.
         _mkt_ids = sorted(matched_oids_by_market)
         _market_stats: dict[int, tuple[int, float | None]] = {}
-        _tq = time.perf_counter()
-        if _mkt_ids:
+        _market_ttl_by_id: dict[int, float] = {}
+        _market_source_by_id: dict[int, str | None] = {}
+        for _o, _m, _sk, _matched in matched_rows:
+            if _m.id not in _market_ttl_by_id:
+                _market_ttl_by_id[_m.id] = (
+                    MARKET_CACHE_TTL_EVENT_SECONDS
+                    if getattr(_m, "event_id", None) is not None
+                    else MARKET_CACHE_TTL_SEASON_SECONDS
+                )
+                _market_source_by_id[_m.id] = getattr(_m, "source", None)
+
+        _eng_key_mkt = _cache_scope_key(db)
+        _real_pg = is_real_pg_engine(db)
+        _shared_cache_on = _real_pg and team_futures_shared_cache_enabled()
+        _cached_stats_ts_by_mid: dict[int, float] = {}
+        _cached_screen_ts_by_mid: dict[int, float] = {}
+        _cached_screen_verdicts: dict[int, set[int]] = {}
+        _stats_to_write: dict[int, tuple[int, float | None, float]] = {}
+        _screen_to_write: dict[int, tuple[set[int], float]] = {}
+        _used_cache_timestamps: list[float] = []
+        _used_cache_expiries: list[float] = []
+        if _award_wall_ts is not None:
+            _used_cache_timestamps.append(_award_wall_ts)
+            _used_cache_expiries.append(_award_wall_ts + _AWARD_OUTCOMES_TTL)
+
+        withheld_by_market: dict[int, set[int]] = {}
+        _screen_ids = _mkt_ids
+        _screened_mids: set[int] = set()
+        _total_screened = 0
+        _screen_waves = 0
+        _screen_early_stopped = False
+        _screen_incomplete = False
+        _screen_unscreened_count = 0
+        _stats_elapsed_ms = 0.0
+        _screen_elapsed_ms = 0.0
+        _use_screen_cache = False
+        _fleet_newest_val: Any = None
+
+        prop_families_route: Any = None
+        futures_route: Any = None
+        _shared_fleet_newest: Any = None
+        _orig_staleness_fn: Any = None
+
+        async def _fetch_missing_stats(target_ids: list[int]) -> None:
+            if not target_ids:
+                return
+            _now_stats = time.time()
             for _mid, _tot, _fsum in (await db.execute(
                 select(
                     FuturesOutcome.market_id,
                     func.count().label("outcome_total"),
                     func.sum(FuturesOutcome.current_probability).label("field_prob_sum"),
                 )
-                .where(FuturesOutcome.market_id.in_(_mkt_ids))
+                .where(FuturesOutcome.market_id.in_(target_ids))
                 .group_by(FuturesOutcome.market_id)
             )).all():
                 _market_stats[_mid] = (_tot, _fsum)
-        if timings is not None:
-            timings["stats"] = round((time.perf_counter() - _tq) * 1000)
-            timings["rows1"] = len(rows1)
-            timings["rows2"] = len(rows2)
+                if _shared_cache_on:
+                    _stats_to_write[_mid] = (_tot, _fsum, _now_stats)
+
+        async def _screen_db_miss_wave(miss_ids: list[int]) -> bool:
+            nonlocal _total_screened, _screen_waves, _screen_incomplete
+            nonlocal _screen_unscreened_count, _fleet_newest_val
+            _screen_waves += 1
+            _screen_savepoint = await db.begin_nested()
+            _wave_markets: list = []
+            try:
+                await _set_local_timeout_pg(db, _TEAM_FUTURES_PG_SCREEN_TIMEOUT_MS)
+                if is_pg:
+                    _wave_markets = await _load_pg_screen_wave(db, miss_ids)
+                else:
+                    screen_stmt = (
+                        select(FuturesMarket)
+                        .where(FuturesMarket.id.in_(miss_ids))
+                        .options(selectinload(FuturesMarket.outcomes))
+                    )
+                    _wave_markets = (await db.execute(screen_stmt)).scalars().all()
+                _total_screened += len(_wave_markets)
+
+                _now_wave = time.time()
+                if is_pg:
+                    for _m in _wave_markets:
+                        if _m.id not in _market_stats:
+                            _tot, _fsum = _derive_market_stats_from_outcomes(_m.outcomes)
+                            _market_stats[_m.id] = (_tot, _fsum)
+                            if _shared_cache_on:
+                                _stats_to_write[_m.id] = (_tot, _fsum, _now_wave)
+
+                # Run board staleness FIRST with ONE hoisted fleet observation across waves (#13552).
+                _fn = prop_families_route._board_staleness_withheld
+                _stopped_by_mid: dict[int, set[int]] = {}
+                _all_outcomes_stopped: dict[int, bool] = {}
+                if _fn is _orig_staleness_fn:
+                    if _fleet_newest_val is None and _wave_markets:
+                        _fleet_newest_val = await _shared_fleet_newest(db, *_wave_markets)
+                    for _m in _wave_markets:
+                        _stopped = await _fn(db, _m, fleet_newest=_fleet_newest_val)
+                        _stopped_set = set(_stopped) if _stopped else set()
+                        _stopped_by_mid[_m.id] = _stopped_set
+                        _m_oids = {o.id for o in getattr(_m, "outcomes", None) or ()}
+                        _all_outcomes_stopped[_m.id] = bool(_m_oids) and (_m_oids <= _stopped_set)
+                        if _stopped_set:
+                            withheld_by_market[_m.id] = (
+                                withheld_by_market.get(_m.id, set()) | _stopped_set
+                            )
+                else:
+                    for _m in _wave_markets:
+                        _stopped = await _fn(db, _m)
+                        _stopped_set = set(_stopped) if _stopped else set()
+                        _stopped_by_mid[_m.id] = _stopped_set
+                        _m_oids = {o.id for o in getattr(_m, "outcomes", None) or ()}
+                        _all_outcomes_stopped[_m.id] = bool(_m_oids) and (_m_oids <= _stopped_set)
+                        if _stopped_set:
+                            withheld_by_market[_m.id] = (
+                                withheld_by_market.get(_m.id, set()) | _stopped_set
+                            )
+
+                # Skip trade snapshot lookups for boards whose matched outcomes are already all stopped.
+                _surviving_markets = [
+                    _m
+                    for _m in _wave_markets
+                    if not (
+                        matched_oids_by_market.get(_m.id, set())
+                        <= withheld_by_market.get(_m.id, set())
+                    )
+                ]
+                _price_withheld: dict[int, set[int]] = {}
+                if _surviving_markets:
+                    _price_withheld = await futures_route.withheld_price_outcome_ids_for_markets(
+                        db, _surviving_markets
+                    )
+                    for _pmid, _poids in _price_withheld.items():
+                        if _poids:
+                            withheld_by_market[_pmid] = (
+                                withheld_by_market.get(_pmid, set()) | _poids
+                            )
+                        else:
+                            withheld_by_market.setdefault(_pmid, set())
+
+                if _use_screen_cache:
+                    _surviving_ids = {_m.id for _m in _surviving_markets}
+                    for _m in _wave_markets:
+                        _mid = _m.id
+                        if _mid in _surviving_ids:
+                            if _mid in _price_withheld:
+                                _screen_to_write[_mid] = (
+                                    set(withheld_by_market.get(_mid, ())),
+                                    _now_wave,
+                                )
+                        elif _all_outcomes_stopped.get(_mid, False):
+                            # Cache only if EVERY outcome on the board is stopped by staleness.
+                            _screen_to_write[_mid] = (
+                                set(_stopped_by_mid.get(_mid, ())),
+                                _now_wave,
+                            )
+                await _screen_savepoint.commit()
+            except Exception as _screen_exc:  # noqa: BLE001 — omit unscreened markets cleanly
+                await _screen_savepoint.rollback()
+                _screen_incomplete = True
+                _screen_unscreened_count = len(_screen_ids) - len(_screened_mids)
+                if is_statement_timeout(_screen_exc):
+                    logger.warning(
+                        "team futures: price screen timed out for teams %s after %d ms — omitting %d unscreened markets (keeping %d screened)",
+                        sorted(teams),
+                        _TEAM_FUTURES_PG_SCREEN_TIMEOUT_MS,
+                        _screen_unscreened_count,
+                        len(_screened_mids),
+                    )
+                else:
+                    logger.exception(
+                        "team futures: price screen failed for teams %s — omitting %d unscreened markets (keeping %d screened)",
+                        sorted(teams),
+                        _screen_unscreened_count,
+                        len(_screened_mids),
+                    )
+                return False
+            return True
+
+        _single_wave_pg = bool(_mkt_ids) and is_pg and len(_mkt_ids) <= _SCREEN_WAVE_SIZE
+        if _mkt_ids:
+            from app.routes import futures as futures_route  # type: ignore[no-redef]
+            from app.routes import prop_families as prop_families_route  # type: ignore[no-redef]
+            from app.utils.futures_price_screen import (
+                _fleet_newest_observation as _shared_fleet_newest,
+            )
+
+            _orig_staleness_fn = getattr(prop_families_route, "_orig_board_staleness_withheld", None)
+            if _orig_staleness_fn is None:
+                prop_families_route._orig_board_staleness_withheld = prop_families_route._board_staleness_withheld
+                _orig_staleness_fn = prop_families_route._orig_board_staleness_withheld
+
+            _use_screen_cache = (
+                _shared_cache_on
+                and (prop_families_route._board_staleness_withheld is _orig_staleness_fn)
+                and (futures_route.withheld_price_outcome_ids_for_markets is _CANONICAL_WITHHELD_PRICE_FN)
+            )
+            if _shared_cache_on:
+                _cached_stats_hits, _cached_screen_hits = await read_market_stats_and_screen(
+                    _eng_key_mkt, _mkt_ids, include_screen=_use_screen_cache
+                )
+                for _mid, (_tot, _fsum, _wts) in _cached_stats_hits.items():
+                    _market_stats[_mid] = (_tot, _fsum)
+                    _cached_stats_ts_by_mid[_mid] = _wts
+                for _mid, (_wset, _wts) in _cached_screen_hits.items():
+                    _cached_screen_verdicts[_mid] = _wset
+                    _cached_screen_ts_by_mid[_mid] = _wts
+
+            if _single_wave_pg:
+                _tq_scr = time.perf_counter()
+                _miss_ids_single: list[int] = []
+                for _mid in _mkt_ids:
+                    if _mid in _cached_screen_verdicts:
+                        _wset = _cached_screen_verdicts[_mid]
+                        if _wset:
+                            withheld_by_market[_mid] = set(_wset)
+                        _screened_mids.add(_mid)
+                        _used_cache_timestamps.append(_cached_screen_ts_by_mid[_mid])
+                        _used_cache_expiries.append(
+                            _cached_screen_ts_by_mid[_mid]
+                            + _market_ttl_by_id.get(_mid, MARKET_CACHE_TTL_SEASON_SECONDS)
+                        )
+                    else:
+                        _miss_ids_single.append(_mid)
+                if _miss_ids_single:
+                    if await _screen_db_miss_wave(_miss_ids_single):
+                        _screened_mids.update(_miss_ids_single)
+                _screen_elapsed_ms = (time.perf_counter() - _tq_scr) * 1000
+
+                _post_stats_ids = [
+                    _mid for _mid in _mkt_ids if _mid in _screened_mids and _mid not in _market_stats
+                ]
+                if _post_stats_ids:
+                    _tq_st = time.perf_counter()
+                    await _fetch_missing_stats(_post_stats_ids)
+                    _stats_elapsed_ms = (time.perf_counter() - _tq_st) * 1000
+                for _mid in _screened_mids:
+                    if _mid in _cached_stats_ts_by_mid:
+                        _used_cache_timestamps.append(_cached_stats_ts_by_mid[_mid])
+                        _used_cache_expiries.append(
+                            _cached_stats_ts_by_mid[_mid]
+                            + _market_ttl_by_id.get(_mid, MARKET_CACHE_TTL_SEASON_SECONDS)
+                        )
+            else:
+                _tq_st = time.perf_counter()
+                if not is_pg:
+                    _upfront_stats_ids = [_mid for _mid in _mkt_ids if _mid not in _market_stats]
+                else:
+                    # Multi-wave PG: defer non-Kalshi stats until waves load outcomes or items survive.
+                    _upfront_stats_ids = [
+                        _mid for _mid in _mkt_ids
+                        if _mid not in _market_stats and _market_source_by_id.get(_mid) == "kalshi"
+                    ]
+                    for _mid in _mkt_ids:
+                        if _market_source_by_id.get(_mid) == "kalshi" and _mid in _cached_stats_ts_by_mid:
+                            _used_cache_timestamps.append(_cached_stats_ts_by_mid[_mid])
+                            _used_cache_expiries.append(
+                                _cached_stats_ts_by_mid[_mid]
+                                + _market_ttl_by_id.get(_mid, MARKET_CACHE_TTL_SEASON_SECONDS)
+                            )
+                await _fetch_missing_stats(_upfront_stats_ids)
+                _stats_elapsed_ms = (time.perf_counter() - _tq_st) * 1000
 
         # Pre-build per-row candidate item stubs (reused across early-stop checks + final build).
         candidate_items: list[tuple[int, int, dict]] = []
@@ -3023,32 +3387,11 @@ async def _query_team_futures(
             focus = {tid for tid in unscreened_tids if len(locked_prefix[tid]) <= d_safe}
             return False, (focus or set(unscreened_tids))
 
-        # #8503 / #11534 / #13552: screen in bounded waves inside SAVEPOINT; run hoisted
+        # #8503 / #11534 / #13552 / #13762: screen in bounded waves inside SAVEPOINT; run hoisted
         # staleness BEFORE snapshot trade reads so stopped/dead boards skip 51 GB trade lookups.
-        withheld_by_market: dict[int, set[int]] = {}
-        _screen_ids = _mkt_ids
-        _screened_mids: set[int] = set()
-        _total_screened = 0
-        _screen_waves = 0
-        _screen_early_stopped = False
-        _screen_incomplete = False
-        _screen_unscreened_count = 0
-        if _screen_ids:
-            from app.routes import prop_families as prop_families_route
-            from app.routes.futures import withheld_price_outcome_ids_for_markets
-            from app.utils.futures_price_screen import (
-                _fleet_newest_observation as _shared_fleet_newest,
-            )
-
-            # Capture the original function so monkeypatches in tests are still honored.
-            _orig_staleness_fn = getattr(prop_families_route, "_orig_board_staleness_withheld", None)
-            if _orig_staleness_fn is None:
-                prop_families_route._orig_board_staleness_withheld = prop_families_route._board_staleness_withheld
-                _orig_staleness_fn = prop_families_route._orig_board_staleness_withheld
-
+        if _screen_ids and not _single_wave_pg:
             _tq = time.perf_counter()
             _focus_tids: set[int] | None = None
-            _fleet_newest_val: Any = None
             while len(_screened_mids) < len(_screen_ids):
                 if len(_screen_ids) <= _SCREEN_WAVE_SIZE and not _screened_mids:
                     wave_ids = list(_screen_ids)
@@ -3059,84 +3402,32 @@ async def _query_team_futures(
                     if not wave_ids:
                         break
 
-                _screen_waves += 1
-                _screen_savepoint = await db.begin_nested()
-                _wave_markets: list = []
-                try:
-                    await _set_local_timeout_pg(db, _TEAM_FUTURES_PG_SCREEN_TIMEOUT_MS)
-                    if is_pg:
-                        _wave_markets = await _load_pg_screen_wave(db, wave_ids)
+                _hit_ids: list[int] = []
+                _miss_ids: list[int] = []
+                for _wid in wave_ids:
+                    if _wid in _cached_screen_verdicts:
+                        _hit_ids.append(_wid)
                     else:
-                        screen_stmt = (
-                            select(FuturesMarket)
-                            .where(FuturesMarket.id.in_(wave_ids))
-                            .options(selectinload(FuturesMarket.outcomes))
-                        )
-                        _wave_markets = (await db.execute(screen_stmt)).scalars().all()
-                    _total_screened += len(_wave_markets)
+                        _miss_ids.append(_wid)
 
-                    # Run board staleness FIRST with ONE hoisted fleet observation across waves (#13552).
-                    _fn = prop_families_route._board_staleness_withheld
-                    if _fn is _orig_staleness_fn:
-                        if _fleet_newest_val is None and _wave_markets:
-                            _fleet_newest_val = await _shared_fleet_newest(db, *_wave_markets)
-                        for _m in _wave_markets:
-                            _stopped = await _fn(db, _m, fleet_newest=_fleet_newest_val)
-                            if _stopped:
-                                withheld_by_market[_m.id] = (
-                                    withheld_by_market.get(_m.id, set()) | _stopped
-                                )
-                    else:
-                        for _m in _wave_markets:
-                            _stopped = await _fn(db, _m)
-                            if _stopped:
-                                withheld_by_market[_m.id] = (
-                                    withheld_by_market.get(_m.id, set()) | _stopped
-                                )
+                for _hid in _hit_ids:
+                    _wset = _cached_screen_verdicts[_hid]
+                    if _wset:
+                        withheld_by_market[_hid] = (
+                            withheld_by_market.get(_hid, set()) | _wset
+                        )
+                    _screened_mids.add(_hid)
+                    _used_cache_timestamps.append(_cached_screen_ts_by_mid[_hid])
+                    _used_cache_expiries.append(
+                        _cached_screen_ts_by_mid[_hid]
+                        + _market_ttl_by_id.get(_hid, MARKET_CACHE_TTL_SEASON_SECONDS)
+                    )
 
-                    # Skip trade snapshot lookups for boards whose matched outcomes are already all stopped.
-                    _surviving_markets = [
-                        _m
-                        for _m in _wave_markets
-                        if not (
-                            matched_oids_by_market.get(_m.id, set())
-                            <= withheld_by_market.get(_m.id, set())
-                        )
-                    ]
-                    if _surviving_markets:
-                        _price_withheld = await withheld_price_outcome_ids_for_markets(
-                            db, _surviving_markets
-                        )
-                        for _pmid, _poids in _price_withheld.items():
-                            if _poids:
-                                withheld_by_market[_pmid] = (
-                                    withheld_by_market.get(_pmid, set()) | _poids
-                                )
-                            else:
-                                withheld_by_market.setdefault(_pmid, set())
-                    await _screen_savepoint.commit()
-                except Exception as _screen_exc:  # noqa: BLE001 — omit unscreened markets cleanly
-                    await _screen_savepoint.rollback()
-                    _screen_incomplete = True
-                    _screen_unscreened_count = len(_screen_ids) - len(_screened_mids)
-                    if is_statement_timeout(_screen_exc):
-                        logger.warning(
-                            "team futures: price screen timed out for teams %s after %d ms — omitting %d unscreened markets (keeping %d screened)",
-                            sorted(teams),
-                            _TEAM_FUTURES_PG_SCREEN_TIMEOUT_MS,
-                            _screen_unscreened_count,
-                            len(_screened_mids),
-                        )
-                    else:
-                        logger.exception(
-                            "team futures: price screen failed for teams %s — omitting %d unscreened markets (keeping %d screened)",
-                            sorted(teams),
-                            _screen_unscreened_count,
-                            len(_screened_mids),
-                        )
-                    break
+                if _miss_ids:
+                    if not await _screen_db_miss_wave(_miss_ids):
+                        break
+                    _screened_mids.update(_miss_ids)
 
-                _screened_mids.update(wave_ids)
                 if len(_screened_mids) >= len(_screen_ids):
                     break
                 _done, _focus_tids = _prefix_cutoff_state(_screened_mids, withheld_by_market)
@@ -3145,16 +3436,7 @@ async def _query_team_futures(
                     break
                 await asyncio.sleep(0)
 
-            if timings is not None:
-                timings["screen"] = round((time.perf_counter() - _tq) * 1000)
-                timings["screened"] = _total_screened
-
-        if timings is not None:
-            timings["screen_waves"] = _screen_waves
-            timings["screen_incomplete"] = _screen_incomplete
-            timings["screen_unscreened"] = _screen_unscreened_count
-            if _award_wall_ts is not None:
-                timings["_award_cached_at"] = _award_wall_ts
+            _screen_elapsed_ms = (time.perf_counter() - _tq) * 1000
 
     # Process matched result rows in original candidate order using single-pass matched_rows.
     per_team_items: dict[int, list[dict]] = {}
@@ -3181,6 +3463,49 @@ async def _query_team_futures(
 
     if _screen_incomplete and not items:
         raise TeamFuturesScreenUnavailableError()
+
+    if _mkt_ids and not _single_wave_pg:
+        _missing_surviving_mids = sorted(
+            {it["market_id"] for it in items if it.get("total_outcomes") is None and it["market_id"] not in _market_stats}
+        )
+        if _missing_surviving_mids:
+            _tq_st2 = time.perf_counter()
+            await _fetch_missing_stats(_missing_surviving_mids)
+            _stats_elapsed_ms += (time.perf_counter() - _tq_st2) * 1000
+        for it in items:
+            _mid = it["market_id"]
+            if it.get("total_outcomes") is None and _mid in _market_stats:
+                it["total_outcomes"] = _market_stats[_mid][0]
+        for _mid in (_screened_mids | {it["market_id"] for it in items}):
+            if _market_source_by_id.get(_mid) != "kalshi" and _mid in _cached_stats_ts_by_mid:
+                _used_cache_timestamps.append(_cached_stats_ts_by_mid[_mid])
+                _used_cache_expiries.append(
+                    _cached_stats_ts_by_mid[_mid]
+                    + _market_ttl_by_id.get(_mid, MARKET_CACHE_TTL_SEASON_SECONDS)
+                )
+
+    if _shared_cache_on and (_stats_to_write or _screen_to_write):
+        await write_market_stats_and_screen(
+            _eng_key_mkt,
+            stats_entries=_stats_to_write,
+            screen_entries=_screen_to_write,
+            ttl_by_mid=_market_ttl_by_id,
+        )
+
+    if timings is not None:
+        timings["stats"] = round(_stats_elapsed_ms)
+        timings["rows1"] = len(rows1)
+        timings["rows2"] = len(rows2)
+        if _screen_ids:
+            timings["screen"] = round(_screen_elapsed_ms)
+            timings["screened"] = _total_screened
+        timings["screen_waves"] = _screen_waves
+        timings["screen_incomplete"] = _screen_incomplete
+        timings["screen_unscreened"] = _screen_unscreened_count
+        if _used_cache_timestamps:
+            timings["_award_cached_at"] = min(_used_cache_timestamps)
+        if _used_cache_expiries:
+            timings["_cache_expires_at"] = min(_used_cache_expiries)
 
     # Build teams list for share link
     teams_list = [

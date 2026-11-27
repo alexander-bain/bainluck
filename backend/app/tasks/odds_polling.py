@@ -23,6 +23,7 @@ from app.utils.game_pairing import (
     clockless_write_defers_to_authority,
     clockless_write_repoisons_a_settled_final,
     external_id_currency,
+    live_write_is_premature,
 )
 from app.utils.odds_math import (
     favorite_from_pair,
@@ -2715,6 +2716,11 @@ async def _poll_all_odds():
                                 and home_score is not None
                                 and away_score is not None
                                 and (event_obj.game_clock or event_obj.period or event_obj.commence_time)
+                                and not live_write_is_premature(
+                                    getattr(event_obj, "commence_time", None),
+                                    now,
+                                    grace=timedelta(0),
+                                )
                             ):
                                 try:
                                     from app.utils.win_probability import (
@@ -2797,6 +2803,7 @@ async def _poll_all_odds():
                                             is_completed=(
                                                 getattr(event_obj, "status", None) in ("completed", "closed")
                                             ),
+                                            commence_time=getattr(event_obj, "commence_time", None),
                                             # #10673: live-only arm (gated on
                                             # `event_status == "live"` above).
                                             max_gap_seconds=STAT_MODEL_LIVE_HEARTBEAT_S,
