@@ -27,7 +27,8 @@ THE CONTRACT, which is what makes a second copy safe to read:
   that closed since the last pass never shows.
 
 What the copy can lag, by at most one rotation of the task (an hour): an outcome
-RENAMED in place, or a market that REOPENED with outcomes it already had.
+RENAMED in place. Reopened markets with zero rows in the copy are restored on
+the very next pass via ``REOPENED_SQL`` before ``DELTA_SQL``.
 """
 
 from __future__ import annotations

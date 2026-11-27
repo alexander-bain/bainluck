@@ -497,3 +497,95 @@ def test_each_pass_survives_its_own_event_loop(rig):
     first = asyncio.run(_refresh_open_futures_outcomes())
     second = asyncio.run(_refresh_open_futures_outcomes())
     assert first["terminal"] == "complete" and second["terminal"] == "complete"
+
+
+async def test_a_reopened_market_returns_to_the_poll_population_on_the_next_pass(
+    rig, monkeypatch
+):
+    """Fable (#13865): a closed market removed in Step 3 that later reopens
+    restores ALL its outcomes (both existing ids <= reader_floor and any new id
+    > reader_floor added on reopen) on the very next pass before SLICE_SQL
+    would reach it, and poll.load_population sees every leg immediately."""
+    import json
+
+    from sqlalchemy import select, update
+
+    from app.models.models import FuturesMarket, FuturesOutcome, OpenFuturesOutcome
+    from app.tasks import venue_poll_30s as poll
+    from app.tasks.open_futures_outcomes import SLICES
+    from app.utils.open_futures_outcomes import STATE_KEY
+
+    monkeypatch.setattr(poll, "_POPULATION", {})
+    monkeypatch.setattr(poll, "_kalshi_open_arm", lambda: False)
+    monkeypatch.setattr(poll, "shown_market_ids", lambda: [])
+
+    market_id = rig["ids"]["award"]
+    await _pass(rig)
+
+    # 1. Close the market; next pass removes all its rows from open_futures_outcomes.
+    async with rig["maker"]() as session:
+        await session.execute(
+            update(FuturesMarket)
+            .where(FuturesMarket.id == market_id)
+            .values(status="closed")
+        )
+        await session.commit()
+    close_out = await _pass(rig)
+    assert close_out["closed"] == 2
+    assert {m for m, _ in await _copy_rows(rig)} == {rig["ids"]["title"]}
+
+    state = json.loads(rig["redis"].data[STATE_KEY])
+    floor_before_reopen = state["reader_floor"]
+    next_slice = state["slice_cursor"]
+    # Confirm SLICE_SQL on the upcoming pass does NOT touch this market.
+    assert market_id % SLICES != next_slice
+
+    # 2. Reopen the market while adding a new outcome above reader_floor so
+    # both existing legs (<= floor) and the new leg (> floor) must return via
+    # REOPENED_SQL running before DELTA_SQL.
+    async with rig["maker"]() as session:
+        await session.execute(
+            update(FuturesMarket)
+            .where(FuturesMarket.id == market_id)
+            .values(status="open")
+        )
+        new_leg = FuturesOutcome(
+            market_id=market_id,
+            external_id="K-Rookie of the Year:reopened",
+            name="Alex Reopened",
+            current_probability=0.25,
+        )
+        session.add(new_leg)
+        await session.commit()
+        assert new_leg.id > floor_before_reopen
+        expected_ids = set(
+            (
+                await session.scalars(
+                    select(FuturesOutcome.id).where(FuturesOutcome.market_id == market_id)
+                )
+            ).all()
+        )
+        assert len(expected_ids) == 3
+
+    # 3. Run ONE steady pass (SLICE_SQL visits `next_slice != market_id % SLICES`).
+    reopen_out = await _pass(rig)
+    assert reopen_out["reopened"] == 3
+
+    async with rig["maker"]() as session:
+        copied_ids = set(
+            (
+                await session.scalars(
+                    select(OpenFuturesOutcome.outcome_id).where(
+                        OpenFuturesOutcome.market_id == market_id
+                    )
+                )
+            ).all()
+        )
+        assert copied_ids == expected_ids
+
+        monkeypatch.setattr(poll, "_POPULATION", {})
+        stats: dict = {}
+        units = await poll.load_population(session, "kalshi", now_mono=1, stats=stats)
+        assert stats["population_outcome_source"] == "open_futures_outcomes"
+        unit = next(u for u in units if u.key == str(market_id))
+        assert set(dict(unit.legs[market_id])) == expected_ids

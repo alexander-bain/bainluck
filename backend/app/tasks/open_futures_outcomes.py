@@ -8,15 +8,18 @@ this task's state is current (``app.utils.open_futures_outcomes``).
 ONE PASS, every 5 minutes, each step its own short transaction:
 
 1. **Watermark.** ``max(futures_outcomes.id)`` before anything is read.
-2. **Delta.** Outcomes of open markets with an id above the PREVIOUS pass's
+2. **Reopened markets.** Open markets with zero rows in the copy (reopened since
+   the last closed sweep) get all their outcomes upserted before the delta so
+   newly added outcomes above ``reader_floor`` never hide older legs.
+3. **Delta.** Outcomes of open markets with an id above the PREVIOUS pass's
    reader floor (one pass of slack for a row whose id was taken before it
    committed), upserted. Primary-key range; a few thousand rows.
-3. **Closed markets out.** Copy rows whose market is no longer ``open``.
-4. **One rotating slice reconciled** (``market_id % SLICES``): the slice's open
-   outcomes upserted (renames, reopened markets) and its rows that no longer
+4. **Closed markets out.** Copy rows whose market is no longer ``open``.
+5. **One rotating slice reconciled** (``market_id % SLICES``): the slice's open
+   outcomes upserted (renames, missed edits) and its rows that no longer
    exist deleted, in one statement over one read of the slice. Twelve slices,
    so every open outcome is re-read once an hour.
-5. **State** written with a TTL of ``STALE_AFTER_SECONDS``: ``watermark`` (this
+6. **State** written with a TTL of ``STALE_AFTER_SECONDS``: ``watermark`` (this
    pass), ``reader_floor`` (the previous pass's watermark), ``pass_at``,
    ``cycle_complete`` and the slice cursor.
 
@@ -70,6 +73,20 @@ ON CONFLICT (outcome_id) DO UPDATE
        IS DISTINCT FROM (EXCLUDED.name, EXCLUDED.market_id,
                          EXCLUDED.external_id, EXCLUDED.is_winner, EXCLUDED.resolution_source)
 """
+
+REOPENED_SQL = text(
+    """
+INSERT INTO open_futures_outcomes (outcome_id, market_id, name, external_id, is_winner, resolution_source)
+SELECT o.id, o.market_id, o.name, o.external_id, o.is_winner, o.resolution_source
+  FROM futures_markets m
+  JOIN futures_outcomes o ON o.market_id = m.id
+ WHERE m.status = 'open'
+   AND NOT EXISTS (
+       SELECT 1 FROM open_futures_outcomes t WHERE t.market_id = m.id
+   )
+"""
+    + _UPSERT_TAIL
+)
 
 DELTA_SQL = text(
     """
@@ -138,7 +155,7 @@ async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECON
         return {"terminal": "partial", "skipped": "another pass holds the lock"}
     started = time.monotonic()
     deadline = started + budget_seconds
-    summary: dict[str, Any] = {"slices": [], "delta": 0, "closed": 0}
+    summary: dict[str, Any] = {"slices": [], "reopened": 0, "delta": 0, "closed": 0}
     try:
         state = _load_state(rc)
         same_version = state.get("version") == OUTCOME_COPY_VERSION
@@ -171,6 +188,12 @@ async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECON
                 if filling:
                     filled += 1
 
+            # Run reopened BEFORE delta: if a reopened market also gained one
+            # new outcome > previous_floor, running DELTA_SQL first would insert
+            # that single row and cause NOT EXISTS to skip the market's older
+            # legs. Only run on steady passes (when all slices are populated).
+            if not filling and time.monotonic() < deadline:
+                summary["reopened"] = await _step(session, REOPENED_SQL)
             previous_floor = state.get("reader_floor")
             if isinstance(previous_floor, int) and time.monotonic() < deadline:
                 summary["delta"] = await _step(session, DELTA_SQL, {"floor": previous_floor})
