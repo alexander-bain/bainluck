@@ -511,9 +511,9 @@ def test_related_futures_survives_unrelated_deploy_while_game_markets_invalidate
     assert events_route._read_related_futures_memo(7) is rf_body
     rf_out, rf_state = rfc.read(7, rc=rc)
     assert rf_state == "live" and rf_out is not None
-    # Game-markets copy keeps its own deploy stamp and still refuses pre-deploy bytes.
+    # Game-markets copy now uses `gm-v1` too and survives the unrelated deploy (#13573).
     gm_out, gm_state = gmc.read(7, rc=rc)
-    assert gm_state == "stale_build" and gm_out is None
+    assert gm_state == "live" and gm_out is not None
 
     # Stale mirror for /related-futures also survives an unrelated deploy within ceiling.
     rc.delete(rfc.keys_for(7).primary)

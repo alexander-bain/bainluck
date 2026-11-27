@@ -118,7 +118,7 @@ class TestTheFinalEntryNoLongerPins:
         events_route._game_markets_cache[15306857] = (
             time.time() - (gmc.FRESH_TTL_FINAL + 1),
             "completed",
-            events_route._current_build_id(),
+            gmc.current_cache_version(),
             {"spreads": []},
         )
         assert events_route._read_game_markets_memo(15306857) is None
@@ -132,7 +132,7 @@ class TestTheFinalEntryNoLongerPins:
         events_route._game_markets_cache[15306857] = (
             time.time() - (events_route._GAME_MARKETS_LIVE_TTL + 5),
             "completed",
-            events_route._current_build_id(),
+            gmc.current_cache_version(),
             {"spreads": [1]},
         )
         assert events_route._read_game_markets_memo(15306857) == {"spreads": [1]}
@@ -145,7 +145,7 @@ class TestTheFinalEntryNoLongerPins:
             events_route._game_markets_cache[1] = (
                 ts,
                 "completed",
-                events_route._current_build_id(),
+                gmc.current_cache_version(),
                 {"spreads": [1]},
             )
             assert events_route._read_game_markets_memo(1) == expected
@@ -155,7 +155,7 @@ class TestTheFinalEntryNoLongerPins:
         events_route._game_markets_cache[1] = (
             time.time() - (events_route._GAME_MARKETS_LIVE_TTL + 1),
             "live",
-            events_route._current_build_id(),
+            gmc.current_cache_version(),
             {"spreads": [1]},
         )
         assert events_route._read_game_markets_memo(1) is None
@@ -184,7 +184,7 @@ class TestL1RefusesAnotherBuild:
         events_route._game_markets_cache[15306857] = (
             time.time(),
             "completed",
-            events_route._current_build_id(),
+            gmc.current_cache_version(),
             {"spreads": [1]},
         )
         assert events_route._read_game_markets_memo(15306857) == {"spreads": [1]}
@@ -198,7 +198,7 @@ class TestL1RefusesAnotherBuild:
 class TestTheStoredPayloadNamesItsBuild:
     def test_stamp_records_the_running_build(self):
         assert gmc.build_id_of(gmc.stamp({}, source_status="completed")) == (
-            gmc.current_build_id()
+            gmc.current_cache_version()
         )
 
     def test_build_id_of_is_empty_for_shapes_that_cannot_carry_one(self):
@@ -209,12 +209,12 @@ class TestTheStoredPayloadNamesItsBuild:
 
 class TestAPayloadFromAnotherBuildIsRefused:
     def test_a_different_build_is_not_current(self, monkeypatch):
-        monkeypatch.setattr(gmc, "current_build_id", lambda: "v4579")
-        assert gmc.payload_is_current_build(_stamped("v4578")) is False
+        monkeypatch.setattr(gmc, "current_cache_version", lambda: "gm-v2")
+        assert gmc.payload_is_current_version(_stamped("gm-v1")) is False
 
     def test_the_same_build_is_current(self, monkeypatch):
-        monkeypatch.setattr(gmc, "current_build_id", lambda: "v4579")
-        assert gmc.payload_is_current_build(_stamped("v4579")) is True
+        monkeypatch.setattr(gmc, "current_cache_version", lambda: "gm-v2")
+        assert gmc.payload_is_current_version(_stamped("gm-v2")) is True
 
     def test_read_refuses_a_fresh_primary_slot_from_another_build(self, monkeypatch):
         """🔴 THE PRODUCTION SPECIMEN: young, and built by code that is gone.
@@ -223,7 +223,7 @@ class TestAPayloadFromAnotherBuildIsRefused:
         age-based check in the tier called it fresh — and it was, and it was
         also wrong.
         """
-        monkeypatch.setattr(gmc, "current_build_id", lambda: "v4579")
+        monkeypatch.setattr(gmc, "current_cache_version", lambda: "gm-v2")
         monkeypatch.setattr(gmc, "get_client", object)  # any non-None client
         monkeypatch.setattr(
             gmc, "read_slot", lambda client, key: _stamped("v4578-preship")
@@ -240,7 +240,7 @@ class TestAPayloadFromAnotherBuildIsRefused:
         mirror, pass `mirror_is_servable` on age, and be served `stale_ok` — the
         pre-ship payload delivered anyway, now wearing an availability label.
         """
-        monkeypatch.setattr(gmc, "current_build_id", lambda: "v4579")
+        monkeypatch.setattr(gmc, "current_cache_version", lambda: "gm-v2")
         monkeypatch.setattr(gmc, "get_client", object)  # any non-None client
 
         keys = gmc.keys_for(15306857)
@@ -258,9 +258,21 @@ class TestAPayloadFromAnotherBuildIsRefused:
 
     def test_a_current_build_slot_is_still_served_live(self, monkeypatch):
         """The reverse direction. This is a cache and it must still cache."""
-        monkeypatch.setattr(gmc, "current_build_id", lambda: "v4579")
+        monkeypatch.setattr(gmc, "current_cache_version", lambda: "gm-v2")
         monkeypatch.setattr(gmc, "get_client", object)  # any non-None client
-        monkeypatch.setattr(gmc, "read_slot", lambda client, key: _stamped("v4579"))
+        monkeypatch.setattr(gmc, "read_slot", lambda client, key: _stamped("gm-v2"))
+
+        body, state = gmc.read(15306857)
+        assert state == "live"
+        assert body is not None
+
+    def test_an_unrelated_deploy_does_not_refuse_current_cache_version(self, monkeypatch):
+        """An unrelated deploy changes HEROKU_RELEASE_VERSION while cache version stays constant."""
+        monkeypatch.setenv("HEROKU_RELEASE_VERSION", "v6636")
+        stamped_body = gmc.stamp({"event_id": 15306857}, source_status="completed")
+        monkeypatch.setenv("HEROKU_RELEASE_VERSION", "v6637")
+        monkeypatch.setattr(gmc, "get_client", object)
+        monkeypatch.setattr(gmc, "read_slot", lambda client, key: stamped_body)
 
         body, state = gmc.read(15306857)
         assert state == "live"
@@ -279,8 +291,8 @@ class TestItFailsOpenWhenTheBuildIsUnknown:
         Refusing these would invalidate the entire tier at the moment this
         lands, which is a self-inflicted herd on a north-star page.
         """
-        monkeypatch.setattr(gmc, "current_build_id", lambda: "v4579")
-        assert gmc.payload_is_current_build(_stamped(None)) is True
+        monkeypatch.setattr(gmc, "current_cache_version", lambda: "gm-v2")
+        assert gmc.payload_is_current_version(_stamped(None)) is True
 
     def test_an_unknown_RUNNING_build_serves_everything(self, monkeypatch):
         """Local dev, CI, and any app without dyno metadata.
@@ -288,18 +300,18 @@ class TestItFailsOpenWhenTheBuildIsUnknown:
         This is the branch that would silently disable the cache in every
         environment that cannot measure the difference.
         """
-        monkeypatch.setattr(gmc, "current_build_id", lambda: UNKNOWN_BUILD)
-        assert gmc.payload_is_current_build(_stamped("v4578")) is True
+        monkeypatch.setattr(gmc, "current_cache_version", lambda: UNKNOWN_BUILD)
+        assert gmc.payload_is_current_version(_stamped("v4578")) is True
 
     def test_an_unknown_STORED_build_serves(self, monkeypatch):
-        monkeypatch.setattr(gmc, "current_build_id", lambda: "v4579")
-        assert gmc.payload_is_current_build(_stamped(UNKNOWN_BUILD)) is True
+        monkeypatch.setattr(gmc, "current_cache_version", lambda: "gm-v2")
+        assert gmc.payload_is_current_version(_stamped(UNKNOWN_BUILD)) is True
 
     def test_read_still_serves_live_when_the_running_build_is_unknown(
         self, monkeypatch
     ):
         """End to end, because the predicate passing is not the cache working."""
-        monkeypatch.setattr(gmc, "current_build_id", lambda: UNKNOWN_BUILD)
+        monkeypatch.setattr(gmc, "current_cache_version", lambda: UNKNOWN_BUILD)
         monkeypatch.setattr(gmc, "get_client", object)  # any non-None client
         monkeypatch.setattr(gmc, "read_slot", lambda client, key: _stamped("v4578"))
 
@@ -312,31 +324,29 @@ class TestItFailsOpenWhenTheBuildIsUnknown:
     ):
         """The L1 twin of the same guard.
 
-        L1 compares the stamp it wrote against the stamp it reads, so when the
-        platform sets nothing both sides are `UNKNOWN_BUILD` and they match —
-        which is the fail-open, reached by equality rather than by a special
-        case. Asserted so a future "tighten this" cannot make L1 dead locally
-        while L2 stays correct.
+        L1 compares the stamp it wrote against the stamp it reads, so when both
+        sides carry `UNKNOWN_BUILD` they match — which is the fail-open, reached
+        by equality rather than by a special case.
         """
-        monkeypatch.setattr(events_route, "_current_build_id", lambda: UNKNOWN_BUILD)
+        monkeypatch.setattr(gmc, "current_cache_version", lambda: UNKNOWN_BUILD)
         events_route._write_game_markets_memo(1, "completed", {"spreads": [1]})
         assert events_route._read_game_markets_memo(1) == {"spreads": [1]}
 
 
 # ---------------------------------------------------------------------------
-# 4. One definition of "which deploy am I".
+# 4. One definition of "which cache version am I".
 # ---------------------------------------------------------------------------
 
 
 class TestBothTiersAskTheSameHelper:
-    def test_l1_and_l2_agree_on_the_running_build(self):
-        assert events_route._current_build_id() == gmc.current_build_id()
+    def test_l1_and_l2_agree_on_the_running_cache_version(self):
+        events_route._write_game_markets_memo(1, "completed", {"spreads": [1]})
+        assert events_route._game_markets_cache[1][2] == gmc.current_cache_version()
+        assert gmc.current_cache_version() == f"gm-v{gmc.GAME_MARKETS_CACHE_VERSION}"
 
-    def test_neither_tier_mints_its_own_identity(self):
-        """Both must resolve to `db_session_identity.current_build_id`."""
-        from app.utils import db_session_identity
-
-        assert gmc.current_build_id is db_session_identity.current_build_id
-        assert events_route._current_build_id() == (
-            db_session_identity.current_build_id()
-        )
+    def test_cache_version_is_independent_of_deploy_sha(self, monkeypatch):
+        monkeypatch.setenv("HEROKU_RELEASE_VERSION", "v6636")
+        v1 = gmc.current_cache_version()
+        monkeypatch.setenv("HEROKU_RELEASE_VERSION", "v6637")
+        v2 = gmc.current_cache_version()
+        assert v1 == v2 == f"gm-v{gmc.GAME_MARKETS_CACHE_VERSION}"

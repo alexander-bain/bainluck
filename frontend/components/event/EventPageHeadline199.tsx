@@ -14,6 +14,7 @@ import {
 } from "@/lib/displayIdentity";
 import {
   HEADLINE_STYLE_199,
+  isUnavailableProbabilityCellText250A,
   type HeadlineColumnRole199,
   type HeadlineCompetitorRow199,
   type HeadlineModel199,
@@ -683,11 +684,22 @@ export default function EventPageHeadline199({
                     </div>
                   </div>
 
-                  {visibleColumns.length > 0 ? (
+                  {visibleColumns.length > 0 ? (() => {
+                    const rowHasUnavailableNotice = visibleColumns.some(
+                      ({ col, idx: colIdx }) =>
+                        (col.role === "now" || col.role === "chance") &&
+                        colIdx < row.cells.length &&
+                        isUnavailableProbabilityCellText250A(row.cells[colIdx]),
+                    );
+                    return (
                     <div
                       data-headline-nums=""
                       className="flex items-baseline shrink-0 max-[359px]:ml-auto"
-                      style={{ gap: colGapPx }}
+                      style={
+                        rowHasUnavailableNotice
+                          ? { gap: colGapPx, alignItems: "center" }
+                          : { gap: colGapPx }
+                      }
                     >
                       {visibleColumns.map(({ col, idx: colIdx }) => {
                         const text = colIdx < row.cells.length ? row.cells[colIdx] : "";
@@ -696,6 +708,28 @@ export default function EventPageHeadline199({
                         const secondaryFontPx = secondaryHeadlineCellFontPx199(colCount);
 
                         if (col.role === "now" || col.role === "chance") {
+                          if (isUnavailableProbabilityCellText250A(text)) {
+                            return (
+                              <span
+                                key={`${col.role}-${colIdx}`}
+                                data-headline-cell={col.role}
+                                data-testid="headline-12472-away-unavailable-cell"
+                                className={`self-center font-medium leading-[1.15] text-right whitespace-normal shrink-0 ${
+                                  wideFeaturedCompact
+                                    ? "lg:!w-[104px] xl:!w-[118px] 2xl:!w-[124px] lg:!text-[12px]"
+                                    : ""
+                                }`}
+                                style={{
+                                  width: minWidth,
+                                  minWidth,
+                                  fontSize: pxToRem199(11.5),
+                                  color: HEADLINE_STYLE_199.quietInk,
+                                }}
+                              >
+                                {text}
+                              </span>
+                            );
+                          }
                           return (
                             <span
                               key={`${col.role}-${colIdx}`}
@@ -869,7 +903,8 @@ export default function EventPageHeadline199({
                         );
                       })}
                     </div>
-                  ) : null}
+                    );
+                  })() : null}
                 </div>
               </React.Fragment>
             );

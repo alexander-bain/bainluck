@@ -26583,7 +26583,7 @@ def _read_game_markets_memo(event_id: int):
     if entry is None:
         return None
     cached_ts, cached_status, cached_build, cached_response = entry
-    if cached_build != _current_build_id():
+    if cached_build != gmc.current_cache_version():
         return None
     age = _time.time() - cached_ts
     ttl = (
@@ -26649,13 +26649,15 @@ def _write_game_markets_memo(event_id: int, source_status, response) -> None:
     the bound is reached is the one holding the OLDEST CONTENT rather than the
     one this process happened to read first.
     """
+    from app.utils import game_markets_cache as gmc
+
     if len(_game_markets_cache) >= _GAME_MARKETS_MAX_SIZE:
         oldest_key = min(_game_markets_cache, key=lambda k: _game_markets_cache[k][0])
         del _game_markets_cache[oldest_key]
     _game_markets_cache[event_id] = (
         _memo_stamp(response),
         str(source_status or ""),
-        _current_build_id(),
+        gmc.current_cache_version(),
         response,
     )
 
