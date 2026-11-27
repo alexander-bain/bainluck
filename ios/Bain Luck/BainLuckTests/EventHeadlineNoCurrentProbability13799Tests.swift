@@ -292,7 +292,9 @@ final class EventHeadlineNoCurrentProbability13799Tests: XCTestCase {
         XCTAssertEqual(model.columns.map(\.role), [.score, .projected, .now])
         XCTAssertEqual(model.rows.count, 2)
         XCTAssertEqual(model.rows[0].role, .away)
-        XCTAssertEqual(model.rows[0].cells.last, "", "#5271 must withhold away probability rather than invent 1 - home")
+        XCTAssertEqual(model.rows[0].cells.last, EventAtlasStates11666.noRecentPrice, "Ruling 250: A requires standing words in withheld soccer away cell")
+        XCTAssertEqual(model.rows[0].quietNoticeColumns, [model.columns.count - 1])
+        XCTAssertNil(model.rows[0].rawProbability)
         XCTAssertEqual(model.rows[1].role, .home)
         XCTAssertEqual(model.rows[1].cells.last, "52.0%")
         XCTAssertNil(model.probabilityUnavailableNotice)
@@ -336,24 +338,21 @@ final class EventHeadlineNoCurrentProbability13799Tests: XCTestCase {
         .padding(16)
         .frame(width: width)
         .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
+        .ignoresSafeArea()
         .environment(\.colorScheme, colorScheme)
         .environment(\.dynamicTypeSize, dynamicTypeSize)
 
         let uiStyle: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
         let host = hostForMeasurement(card, at: dynamicTypeSize)
         host.overrideUserInterfaceStyle = uiStyle
+        host.additionalSafeAreaInsets = .zero
+        host.view.insetsLayoutMarginsFromSafeArea = false
         host.view.frame = CGRect(x: 0, y: 0, width: width, height: 10)
         let target = host.sizeThatFits(in: CGSize(width: width, height: UIView.layoutFittingExpandedSize.height))
         let bounds = CGRect(origin: .zero, size: CGSize(width: width, height: ceil(target.height)))
         host.view.frame = bounds
 
-        let window: UIWindow
-        if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
-            window = UIWindow(windowScene: scene)
-        } else {
-            window = UIWindow(frame: bounds)
-        }
-        window.frame = bounds
+        let window = UIWindow(frame: bounds)
         window.overrideUserInterfaceStyle = uiStyle
         window.rootViewController = host
         window.isHidden = false

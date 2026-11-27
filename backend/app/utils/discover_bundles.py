@@ -285,7 +285,7 @@ AUTHORED_STORY_QUESTIONS = {
     "story:macro_rates": "What does the Fed do next?",
     "story:oil": "Where is the oil price going?",
     "story:single_stock_earnings": "Who beats their earnings number?",
-    "story:ipo_markets": "Who goes public, and at what price?",
+    "story:ipo_markets": "Who goes public, and at what valuation?",
     "story:spacex_ipo": "Does SpaceX go public, and at what valuation?",
     # Tech / science
     # #8742: this was "Which AI model comes out on top?", which is true of the
@@ -569,7 +569,7 @@ def _bundle_subtitle(measure: str, count: int) -> str:
     :func:`_measure_key` is what makes each sentence true of every member under it.
     """
     if measure == "ipo_valuation":
-        return "Which of these companies is priced highest to list?"
+        return "Which of these companies lists at the highest valuation?"
     if measure == "commodity_ranges":
         return "Where do these commodity prices land?"
     if measure == "rotten_tomatoes_scores":
