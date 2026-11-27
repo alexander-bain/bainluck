@@ -56,6 +56,8 @@ function ContainersV2Session() {
   const [deckId, setDeckId] = useState<string | null>(null);
   const [reviewer, setReviewer] = useState<string>("alex");
   const [snapshotAt, setSnapshotAt] = useState<string | null>(null);
+  const [coveragePartial, setCoveragePartial] = useState(false);
+  const [coverageFailedReads, setCoverageFailedReads] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
   const [surfaceScheme, setSurfaceScheme] = useState<"light" | "dark">("light");
@@ -100,6 +102,8 @@ function ContainersV2Session() {
           setErrorMsg(previewRes.error || "Could not load preview container pages from cache.");
           setPages([]);
           setDeckStatus(null);
+          setCoveragePartial(false);
+          setCoverageFailedReads([]);
           setLoading(false);
           return;
         }
@@ -109,6 +113,8 @@ function ContainersV2Session() {
         setDeckId(resolvedDeckId);
         setDeckStatus(previewRes.status || (resolvedPages.length > 0 ? "ready" : "not_built_yet"));
         setSnapshotAt(previewRes.snapshot_captured_at || null);
+        setCoveragePartial(Boolean(previewRes.coverage_partial));
+        setCoverageFailedReads(previewRes.coverage_failed_reads ?? []);
 
         const baseDraftKey = resolvedDeckId
           ? `${CONTAINERS_V2_DRAFT_STORAGE_KEY}:${resolvedDeckId}`
@@ -270,6 +276,15 @@ function ContainersV2Session() {
               {deckId ? ` · Deck ${deckId}` : ""}
               {reviewer !== "alex" ? ` · Grader: ${reviewer}` : ""}
             </p>
+          )}
+          {coveragePartial && (
+            <div
+              data-testid="grade-coverage-partial"
+              className="mt-2 rounded-lg border border-accent-warning/40 bg-accent-warning/10 px-2.5 py-1.5 text-xs font-medium text-accent-warning"
+            >
+              Partial coverage — failed reads:{" "}
+              {coverageFailedReads.join(", ") || "unknown"}. Some pages may repeat existing sets.
+            </div>
           )}
           <div className="mt-3 flex items-center justify-between gap-2 border-t border-surface-border pt-2.5 text-xs">
             <span data-testid="grade-progress-summary" className="font-semibold text-text-primary">

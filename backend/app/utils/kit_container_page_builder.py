@@ -800,12 +800,42 @@ def _heading_base_key(headline: str, subject_tokens: set[str] | frozenset[str] =
     return " ".join(toks)
 
 
+_DANGLING_CONDITIONAL_VERBS: frozenset[str] = frozenset({"insult", "praise", "visit"})
+_DANGLING_TAIL_WORDS: frozenset[str] = (
+    _DANGLING_HEADLINE_ENDINGS - _DANGLING_CONDITIONAL_VERBS
+) | frozenset({
+    "and", "or", "as", "than", "that", "which", "who", "whom", "whose",
+    "been", "being", "had", "did", "do", "does", "not", "no",
+})
+
+
+def _is_dangling_headline_phrase(phrase: str) -> bool:
+    """Return True if a headline ends mid-clause on a preposition, article, or dangling verb."""
+    s = str(phrase or "").strip()
+    if not s or s.endswith(("...", "\u2026")):
+        return True
+    words = s.split()
+    if not words:
+        return True
+    tail = words[-1].strip("?!.,:;\"'\u2018\u2019\u201c\u201d-").lower()
+    if tail in _DANGLING_TAIL_WORDS:
+        return True
+    if tail in _DANGLING_CONDITIONAL_VERBS:
+        prev = words[-2].strip("?!.,:;\"'\u2018\u2019\u201c\u201d-").lower() if len(words) >= 2 else ""
+        # Noun-noun / infinitive phrases like "Public Praise" or "Countries to Visit" are complete;
+        # adverb+verb ("... Publicly Praise") or bare verb chains ("... Will Visit") are clipped.
+        if prev in {"public", "to"} and len(words) >= 2:
+            return False
+        return True
+    return False
+
+
 def _derive_single_market_field_headline(
     mkt_name: str,
     subject_tokens: set[str] | frozenset[str] = frozenset(),
     seen_headlines: set[str] | frozenset[str] = frozenset(),
 ) -> str:
-    """Derive a concrete 2–4 word market-naming headline for a single multi-outcome field."""
+    """Derive a clean 2–4 word heading or fall back to the full market title."""
     raw = str(mkt_name or "").strip()
     seen_low = {s.lower().strip() for s in seen_headlines if s} | _BANNED_SECTION_HEADINGS
     seen_base = {_heading_base_key(s, subject_tokens) for s in seen_headlines if s}
@@ -819,13 +849,27 @@ def _derive_single_market_field_headline(
             and low not in seen_low
             and not any(b in low for b in _BANNED_SECTION_HEADINGS)
             and (not bkey or bkey not in seen_base)
+            and not _is_dangling_headline_phrase(cand)
             and _passes_taste_and_harm(cand)
+        )
+
+    def _full_title_ok(title: str) -> bool:
+        t = str(title or "").strip()
+        if not t:
+            return False
+        low = t.lower()
+        bkey = _heading_base_key(t, subject_tokens)
+        return (
+            low not in seen_low
+            and not any(b in low for b in _BANNED_SECTION_HEADINGS)
+            and (not bkey or bkey not in seen_base)
+            and _passes_taste_and_harm(t)
         )
 
     cands: list[str] = []
     if ":" in raw:
         rhs = re.sub(r"[?!.]+$", "", raw.split(":", 1)[1]).strip()
-        if rhs:
+        if rhs and len(rhs.split()) <= 4:
             cands.append(_title_case_phrase(rhs))
 
     m_which = re.match(
@@ -835,44 +879,83 @@ def _derive_single_market_field_headline(
     )
     if m_which:
         noun = m_which.group(1).strip()
+        subj_mid = m_which.group(2).strip()
         verb = m_which.group(3).strip()
-        if verb.lower() not in {"be", "have", "do", "make"}:
+        if (
+            len(noun.split()) <= 2
+            and not re.search(r"\b(?:be|been|being)\b", subj_mid, re.IGNORECASE)
+            and verb.lower() not in {
+                "be", "have", "do", "make", "of", "for", "to", "in", "on", "at",
+                "by", "with", "from", "as", "into", "about", "after", "before", "and", "or",
+            }
+        ):
             cands.append(_title_case_phrase(f"{noun} to {verb}"))
 
     m_next = re.match(r"^who\s+will\s+be\s+(?:the\s+)?next\s+(.+?)(?:\?|$)", raw, re.IGNORECASE)
     if m_next:
         role = _BEFORE_DATE_RE.sub("", m_next.group(1)).strip(" ?.,")
-        words = role.split()[:3]
-        if words:
-            cands.append(_title_case_phrase(f"next {' '.join(words)}"))
+        role_words = [w for w in role.split() if w]
+        if 1 <= len(role_words) <= 3:
+            cands.append(_title_case_phrase(f"next {' '.join(role_words)}"))
 
     m_winner = re.match(r"^who\s+will\s+win\s+(?:the\s+)?(.+?)(?:\s+(?:in|at)\s+20\d{2}|\?|$)", raw, re.IGNORECASE)
     if m_winner:
         prize = _BEFORE_DATE_RE.sub("", m_winner.group(1)).strip(" ?.,")
-        words = prize.split()[:4]
-        if len(words) >= 2:
-            cands.append(_title_case_phrase(" ".join(words)))
-
-    cleaned = _BEFORE_DATE_RE.sub("", raw)
-    cleaned = re.sub(r"^(?:will|who\s+will|which|what\s+will|where\s+will|when\s+will)\s+", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s+(?:in|for|of)\s+20\d{2}\b", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"[?!.]+$", "", cleaned).strip(" -–—:,")
-    words = [w for w in cleaned.split() if w.lower().rstrip("'’s") not in subject_tokens]
-    while words and words[0].lower() in {"be", "the", "a", "an", "to"}:
-        words = words[1:]
-    while words and words[-1].lower() in _DANGLING_HEADLINE_ENDINGS:
-        words = words[:-1]
-    if 2 <= len(words) <= 4:
-        cands.append(_title_case_phrase(" ".join(words)))
-    elif len(words) > 4:
-        cands.append(_title_case_phrase(" ".join(words[:4])))
+        prize_words = [w for w in prize.split() if w]
+        if 2 <= len(prize_words) <= 4:
+            cands.append(_title_case_phrase(" ".join(prize_words)))
 
     for c in cands:
         if _ok(c):
             return c
+
+    is_wh_question = bool(
+        re.match(
+            r"^(?:who|which|what)(?:\s+[a-z0-9'\u2019-]+){0,3}\s+(?:will|would|is|are|does|do|wins?|gets?|becomes?)\b",
+            raw,
+            re.IGNORECASE,
+        )
+    )
+    if is_wh_question and _full_title_ok(raw):
+        return raw
+
+    if not is_wh_question:
+        cleaned = _BEFORE_DATE_RE.sub("", raw)
+        cleaned = re.sub(r"^(?:will|who\s+will|which|what\s+will|where\s+will|when\s+will)\s+", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+(?:in|for|of)\s+20\d{2}\b", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"[?!.]+$", "", cleaned).strip(" -–—:,")
+        words = [w for w in cleaned.split() if w.lower().rstrip("'’s") not in subject_tokens]
+        while words and words[0].lower() in {"be", "the", "a", "an", "to"}:
+            words = words[1:]
+        while words and words[-1].lower() in _DANGLING_HEADLINE_ENDINGS:
+            words = words[:-1]
+        if 2 <= len(words) <= 4:
+            cand_clean = _title_case_phrase(" ".join(words))
+            if _ok(cand_clean):
+                return cand_clean
+
+    if _full_title_ok(raw):
+        return raw
     for fallback in ("Contender Odds", "Leading Contenders", "Field Breakdown"):
         if _ok(fallback):
             return fallback
+    return raw or "Contender Odds"
+
+
+def _format_single_market_field_caption(
+    top_name: str,
+    top_pct_str: str,
+    headline: str,
+    *,
+    mutually_exclusive: Any,
+) -> str:
+    """Format concise lead caption for single-market contender/field cards (#13696 v5)."""
+    if mutually_exclusive is False:
+        return f"{top_name} is the most likely at {top_pct_str}"
+    hl = str(headline or "").strip()
+    if hl.endswith("?") or len(hl.split()) > 4:
+        return f"{top_name} is the favorite at {top_pct_str}"
+    return f"{top_name} is the favorite for {hl} at {top_pct_str}"
     return "Contender Odds"
 
 
@@ -1510,9 +1593,43 @@ def _lookup_subject_art(name: str, art_map: Mapping[str, Mapping[str, Any]]) -> 
     return None
 
 
+def _is_single_market_field_section(
+    card: Mapping[str, Any],
+    *,
+    markets_by_id: Mapping[int, Mapping[str, Any]] | None = None,
+) -> bool:
+    """Return True when a stack card renders rows of one multi-outcome or unified-group field."""
+    variant = str(card.get("variant") or "")
+    if variant not in {"casting_sheet", "plain_bar_stack"}:
+        return False
+    items = (card.get("body") or {}).get("items") or ()
+    if variant == "casting_sheet":
+        return True
+    item_mids = {
+        int((it.get("provenance") or {}).get("market_id"))
+        for it in items
+        if isinstance(it, Mapping) and (it.get("provenance") or {}).get("market_id") is not None
+    }
+    if len(item_mids) == 1 or any("-bar-m-" in str(it.get("id") or "") for it in items if isinstance(it, Mapping)):
+        return True
+    if (
+        markets_by_id is not None
+        and len(items) >= 2
+        and len(item_mids) > 0
+        and all(mid in markets_by_id for mid in item_mids)
+    ):
+        gids = {str(markets_by_id[mid].get("group_id") or "").strip() for mid in item_mids}
+        return len(gids) == 1 and "" not in gids
+    return False
+
+
 def _finalize_section(card: dict[str, Any]) -> dict[str, Any] | None:
     hl = str(card.get("common_headline") or "").strip()
-    if not (2 <= len(hl.split()) <= 4):
+    hl_words = [w for w in hl.split() if w]
+    is_field_card = _is_single_market_field_section(card)
+    if _is_dangling_headline_phrase(hl):
+        return None
+    if not (2 <= len(hl_words) <= 4) and not (is_field_card and len(hl_words) >= 2):
         return None
     if hl.lower() in _BANNED_SECTION_HEADINGS or any(b in hl.lower() for b in _BANNED_SECTION_HEADINGS):
         return None
@@ -2586,14 +2703,19 @@ def _build_casting_sheet_section(
             eff_subj,
             seen_headlines,
         )
-        lead_verb = "is most likely for" if m.get("mutually_exclusive") is False else "is the favorite for"
+        stat_caption = _format_single_market_field_caption(
+            str(top_o["name"]),
+            top_pct_str,
+            headline,
+            mutually_exclusive=m.get("mutually_exclusive"),
+        )
         card = _finalize_section(_make_kit_card(
             card_id=f"{slug}-casting-sheet",
             layout="stack",
             variant="casting_sheet",
             kicker=f"{kicker} · CONTENDERS",
             common_headline=headline,
-            stat_caption=f"{top_o['name']} {lead_verb} {headline} at {top_pct_str}",
+            stat_caption=stat_caption,
             source_count=_sources_count(m),
             route_slug=slug,
             body={"header_layout": "none", "header_marks": [], "items": items},
@@ -2649,14 +2771,19 @@ def _build_plain_bar_stack_section(
             eff_subj,
             seen_headlines,
         )
-        lead_verb = "is most likely for" if m.get("mutually_exclusive") is False else "is the favorite for"
+        stat_caption = _format_single_market_field_caption(
+            str(top_o["name"]),
+            top_pct_str,
+            headline,
+            mutually_exclusive=m.get("mutually_exclusive"),
+        )
         card = _finalize_section(_make_kit_card(
             card_id=f"{slug}-plain-bars",
             layout="stack",
             variant="plain_bar_stack",
             kicker=f"{kicker} · RACE",
             common_headline=headline,
-            stat_caption=f"{top_o['name']} {lead_verb} {headline} at {top_pct_str}",
+            stat_caption=stat_caption,
             source_count=_sources_count(m),
             route_slug=slug,
             body={"header_layout": "none", "header_marks": [], "items": items},
@@ -2842,21 +2969,21 @@ def propose_container_page_for_family(
         sec_hl = str(sec.get("common_headline") or "").strip()
         sec_bkey = _heading_base_key(sec_hl, entity_tokens)
         row_texts = _section_row_texts(sec)
+        is_field_card = _is_single_market_field_section(sec)
+        hl_words = [w for w in sec_hl.split() if w]
+        valid_field_full_hl = is_field_card and len(hl_words) >= 2 and not _is_dangling_headline_phrase(sec_hl)
+        hl_len_invalid = (not valid_field_full_hl) and not (2 <= len(hl_words) <= 4)
         if (
             not sec_hl
-            or not (2 <= len(sec_hl.split()) <= 4)
+            or hl_len_invalid
+            or _is_dangling_headline_phrase(sec_hl)
             or sec_hl.lower() in seen_headlines
             or sec_hl.lower() in _BANNED_SECTION_HEADINGS
             or (sec_bkey and sec_bkey in seen_base_keys)
         ):
-            # Single-market casting/contender cards cannot re-derive from contender names;
-            # keep them only if their own heading did not collide.
-            mids = set()
-            for it in (sec.get("body") or {}).get("items") or ():
-                mid = (it.get("provenance") or {}).get("market_id")
-                if mid is not None:
-                    mids.add(int(mid))
-            if variant == "casting_sheet" or (variant == "plain_bar_stack" and len(mids) == 1):
+            # Single-market / unified-group casting & contender cards cannot re-derive from contender names;
+            # drop if their own heading collided or failed validity checks.
+            if is_field_card:
                 return
             topical_hl = _derive_section_headline(
                 variant,
@@ -2990,20 +3117,7 @@ def audit_container_page_invariants(
         hl_low = hl.lower()
         body = sec.get("body") or {}
 
-        # 5b & 6. Headline shape, banned check, and stripped-subject uniqueness
-        if not (2 <= len(hl.split()) <= 4):
-            violations.append(f"{sec_id}: headline word count out of 2..4 range ({hl!r})")
-        if hl_low in _BANNED_SECTION_HEADINGS or any(b in hl_low for b in _BANNED_SECTION_HEADINGS):
-            violations.append(f"{sec_id}: banned headline ({hl!r})")
-        bkey = _heading_base_key(hl, subject_tokens)
-        if bkey in seen_base_headings:
-            violations.append(
-                f"{sec_id}: stripped heading {bkey!r} ({hl!r}) repeats {seen_base_headings[bkey]!r}"
-            )
-        elif bkey:
-            seen_base_headings[bkey] = hl
-
-        # Gather rows + provenance market_ids + displayed numbers
+        # Gather rows + provenance market_ids + displayed numbers first so headline validation knows field provenance
         section_market_ids: set[int] = set()
         section_row_entries: list[dict[str, Any]] = []
         raw_texts_for_theme: list[str] = []
@@ -3168,6 +3282,39 @@ def audit_container_page_invariants(
             if mid in seen_market_sections:
                 violations.append(f"{sec_id}: market_id {mid} repeated across {seen_market_sections[mid]} and {sec_id}")
             seen_market_sections[mid] = sec_id
+
+        # 5b & 6. Headline shape, banned check, dangling/clipped fragment check, and stripped-subject uniqueness
+        hl_words = [w for w in hl.split() if w]
+        is_field_headline_sec = _is_single_market_field_section(sec, markets_by_id=markets_by_id)
+        full_title_match = False
+        if is_field_headline_sec and hl:
+            if markets_by_id is not None and section_market_ids:
+                full_title_match = any(
+                    hl in {
+                        str(markets_by_id[mid].get("name") or "").strip(),
+                        str(markets_by_id[mid].get("event_title") or "").strip(),
+                    }
+                    for mid in section_market_ids
+                    if mid in markets_by_id
+                )
+            elif len(hl_words) >= 2 and not _is_dangling_headline_phrase(hl):
+                if re.match(r"^(?:who|which|what)\b", hl_low):
+                    full_title_match = hl.endswith("?")
+                else:
+                    full_title_match = True
+        if _is_dangling_headline_phrase(hl):
+            violations.append(f"{sec_id}: dangling or truncated headline ({hl!r})")
+        elif not full_title_match and not (2 <= len(hl_words) <= 4):
+            violations.append(f"{sec_id}: headline word count out of 2..4 range ({hl!r})")
+        if hl_low in _BANNED_SECTION_HEADINGS or any(b in hl_low for b in _BANNED_SECTION_HEADINGS):
+            violations.append(f"{sec_id}: banned headline ({hl!r})")
+        bkey = _heading_base_key(hl, subject_tokens)
+        if bkey in seen_base_headings:
+            violations.append(
+                f"{sec_id}: stripped heading {bkey!r} ({hl!r}) repeats {seen_base_headings[bkey]!r}"
+            )
+        elif bkey:
+            seen_base_headings[bkey] = hl
 
         # 2. Check numeric threshold rung monotonicity
         if len(section_row_entries) >= 2:

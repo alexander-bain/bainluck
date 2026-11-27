@@ -281,4 +281,22 @@ describe("Decision 386: A (#12221) — /grade/containers-v2", () => {
     }
     expect(hits).toEqual([]);
   });
+
+  test("Admin preview and grading headers surface partial coverage notices when coverage reads fail", () => {
+    const frontendRoot = path.resolve(__dirname, "../..");
+    const previewSrc = fs.readFileSync(
+      path.join(frontendRoot, "app/admin/containers-kit-preview/page.tsx"),
+      "utf-8",
+    );
+    const gradeSrc = fs.readFileSync(
+      path.join(frontendRoot, "app/grade/containers-v2/page.tsx"),
+      "utf-8",
+    );
+    expect(previewSrc).toContain("coverage_partial");
+    expect(previewSrc).toContain("coverage_failed_reads");
+    expect(previewSrc).toContain("kit-preview-coverage-partial");
+    expect(gradeSrc).toContain("coverage_partial");
+    expect(gradeSrc).toContain("coverage_failed_reads");
+    expect(gradeSrc).toContain("grade-coverage-partial");
+  });
 });

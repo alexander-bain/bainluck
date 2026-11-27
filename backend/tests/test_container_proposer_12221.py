@@ -816,12 +816,15 @@ def test_frozen_deck_id_covered_ids_and_timings_in_task(monkeypatch):
             session=object(),
             markets=mkts,
             covered_ids=None,
+            covered_public_set_names=(),
             now=REF_NOW,
             redis_client=rc,
         )
     )
     assert res_filtered["covered_ids_count"] == 2
     assert res_filtered["proposed_count"] == 0
+    assert res_filtered["status"] == "complete"
+    assert res_filtered["coverage_partial"] is False
     assert res_filtered["timings_ms"]["total_ms"] >= 0.0
 
     # With empty covered_ids, Alpha Horizon proposes and freezes deck_id in Redis
@@ -1256,7 +1259,7 @@ def test_13696_fable_nov26_rework_six_invariants():
     assert pb_visit is not None
     assert pb_visit["common_headline"] == "Countries to Visit", pb_visit
     assert "milestones" not in pb_visit["common_headline"].lower()
-    assert "13%" in pb_visit["stat_caption"] and "countries to visit" in pb_visit["stat_caption"].lower()
+    assert pb_visit["stat_caption"] == "Nordmark is the most likely at 13%", pb_visit["stat_caption"]
 
     # 2. Inverted numeric threshold rungs rejected ($1.5T reading higher than $1.4T)
     inv_mkts = [
@@ -1781,3 +1784,238 @@ def test_13696_fable_nov27_1007am_four_review_fixes() -> None:
     dumped = json.dumps([ladder_page["page"], non_excl_page["page"], us_page["page"], mixed_page["page"]]).lower()
     for term in _BANNED_TERMS:
         assert term not in dumped, term
+
+
+def test_13696_fable_nov27_v5_four_guards(monkeypatch) -> None:
+    """Fable 11:11 AM + 11:12 AM PT guards: full-title fallback, clean non-excl captions, nightly-only deck, partial coverage."""
+    from types import SimpleNamespace
+    from app.routes import containers as containers_route
+    from app.tasks import container_proposer as cp_task
+    from app.utils.kit_container_page_builder import (
+        _build_casting_sheet_section,
+        _build_plain_bar_stack_section,
+        _derive_single_market_field_headline,
+        _format_single_market_field_caption,
+    )
+
+    # 1. Must-not "Spy Be Accused Of": full title used instead of mid-sentence chop; audit rejects clipped fragment.
+    spy_title = "Who will the OpenAI spy be accused of working for in 2026?"
+    derived_hl = _derive_single_market_field_headline(
+        spy_title,
+        subject_tokens={"openai"},
+        seen_headlines={"openai outlook", "through jan 2029", "ai & safety", "long shots"},
+    )
+    assert derived_hl == spy_title, derived_hl
+    assert derived_hl != "Spy Be Accused Of"
+
+    spy_mkts = [
+        {
+            "id": 65740158,
+            "source": "polymarket",
+            "name": spy_title,
+            "category": "tech",
+            "mutually_exclusive": False,
+            "status": "open",
+            "resolution_date": REF_NOW + timedelta(days=34),
+            "volume_24h": 45000,
+            "outcomes": [
+                {"id": 1, "name": "Saudi Arabia", "current_probability": 0.07},
+                {"id": 2, "name": "Russia", "current_probability": 0.06},
+                {"id": 3, "name": "Israel", "current_probability": 0.05},
+            ],
+        },
+        _bin(65740201, "Will OpenAI or Anthropic announce recursive self-improvement before Jan 1, 2027?", 18, series="KXAI", res_days=34),
+        _bin(65740202, "Will OpenAI or Anthropic announce recursive self-improvement before Jan 1, 2029?", 81, series="KXAI", res_days=730),
+        _bin(65740203, "Will OpenAI IPO valuation hit $1T+ by Dec 31, 2026?", 97, series="KXAI", res_days=34),
+        _bin(65740204, "Will OpenAI launch a new consumer hardware product by Dec 31, 2026?", 15, series="KXAI", res_days=34),
+        _bin(65740205, "Will the highest score achieved by an OpenAI model on HLE in 2026 be 55% or higher?", 47, series="KXAI", res_days=34),
+    ]
+    openai_page = propose_container_page_for_family("OpenAI Outlook", spy_mkts, now=REF_NOW)
+    assert openai_page["accepted"], openai_page
+    dumped_openai = json.dumps(openai_page["page"])
+    assert "Spy Be Accused Of" not in dumped_openai
+    spy_secs = [
+        s for s in openai_page["page"]["sections"]
+        if any(
+            (it.get("provenance") or {}).get("market_id") == 65740158
+            for it in (s.get("body", {}).get("items") or [])
+        )
+    ]
+    assert len(spy_secs) == 1, spy_secs
+    assert spy_secs[0]["common_headline"] == spy_title, spy_secs[0]["common_headline"]
+    assert audit_container_page_invariants(openai_page["page"], markets_by_id={m["id"]: m for m in spy_mkts}) == []
+
+    # Craft a bad casting_sheet section with clipped headline "Spy Be Accused Of" -> audit MUST flag it
+    bad_clipped_page = {
+        "title": "OpenAI Outlook",
+        "snapshot_captured_at": REF_NOW.isoformat(),
+        "sections": [
+            {
+                **spy_secs[0],
+                "common_headline": "Spy Be Accused Of",
+                "stat_caption": "Saudi Arabia is most likely for Spy Be Accused Of at 7%",
+            }
+        ],
+    }
+    bad_clipped_errs = audit_container_page_invariants(bad_clipped_page, markets_by_id={m["id"]: m for m in spy_mkts})
+    assert bad_clipped_errs, bad_clipped_errs
+    bad_clipped_no_map = audit_container_page_invariants(bad_clipped_page)
+    assert bad_clipped_no_map, bad_clipped_no_map
+
+    # 2. Non-exclusive field caption omits "for <heading>": "X is the most likely at N%".
+    assert spy_secs[0]["stat_caption"] == "Saudi Arabia is the most likely at 7%", spy_secs[0]["stat_caption"]
+    dress_mkt = {
+        "id": 77301,
+        "name": "Taylor Swift: Wedding Dress",
+        "mutually_exclusive": False,
+        "status": "open",
+        "volume_24h": 30000,
+        "outcomes": [
+            {"id": 1, "name": "Dior", "current_probability": 0.31},
+            {"id": 2, "name": "Vera Wang", "current_probability": 0.21},
+            {"id": 3, "name": "Oscar de la Renta", "current_probability": 0.19},
+        ],
+    }
+    pb_dress = _build_plain_bar_stack_section("taylor-swift", "CULTURE", [dress_mkt], set(), now=REF_NOW, family_headline="Taylor Swift")
+    assert pb_dress is not None
+    assert pb_dress["common_headline"] == "Wedding Dress", pb_dress["common_headline"]
+    assert pb_dress["stat_caption"] == "Dior is the most likely at 31%", pb_dress["stat_caption"]
+    assert "is most likely for" not in pb_dress["stat_caption"].lower()
+    assert _format_single_market_field_caption("Jane Doe", "44%", "Central Desk", mutually_exclusive=True) == "Jane Doe is the favorite for Central Desk at 44%"
+    assert _format_single_market_field_caption("Jane Doe", "44%", spy_title, mutually_exclusive=True) == "Jane Doe is the favorite at 44%"
+
+    # Keep unused casting helper imported for lint parity
+    assert _build_casting_sheet_section is not None
+
+    # 3. Tonight's deck contains ONLY tonight's pages (omitted run1 families never survive under run2's timestamp).
+    class FakeRedis:
+        def __init__(self):
+            self.store = {}
+
+        def get(self, key):
+            return self.store.get(key)
+
+        def set(self, key, val, ex=None):
+            self.store[key] = val
+
+    t1 = datetime(2026, 11, 26, 8, 0, 0, tzinfo=timezone.utc)
+    t2 = datetime(2026, 11, 27, 8, 0, 0, tzinfo=timezone.utc)
+    fam_a_page = {
+        "slug": "alpha-family",
+        "family_fingerprint": "fp-alpha",
+        "page_fingerprint": "pfp-alpha",
+        "title": "Alpha Family",
+        "kicker": "TECH",
+        "market_count": 5,
+        "section_count": 3,
+        "variants": ["dated_tiles", "shared_scale", "countdown"],
+        "sections": [],
+    }
+    fam_b_page = {
+        "slug": "beta-family",
+        "family_fingerprint": "fp-beta",
+        "page_fingerprint": "pfp-beta",
+        "title": "Beta Family",
+        "kicker": "TECH",
+        "market_count": 5,
+        "section_count": 3,
+        "variants": ["dated_tiles", "shared_scale", "countdown"],
+        "sections": [],
+    }
+    store1 = merge_preview_store(None, [fam_a_page, fam_b_page], now=t1)
+    assert [p["slug"] for p in store1["pages"]] == ["alpha-family", "beta-family"]
+    store2 = merge_preview_store(store1, [fam_b_page], now=t2)
+    assert [p["slug"] for p in store2["pages"]] == ["beta-family"], store2["pages"]
+    assert store2["updated_at"] == t2.isoformat()
+    assert store2["updated_last_run"] == 1 and store2["added_last_run"] == 0
+
+    rc = FakeRedis()
+    fam_a_mkts = [
+        {**_bin(95101, "Alpha Corp ship chip Before Nov 28 2026", 35, category="tech", series="KXALF", vol=80000, move=0.12, res_days=10, sources_count=2), "event_title": "Alpha Corp"},
+        {**_bin(95102, "Alpha Corp ship chip Before Dec 15 2026", 68, category="tech", series="KXALF", vol=75000, move=0.10, res_days=21, sources_count=2), "event_title": "Alpha Corp"},
+        {**_bin(95103, "Alpha Corp pass safety audit by Dec 31", 72, category="tech", series="KXALF", vol=65000, move=0.08, res_days=18, sources_count=2), "event_title": "Alpha Corp"},
+        {**_bin(95104, "Alpha Corp launch consumer hub by Dec 31", 44, category="tech", series="KXALF", vol=60000, move=0.07, res_days=12, sources_count=2), "event_title": "Alpha Corp"},
+        {**_bin(95105, "Alpha Corp acquire cloud lab in 2027", 14, category="tech", series="KXALF", vol=55000, move=0.05, res_days=80, sources_count=2), "event_title": "Alpha Corp"},
+        {**_bin(95106, "Alpha Corp open Tokyo datacenter in 2027", 8, category="tech", series="KXALF", vol=50000, move=0.03, res_days=120, sources_count=2), "event_title": "Alpha Corp"},
+        {**_bin(95107, "Alpha Corp list on Nasdaq in 2027", 6, category="tech", series="KXALF", vol=45000, move=0.02, res_days=130, sources_count=2), "event_title": "Alpha Corp"},
+    ]
+    fam_b_mkts = [
+        {**_bin(95201, "Beta Systems pass audit Before Nov 28 2026", 41, category="tech", series="KXBET", vol=80000, move=0.12, res_days=10, sources_count=2), "event_title": "Beta Systems"},
+        {**_bin(95202, "Beta Systems pass audit Before Dec 15 2026", 74, category="tech", series="KXBET", vol=75000, move=0.10, res_days=21, sources_count=2), "event_title": "Beta Systems"},
+        {**_bin(95203, "Beta Systems publish benchmark by Dec 31", 69, category="tech", series="KXBET", vol=65000, move=0.08, res_days=18, sources_count=2), "event_title": "Beta Systems"},
+        {**_bin(95204, "Beta Systems release SDK by Dec 31", 48, category="tech", series="KXBET", vol=60000, move=0.07, res_days=12, sources_count=2), "event_title": "Beta Systems"},
+        {**_bin(95205, "Beta Systems split stock in 2027", 12, category="tech", series="KXBET", vol=55000, move=0.05, res_days=80, sources_count=2), "event_title": "Beta Systems"},
+        {**_bin(95206, "Beta Systems file patent suit in 2027", 9, category="tech", series="KXBET", vol=50000, move=0.03, res_days=120, sources_count=2), "event_title": "Beta Systems"},
+        {**_bin(95207, "Beta Systems reach 10M users in 2027", 5, category="tech", series="KXBET", vol=45000, move=0.02, res_days=130, sources_count=2), "event_title": "Beta Systems"},
+    ]
+    task_run1 = asyncio.run(
+        run_nightly_container_proposer(
+            markets=fam_a_mkts + fam_b_mkts,
+            covered_ids=frozenset(),
+            covered_public_set_names=(),
+            now=t1,
+            redis_client=rc,
+        )
+    )
+    assert len(task_run1["store"]["pages"]) == 2
+    deck1_id = task_run1["deck_id"]
+    task_run2 = asyncio.run(
+        run_nightly_container_proposer(
+            markets=fam_b_mkts,
+            covered_ids=frozenset(),
+            covered_public_set_names=(),
+            now=t2,
+            redis_client=rc,
+        )
+    )
+    assert [p["title"] for p in task_run2["store"]["pages"]] == ["Beta Systems"], task_run2["store"]["pages"]
+    assert task_run2["store"]["updated_at"] == t2.isoformat()
+    # Earlier deck frozen under its own deck_id still keeps both pages intact for saved grades.
+    assert len(json.loads(rc.get(f"{cp_task.CONTAINER_PREVIEWS_DECK_KEY_PREFIX}{deck1_id}"))["pages"]) == 2
+
+    # 4. Failed coverage read is recorded on stored deck & API preview response, never silent complete.
+    import importlib
+    gs_mod = importlib.import_module("app.tasks.grouping_sentinel")
+
+    class FailingSession:
+        async def execute(self, stmt):
+            sql_text = str(stmt)
+            if "SELECT slug, title FROM containers" in sql_text:
+                class _Res:
+                    def all(self):
+                        return []
+                return _Res()
+            raise RuntimeError("graph SQL timeout")
+
+        async def rollback(self):
+            return None
+
+    async def _fail_def_cov(_sess):
+        raise RuntimeError("definition_coverage timeout")
+
+    monkeypatch.setattr(gs_mod, "definition_coverage", _fail_def_cov)
+    partial_run = asyncio.run(
+        run_nightly_container_proposer(
+            session=FailingSession(),
+            markets=fam_b_mkts,
+            covered_ids=None,
+            now=t2,
+            redis_client=rc,
+        )
+    )
+    assert partial_run["status"] == "partial_coverage", partial_run
+    assert partial_run["coverage_partial"] is True
+    assert set(partial_run["coverage_failed_reads"]) == {"graph_sql", "definition_coverage"}
+    assert partial_run["store"]["coverage_partial"] is True
+    assert set(partial_run["store"]["coverage_failed_reads"]) == {"graph_sql", "definition_coverage"}
+
+    async def _admin_ok(*_a, **_kw):
+        return True
+
+    monkeypatch.setattr("app.routes.admin_utils._check_admin_auth", _admin_ok)
+    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: rc)
+    req = SimpleNamespace(headers={}, query_params={})
+    preview_resp = asyncio.run(containers_route.get_kit_container_pages_preview(request=req, db=None))
+    assert preview_resp["status"] == "ready"
+    assert preview_resp["coverage_partial"] is True
+    assert set(preview_resp["coverage_failed_reads"]) == {"graph_sql", "definition_coverage"}

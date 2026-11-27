@@ -772,6 +772,8 @@ async def get_kit_container_pages_preview(
             "deck_id": requested_deck_id,
             "snapshot_captured_at": None,
             "covered_ids_count": 0,
+            "coverage_partial": False,
+            "coverage_failed_reads": [],
             "timings_ms": None,
             "count": 0,
             "pages": [],
@@ -786,6 +788,8 @@ async def get_kit_container_pages_preview(
             "deck_id": requested_deck_id,
             "snapshot_captured_at": None,
             "covered_ids_count": 0,
+            "coverage_partial": False,
+            "coverage_failed_reads": [],
             "timings_ms": None,
             "count": 0,
             "pages": [],
@@ -802,6 +806,8 @@ async def get_kit_container_pages_preview(
             "deck_id": requested_deck_id,
             "snapshot_captured_at": None,
             "covered_ids_count": 0,
+            "coverage_partial": False,
+            "coverage_failed_reads": [],
             "timings_ms": None,
             "count": 0,
             "pages": [],
@@ -819,21 +825,38 @@ async def get_kit_container_pages_preview(
                 "deck_id": requested_deck_id,
                 "snapshot_captured_at": None,
                 "covered_ids_count": 0,
+                "coverage_partial": False,
+                "coverage_failed_reads": [],
                 "timings_ms": None,
                 "count": 0,
                 "pages": [],
             }
-        if isinstance(cached, dict) and cached.get("pages"):
+        if isinstance(cached, dict):
             pages = cached.get("pages") or []
+            if pages:
+                return {
+                    "kit_page_version": 1,
+                    "status": "ready",
+                    "deck_id": cached.get("deck_id"),
+                    "snapshot_captured_at": cached.get("updated_at"),
+                    "covered_ids_count": int(cached.get("covered_ids_count") or 0),
+                    "coverage_partial": bool(cached.get("coverage_partial")),
+                    "coverage_failed_reads": list(cached.get("coverage_failed_reads") or []),
+                    "timings_ms": cached.get("timings_ms"),
+                    "count": len(pages),
+                    "pages": pages,
+                }
             return {
                 "kit_page_version": 1,
-                "status": "ready",
-                "deck_id": cached.get("deck_id"),
+                "status": "not_built_yet",
+                "deck_id": cached.get("deck_id") or requested_deck_id,
                 "snapshot_captured_at": cached.get("updated_at"),
                 "covered_ids_count": int(cached.get("covered_ids_count") or 0),
+                "coverage_partial": bool(cached.get("coverage_partial")),
+                "coverage_failed_reads": list(cached.get("coverage_failed_reads") or []),
                 "timings_ms": cached.get("timings_ms"),
-                "count": len(pages),
-                "pages": pages,
+                "count": 0,
+                "pages": [],
             }
 
     return {
@@ -842,6 +865,8 @@ async def get_kit_container_pages_preview(
         "deck_id": requested_deck_id,
         "snapshot_captured_at": None,
         "covered_ids_count": 0,
+        "coverage_partial": False,
+        "coverage_failed_reads": [],
         "timings_ms": None,
         "count": 0,
         "pages": [],

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import inspect
 import json
 import logging
 import time
@@ -46,7 +47,11 @@ def compute_deck_id(pages: list[dict[str, Any]], *, snapshot_captured_at: str) -
     return f"kit-deck-{digest}"
 
 
-async def load_covered_market_ids(session: Any) -> set[int]:
+async def load_covered_market_ids(
+    session: Any,
+    *,
+    failed_reads: list[str] | None = None,
+) -> set[int]:
     """Load market IDs already covered by persisted containers, Midterms, and round-ups."""
     from app.tasks.grouping_sentinel import _GRAPH_SQL, collection_ids, definition_coverage
 
@@ -59,6 +64,8 @@ async def load_covered_market_ids(session: Any) -> set[int]:
                 covered.add(int(val))
     except Exception:
         logger.warning("[container-proposer] graph SQL coverage read failed; continuing with collection/definition IDs", exc_info=True)
+        if failed_reads is not None and "graph_sql" not in failed_reads:
+            failed_reads.append("graph_sql")
         if hasattr(session, "rollback"):
             try:
                 await session.rollback()
@@ -69,6 +76,8 @@ async def load_covered_market_ids(session: Any) -> set[int]:
         covered |= def_ids
     except Exception:
         logger.warning("[container-proposer] definition_coverage read failed; continuing with DB/Midterms IDs", exc_info=True)
+        if failed_reads is not None and "definition_coverage" not in failed_reads:
+            failed_reads.append("definition_coverage")
         if hasattr(session, "rollback"):
             try:
                 await session.rollback()
@@ -77,7 +86,11 @@ async def load_covered_market_ids(session: Any) -> set[int]:
     return covered
 
 
-async def load_covered_public_set_names(session: Any) -> set[str]:
+async def load_covered_public_set_names(
+    session: Any,
+    *,
+    failed_reads: list[str] | None = None,
+) -> set[str]:
     """Load slug and title strings of published public containers for covered-core overlap checks."""
     names: set[str] = set()
     try:
@@ -91,6 +104,8 @@ async def load_covered_public_set_names(session: Any) -> set[str]:
                 names.add(str(title_val))
     except Exception:
         logger.warning("[container-proposer] container name lookup failed; continuing with ID coverage only", exc_info=True)
+        if failed_reads is not None and "container_names" not in failed_reads:
+            failed_reads.append("container_names")
         if hasattr(session, "rollback"):
             try:
                 await session.rollback()
@@ -105,26 +120,28 @@ def merge_preview_store(
     *,
     now: datetime,
     covered_ids_count: int = 0,
+    coverage_failed_reads: Iterable[str] = (),
     timings_ms: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
-    """Idempotently merge new preview pages by ``family_fingerprint`` with frozen deck_id."""
-    by_fp: dict[str, dict[str, Any]] = {}
+    """Build tonight's preview deck strictly from tonight's pages with frozen deck_id."""
+    prev_fps: set[str] = set()
     if isinstance(existing, Mapping):
         for page in existing.get("pages") or ():
             if not isinstance(page, Mapping):
                 continue
             fp = str(page.get("family_fingerprint") or page.get("slug") or "")
             if fp:
-                by_fp[fp] = {**dict(page), "state": "preview"}
+                prev_fps.add(fp)
 
+    by_fp: dict[str, dict[str, Any]] = {}
     added = 0
     updated = 0
     for page in new_pages:
         clean_page = {**dict(page), "state": "preview"}
         fp = str(clean_page.get("family_fingerprint") or clean_page.get("slug") or "")
-        if not fp:
+        if not fp or fp in by_fp:
             continue
-        if fp in by_fp:
+        if fp in prev_fps:
             updated += 1
         else:
             added += 1
@@ -133,12 +150,15 @@ def merge_preview_store(
     ordered_pages = list(by_fp.values())
     updated_at_iso = now.isoformat()
     deck_id = compute_deck_id(ordered_pages, snapshot_captured_at=updated_at_iso)
+    failed_list = list(dict.fromkeys(str(r) for r in coverage_failed_reads if r))
     return {
         "kit_page_version": 1,
         "status": "ready" if ordered_pages else "not_built_yet",
         "deck_id": deck_id,
         "updated_at": updated_at_iso,
         "covered_ids_count": int(covered_ids_count),
+        "coverage_partial": bool(failed_list),
+        "coverage_failed_reads": failed_list,
         "timings_ms": dict(timings_ms) if timings_ms is not None else None,
         "count": len(ordered_pages),
         "added_last_run": added,
@@ -188,6 +208,7 @@ async def run_nightly_container_proposer(
 
     snapshot_load_ms = 0.0
     coverage_load_ms = 0.0
+    coverage_failed_reads: list[str] = []
     resolved_covered: set[int] | frozenset[int] = covered_ids if covered_ids is not None else set()
     resolved_set_names: set[str] | tuple[str, ...] = tuple(covered_public_set_names) if covered_public_set_names is not None else ()
 
@@ -202,10 +223,16 @@ async def run_nightly_container_proposer(
             snapshot_load_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         if covered_ids is None:
             t1 = time.perf_counter()
-            loaded_covered = await load_covered_market_ids(db_sess)
+            if "failed_reads" in inspect.signature(load_covered_market_ids).parameters:
+                loaded_covered = await load_covered_market_ids(db_sess, failed_reads=coverage_failed_reads)
+            else:
+                loaded_covered = await load_covered_market_ids(db_sess)
             coverage_load_ms = round((time.perf_counter() - t1) * 1000.0, 2)
         if covered_public_set_names is None:
-            loaded_names = await load_covered_public_set_names(db_sess)
+            if "failed_reads" in inspect.signature(load_covered_public_set_names).parameters:
+                loaded_names = await load_covered_public_set_names(db_sess, failed_reads=coverage_failed_reads)
+            else:
+                loaded_names = await load_covered_public_set_names(db_sess)
         return loaded_markets, loaded_covered, loaded_names
 
     if markets is None or covered_ids is None:
@@ -250,6 +277,9 @@ async def run_nightly_container_proposer(
         "total_ms": total_ms,
     }
 
+    failed_list = list(dict.fromkeys(coverage_failed_reads))
+    coverage_partial = bool(failed_list)
+
     stored_payload: dict[str, Any] | None = None
     if redis_client is not None:
         raw_prev = redis_client.get(CONTAINER_PREVIEWS_REDIS_KEY)
@@ -259,6 +289,7 @@ async def run_nightly_container_proposer(
             result["pages"],
             now=ref_now,
             covered_ids_count=len(resolved_covered),
+            coverage_failed_reads=failed_list,
             timings_ms=timings_ms,
         )
         serialized = json.dumps(stored_payload)
@@ -276,18 +307,22 @@ async def run_nightly_container_proposer(
             )
 
     logger.info(
-        "[container-proposer] uncovered_families=%d proposed=%d audited=%d covered_ids=%d total_ms=%.2f",
+        "[container-proposer] uncovered_families=%d proposed=%d audited=%d covered_ids=%d coverage_partial=%s failed_reads=%s total_ms=%.2f",
         result["uncovered_family_count"],
         result["count"],
         len(result["ranked_audit"]),
         len(resolved_covered),
+        coverage_partial,
+        failed_list,
         total_ms,
     )
     return {
-        "status": "complete",
+        "status": "partial_coverage" if coverage_partial else "complete",
         "snapshot_captured_at": result["snapshot_captured_at"],
         "deck_id": stored_payload.get("deck_id") if stored_payload else compute_deck_id(result["pages"], snapshot_captured_at=result["snapshot_captured_at"]),
         "covered_ids_count": len(resolved_covered),
+        "coverage_partial": coverage_partial,
+        "coverage_failed_reads": failed_list,
         "timings_ms": timings_ms,
         "uncovered_family_count": result["uncovered_family_count"],
         "proposed_count": result["count"],

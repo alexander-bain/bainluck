@@ -29,6 +29,8 @@ export interface KitContainerPagesPreviewResponse {
   deck_id?: string | null;
   snapshot_captured_at: string | null;
   covered_ids_count?: number;
+  coverage_partial?: boolean;
+  coverage_failed_reads?: string[];
   timings_ms?: Record<string, number> | null;
   count: number;
   pages: KitContainerPageSpec[];

@@ -89,6 +89,15 @@ function ContainersKitPreviewContent() {
               {payload.deck_id ? ` · Deck ${payload.deck_id}` : ""}
             </p>
           )}
+          {payload?.coverage_partial && (
+            <div
+              data-testid="kit-preview-coverage-partial"
+              className="mt-2 rounded-lg border border-accent-warning/40 bg-accent-warning/10 px-2.5 py-1.5 text-xs font-medium text-accent-warning"
+            >
+              Partial coverage — failed reads:{" "}
+              {(payload.coverage_failed_reads ?? []).join(", ") || "unknown"}. Some pages may repeat existing sets.
+            </div>
+          )}
         </header>
 
         {loading && (
