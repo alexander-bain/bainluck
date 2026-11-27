@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import json
 import logging
 import re
+import time
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -28,6 +28,7 @@ from app.utils.guess_daily import (
     CHANCE_MID_GAP,
     EARNED_MISS,
     LEAD_GAP,
+    MAX_DAILY_ENTRIES,
     MAX_GROUP_ENTRIES,
     OPTION_GAP,
     RETENTION_DAYS,
@@ -40,7 +41,6 @@ from app.utils.guess_daily import (
     load_site_market_details,
     points_for,
     resolve_card_from_markets,
-    sweep_expired_guess_data,
     today_pt,
 )
 
@@ -511,11 +511,108 @@ def test_guess_group_entry_schema_stores_only_privacy_allowed_columns():
 
 def test_checked_in_schedule_file_is_valid_shell_for_fable_and_edition_codes_avoid_c1_d1():
     sched = load_daily_schedule(SCHEDULE_PATH)
-    assert sched == {"version": 1, "days": {}}
+    assert sched["version"] == 1
+    days = sched["days"]
+    assert "2026-11-28" in days and "2026-11-29" in days
+    ban_re = re.compile(r"\b(questions?|stale|blend|priced?|curated|cohort|bids?)\b", re.I)
+    for day_key, day_obj in days.items():
+        assert len(day_obj["topics"]) == 3
+        for bucket in ("step_cards", "spares"):
+            for step_key in ("easy", "medium", "hard"):
+                for tmpl in (day_obj.get(bucket) or {}).get(step_key) or ():
+                    for fld in ("prompt", "sub", "short", "context", "roastHigh", "roastLow"):
+                        val = tmpl.get(fld)
+                        if val:
+                            assert not ban_re.search(val), f"{day_key} {tmpl['id']}.{fld}: {val}"
+                            if fld in ("roastHigh", "roastLow"):
+                                assert len(val) <= 110
     for offset in range(-400, 400):
         code = edition_code_for_day(date(2026, 1, 1) + timedelta(days=offset))
         assert len(code) >= 4
         assert code not in {"c1", "d1"}
+
+
+def test_rendered_percent_uses_site_value_fallback_and_rejects_extremes():
+    now = datetime(2026, 11, 27, 16, 0, tzinfo=timezone.utc)
+    # Pair at 0.195 and 0.805 where site rendered_percent rounds to 19 and 81 (half-up would give 20 and 81).
+    pair_details = {
+        9001: {
+            **_make_detail(9001, [("Yes", 0.195), ("No", 0.805)], extra_fields_by_name={"Yes": {"rendered_percent": 19}, "No": {"rendered_percent": 81}}),
+        },
+        9002: {
+            **_make_detail(9002, [("Yes", 0.565)], extra_fields_by_name={"Yes": {"rendered_percent": None}}),
+        },
+        9003: {
+            **_make_detail(9003, [("Yes", 0.004)], extra_fields_by_name={"Yes": {"rendered_percent": 0}}),
+        },
+        9004: {
+            **_make_detail(9004, [("Yes", 0.996)], extra_fields_by_name={"Yes": {"rendered_percent": 100}}),
+        },
+    }
+    card_pair, _ = resolve_card_from_markets(
+        {
+            "id": "vp1",
+            "kind": "versus",
+            "topic": "World",
+            "emoji": "A",
+            "prompt": "Compare pair",
+            "short": "Pair",
+            "context": "C",
+            "options": [
+                {"market_id": 9001, "outcome_name": "Yes", "label": "Left side", "short": "Left", "emoji": "L"},
+                {"market_id": 9001, "outcome_name": "No", "label": "Right side", "short": "Right", "emoji": "R"},
+            ],
+        },
+        pair_details,
+        now,
+        day_seed="2026-11-27",
+    )
+    assert card_pair["options"][0]["percent"] == 19
+    assert card_pair["options"][1]["percent"] == 81
+
+    # Fallback when rendered_percent is None must match graded_card.rendered_percent(0.565) == 57.
+    card_fb, _ = resolve_card_from_markets(
+        {
+            "id": "fb1",
+            "kind": "chance",
+            "topic": "World",
+            "emoji": "B",
+            "extras": ["1", "2"],
+            "prompt": "Fallback pct",
+            "short": "Fallback",
+            "context": "C",
+            "roastHigh": "{n} too high",
+            "roastLow": "{n} too low",
+            "source": {"market_id": 9002, "outcome_name": "Yes"},
+        },
+        pair_details,
+        now,
+        day_seed="2026-11-27",
+    )
+    assert card_fb["answer"] == 57
+
+    for extreme_mid in (9003, 9004):
+        assert (
+            resolve_card_from_markets(
+                {
+                    "id": f"ex{extreme_mid}",
+                    "kind": "chance",
+                    "topic": "World",
+                    "emoji": "C",
+                    "extras": ["1", "2"],
+                    "prompt": "Extreme pct",
+                    "short": "Extreme",
+                    "context": "C",
+                    "roastHigh": "{n} too high",
+                    "roastLow": "{n} too low",
+                    "source": {"market_id": extreme_mid, "outcome_name": "Yes"},
+                },
+                pair_details,
+                now,
+                day_seed="2026-11-27",
+            )
+            is None
+        )
 
 
 def test_pack_invariants_gaps_coin_roasts_and_slots_match_guess_pack_contract():
@@ -688,7 +785,8 @@ async def test_server_scoring_group_isolation_and_no_ip_hash_logged(guess_test_e
         assert rejected.status_code == 422
 
     fake_ip = "203.0.113.77"
-    expected_hash = hashlib.sha256(f"{guess_routes._EPHEMERAL_SALT}:{fake_ip}".encode("utf-8")).hexdigest()[:24]
+    active_salt = await guess_routes._get_daily_rate_limit_salt(int(time.time()))
+    expected_hash = hashlib.sha256(f"{active_salt}:{fake_ip}".encode("utf-8")).hexdigest()[:24]
     expected_total = sum(points_for(card, g) for card, g in zip(pack["cards"], win, strict=True))
     res1 = await client.post(
         "/api/guess/groups/alpha12345/entries",
@@ -698,6 +796,7 @@ async def test_server_scoring_group_isolation_and_no_ip_hash_logged(guess_test_e
     assert res1.status_code == 201
     assert res1.json()["entries"][0]["points"] == expected_total
     assert fake_ip not in caplog.text
+    assert active_salt not in caplog.text
     assert expected_hash not in caplog.text
 
     # Idempotent replay -> 200; colliding answers for same nickname -> 409; Group B isolated.
@@ -720,18 +819,19 @@ async def test_anti_flood_client_burst_group_burst_30_cap_and_503(guess_test_env
     pack = (await client.get("/api/guess/today")).json()["pack"]
     win = _winning_answers_for_pack(pack)
 
+    # Spoofed first X-Forwarded-For hop still hits the router peer's single bucket (203.0.113.9).
     for i in range(8):
         resp = await client.post(
             "/api/guess/groups/burstgrp01/entries",
             json={"day": "2026-11-27", "nickname": f"P{i}", "answers": win, "step_times": [5, 5, 5]},
-            headers={"X-Forwarded-For": "203.0.113.9"},
+            headers={"X-Forwarded-For": f"198.51.100.{i + 50}, 203.0.113.9"},
         )
         assert resp.status_code == 201
     assert (
         await client.post(
             "/api/guess/groups/burstgrp01/entries",
             json={"day": "2026-11-27", "nickname": "P99", "answers": win, "step_times": [5, 5, 5]},
-            headers={"X-Forwarded-For": "203.0.113.9"},
+            headers={"X-Forwarded-For": "198.51.100.244, 203.0.113.9"},
         )
     ).status_code == 429
 
@@ -739,7 +839,7 @@ async def test_anti_flood_client_burst_group_burst_30_cap_and_503(guess_test_env
         resp = await client.post(
             "/api/guess/groups/burstgrp01/entries",
             json={"day": "2026-11-27", "nickname": f"Q{i}", "answers": win, "step_times": [5, 5, 5]},
-            headers={"X-Forwarded-For": f"198.51.100.{i + 10}"},
+            headers={"X-Forwarded-For": f"203.0.113.9, 198.51.100.{i + 10}"},
         )
         assert resp.status_code == 201
     assert (
@@ -842,3 +942,116 @@ async def test_30_day_retention_sweep_and_beat_task(guess_test_env, monkeypatch)
     assert entry_days == {boundary_day}
     assert "guess-daily-maintenance" in celery_app.conf.beat_schedule
     assert today_pt(datetime(2026, 11, 27, 7, 59, tzinfo=timezone.utc)) == date(2026, 11, 26)
+
+
+class _FakeSharedRedis:
+    def __init__(self):
+        self.kv: dict[str, str] = {}
+
+    async def get(self, key: str):
+        return self.kv.get(key)
+
+    async def set(self, key: str, value: str, *, nx: bool = False, ex: int | None = None):
+        if nx and key in self.kv:
+            return False
+        self.kv[key] = str(value)
+        return True
+
+    async def incr(self, key: str) -> int:
+        val = int(self.kv.get(key, "0")) + 1
+        self.kv[key] = str(val)
+        return val
+
+    async def expire(self, key: str, ttl: int) -> bool:
+        return True
+
+
+@pytest.mark.asyncio
+async def test_shared_redis_salt_across_processes_and_daily_rotation(guess_test_env, monkeypatch, caplog):
+    client, _db, _details, _sched, _clock = guess_test_env
+    caplog.set_level(logging.INFO)
+    shared = _FakeSharedRedis()
+    monkeypatch.setattr(guess_routes, "_get_async_rl_redis", lambda: shared)
+
+    pack = (await client.get("/api/guess/today")).json()["pack"]
+    win = _winning_answers_for_pack(pack)
+
+    day1_ts = int(datetime(2026, 11, 27, 16, 0, tzinfo=timezone.utc).timestamp())
+    day2_ts = int(datetime(2026, 11, 28, 16, 0, tzinfo=timezone.utc).timestamp())
+    monkeypatch.setattr(guess_routes.time, "time", lambda: day1_ts)
+
+    salt_p1 = await guess_routes._get_daily_rate_limit_salt(day1_ts)
+    # Simulate a second worker process starting with an empty process cache.
+    guess_routes._CACHED_SALT = ("", "", False)
+    salt_p2 = await guess_routes._get_daily_rate_limit_salt(day1_ts)
+    assert salt_p1 == salt_p2
+
+    for i in range(8):
+        if i % 2 == 1:
+            guess_routes._CACHED_SALT = ("", "", False)
+        r = await client.post(
+            "/api/guess/groups/sharedsalt1/entries",
+            json={"day": "2026-11-27", "nickname": f"S{i}", "answers": win, "step_times": [5, 5, 5]},
+            headers={"X-Forwarded-For": f"10.0.0.{i + 1}, 203.0.113.44"},
+        )
+        assert r.status_code == 201
+
+    guess_routes._CACHED_SALT = ("", "", False)
+    blocked = await client.post(
+        "/api/guess/groups/sharedsalt1/entries",
+        json={"day": "2026-11-27", "nickname": "S99", "answers": win, "step_times": [5, 5, 5]},
+        headers={"X-Forwarded-For": "10.0.0.99, 203.0.113.44"},
+    )
+    assert blocked.status_code == 429
+
+    salt_next_day = await guess_routes._get_daily_rate_limit_salt(day2_ts)
+    assert salt_next_day != salt_p1
+    assert "203.0.113.44" not in caplog.text
+    assert salt_p1 not in caplog.text
+    assert salt_next_day not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_daily_entry_ceiling_returns_429_and_logs_once_per_day(guess_test_env, monkeypatch, caplog):
+    client, _db, _details, _sched, _clock = guess_test_env
+    caplog.set_level(logging.ERROR)
+    assert MAX_DAILY_ENTRIES == 10_000
+    monkeypatch.setattr(guess_routes, "MAX_DAILY_ENTRIES", 3)
+
+    pack = (await client.get("/api/guess/today")).json()["pack"]
+    win = _winning_answers_for_pack(pack)
+
+    for idx in range(3):
+        res = await client.post(
+            f"/api/guess/groups/dailygrp0{idx}/entries",
+            json={"day": "2026-11-27", "nickname": f"User{idx}", "answers": win, "step_times": [7, 8, 9]},
+            headers={"X-Forwarded-For": f"192.0.2.{idx + 1}"},
+        )
+        assert res.status_code == 201
+
+    # 4th finished game across another group triggers the daily ceiling and logs once.
+    capped1 = await client.post(
+        "/api/guess/groups/dailygrp99/entries",
+        json={"day": "2026-11-27", "nickname": "Fourth", "answers": win, "step_times": [7, 8, 9]},
+        headers={"X-Forwarded-For": "192.0.2.99"},
+    )
+    assert capped1.status_code == 429
+    assert "full right now" in capped1.json()["detail"].lower()
+
+    # 5th refusal emits 429 without duplicating the error log; idempotent replay stays 200.
+    capped2 = await client.post(
+        "/api/guess/groups/dailygrp98/entries",
+        json={"day": "2026-11-27", "nickname": "Fifth", "answers": win, "step_times": [7, 8, 9]},
+        headers={"X-Forwarded-For": "192.0.2.98"},
+    )
+    assert capped2.status_code == 429
+    err_logs = [rec for rec in caplog.records if "daily entry ceiling" in rec.message.lower()]
+    assert len(err_logs) == 1
+    assert "192.0.2." not in caplog.text
+
+    replay = await client.post(
+        "/api/guess/groups/dailygrp00/entries",
+        json={"day": "2026-11-27", "nickname": "User0", "answers": win, "step_times": [7, 8, 9]},
+        headers={"X-Forwarded-For": "192.0.2.1"},
+    )
+    assert replay.status_code == 200

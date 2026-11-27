@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import GuessDailyEdition, GuessGroupEntry
+from app.utils.graded_card import rendered_percent as site_rendered_percent
 from app.utils.market_staleness import is_title_implied_stale
 
 PT_TZ = ZoneInfo("America/Los_Angeles")
@@ -47,15 +48,17 @@ LONGEST_LINE = 110
 
 RETENTION_DAYS = 30
 MAX_GROUP_ENTRIES = 30
+# 10,000 finished games per PT day is >100x a busy family week yet bounds 30-day
+# retention to <=300k compact rows if a script floods across new group codes.
+MAX_DAILY_ENTRIES = 10_000
 GROUP_CODE_RE = re.compile(r"^[a-z0-9]{8,24}$")
 
 _TAP_KINDS = frozenset({"side", "versus", "four", "leader"})
 _RESERVED_NICKNAMES = frozenset({"the coin", "together"})
 _LEGACY_EDITION_CODES = frozenset({"c1", "d1"})
 _NON_PLAYABLE_OUTCOME_STATUSES = frozenset({"settled", "closed", "voided", "cancelled"})
-_EXTREME_RENDERED_PERCENTS = frozenset({"<1%", ">99%"})
 _EDITION_LOCK_NS = 0x47554553  # 'GUES'
-_GROUP_LOCK_NS = 0x47525053  # 'GRPS'
+GROUP_LOCK_NS = 0x47525053  # 'GRPS'
 _BASE36_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 
@@ -409,8 +412,6 @@ def _read_outcome_percent(
             return None
         if outcome.get("kalshi_no_bid"):
             return None
-        if outcome.get("rendered_percent") in _EXTREME_RENDERED_PERCENTS:
-            return None
         source_mark = outcome.get("source_mark")
         if isinstance(source_mark, Mapping) and source_mark.get("state") in {
             "unsupported",
@@ -429,8 +430,20 @@ def _read_outcome_percent(
         prob = float(raw_p)
         if not (0.0 < prob < 1.0):
             return None
-        pct = int(math.floor(prob * 100.0 + 0.5))
-        if not (1 <= pct <= 99):
+
+        rp = outcome.get("rendered_percent")
+        if isinstance(rp, str) and rp.strip() in {"<1%", ">99%"}:
+            return None
+        if isinstance(rp, int) and not isinstance(rp, bool):
+            pct: Optional[int] = rp
+        elif isinstance(rp, float) and math.isfinite(rp) and rp.is_integer():
+            pct = int(rp)
+        elif rp is None:
+            pct = site_rendered_percent(prob)
+        else:
+            return None
+
+        if pct is None or pct <= 0 or pct >= 100:
             return None
         rep = str(detail.get("representation") or "source")
         return pct, prob, int(outcome.get("id") or 0), rep

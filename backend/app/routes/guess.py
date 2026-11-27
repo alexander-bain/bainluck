@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import secrets
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -25,8 +26,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import GuessGroupEntry
 from app.services.database import get_db_rw
 from app.utils.guess_daily import (
+    GROUP_LOCK_NS,
+    MAX_DAILY_ENTRIES,
     MAX_GROUP_ENTRIES,
-    _GROUP_LOCK_NS,
     _acquire_advisory_lock,
     build_group_board_payload,
     clean_nickname,
@@ -40,30 +42,91 @@ from app.utils.guess_daily import (
     GuessInvalidGroupCodeError,
     GuessInvalidSubmissionError,
 )
-from app.utils.rate_limit import _get_async_rl_redis
+from app.utils.rate_limit import _get_async_rl_redis, _router_peer_ip
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/guess", tags=["guess"])
 
 _CLIENT_WINDOW_S = 300
 _CLIENT_LIMIT = 8
 _GROUP_WINDOW_S = 60
 _GROUP_LIMIT = 20
+_SALT_TTL_S = 172800
 
-# Ephemeral per-process salt so rate-limit keys hold no recoverable IP address.
-_EPHEMERAL_SALT = secrets.token_hex(16)
+# Process-local cache of `(day_key, salt, from_redis)` plus bounded in-memory
+# fallbacks when Redis is unavailable (never logged or returned to clients).
+_CACHED_SALT: tuple[str, str, bool] = ("", "", False)
+_FALLBACK_SALTS: dict[str, str] = {}
 _MEM_BUCKETS: dict[str, tuple[int, int]] = {}
+_DAILY_CEILING_LOGGED_DAYS: set[date] = set()
 
 
 def _reset_rate_limits_for_tests() -> None:
-    """Clear in-memory fallback burst counters between unit tests."""
+    """Clear in-memory fallback burst counters and salt caches between tests."""
+    global _CACHED_SALT
+    _CACHED_SALT = ("", "", False)
+    _FALLBACK_SALTS.clear()
     _MEM_BUCKETS.clear()
+    _DAILY_CEILING_LOGGED_DAYS.clear()
 
 
-def _ephemeral_client_bucket(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for") or ""
-    first_ip = xff.split(",")[0].strip() if xff else ""
-    raw = first_ip or (request.client.host if request.client else "") or "anonymous"
-    return hashlib.sha256(f"{_EPHEMERAL_SALT}:{raw}".encode("utf-8")).hexdigest()[:24]
+def _decode_redis_str(raw: object) -> Optional[str]:
+    if isinstance(raw, (bytes, bytearray)):
+        text = raw.decode("utf-8", errors="replace").strip()
+        return text or None
+    if isinstance(raw, str):
+        text = raw.strip()
+        return text or None
+    return None
+
+
+async def _get_daily_rate_limit_salt(now_s: int) -> str:
+    """Return one random rate-limit salt shared across dynos and rotated daily."""
+    global _CACHED_SALT
+    day_key = today_pt(datetime.fromtimestamp(now_s, tz=timezone.utc)).isoformat()
+    cached_day, cached_salt, cached_from_redis = _CACHED_SALT
+    if cached_from_redis and cached_day == day_key and cached_salt:
+        return cached_salt
+
+    salt_key = f"guess_rl:salt:{day_key}"
+    redis_cli = _get_async_rl_redis()
+    if redis_cli is not None:
+        try:
+            existing = _decode_redis_str(
+                await asyncio.wait_for(redis_cli.get(salt_key), timeout=1.0)
+            )
+            if existing:
+                _CACHED_SALT = (day_key, existing, True)
+                return existing
+            candidate = secrets.token_hex(16)
+            created = await asyncio.wait_for(
+                redis_cli.set(salt_key, candidate, nx=True, ex=_SALT_TTL_S),
+                timeout=1.0,
+            )
+            if created:
+                _CACHED_SALT = (day_key, candidate, True)
+                return candidate
+            winner = _decode_redis_str(
+                await asyncio.wait_for(redis_cli.get(salt_key), timeout=1.0)
+            )
+            if winner:
+                _CACHED_SALT = (day_key, winner, True)
+                return winner
+        except Exception:
+            pass
+
+    if day_key not in _FALLBACK_SALTS:
+        _FALLBACK_SALTS.clear()
+        _FALLBACK_SALTS[day_key] = secrets.token_hex(16)
+    salt = _FALLBACK_SALTS[day_key]
+    _CACHED_SALT = (day_key, salt, False)
+    return salt
+
+
+def _ephemeral_client_bucket(request: Request, salt: str) -> str:
+    """Hash only the router-appended peer address so callers cannot forge hops."""
+    raw = _router_peer_ip(request)
+    return hashlib.sha256(f"{salt}:{raw}".encode("utf-8")).hexdigest()[:24]
 
 
 async def _hit_window(key: str, window_s: int, now_s: int) -> int:
@@ -95,8 +158,9 @@ async def _hit_window(key: str, window_s: int, now_s: int) -> int:
 
 async def _enforce_guess_burst_limits(request: Request, group_code: str) -> None:
     now_s = int(time.time())
+    salt = await _get_daily_rate_limit_salt(now_s)
     client_count = await _hit_window(
-        f"c:{_ephemeral_client_bucket(request)}", _CLIENT_WINDOW_S, now_s
+        f"c:{_ephemeral_client_bucket(request, salt)}", _CLIENT_WINDOW_S, now_s
     )
     if client_count > _CLIENT_LIMIT:
         raise HTTPException(
@@ -109,6 +173,44 @@ async def _enforce_guess_burst_limits(request: Request, group_code: str) -> None
             status_code=429,
             detail="This group board is busy right now. Please try again in a minute.",
         )
+
+
+async def _log_daily_ceiling_once(day_pt_val: date) -> None:
+    day_str = day_pt_val.isoformat()
+    redis_cli = _get_async_rl_redis()
+    if redis_cli is not None:
+        try:
+            first_today = await asyncio.wait_for(
+                redis_cli.set(
+                    f"guess_rl:daily_cap_logged:{day_str}",
+                    "1",
+                    nx=True,
+                    ex=_SALT_TTL_S,
+                ),
+                timeout=1.0,
+            )
+            if not first_today:
+                return
+            _DAILY_CEILING_LOGGED_DAYS.add(day_pt_val)
+            logger.error(
+                "Guess daily entry ceiling reached for %s PT (%d entries); refusing new games until tomorrow.",
+                day_str,
+                MAX_DAILY_ENTRIES,
+            )
+            return
+        except Exception:
+            pass
+
+    if day_pt_val in _DAILY_CEILING_LOGGED_DAYS:
+        return
+    if len(_DAILY_CEILING_LOGGED_DAYS) > 64:
+        _DAILY_CEILING_LOGGED_DAYS.clear()
+    _DAILY_CEILING_LOGGED_DAYS.add(day_pt_val)
+    logger.error(
+        "Guess daily entry ceiling reached for %s PT (%d entries); refusing new games until tomorrow.",
+        day_str,
+        MAX_DAILY_ENTRIES,
+    )
 
 
 class GuessEntrySubmission(BaseModel):
@@ -197,7 +299,7 @@ async def submit_guess_group_entry(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     await _acquire_advisory_lock(
-        db, _GROUP_LOCK_NS, group_lock_key(edition.day_pt, clean_code)
+        db, GROUP_LOCK_NS, group_lock_key(edition.day_pt, clean_code)
     )
 
     existing = await db.scalar(
@@ -229,6 +331,18 @@ async def submit_guess_group_entry(
         raise HTTPException(
             status_code=429,
             detail="This group board already has 30 finished games for today.",
+        )
+
+    daily_count = await db.scalar(
+        select(func.count(GuessGroupEntry.id)).where(
+            GuessGroupEntry.day_pt == edition.day_pt,
+        )
+    )
+    if int(daily_count or 0) >= MAX_DAILY_ENTRIES:
+        await _log_daily_ceiling_once(edition.day_pt)
+        raise HTTPException(
+            status_code=429,
+            detail="Today's shared boards are full right now. Please try again tomorrow.",
         )
 
     db.add(
