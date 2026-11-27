@@ -801,6 +801,6 @@ struct TeamDetailView: View {
     }
 
     private func formatPct(_ p: Double) -> String {
-        "\(Int(round(p * 100)))%"
+        formatProbability(p)
     }
 }

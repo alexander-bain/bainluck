@@ -2180,7 +2180,7 @@ enum EventSportHeadlines12472 {
                 let formatted = shares.map { p -> String in
                     if p < 0.01 { return "<1%" }
                     if p > 0.995 { return ">99%" }
-                    return "\(Int((p * 100.0).rounded()))%"
+                    return DiscoverRoundupCardModel.probabilityText(probability: p, renderedPercent: nil)
                 }
                 return (formatted[0], formatted[1], formatted[2])
             }
