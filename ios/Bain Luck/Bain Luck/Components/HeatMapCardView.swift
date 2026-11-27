@@ -316,109 +316,15 @@ struct HeatMapCardView: View {
 
 // MARK: - Date-ladder rung resolution & sorting
 
-private let heatMapUtcCalendar: Calendar = {
-    var cal = Calendar(identifier: .gregorian)
-    cal.timeZone = TimeZone(identifier: "UTC")!
-    return cal
-}()
-
-private func heatMapUtcDayString(_ date: Date) -> String {
-    let comps = heatMapUtcCalendar.dateComponents([.year, .month, .day], from: date)
-    return String(format: "%04d-%02d-%02d", comps.year ?? 0, comps.month ?? 1, comps.day ?? 1)
-}
-
-private func heatMapIsIsoDateString(_ raw: String?) -> Bool {
-    guard let raw else { return false }
-    let bytes = Array(raw.utf8)
-    guard bytes.count == 10, bytes[4] == 45, bytes[7] == 45 else { return false }
-    for (idx, b) in bytes.enumerated() where idx != 4 && idx != 7 {
-        if b < 48 || b > 57 { return false }
-    }
-    return true
-}
-
-private func heatMapStartsWithBefore(_ label: String) -> Bool {
-    let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    guard trimmed.hasPrefix("before") else { return false }
-    if trimmed.count == 6 { return true }
-    let next = trimmed[trimmed.index(trimmed.startIndex, offsetBy: 6)]
-    return !(next.isLetter || next.isNumber || next == "_")
-}
-
-private func heatMapDistributionDatesByLabel(_ outcomes: [FeedDiscoverDistributionOutcome]?) -> [String: String] {
-    var map: [String: String] = [:]
-    for outcome in outcomes ?? [] {
-        let key = outcome.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !key.isEmpty, map[key] == nil, heatMapIsIsoDateString(outcome.date) {
-            map[key] = outcome.date
-        }
-    }
-    return map
-}
-
-private func heatMapPointDateIso(
-    _ point: FeedDiscoverThresholdPoint,
-    distDatesByLabel: [String: String],
-    now: Date
-) -> String? {
-    let key = point.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if let iso = distDatesByLabel[key] {
-        return iso
-    }
-    guard point.source == "date_bucket" || point.unit == "date" else { return nil }
-    guard let rawValue = point.value, rawValue.isFinite, rawValue.rounded() == rawValue else { return nil }
-    let v = Int(rawValue)
-    let year = v / 10_000
-    let month = (v / 100) % 100
-    let day = v % 100
-    if (2001...2999).contains(year) {
-        if month == 0 {
-            return heatMapStartsWithBefore(point.label) ? "\(year)-01-01" : "\(year)-12-31"
-        }
-        guard (1...12).contains(month) else { return nil }
-        let resolvedDay: Int?
-        if day == 0 {
-            if let monthStart = heatMapUtcCalendar.date(from: DateComponents(year: year, month: month, day: 1)),
-               let range = heatMapUtcCalendar.range(of: .day, in: .month, for: monthStart) {
-                resolvedDay = range.count
-            } else {
-                resolvedDay = nil
-            }
-        } else if (1...31).contains(day) {
-            resolvedDay = day
-        } else {
-            resolvedDay = nil
-        }
-        guard let resolvedDay else { return nil }
-        return String(format: "%04d-%02d-%02d", year, month, resolvedDay)
-    }
-    if year == 2000 && (1...12).contains(month) && (1...31).contains(day) {
-        let nowYear = heatMapUtcCalendar.component(.year, from: now)
-        var bestYear = nowYear
-        var bestDiff = TimeInterval.greatestFiniteMagnitude
-        for y in [nowYear - 1, nowYear, nowYear + 1] {
-            if let d = heatMapUtcCalendar.date(from: DateComponents(year: y, month: month, day: day)) {
-                let diff = abs(d.timeIntervalSince(now))
-                if diff < bestDiff {
-                    bestDiff = diff
-                    bestYear = y
-                }
-            }
-        }
-        return String(format: "%04d-%02d-%02d", bestYear, month, day)
-    }
-    return nil
-}
-
 func heatMapSortedPoints(
     _ points: [FeedDiscoverThresholdPoint],
     distributionOutcomes: [FeedDiscoverDistributionOutcome]? = nil,
     now: Date = Date()
 ) -> [FeedDiscoverThresholdPoint] {
-    let distDates = heatMapDistributionDatesByLabel(distributionOutcomes)
+    let distDates = DiscoverGroupRows.distributionDatesByLabel(distributionOutcomes)
     return points.sorted { lhs, rhs in
-        if let lDate = heatMapPointDateIso(lhs, distDatesByLabel: distDates, now: now),
-           let rDate = heatMapPointDateIso(rhs, distDatesByLabel: distDates, now: now),
+        if let lDate = DiscoverGroupRows.resolveRungDateIso(point: lhs, distDatesByLabel: distDates, now: now),
+           let rDate = DiscoverGroupRows.resolveRungDateIso(point: rhs, distDatesByLabel: distDates, now: now),
            lDate != rDate {
             return lDate < rDate
         }
@@ -460,10 +366,10 @@ func heatMapBetterThanEvenIndex(
     guard isDateLadder else {
         return points.lastIndex(where: isOverEven)
     }
-    let todayIso = heatMapUtcDayString(now)
-    let distDates = heatMapDistributionDatesByLabel(distributionOutcomes)
+    let todayIso = DiscoverGroupRows.utcDayString(now)
+    let distDates = DiscoverGroupRows.distributionDatesByLabel(distributionOutcomes)
     let upcomingIndices = points.indices.filter { idx in
-        guard let dateIso = heatMapPointDateIso(points[idx], distDatesByLabel: distDates, now: now) else {
+        guard let dateIso = DiscoverGroupRows.resolveRungDateIso(point: points[idx], distDatesByLabel: distDates, now: now) else {
             return true
         }
         return dateIso >= todayIso
