@@ -94,8 +94,7 @@ function ContainersKitPreviewContent() {
               data-testid="kit-preview-coverage-partial"
               className="mt-2 rounded-lg border border-accent-warning/40 bg-accent-warning/10 px-2.5 py-1.5 text-xs font-medium text-accent-warning"
             >
-              Partial coverage — failed reads:{" "}
-              {(payload.coverage_failed_reads ?? []).join(", ") || "unknown"}. Some pages may repeat existing sets.
+              One of tonight&apos;s coverage checks failed, so some pages may repeat sets that already exist.
             </div>
           )}
         </header>

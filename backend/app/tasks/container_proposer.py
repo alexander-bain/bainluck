@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
-import inspect
 import json
 import logging
 import time
@@ -223,16 +222,10 @@ async def run_nightly_container_proposer(
             snapshot_load_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         if covered_ids is None:
             t1 = time.perf_counter()
-            if "failed_reads" in inspect.signature(load_covered_market_ids).parameters:
-                loaded_covered = await load_covered_market_ids(db_sess, failed_reads=coverage_failed_reads)
-            else:
-                loaded_covered = await load_covered_market_ids(db_sess)
+            loaded_covered = await load_covered_market_ids(db_sess, failed_reads=coverage_failed_reads)
             coverage_load_ms = round((time.perf_counter() - t1) * 1000.0, 2)
         if covered_public_set_names is None:
-            if "failed_reads" in inspect.signature(load_covered_public_set_names).parameters:
-                loaded_names = await load_covered_public_set_names(db_sess, failed_reads=coverage_failed_reads)
-            else:
-                loaded_names = await load_covered_public_set_names(db_sess)
+            loaded_names = await load_covered_public_set_names(db_sess, failed_reads=coverage_failed_reads)
         return loaded_markets, loaded_covered, loaded_names
 
     if markets is None or covered_ids is None:

@@ -193,8 +193,8 @@ export interface PlayerEntry {
   times: number[];
   /** The step this phone called the most fun, counted from 1. 0 for none given. */
   fun: number;
-  /** Where this entry came from. `house` is the Coin. */
-  from: "here" | "link" | "house";
+  /** Where this entry came from. `server` is the group's stored board; `house` is the Coin. */
+  from: "here" | "link" | "server" | "house";
 }
 
 /** The line shown after a card, and who it is about. */

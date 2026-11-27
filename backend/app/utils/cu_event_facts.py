@@ -1,11 +1,14 @@
 """Deterministic Content Understanding fields from a linked game or market title."""
 
-from datetime import datetime, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from app.utils.feed_market_quality import is_us_state_legislative_district
+from app.utils.feed_market_quality import (
+    is_us_state_legislative_district,
+    names_us_election_office,
+)
 from app.utils.scheduled_start import start_is_from_schedule
-from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES
 
 # Canonical soccer keys name the country in their second component.
 _SOCCER_COUNTRIES = {
@@ -121,6 +124,19 @@ _INTERNATIONAL_SOCCER_PREFIXES = (
     "soccer_uefa_",
 )
 
+_ELECTION_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+_ELECTION_RACE_RE = re.compile(r"\b(?:election|winner|wins?|race)\b", re.IGNORECASE)
+_NON_GENERAL_ELECTION_RE = re.compile(
+    r"\b(?:primary|primaries|nominat\w*|nominees?|run[- ]?offs?|"
+    r"special|by[- ]?elections?|recall|caucus|convention|inaugurat\w*|"
+    r"poll(?:s|ing)?|appointed?|acting)\b",
+    re.IGNORECASE,
+)
+_ELECTION_DATE_WINDOW_RE = re.compile(
+    r"\b(?:before|after|by|until|through)\s+(?:the\s+)?(?:end of\s+)?(?:19|20)\d{2}\b",
+    re.IGNORECASE,
+)
+
 
 def _league_geography(league: str | None) -> str | None:
     if not league:
@@ -142,6 +158,53 @@ def _league_zone(league: str | None, geography: str | None) -> str | None:
     return _LEAGUE_ZONE_BY_GEOGRAPHY.get(geography or "")
 
 
+def _league_country(league: str | None) -> str | None:
+    geography = _league_geography(league)
+    return geography if geography != "global" else None
+
+
+def cu_model_geography(
+    model_geography: object,
+    *,
+    linked_league: str | None,
+    home_team_league: str | None,
+    away_team_league: str | None,
+) -> object:
+    """Clear an unsupported U.S. answer for a linked soccer fixture."""
+    if (
+        model_geography == "us"
+        and linked_league
+        and linked_league.startswith("soccer_")
+        and _league_country(linked_league) is None
+        and "us" not in (
+            _league_country(home_team_league),
+            _league_country(away_team_league),
+        )
+    ):
+        return None
+    return model_geography
+
+
+def _election_date_facts(title: str) -> dict[str, str | None]:
+    years = set(_ELECTION_YEAR_RE.findall(title))
+    if (
+        not years
+        or not _ELECTION_RACE_RE.search(title)
+        or _NON_GENERAL_ELECTION_RE.search(title)
+        or not names_us_election_office(title)
+    ):
+        return {}
+    if len(years) != 1 or _ELECTION_DATE_WINDOW_RE.search(title):
+        return {"event_date": None}
+    year = int(next(iter(years)))
+    if year % 2 and not re.search(r"\bgeneral election\b", title, re.IGNORECASE):
+        return {"event_date": None}
+    november_start = date(year, 11, 1)
+    days_to_monday = -november_start.weekday() % 7
+    election_day = november_start + timedelta(days=days_to_monday + 1)
+    return {"event_date": election_day.isoformat()}
+
+
 def cu_event_facts(
     title: str,
     *,
@@ -149,37 +212,43 @@ def cu_event_facts(
     linked_start: datetime | None = None,
     start_source: str | None = None,
     linked_league: str | None = None,
+    home_team_league: str | None = None,
+    away_team_league: str | None = None,
 ) -> dict[str, str | int | None]:
-    """Return fields supplied by a linked fixture or an explicit state district."""
+    """Return fields supplied by a linked fixture or a U.S. election title."""
     fields: dict[str, str | int | None] = {}
     if linked_game_id is not None:
         # Linked markets take the fixture's scheduling evidence. A prediction
         # market's close/listing stamp cannot supply a day for a linked game.
         fields["event_date"] = None
-        geography = _league_geography(linked_league)
-        if geography:
-            fields["geography"] = geography
-        zone = _league_zone(linked_league, geography)
+        home_country = _league_country(home_team_league)
+        away_country = _league_country(away_team_league)
+        if home_country and away_country:
+            fields["geography"] = home_country if home_country == away_country else "global"
+        zone = _league_zone(
+            linked_league,
+            _league_geography(linked_league)
+            or (home_country if home_country == away_country else None),
+        )
         if zone and linked_start is not None and start_is_from_schedule(start_source):
             start = linked_start
             if start.tzinfo is None:
                 start = start.replace(tzinfo=timezone.utc)
             fields["event_date"] = start.astimezone(ZoneInfo(zone)).date().isoformat()
+    else:
+        fields.update(_election_date_facts(title))
     if is_us_state_legislative_district(title):
         fields.update(geography="local", stakes=1, breadth=1)
     return fields
 
 
 def cu_unlinked_event_date(
-    model_date: object, settlement_at: datetime | None, *, category: str, topic: object
+    model_date: object, settlement_at: datetime | None
 ) -> str | None:
-    """Drop a non-sport date that only repeats the venue's payout day."""
+    """Drop a model date that only repeats the venue's UTC settlement day."""
     if not isinstance(model_date, str):
         return None
-    non_sport = category in NON_SPORT_LLM_CATEGORIES and (
-        category != "other" or topic not in ("sports", "esports")
-    )
-    if non_sport and settlement_at is not None:
+    if settlement_at is not None:
         if settlement_at.tzinfo is None:
             settlement_at = settlement_at.replace(tzinfo=timezone.utc)
         if model_date == settlement_at.astimezone(timezone.utc).date().isoformat():

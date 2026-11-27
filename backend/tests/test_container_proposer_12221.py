@@ -806,7 +806,7 @@ def test_frozen_deck_id_covered_ids_and_timings_in_task(monkeypatch):
         _bin(99106, "Alpha Horizon booster reuse achieved", 44, category="tech", series="KXAL", res_days=25),
     ]
 
-    async def _fake_covered(_sess):
+    async def _fake_covered(_sess, **_kw):
         return {99101, 99102}  # Excludes 2 markets so Alpha Horizon drops below 5
 
     monkeypatch.setattr(cp_task, "load_covered_market_ids", _fake_covered)

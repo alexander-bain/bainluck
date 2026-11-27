@@ -104,14 +104,14 @@ function SideFace({ card, value, onChange }: { card: SideCard; value: number | n
             ⬇️
           </span>
           <span className="block text-lg font-black">Below 50%</span>
-          <span className={`block text-xs font-semibold ${value === 0 ? "text-white" : "text-text-secondary"}`}>less likely than not</span>
+          <span className={`block text-sm font-semibold ${value === 0 ? "text-white" : "text-text-secondary"}`}>less likely than not</span>
         </Tap>
         <Tap place={1} value={value} onChange={onChange} label="Above 50 percent" center>
           <span className="block text-2xl" aria-hidden="true">
             ⬆️
           </span>
           <span className="block text-lg font-black">Above 50%</span>
-          <span className={`block text-xs font-semibold ${value === 1 ? "text-white" : "text-text-secondary"}`}>more likely than not</span>
+          <span className={`block text-sm font-semibold ${value === 1 ? "text-white" : "text-text-secondary"}`}>more likely than not</span>
         </Tap>
       </div>
     </div>
@@ -124,7 +124,7 @@ function VersusFace({ card, value, onChange }: { card: VersusCard; value: number
       {card.options.map((option, i) => (
         <div key={option.label}>
           {i === 1 && (
-            <div className="py-0.5 text-center text-xs font-black uppercase tracking-wide text-text-secondary" aria-hidden="true">
+            <div className="py-0.5 text-center text-sm font-black uppercase tracking-wide text-text-secondary" aria-hidden="true">
               or
             </div>
           )}
@@ -153,7 +153,7 @@ function FourFace({ card, value, onChange }: { card: FourCard; value: number | n
           </Tap>
         ))}
       </div>
-      <p className="text-center text-xs font-semibold text-text-secondary">One of these four is what the world says.</p>
+      <p className="text-center text-sm font-semibold text-text-secondary">One of these four is what the world says.</p>
     </div>
   );
 }
@@ -224,7 +224,7 @@ function Dial({
         onChange={(e) => set(Number(e.target.value))}
         aria-label={label}
         data-testid={`${testId}-slider`}
-        className="h-10 w-full accent-accent-brand"
+        className="h-10 w-full touch-none accent-accent-brand"
       />
     </div>
   );
@@ -232,7 +232,7 @@ function Dial({
 
 function PercentScale() {
   return (
-    <div className="flex justify-between text-xs font-semibold text-text-secondary">
+    <div className="flex justify-between text-sm font-semibold text-text-secondary">
       <span>0% never</span>
       <span>50% coin flip</span>
       <span>100% certain</span>
@@ -251,7 +251,7 @@ function ChancePicture({ card }: { card: ChanceCard }) {
             {card.emoji}
           </span>
           <div className="min-w-0 flex-1">
-            <div className="text-[11px] font-black uppercase tracking-wide text-text-secondary">A number to go on</div>
+            <div className="text-xs font-black uppercase tracking-wide text-text-secondary">A number to go on</div>
             <div className="text-sm font-bold leading-snug text-text-primary">{card.given.text}</div>
           </div>
         </div>
@@ -273,14 +273,14 @@ function ChancePicture({ card }: { card: ChanceCard }) {
             <span className="text-lg" aria-hidden="true">
               🚫
             </span>
-            <span className="text-xs font-bold text-text-secondary line-through">{part.label}</span>
+            <span className="text-sm font-bold text-text-secondary line-through">{part.label}</span>
           </div>
         ))}
         <div className="flex min-h-[64px] flex-col items-center justify-center rounded-2xl border-2 border-text-primary bg-surface-card px-1 text-center">
           <span className="text-2xl" aria-hidden="true">
             {card.emoji}
           </span>
-          <span className="text-xs font-black text-text-primary">Anyone else</span>
+          <span className="text-sm font-black text-text-primary">Anyone else</span>
         </div>
       </div>
     );
@@ -343,7 +343,7 @@ function CountFace({ card, value, onChange }: { card: CountCard; value: number; 
         testId="guess-number"
         onChange={onChange}
       />
-      <div className="flex justify-between text-xs font-semibold text-text-secondary">
+      <div className="flex justify-between text-sm font-semibold text-text-secondary">
         <span>0 none</span>
         <span>{Math.round(card.max / 2)} half</span>
         <span>{card.max} all</span>
@@ -395,7 +395,7 @@ function DuoFace({ card, value, onChange }: { card: DuoCard; value: number; onCh
               onChange={(e) => set(i, Number(e.target.value))}
               aria-label={`${part.label}: your guess, from 0 to 100 percent`}
               data-testid={`guess-number-${i + 1}-slider`}
-              className="h-10 min-w-0 flex-1 accent-accent-brand"
+              className="h-10 min-w-0 flex-1 touch-none accent-accent-brand"
             />
             {step(i, 1)}
           </div>

@@ -282,7 +282,7 @@ describe("Decision 386: A (#12221) — /grade/containers-v2", () => {
     expect(hits).toEqual([]);
   });
 
-  test("Admin preview and grading headers surface partial coverage notices when coverage reads fail", () => {
+  test("Admin preview and grading headers surface plain-English partial coverage notices when coverage reads fail", () => {
     const frontendRoot = path.resolve(__dirname, "../..");
     const previewSrc = fs.readFileSync(
       path.join(frontendRoot, "app/admin/containers-kit-preview/page.tsx"),
@@ -293,10 +293,14 @@ describe("Decision 386: A (#12221) — /grade/containers-v2", () => {
       "utf-8",
     );
     expect(previewSrc).toContain("coverage_partial");
-    expect(previewSrc).toContain("coverage_failed_reads");
     expect(previewSrc).toContain("kit-preview-coverage-partial");
+    expect(previewSrc).toContain("coverage checks failed");
+    expect(previewSrc).not.toContain("coverage_failed_reads");
+    expect(previewSrc).not.toContain("failed reads");
     expect(gradeSrc).toContain("coverage_partial");
-    expect(gradeSrc).toContain("coverage_failed_reads");
     expect(gradeSrc).toContain("grade-coverage-partial");
+    expect(gradeSrc).toContain("coverage checks failed");
+    expect(gradeSrc).not.toContain("coverage_failed_reads");
+    expect(gradeSrc).not.toContain("failed reads");
   });
 });
