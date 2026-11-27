@@ -159,7 +159,7 @@ async def _step(session, stmt, params: dict | None = None) -> int:
     return int(result.rowcount or 0) if result.rowcount is not None else 0
 
 
-async def _sync_reopened_markets(session) -> tuple[int, float]:
+async def _sync_reopened_markets(session) -> tuple[int, int, float]:
     """Pick reopened market IDs first, then upsert their outcomes in batches.
 
     Fable (#13865) noted that joining ``futures_markets`` directly to
@@ -172,7 +172,7 @@ async def _sync_reopened_markets(session) -> tuple[int, float]:
     market_ids = [int(mid) for mid in (await session.scalars(REOPENED_MARKET_IDS_SQL)).all()]
     if not market_ids:
         await session.commit()
-        return 0, round(time.monotonic() - t0, 3)
+        return 0, 0, round(time.monotonic() - t0, 3)
 
     restored = 0
     for start in range(0, len(market_ids), REOPENED_MARKET_BATCH_SIZE):
@@ -180,7 +180,7 @@ async def _sync_reopened_markets(session) -> tuple[int, float]:
         res = await session.execute(REOPENED_OUTCOMES_SQL, {"market_ids": batch})
         restored += int(res.rowcount or 0) if res.rowcount is not None else 0
     await session.commit()
-    return restored, round(time.monotonic() - t0, 3)
+    return len(market_ids), restored, round(time.monotonic() - t0, 3)
 
 
 async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECONDS) -> dict[str, Any]:
@@ -196,6 +196,7 @@ async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECON
     deadline = started + budget_seconds
     summary: dict[str, Any] = {
         "slices": [],
+        "reopened_markets": 0,
         "reopened": 0,
         "reopened_seconds": 0.0,
         "delta": 0,
@@ -238,7 +239,10 @@ async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECON
             # that single row and cause NOT EXISTS to skip the market's older
             # legs. Only run on steady passes (when all slices are populated).
             if not filling and time.monotonic() < deadline:
-                reopened_count, reopened_secs = await _sync_reopened_markets(session)
+                reopened_markets, reopened_count, reopened_secs = await _sync_reopened_markets(
+                    session
+                )
+                summary["reopened_markets"] = reopened_markets
                 summary["reopened"] = reopened_count
                 summary["reopened_seconds"] = reopened_secs
             previous_floor = state.get("reader_floor")

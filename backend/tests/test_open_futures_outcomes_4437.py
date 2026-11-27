@@ -281,7 +281,8 @@ async def test_reopened_sync_skips_outcomes_query_when_no_market_is_missing():
         async def commit(self):
             calls.append("commit")
 
-    restored, seconds = await _sync_reopened_markets(_Session())
+    markets_picked, restored, seconds = await _sync_reopened_markets(_Session())
+    assert markets_picked == 0
     assert restored == 0
     assert isinstance(seconds, float) and seconds >= 0.0
     assert calls == ["scalars", "commit"]
@@ -323,9 +324,44 @@ async def test_reopened_sync_batches_market_ids_before_joining_outcomes():
             nonlocal commits
             commits += 1
 
-    restored, seconds = await _sync_reopened_markets(_Session())
+    markets_picked, restored, seconds = await _sync_reopened_markets(_Session())
+    assert markets_picked == total_ids
     assert restored == total_ids * 2
     assert isinstance(seconds, float) and seconds >= 0.0
     assert [len(b) for b in batches] == [REOPENED_MARKET_BATCH_SIZE, 1]
     assert batches[0][0] == 1 and batches[1][-1] == total_ids
     assert commits == 1
+
+
+@pytest.mark.asyncio
+async def test_reopened_sync_reports_picked_market_with_zero_outcomes():
+    from app.tasks.open_futures_outcomes import (
+        REOPENED_MARKET_IDS_SQL,
+        REOPENED_OUTCOMES_SQL,
+        _sync_reopened_markets,
+    )
+
+    class _Scalars:
+        def all(self):
+            return [42]
+
+    class _Result:
+        rowcount = 0
+
+    class _Session:
+        async def scalars(self, stmt):
+            assert stmt is REOPENED_MARKET_IDS_SQL
+            return _Scalars()
+
+        async def execute(self, stmt, params=None):
+            assert stmt is REOPENED_OUTCOMES_SQL
+            assert params == {"market_ids": [42]}
+            return _Result()
+
+        async def commit(self):
+            pass
+
+    markets_picked, restored, seconds = await _sync_reopened_markets(_Session())
+    assert markets_picked == 1
+    assert restored == 0
+    assert isinstance(seconds, float) and seconds >= 0.0

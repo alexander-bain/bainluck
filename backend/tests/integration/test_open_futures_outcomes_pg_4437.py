@@ -532,6 +532,7 @@ async def test_a_reopened_market_returns_to_the_poll_population_on_the_next_pass
         await session.commit()
     close_out = await _pass(rig)
     assert close_out["closed"] == 2
+    assert close_out["reopened_markets"] == 0
     assert close_out["reopened"] == 0
     assert isinstance(close_out["reopened_seconds"], float) and close_out["reopened_seconds"] >= 0.0
     assert {m for m, _ in await _copy_rows(rig)} == {rig["ids"]["title"]}
@@ -571,6 +572,7 @@ async def test_a_reopened_market_returns_to_the_poll_population_on_the_next_pass
 
     # 3. Run ONE steady pass (SLICE_SQL visits `next_slice != market_id % SLICES`).
     reopen_out = await _pass(rig)
+    assert reopen_out["reopened_markets"] == 1
     assert reopen_out["reopened"] == 3
     assert isinstance(reopen_out["reopened_seconds"], float) and reopen_out["reopened_seconds"] >= 0.0
 
