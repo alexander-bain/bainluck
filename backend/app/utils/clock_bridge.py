@@ -44,15 +44,35 @@ children run each task in its own ``asyncio.run`` loop, where a loop-resident
 task would die with the task. ``armed`` only updates state under a lock and
 may start the thread; a failure anywhere is a fault line or nothing, never an
 exception into the write path. About window/5 + 2 round trips per armed pid.
+
+Markers (amendment P2, the 20261030T0615Z causal contract). DARK unless BOTH a
+trace in this pid is armed AND ``CLOCK_MARKER_CASE`` names an admitted case with
+``CLOCK_MARKER_EXPIRES_AT`` in the next two hours, so a later ordinary arming of
+P never carries marker traffic. Then, after the run's first probe on a
+connection, the bridge LISTENs on ONE channel addressed to this incarnation
+(``cm_<case>_<tok>``, ``tok`` hashed from case, dyno, pid, boot id and run) and
+announces it once (``bind``) on the case's reply channel ``cmr_<case>``. Each
+valid request ``{v, case, tok, run, slot, nonce}`` is answered on the same
+connection, between P's own statements, with ``lo`` (this pid's
+``time.monotonic`` when its callback ran, after receipt) and ``hi`` (read just
+before the reply is sent): every stamp of this pid above ``lo`` came after the
+request was received, and every stamp below ``hi`` before the reply left
+(each expanded by ``q`` first).
+No marker line goes to the log and no marker spends P's ``MAX_LINES``. Caps,
+counters and the pinned schema: ``MARKER_*`` below and
+``tests/fixtures/clock_marker_10090_schema.json``. Dark, the run makes exactly
+P's calls, including its thread-blocking wait.
 """
 
 from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import json
 import logging
 import os
+import re
 import _thread
 import sys
 import threading
@@ -71,7 +91,25 @@ MAX_LINES = 256  # per run: 600 s / 5 s probes plus ARMED triggers and faults
 ROLES = frozenset({"kalshi", "polymarket", "nonvenue", "fold"})
 PRODUCER_ROLES = frozenset({"kalshi", "polymarket"})
 
+MARKER_SCHEMA = "clock_marker/1"
+MARKER_POLL_S = 0.050  # how late an ARMED wake can be seen while markers listen
+MARKER_ARM_MAX_S = 7200.0  # CLOCK_MARKER_EXPIRES_AT may sit no further out
+MARKER_MAX = 760  # accepted markers (= slots) per run; P's MAX_LINES is untouched
+MARKER_MAX_RECEIVED = 1520  # notifications a run looks at, valid or not
+MARKER_QUEUE = 4  # requests waiting behind one of P's statements
+MARKER_REQUEST_MAX_B = 256
+MARKER_REPLY_MAX_B = 512
+MARKER_PAYLOAD_MAX_B = 583_680  # received + sent payload bytes per run (760 x 768)
+MARKER_WIRE_MAX_B = 2 * 1024 * 1024  # payload plus ESTIMATED protocol framing
+MARKER_FRAME_IN_B = 64  # NotificationResponse header + TLS record, estimated
+MARKER_FRAME_OUT_B = 192  # Bind/Execute/Sync + replies + TLS records, estimated
+MARKER_FAULTS = ("big", "bad", "foreign", "dup", "ord", "q", "drop")
+_MARKER_CASE = re.compile(r"[a-z0-9]{8,24}")
+_MARKER_NONCE = re.compile(r"[0-9a-f]{32}")
+_MARKER_REQUEST_KEYS = frozenset({"v", "case", "tok", "run", "slot", "nonce"})
+
 _PROBE_SQL = "SELECT clock_timestamp()"
+_NOTIFY_SQL = "SELECT pg_notify($1, $2)"
 _AUTHORITY_SQL = (
     "SELECT protocol, incarnation, namespace, state, clock_timestamp() AS read_clock "
     "FROM dnpl_authority WHERE id = 1"
@@ -211,6 +249,7 @@ class ClockBridge:
     async def _run(self, run):
         state = dict(run=run, line=0, seq=0, authority=False)
         conn = None
+        markers = self._markers(run)  # None: dark, and every call below is P's
         try:
             while state["line"] <= MAX_LINES - 3:  # a pass writes at most 3 lines
                 taken = self._take()
@@ -226,12 +265,33 @@ class ClockBridge:
                 if conn is not None and not state["authority"]:
                     state["authority"] = True
                     conn = await self._authority(conn, state, roles)
+                if markers is not None and conn is not None:
+                    conn = await markers.listen(conn)
                 wait = min(tick + self.period_s, deadline) - self.mono()
                 if wait > 0:
-                    self._wake.wait(wait)  # this thread's own loop: nothing else runs here
+                    if markers is None or not markers.listening(conn):
+                        self._wake.wait(wait)  # this thread's own loop: nothing else runs here
+                    else:
+                        conn = await markers.wait(conn, self.mono() + wait)
         finally:
+            if markers is not None and conn is not None:
+                conn = await markers.stop(conn, "RUN_END")
             if conn is not None:
                 await self._close(conn)
+
+    def _markers(self, run):
+        """This run's marker state, or None (dark) unless a case is admitted."""
+        try:
+            case = self.env.get("CLOCK_MARKER_CASE")
+            raw = self.env.get("CLOCK_MARKER_EXPIRES_AT")
+            if not (isinstance(case, str) and _MARKER_CASE.fullmatch(case) and raw):
+                return None  # without both, not even a clock read
+            expires = float(raw)
+            if not self.wall() < expires <= self.wall() + MARKER_ARM_MAX_S:
+                return None
+            return _Markers(self, case, expires, run)
+        except Exception:
+            return None
 
     def _line(self, state, prefix, record):
         state["line"] += 1
@@ -326,6 +386,230 @@ class ClockBridge:
         record.update(db_row_fields(row))
         record.update(activation(roles, record))
         self._line(state, "clock_bridge_authority", record)
+        return conn
+
+
+def _boot_id():
+    try:
+        with open("/proc/sys/kernel/random/boot_id") as handle:
+            return handle.read(64).strip() or None
+    except Exception:
+        return None
+
+
+def _compact(record):
+    return json.dumps(record, separators=(",", ":"), sort_keys=True)
+
+
+class _Markers:
+    """One run's request-caused markers, all on the bridge's own loop.
+
+    The notification callback only stamps, validates and queues (no await, no
+    task). Replies go out from the run's coroutine, so they are serialized with
+    P's statements on the one connection; a probe in flight makes a reply
+    later, never a probe later. Any reply/LISTEN failure halts markers for the
+    run and abandons the connection exactly as a P fault does; P reconnects on
+    its next tick and markers stay halted.
+    """
+
+    def __init__(self, bridge, case, expires, run):
+        self.bridge, self.case, self.expires, self.run = bridge, case, expires, run
+        env = bridge.env
+        self.pid, self.boot = os.getpid(), _boot_id()
+        self.dyno = _text(env.get("DYNO"))
+        self.tok = hashlib.sha256(
+            f"{case}|{self.dyno}|{self.pid}|{self.boot}|{run}".encode()).hexdigest()[:16]
+        self.channel = f"cm_{case}_{self.tok}"
+        self.reply_channel = f"cmr_{case}"
+        self.bind_fields = dict(
+            dyno=self.dyno, rel=_text(env.get("HEROKU_RELEASE_VERSION")),
+            commit=_text(env.get("HEROKU_SLUG_COMMIT")), boot=self.boot,
+        )
+        self.conn = None  # the connection currently LISTENing
+        self.listens = self.received = self.accepted = 0
+        self.payload_b = self.wire_b = 0
+        self.last_slot = -1
+        self.slots, self.nonces, self.pending = set(), set(), []
+        self.faults = dict.fromkeys(MARKER_FAULTS, 0)
+        self.halted = None  # the reason markers stopped, once they have
+        self.event = asyncio.Event()
+
+    # ── the callback: asyncpg calls it with call_soon on this loop ──────────
+
+    def on_notify(self, _conn, _server_pid, channel, payload):
+        lo = self.bridge.mono()
+        try:
+            self.received += 1
+            if self.halted:
+                return
+            if self.received > MARKER_MAX_RECEIVED:
+                return self.halt("RECEIVED_CAP")
+            size = len(payload.encode("utf-8", "replace")) if isinstance(payload, str) else 0
+            if not self.spend(size, MARKER_FRAME_IN_B + len(channel)):
+                return
+            if not 0 < size <= MARKER_REQUEST_MAX_B:
+                self.faults["big"] += 1
+                return
+            slot, nonce = self.parse(payload)
+            if slot is None:
+                return
+            if slot in self.slots or nonce in self.nonces:
+                self.faults["dup"] += 1
+            elif slot <= self.last_slot:
+                self.faults["ord"] += 1
+            elif len(self.pending) >= MARKER_QUEUE:
+                self.faults["q"] += 1
+            else:
+                self.slots.add(slot)
+                self.nonces.add(nonce)
+                self.last_slot = slot
+                self.pending.append((lo, self.received, slot, nonce))
+                self.event.set()
+        except Exception:
+            self.faults["bad"] += 1
+
+    def parse(self, payload):
+        try:
+            request = json.loads(payload)
+        except ValueError:
+            request = None
+        if (not isinstance(request, dict) or request.keys() != _MARKER_REQUEST_KEYS
+                or type(request["v"]) is not int or request["v"] != 1
+                or type(request["slot"]) is not int or not 0 <= request["slot"] < MARKER_MAX
+                or not isinstance(request["nonce"], str)
+                or not _MARKER_NONCE.fullmatch(request["nonce"])):
+            self.faults["bad"] += 1
+            return None, None
+        if (request["case"], request["tok"], request["run"]) != (self.case, self.tok, self.run):
+            self.faults["foreign"] += 1
+            return None, None
+        return request["slot"], request["nonce"]
+
+    def spend(self, payload_b, frame_b):
+        self.payload_b += payload_b
+        self.wire_b += payload_b + frame_b
+        if self.payload_b > MARKER_PAYLOAD_MAX_B or self.wire_b > MARKER_WIRE_MAX_B:
+            self.halt("BYTE_CAP")
+            return False
+        return True
+
+    def halt(self, reason):
+        if self.halted is None:
+            self.halted = reason
+            self.event.set()
+
+    # ── the run's side: LISTEN, wait, reply, stop ───────────────────────────
+
+    def listening(self, conn):
+        return conn is not None and conn is self.conn and self.halted is None
+
+    def message(self, kind, **fields):
+        return _compact(dict(v=1, k=kind, case=self.case, tok=self.tok, run=self.run,
+                             pid=self.pid, **fields))
+
+    async def notify(self, conn, payload):
+        """One reply on the shared connection; False means the conn is gone."""
+        size = len(payload.encode())
+        if size > MARKER_REPLY_MAX_B:
+            self.halt("REPLY_TOO_BIG")
+            return True
+        if not self.spend(size, MARKER_FRAME_OUT_B + len(self.reply_channel)):
+            return True
+        try:
+            async with asyncio.timeout(PROBE_TIMEOUT_S):
+                await conn.execute(_NOTIFY_SQL, self.reply_channel, payload)
+            return True
+        except Exception:
+            self.halt("REPLY_FAILED")
+            return False
+
+    async def listen(self, conn):
+        if self.halted is not None and conn is not None and conn is self.conn:
+            return await self.stop(conn, self.halted)  # a cap hit during P's statement
+        if self.halted is not None or conn is self.conn:
+            return conn
+        if self.bridge.wall() >= self.expires:
+            self.halt("EXPIRED")
+            return conn
+        self.conn = None
+        try:
+            async with asyncio.timeout(PROBE_TIMEOUT_S):
+                await conn.add_listener(self.channel, self.on_notify)
+        except Exception:
+            self.halt("LISTEN_FAILED")
+            return await self.bridge._abandon(conn)
+        self.conn, self.listens = conn, self.listens + 1
+        bind = self.message("bind", ch=self.channel, listen=self.listens,
+                            clock="time.monotonic", mono=round(self.bridge.mono(), 6),
+                            exp=self.expires, slots=MARKER_MAX, **self.bind_fields)
+        if not await self.notify(conn, bind):
+            self.conn = None
+            return await self.bridge._abandon(conn)
+        return conn
+
+    async def wait(self, conn, until):
+        """P's wait while listening: serve replies, see an ARMED wake in <=50 ms."""
+        while True:
+            if self.listening(conn) and self.pending:
+                conn = await self.serve(conn)
+            if self.halted is None and self.bridge.wall() >= self.expires:
+                self.halt("EXPIRED")
+            if self.halted is not None:
+                if conn is not None and conn is self.conn:
+                    conn = await self.stop(conn, self.halted)
+                left = until - self.bridge.mono()
+                if left > 0 and not self.bridge._wake.is_set():
+                    self.bridge._wake.wait(left)  # back to P's own wait
+                return conn
+            left = until - self.bridge.mono()
+            if left <= 0 or self.bridge._wake.is_set():
+                return conn
+            self.event.clear()
+            try:
+                async with asyncio.timeout(min(MARKER_POLL_S, left)):
+                    await self.event.wait()
+            except TimeoutError:
+                pass
+
+    async def serve(self, conn):
+        while self.pending and self.halted is None:
+            lo, rx, slot, nonce = self.pending.pop(0)
+            if self.accepted >= MARKER_MAX:
+                self.faults["drop"] += 1
+                self.halt("MARKER_CAP")
+                break
+            self.accepted += 1
+            hi = self.bridge.mono()
+            reply = self.message("m", slot=slot, nonce=nonce, i=self.accepted, rx=rx,
+                                 lo=round(lo, 6), hi=round(hi, 6), q=1e-06,
+                                 f=dict(self.faults))
+            if not await self.notify(conn, reply):
+                self.conn = None
+                return await self.bridge._abandon(conn)
+        return conn
+
+    async def stop(self, conn, reason):
+        """Say why markers ended (bounded) and stop LISTENing; never retried."""
+        if conn is None or conn is not self.conn:
+            return conn
+        self.faults["drop"] += len(self.pending)
+        self.pending.clear()
+        self.halt(reason)
+        why = self.halted  # the FIRST reason markers stopped, not this caller's
+        self.conn = None
+        end = self.message("end", why=why, i=self.accepted, rx=self.received,
+                           f=dict(self.faults), pb=self.payload_b, wb=self.wire_b)
+        if why in ("BYTE_CAP", "REPLY_TOO_BIG", "REPLY_FAILED"):
+            end = None
+        if end is not None and not await self.notify(conn, end):
+            return await self.bridge._abandon(conn)
+        if reason == "RUN_END":
+            return conn  # the close that follows ends the LISTEN
+        try:
+            async with asyncio.timeout(PROBE_TIMEOUT_S):
+                await conn.remove_listener(self.channel, self.on_notify)
+        except Exception:
+            return await self.bridge._abandon(conn)
         return conn
 
 
