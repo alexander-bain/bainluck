@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import MachinerySectionRenderer, {
@@ -37,21 +39,23 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
       muted: false,
     });
 
-    expect(
-      describeMachineryOutcomeDisplay({
-        probability: 0.01,
-        rendered_percent: 1,
-        unfloored_percent: 1,
-        settled_out: false,
-      }),
-    ).toEqual({
-      state: "live",
-      label: "1%",
-      barWidthPercent: 4,
-      muted: false,
-    });
+    for (const p of [0.01, 0.014]) {
+      expect(
+        describeMachineryOutcomeDisplay({
+          probability: p,
+          rendered_percent: 1,
+          unfloored_percent: 1,
+          settled_out: false,
+        }),
+      ).toEqual({
+        state: "live",
+        label: "1%",
+        barWidthPercent: 4,
+        muted: false,
+      });
+    }
 
-    for (const p of [0.0099, 0.004, 0.0005]) {
+    for (const p of [0.0099, 0.005, 0.004, 0.0005]) {
       expect(
         describeMachineryOutcomeDisplay({
           probability: p,
@@ -68,32 +72,32 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
     }
 
     // Settled out prints "Eliminated" with empty track even if a residue number arrived
-    expect(
-      describeMachineryOutcomeDisplay({
-        probability: 0.005,
-        rendered_percent: 1,
-        settled_out: true,
-      }),
-    ).toEqual({
+    const eliminatedDisplay = describeMachineryOutcomeDisplay({
+      probability: 0.005,
+      rendered_percent: 1,
+      settled_out: true,
+    });
+    expect(eliminatedDisplay).toEqual({
       state: "eliminated",
       label: ELIMINATED_LABEL,
       barWidthPercent: 0,
       muted: true,
     });
+    expect(eliminatedDisplay.label).toBe("Eliminated");
 
     // Missing/unpriced with settled_out: false prints "No recent probability" with empty track
-    expect(
-      describeMachineryOutcomeDisplay({
-        probability: null,
-        rendered_percent: null,
-        settled_out: false,
-      }),
-    ).toEqual({
+    const unpricedDisplay = describeMachineryOutcomeDisplay({
+      probability: null,
+      rendered_percent: null,
+      settled_out: false,
+    });
+    expect(unpricedDisplay).toEqual({
       state: "no_recent_probability",
       label: NO_RECENT_PROBABILITY_LABEL,
       barWidthPercent: 0,
       muted: true,
     });
+    expect(unpricedDisplay.label).toBe("No recent probability");
 
     // Non-division cards omit settled_out and keep exact existing formatGroupedProbability behaviour
     expect(
@@ -122,8 +126,8 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
     });
   });
 
-  it("renders all four teams and exact labels on both MachineryDiscoverCard and SiblingFieldsGridBlock", () => {
-    const outcomes = [
+  it("renders priced rows beside unpriced_outcomes with secondary color, normal row size, and zero bg-slate-300", () => {
+    const pricedOutcomes = [
       {
         outcome_id: 846594,
         name: "Denver",
@@ -136,15 +140,19 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
       {
         outcome_id: 846593,
         name: "Kansas City",
-        probability: 0.009,
+        probability: 0.0099,
         rendered_percent: 1,
         unfloored_percent: 1,
         settled_out: false,
         art: NFL_ART("kc"),
       },
+    ];
+    const unpricedOutcomes = [
       {
+        market_id: 53675,
         outcome_id: 846592,
         name: "Los Angeles Chargers",
+        label: "Los Angeles Chargers",
         probability: null,
         rendered_percent: null,
         unfloored_percent: null,
@@ -152,8 +160,10 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
         art: NFL_ART("lac"),
       },
       {
+        market_id: 53675,
         outcome_id: 846591,
         name: "Las Vegas",
+        label: "Las Vegas",
         probability: null,
         rendered_percent: null,
         unfloored_percent: null,
@@ -172,7 +182,8 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
       scale_ordered: false,
       section_count: 2,
       destination_href: "/collections/machinery-afc-west-duel",
-      rows: outcomes,
+      rows: pricedOutcomes,
+      unpriced_outcomes: unpricedOutcomes,
     };
 
     const cardHtml = renderToStaticMarkup(<MachineryDiscoverCard card={card} />);
@@ -185,6 +196,7 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
     expect(cardHtml).toContain("Las Vegas");
     expect(cardHtml).toContain("Eliminated");
     expect(cardHtml).not.toContain("<span>—</span>");
+    expect(cardHtml).not.toContain("bg-slate-300");
 
     const rowStates = Array.from(
       cardHtml.matchAll(/data-outcome-state="([^"]+)"/g),
@@ -196,11 +208,25 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
       "no_recent_probability",
       "eliminated",
     ]);
-    // Empty tracks for eliminated & no_recent_probability; filled bars only for live & sub_one_percent
+    // Empty tracks for eliminated & no_recent_probability; filled bars only for live & sub_one_percent;
+    // labels map to the exact team row (mutants swapping labels fail).
     const rowBlocks = cardHtml.split('data-outcome-state="').slice(1);
     expect(rowBlocks[0]).toContain("width:53%");
     expect(rowBlocks[1]).toContain("width:2%");
+    expect(rowBlocks[1]).toContain("bg-text-muted");
+    expect(rowBlocks[2]).toContain("Los Angeles Chargers");
+    expect(rowBlocks[2]).toContain("No recent probability");
+    expect(rowBlocks[2]).not.toContain("Eliminated");
+    expect(rowBlocks[2]).toContain("text-text-secondary");
+    expect(rowBlocks[2]).toContain("text-sm");
+    expect(rowBlocks[2]).not.toContain("text-text-muted");
     expect(rowBlocks[2]).not.toContain('style="width:');
+    expect(rowBlocks[3]).toContain("Las Vegas");
+    expect(rowBlocks[3]).toContain("Eliminated");
+    expect(rowBlocks[3]).not.toContain("No recent probability");
+    expect(rowBlocks[3]).toContain("text-text-secondary");
+    expect(rowBlocks[3]).toContain("text-sm");
+    expect(rowBlocks[3]).not.toContain("text-text-muted");
     expect(rowBlocks[3]).not.toContain('style="width:');
 
     const vb: MachineryVisualBlock = {
@@ -212,7 +238,8 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
           title: "AFC West",
           href: "/futures/53675",
           scale_ordered: false,
-          outcomes,
+          outcomes: pricedOutcomes,
+          unpriced_outcomes: unpricedOutcomes,
         },
       ],
     };
@@ -224,6 +251,7 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
     expect(secHtml).toContain("&lt;1%");
     expect(secHtml).toContain("No recent probability");
     expect(secHtml).toContain("Eliminated");
+    expect(secHtml).not.toContain("bg-slate-300");
 
     const secStates = Array.from(
       secHtml.matchAll(/data-outcome-state="([^"]+)"/g),
@@ -238,11 +266,28 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
     const secBlocks = secHtml.split('data-outcome-state="').slice(1);
     expect(secBlocks[0]).toContain("width:53%");
     expect(secBlocks[1]).toContain("width:2%");
+    expect(secBlocks[1]).toContain("bg-text-muted");
+    expect(secBlocks[2]).toContain("No recent probability");
+    expect(secBlocks[2]).not.toContain("Eliminated");
+    expect(secBlocks[2]).toContain("text-text-secondary");
     expect(secBlocks[2]).not.toContain('style="width:');
+    expect(secBlocks[3]).toContain("Eliminated");
+    expect(secBlocks[3]).not.toContain("No recent probability");
+    expect(secBlocks[3]).toContain("text-text-secondary");
     expect(secBlocks[3]).not.toContain('style="width:');
+
+    const rendererSrc = fs.readFileSync(
+      path.join(__dirname, "..", "..", "components", "collections", "MachinerySectionRenderer.tsx"),
+      "utf8",
+    );
+    const subOneBranches = rendererSrc.match(/sub_one_percent[\s\S]{0,120}/g) ?? [];
+    expect(subOneBranches.length).toBeGreaterThanOrEqual(2);
+    for (const branch of subOneBranches) {
+      expect(branch).not.toContain("bg-slate-300");
+    }
   });
 
-  it("keeps non-division cards unchanged and prevents live patch from overwriting settled_out rows", () => {
+  it("keeps non-division cards unchanged and prevents live patch from overwriting unpriced_outcomes", () => {
     const regularCard: MachineryCardContract = {
       slug: "machinery-european-league-titles",
       form_id: "sibling_fields_grid",
@@ -292,9 +337,13 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
               settled_out: false,
               art: NFL_ART("den"),
             },
+          ],
+          unpriced_outcomes: [
             {
+              market_id: 53675,
               outcome_id: 846591,
               name: "Las Vegas",
+              label: "Las Vegas",
               probability: null,
               rendered_percent: null,
               unfloored_percent: null,
@@ -328,10 +377,11 @@ describe("441: A (#13777) NFL division race four-team website rendering", () => 
     ]);
     const patched = patchMachineryVisualBlock(vb, priced);
     const patchedOutcomes = (patched.items?.[0]?.outcomes ?? []) as Array<Record<string, unknown>>;
+    const patchedUnpriced = (patched.items?.[0]?.unpriced_outcomes ?? []) as Array<Record<string, unknown>>;
     expect(patchedOutcomes[0].rendered_percent).toBe(57);
     expect(patchedOutcomes[0].unfloored_percent).toBe(57);
-    expect(patchedOutcomes[1].settled_out).toBe(true);
-    expect(patchedOutcomes[1].probability).toBeNull();
-    expect(patchedOutcomes[1].rendered_percent).toBeNull();
+    expect(patchedUnpriced[0].settled_out).toBe(true);
+    expect(patchedUnpriced[0].probability).toBeNull();
+    expect(patchedUnpriced[0].rendered_percent).toBeNull();
   });
 });

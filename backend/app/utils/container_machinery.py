@@ -2439,6 +2439,7 @@ def _hydrate_market_visual_item(
     scale_ordered = False
     leader_outcome_id: Optional[int] = None
     lead_prob = 0.0
+    unpriced_outcomes_out: list[dict[str, Any]] = []
 
     if include_all_division_teams:
         div_priced_raw: list[Mapping[str, Any]] = []
@@ -2520,12 +2521,14 @@ def _hydrate_market_visual_item(
         div_unpriced_rows.sort(key=lambda o: str(o.get("name") or "").casefold())
         div_settled_out_rows.sort(key=lambda o: str(o.get("name") or "").casefold())
 
-        kept_div = [*canonical_rows, *div_unpriced_rows, *div_settled_out_rows][:max_outcomes]
+        kept_priced = canonical_rows[:max_outcomes]
+        remaining_slots = max(0, max_outcomes - len(kept_priced))
+        kept_unpriced = [*div_unpriced_rows, *div_settled_out_rows][:remaining_slots]
         shape_is_yes = False
         from app.utils.field_opening_coherence import field_openings_publishable
 
         openings_ok = field_openings_publishable(
-            [o.get("opening_probability") for o in canonical_rows],
+            [o.get("opening_probability") for o in kept_priced],
             mutually_exclusive=mut_excl,
         )
         eff_sport_key = (
@@ -2535,10 +2538,9 @@ def _hydrate_market_visual_item(
         )
         eff_allow_team_lookup = True if allow_team_lookup is None else bool(allow_team_lookup)
         outcomes_out = []
-        for idx, o in enumerate(kept_div):
+        for idx, o in enumerate(kept_priced):
             o_name = _clean_outcome_label(str(o.get("name") or "").strip())
             oid = int(o.get("id") or (mid * 100 + idx + 1))
-            settled_out_flag = bool(o.get("settled_out"))
             raw_p = o.get("probability")
             art = resolver.resolve(
                 o_name,
@@ -2549,23 +2551,17 @@ def _hydrate_market_visual_item(
             canon_subj = art.get("canonical_name")
             if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
                 o_name = str(canon_subj)
-            if not settled_out_flag and isinstance(raw_p, (int, float)) and not isinstance(raw_p, bool):
-                p: Optional[float] = float(raw_p)
-                if leader_outcome_id is None:
-                    leader_outcome_id = oid
-                    lead_prob = p
-                rendered = o.get("rendered_percent")
-                pct_val: Optional[int] = int(rendered) if rendered is not None else _half_up_pct(p)
-                unfloored_val = o.get("unfloored_percent")
-                for fk_alias in (_norm_key(o_name), _ascii_fold_key(o_name)):
-                    if fk_alias and fk_alias not in canon_by_key:
-                        canon_by_key[fk_alias] = pct_val
-                open_p = o.get("opening_probability") if openings_ok else None
-            else:
-                p = None
-                pct_val = None
-                unfloored_val = None
-                open_p = None
+            p = float(raw_p)
+            if leader_outcome_id is None:
+                leader_outcome_id = oid
+                lead_prob = p
+            rendered = o.get("rendered_percent")
+            pct_val = int(rendered) if rendered is not None else _half_up_pct(p)
+            unfloored_val = o.get("unfloored_percent")
+            for fk_alias in (_norm_key(o_name), _ascii_fold_key(o_name)):
+                if fk_alias and fk_alias not in canon_by_key:
+                    canon_by_key[fk_alias] = pct_val
+            open_p = o.get("opening_probability") if openings_ok else None
             outcomes_out.append(
                 {
                     "outcome_id": oid,
@@ -2574,6 +2570,32 @@ def _hydrate_market_visual_item(
                     "rendered_percent": pct_val,
                     "unfloored_percent": unfloored_val,
                     "opening_probability": open_p,
+                    "settled_out": False,
+                    "art": art,
+                }
+            )
+        for idx, o in enumerate(kept_unpriced):
+            o_name = _clean_outcome_label(str(o.get("name") or "").strip())
+            oid = int(o.get("id") or -(mid * 10 + idx + 1))
+            settled_out_flag = bool(o.get("settled_out"))
+            art = resolver.resolve(
+                o_name,
+                explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
+                sport_key=eff_sport_key,
+                allow_team_lookup=eff_allow_team_lookup,
+            )
+            canon_subj = art.get("canonical_name")
+            if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
+                o_name = str(canon_subj)
+            unpriced_outcomes_out.append(
+                {
+                    "market_id": mid,
+                    "outcome_id": oid,
+                    "name": o_name,
+                    "label": o_name,
+                    "probability": None,
+                    "rendered_percent": None,
+                    "unfloored_percent": None,
                     "settled_out": settled_out_flag,
                     "art": art,
                 }
@@ -2830,9 +2852,9 @@ def _hydrate_market_visual_item(
         outcomes_out[0]["art"] = yes_art
 
     # Portrait/subject gate (#13587): never serve a person's face on another subject's row.
-    if outcomes_out:
+    if outcomes_out or unpriced_outcomes_out:
         art_context_texts = (display_title, clean_raw_name)
-        for oc in outcomes_out:
+        for oc in (*outcomes_out, *unpriced_outcomes_out):
             oc["art"] = _gate_outcome_art(
                 str(oc.get("name") or ""),
                 art_context_texts,
@@ -2927,7 +2949,7 @@ def _hydrate_market_visual_item(
         if raw_with_phrase:
             headline_with_phrase = _render_tpl(raw_with_phrase)
 
-    return {
+    hydrated: dict[str, Any] = {
         "market_id": mid,
         "title": display_title,
         "_short_label_base": base_title,
@@ -2954,6 +2976,9 @@ def _hydrate_market_visual_item(
         "member_page_numbers": mpn,
         "card": card_copy,
     }
+    if unpriced_outcomes_out:
+        hydrated["unpriced_outcomes"] = unpriced_outcomes_out
+    return hydrated
 
 
 def _event_has_sportsbook(event: Any, *, hero_source: Optional[str] = None) -> bool:
@@ -5903,6 +5928,7 @@ async def produce_container_machinery(
 
     rows_out: list[dict[str, Any]] = []
     card_visual_rows: list[dict[str, Any]] = []
+    card_unpriced_rows: list[dict[str, Any]] = []
 
     if vb_form == "paired_stage_bars" and isinstance(vb.get("paired_metric_set"), Mapping):
         pset = vb["paired_metric_set"]
@@ -6078,24 +6104,12 @@ async def produce_container_machinery(
             chosen_outs = all_lead_outs[:card_rows_limit]
             card_scale_ordered = bool(lead_market.get("scale_ordered"))
         for o in chosen_outs:
-            p_raw = o.get("probability")
-            p_val = (
-                float(p_raw)
-                if isinstance(p_raw, (int, float)) and not isinstance(p_raw, bool)
-                else None
-            )
-            rp_raw = o.get("rendered_percent")
-            rp_val = (
-                int(rp_raw)
-                if isinstance(rp_raw, (int, float)) and not isinstance(rp_raw, bool)
-                else None
-            )
             row_entry: dict[str, Any] = {
                 "market_id": mid,
                 "outcome_id": int(o["outcome_id"]),
                 "label": str(o["name"]),
-                "probability": p_val,
-                "rendered_percent": rp_val,
+                "probability": float(o["probability"]),
+                "rendered_percent": int(o["rendered_percent"]),
                 "unfloored_percent": o.get("unfloored_percent"),
             }
             if "settled_out" in o:
@@ -6106,6 +6120,22 @@ async def produce_container_machinery(
                     "market_id": mid,
                     "href": lead_market.get("href") or f"/futures/{mid}",
                     **o,
+                }
+            )
+        remaining_card_slots = max(0, card_rows_limit - len(chosen_outs))
+        for u in list(lead_market.get("unpriced_outcomes") or ())[:remaining_card_slots]:
+            u_name = str(u.get("name") or "")
+            card_unpriced_rows.append(
+                {
+                    "market_id": mid,
+                    "outcome_id": int(u["outcome_id"]),
+                    "name": u_name,
+                    "label": str(u.get("label") or u_name),
+                    "probability": None,
+                    "rendered_percent": None,
+                    "unfloored_percent": None,
+                    "settled_out": bool(u.get("settled_out")),
+                    "art": copy.deepcopy(u.get("art") or {}),
                 }
             )
 
@@ -6133,6 +6163,8 @@ async def produce_container_machinery(
     hide_row_art = bool(rule.get("hide_row_art"))
     if hide_row_art and card_visual_rows:
         card_visual_rows = _strip_visual_row_art(card_visual_rows)
+    if hide_row_art and card_unpriced_rows:
+        card_unpriced_rows = _strip_visual_row_art(card_unpriced_rows)
 
     # Decision 387: A (#13605): show the verified pictures we have on each row
     # and leave rows without one as monogram/initials circles (never hide
@@ -6162,7 +6194,11 @@ async def produce_container_machinery(
                 missing_subjects,
             )
 
-    has_card_art = any(_has_verified_art(r) for r in card_visual_rows if isinstance(r, Mapping))
+    has_card_art = any(
+        _has_verified_art(r)
+        for r in (*card_visual_rows, *card_unpriced_rows)
+        if isinstance(r, Mapping)
+    )
     if vb_form == "paired_stage_bars" and lead_paired_set:
         has_card_art = any(
             _has_verified_art(r)
@@ -6242,6 +6278,8 @@ async def produce_container_machinery(
         "destination_href": dest_href,
         "rows": card_visual_rows,
     }
+    if card_unpriced_rows:
+        machinery_card["unpriced_outcomes"] = card_unpriced_rows
     if suppress_card_photo:
         machinery_card["suppress_card_photo"] = True
     if allow_card_header_image:
@@ -6279,6 +6317,7 @@ async def produce_container_machinery(
         parent_name=definition.get("parent_name"),
         paired_metric_set=card_paired_set,
         machinery_card=machinery_card,
+        unpriced_outcomes=card_unpriced_rows,
         covered_market_ids=covered_twin_market_ids,
     )
 
@@ -6503,6 +6542,11 @@ def _enforce_section_all_or_nothing_art(
             if isinstance(outs, Sequence) and not isinstance(outs, (str, bytes)):
                 it_copy["outcomes"] = _strip_visual_row_art(
                     [o for o in outs if isinstance(o, Mapping)]
+                )
+            unpriced = it_copy.get("unpriced_outcomes")
+            if isinstance(unpriced, Sequence) and not isinstance(unpriced, (str, bytes)):
+                it_copy["unpriced_outcomes"] = _strip_visual_row_art(
+                    [u for u in unpriced if isinstance(u, Mapping)]
                 )
             stripped_items.append(it_copy)
         sec_vb["items"] = stripped_items
@@ -6851,12 +6895,6 @@ def _compute_member_number_parity(
         for r in mc.get("rows") or ():
             if not isinstance(r, Mapping):
                 continue
-            if (
-                r.get("settled_out") is True
-                or r.get("probability") is None
-                or r.get("rendered_percent") is None
-            ):
-                continue
             mid = int(r.get("market_id") or 0)
             oid = int(r["outcome_id"]) if isinstance(r.get("outcome_id"), int) else None
             lbl = str(r.get("name") or r.get("label") or "")
@@ -6962,12 +7000,6 @@ def _compute_member_number_parity(
                 for o in it.get("outcomes") or ():
                     if not isinstance(o, Mapping):
                         continue
-                    if (
-                        o.get("settled_out") is True
-                        or o.get("probability") is None
-                        or o.get("rendered_percent") is None
-                    ):
-                        continue
                     oid = int(o["outcome_id"]) if isinstance(o.get("outcome_id"), int) else None
                     lbl = str(o.get("name") or "")
                     shown_v = int(o["rendered_percent"])
@@ -7014,6 +7046,9 @@ def compute_visual_diversity_report(
     mc = rc.get("machinery_card") if isinstance(rc.get("machinery_card"), Mapping) else {}
     card_form = str(mc.get("form_id") or "roundup")
     card_rows = [r for r in (mc.get("rows") or ()) if isinstance(r, Mapping)]
+    card_unpriced = [
+        r for r in (mc.get("unpriced_outcomes") or ()) if isinstance(r, Mapping)
+    ]
     pms = rc.get("paired_metric_set") if isinstance(rc.get("paired_metric_set"), Mapping) else None
     if card_form == "paired_stage_bars" and pms:
         all_pms_entries = [r for r in (pms.get("entries") or pms.get("rows") or ()) if isinstance(r, Mapping)]
@@ -7022,7 +7057,7 @@ def compute_visual_diversity_report(
         card_pics = sum(1 for r in pms_rows if _has_verified_art(r))
         card_scale_checked, card_scale_violations = _check_scale_order_violations(pms_rows, "card:paired_stage")
     else:
-        card_row_count = len(card_rows)
+        card_row_count = len(card_rows) + len(card_unpriced)
         card_pics = 0
         for r in card_rows:
             if card_form in {"coin_flip_matchups", "matchup_slate"}:
@@ -7031,6 +7066,9 @@ def compute_visual_diversity_report(
                 if isinstance(r.get("home_art"), Mapping) and str(r["home_art"].get("url") or "").strip():
                     card_pics += 1
             elif _has_verified_art(r):
+                card_pics += 1
+        for r in card_unpriced:
+            if _has_verified_art(r):
                 card_pics += 1
         if (
             isinstance(mc.get("mini_chart"), Mapping)

@@ -188,52 +188,183 @@ async def test_division_races_emit_all_four_teams_with_tiny_settled_and_unpriced
     feed_item = compose_roundup_feed_item(prod, res)
     container = compose_roundup_container(prod, res)
 
-    card = feed_item["data"]["roundup"]["machinery_card"]
+    roundup_payload = feed_item["data"]["roundup"]
+    card = roundup_payload["machinery_card"]
     assert card["form_id"] == "sibling_fields_grid"
-    assert len(card["rows"]) == 4
-    by_name = {r["name"]: r for r in card["rows"]}
-    assert set(by_name) == {"Denver", "Kansas City", "Los Angeles Chargers", "Las Vegas"}
 
+    # Old iPhone safety invariant: rows & outcomes NEVER contain null/unpriced or settled_out=True rows.
+    for row_list_name, row_list in (
+        ("roundup.rows", roundup_payload["rows"]),
+        ("machinery_card.rows", card["rows"]),
+    ):
+        assert len(row_list) == 2, row_list_name
+        for r in row_list:
+            assert r.get("settled_out") is False
+            assert isinstance(r.get("probability"), float) and 0.0 < r["probability"] < 1.0
+            assert isinstance(r.get("rendered_percent"), int) and r["rendered_percent"] >= 1
+
+    by_name = {r["name"]: r for r in card["rows"]}
+    assert list(by_name) == ["Denver", "Kansas City"]
     assert by_name["Denver"]["probability"] == pytest.approx(0.625)
     assert by_name["Denver"]["settled_out"] is False
     # Tiny probability (<0.005) kept and unfloored preserved
     assert by_name["Kansas City"]["probability"] == pytest.approx(0.004)
     assert by_name["Kansas City"]["settled_out"] is False
-    # Unpriced team emitted with null probability and settled_out=False
-    assert by_name["Los Angeles Chargers"]["probability"] is None
-    assert by_name["Los Angeles Chargers"]["rendered_percent"] is None
-    assert by_name["Los Angeles Chargers"]["settled_out"] is False
-    assert by_name["Los Angeles Chargers"]["art"]["url"].endswith("/lac.png")
-    # Settled-out team carries settled_out=True and withheld numbers
-    assert by_name["Las Vegas"]["settled_out"] is True
-    assert by_name["Las Vegas"]["probability"] is None
-    assert by_name["Las Vegas"]["rendered_percent"] is None
-    assert by_name["Las Vegas"]["art"]["url"].endswith("/lv.png")
 
-    # Section 1 (`nfl_division_races`) also carries all 4 teams per division
+    # Unpriced & settled-out teams live ONLY in sibling list `unpriced_outcomes` beside rows
+    assert card["unpriced_outcomes"] == roundup_payload["unpriced_outcomes"]
+    card_unpriced = {u["name"]: u for u in card["unpriced_outcomes"]}
+    assert [u["name"] for u in card["unpriced_outcomes"]] == [
+        "Los Angeles Chargers",
+        "Las Vegas",
+    ]
+    for u in card["unpriced_outcomes"]:
+        assert set(u) == {
+            "market_id",
+            "outcome_id",
+            "name",
+            "label",
+            "probability",
+            "rendered_percent",
+            "unfloored_percent",
+            "settled_out",
+            "art",
+        }
+        assert u["probability"] is None
+        assert u["rendered_percent"] is None
+        assert u["unfloored_percent"] is None
+    assert card_unpriced["Los Angeles Chargers"]["settled_out"] is False
+    assert card_unpriced["Los Angeles Chargers"]["art"]["url"].endswith("/lac.png")
+    assert card_unpriced["Las Vegas"]["settled_out"] is True
+    assert card_unpriced["Las Vegas"]["art"]["url"].endswith("/lv.png")
+
+    # Section 1 (`nfl_division_races`) also splits priced outcomes vs sibling `unpriced_outcomes`
     sec_divs = {it["market_id"]: it for it in container["sections"][1]["visual_block"]["items"]}
-    assert len(sec_divs[53673]["outcomes"]) == 4
-    nfc_n = {o["name"]: o for o in sec_divs[53673]["outcomes"]}
-    assert nfc_n["Chicago"]["settled_out"] is False
-    assert nfc_n["Minnesota"]["settled_out"] is False and nfc_n["Minnesota"]["probability"] == pytest.approx(0.35)
-    assert nfc_n["Detroit"]["settled_out"] is False and nfc_n["Detroit"]["probability"] == pytest.approx(0.009)
-    assert nfc_n["Green Bay"]["settled_out"] is False and nfc_n["Green Bay"]["probability"] is None
-    assert nfc_n["Green Bay"]["art"]["url"].endswith("/gb.png")
+    for mid_check, item_check in sec_divs.items():
+        for o in item_check["outcomes"]:
+            assert o["settled_out"] is False
+            assert isinstance(o["probability"], float) and 0.0 < o["probability"] < 1.0
+            assert isinstance(o["rendered_percent"], int) and o["rendered_percent"] >= 1
+        assert (
+            len(item_check["outcomes"]) + len(item_check.get("unpriced_outcomes") or ())
+            == 4
+        ), f"market {mid_check} must total 4 teams"
 
+    nfc_n_priced = {o["name"]: o for o in sec_divs[53673]["outcomes"]}
+    nfc_n_unpriced = {u["name"]: u for u in sec_divs[53673]["unpriced_outcomes"]}
+    assert set(nfc_n_priced) == {"Chicago", "Minnesota", "Detroit"}
+    assert nfc_n_priced["Minnesota"]["probability"] == pytest.approx(0.35)
+    assert nfc_n_priced["Detroit"]["probability"] == pytest.approx(0.009)
+    assert list(nfc_n_unpriced) == ["Green Bay"]
+    assert nfc_n_unpriced["Green Bay"]["settled_out"] is False
+    assert nfc_n_unpriced["Green Bay"]["probability"] is None
+    assert nfc_n_unpriced["Green Bay"]["art"]["url"].endswith("/gb.png")
+
+    # When all 4 teams are priced, `unpriced_outcomes` is omitted cleanly
+    assert "unpriced_outcomes" not in sec_divs[53672]
     nfc_s = {o["name"]: o for o in sec_divs[53672]["outcomes"]}
+    assert len(nfc_s) == 4
     assert nfc_s["New Orleans"]["probability"] == pytest.approx(0.002)
     assert nfc_s["New Orleans"]["settled_out"] is False
 
-    nfc_w = {o["name"]: o for o in sec_divs[53671]["outcomes"]}
-    assert nfc_w["Arizona"]["settled_out"] is False and nfc_w["Arizona"]["probability"] is None
-    assert nfc_w["Seattle"]["settled_out"] is False and nfc_w["Seattle"]["probability"] is None
-    assert nfc_w["Los Angeles Rams"]["probability"] == pytest.approx(0.0099)
+    nfc_w_priced = {o["name"]: o for o in sec_divs[53671]["outcomes"]}
+    nfc_w_unpriced = {u["name"]: u for u in sec_divs[53671]["unpriced_outcomes"]}
+    assert set(nfc_w_priced) == {"San Francisco", "Los Angeles Rams"}
+    assert nfc_w_priced["Los Angeles Rams"]["probability"] == pytest.approx(0.0099)
+    assert set(nfc_w_unpriced) == {"Arizona", "Seattle"}
+    assert nfc_w_unpriced["Arizona"]["settled_out"] is False and nfc_w_unpriced["Arizona"]["probability"] is None
+    assert nfc_w_unpriced["Seattle"]["settled_out"] is False and nfc_w_unpriced["Seattle"]["probability"] is None
 
     card_parity, page_parity = _compute_member_number_parity(feed_item, container)
     assert card_parity["passes"] is True
     assert page_parity["passes"] is True
     div_report = compute_visual_diversity_report(defn, feed_item, container)
     assert div_report["card"]["point_2_longest_form_run"]["passes"] is True
+    assert div_report["card"]["point_2_longest_form_run"]["longest_row_run"] == 4
+
+
+@pytest.mark.asyncio
+async def test_authoritative_source_required_for_eliminated_division_row() -> None:
+    """Mutant guard: dropping resolution_source in AUTHORITATIVE_SOURCES must fail."""
+    clear_fun_markets_cache()
+    defn = load_machinery_definition(CANDIDATES_DIR / "machinery-afc-west-duel.json")
+    prod = build_container_machinery_producer(defn)
+
+    snap = {
+        "events": [],
+        "teams": _nfl_teams(),
+        "markets": [
+            _div_market(
+                53675,
+                "AFC West Division Winner",
+                [
+                    {"id": 846594, "name": "Denver", "probability": 0.90},
+                    {
+                        "id": 846593,
+                        "name": "Kansas City",
+                        "probability": 0.0,
+                        "is_winner": False,
+                        "resolution_source": "heuristic_inference",
+                    },
+                    {
+                        "id": 846592,
+                        "name": "Los Angeles Chargers",
+                        "probability": 0.003,
+                        "is_winner": False,
+                        "resolution_source": "polymarket_stale",
+                    },
+                    {
+                        "id": 846591,
+                        "name": "Las Vegas",
+                        "probability": 0.0,
+                        "is_winner": False,
+                        "resolution_source": "api_settlement",
+                    },
+                ],
+            ),
+            _div_market(
+                53673,
+                "NFC North Division Winner",
+                [
+                    {"id": 11, "name": "Chicago", "probability": 0.4},
+                    {"id": 12, "name": "Minnesota", "probability": 0.3},
+                    {"id": 13, "name": "Detroit", "probability": 0.2},
+                    {"id": 14, "name": "Green Bay", "probability": 0.1},
+                ],
+            ),
+            _div_market(
+                53672,
+                "NFC South Division Winner",
+                [
+                    {"id": 21, "name": "Carolina", "probability": 0.4},
+                    {"id": 22, "name": "Tampa Bay", "probability": 0.3},
+                    {"id": 23, "name": "Atlanta", "probability": 0.2},
+                    {"id": 24, "name": "New Orleans", "probability": 0.1},
+                ],
+            ),
+            _div_market(
+                53671,
+                "NFC West Division Winner",
+                [
+                    {"id": 31, "name": "San Francisco", "probability": 0.4},
+                    {"id": 32, "name": "Los Angeles Rams", "probability": 0.3},
+                    {"id": 33, "name": "Seattle", "probability": 0.2},
+                    {"id": 34, "name": "Arizona", "probability": 0.1},
+                ],
+            ),
+        ],
+    }
+
+    res = await produce_container_machinery(snap, defn, now=NOW)
+    feed_item = compose_roundup_feed_item(prod, res)
+    card = feed_item["data"]["roundup"]["machinery_card"]
+    # Non-authoritative 0.003 stays priced <1%; non-authoritative 0.0 stays unpriced (settled_out=False);
+    # ONLY authoritative api_settlement marks settled_out=True.
+    assert [r["name"] for r in card["rows"]] == ["Denver", "Los Angeles Chargers"]
+    by_u = {u["name"]: u for u in card["unpriced_outcomes"]}
+    assert list(by_u) == ["Kansas City", "Las Vegas"]
+    assert by_u["Kansas City"]["settled_out"] is False
+    assert by_u["Las Vegas"]["settled_out"] is True
 
 
 @pytest.mark.asyncio
@@ -351,8 +482,11 @@ async def test_non_division_card_keeps_existing_floor_and_null_dropping_behaviou
         "Josh Shapiro",
     ]
     assert all("settled_out" not in o for o in first_item_outs)
+    assert "unpriced_outcomes" not in items_by_mid[999112897]
     assert len(res.machinery_card["rows"]) == 2
     assert all("settled_out" not in r for r in res.machinery_card["rows"])
+    assert "unpriced_outcomes" not in res.machinery_card
+    assert res.unpriced_outcomes == ()
 
 
 @pytest.mark.asyncio
@@ -507,8 +641,11 @@ async def test_db_snapshot_loader_preserves_division_all_outcomes_and_strips_int
     for env in res.members:
         assert "_division_all_outcomes" not in env["card"]
     afc_rows = {r["name"]: r for r in res.machinery_card["rows"]}
+    assert list(afc_rows) == ["Denver", "Kansas City"]
     assert afc_rows["Kansas City"]["probability"] == pytest.approx(0.003)
-    assert afc_rows["Los Angeles Chargers"]["probability"] is None
-    assert afc_rows["Los Angeles Chargers"]["settled_out"] is False
-    assert afc_rows["Las Vegas"]["settled_out"] is True
-    assert afc_rows["Las Vegas"]["probability"] is None
+    afc_unpriced = {u["name"]: u for u in res.machinery_card["unpriced_outcomes"]}
+    assert list(afc_unpriced) == ["Los Angeles Chargers", "Las Vegas"]
+    assert afc_unpriced["Los Angeles Chargers"]["probability"] is None
+    assert afc_unpriced["Los Angeles Chargers"]["settled_out"] is False
+    assert afc_unpriced["Las Vegas"]["settled_out"] is True
+    assert afc_unpriced["Las Vegas"]["probability"] is None

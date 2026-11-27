@@ -63,6 +63,7 @@ export interface MachineryCardContract {
   image_alt?: string | null;
   destination_href: string;
   rows: Record<string, unknown>[];
+  unpriced_outcomes?: Record<string, unknown>[];
   mini_chart?: MachineryHistoryChartItem | null;
 }
 
@@ -669,7 +670,10 @@ function SiblingFieldsGridBlock({
           const href = String(m.href ?? `/futures/${mid}`);
           const scaleOrdered = Boolean(m.scale_ordered);
           const leaderOid = Number(m.leader_outcome_id ?? 0);
-          const outcomes = ((m.outcomes as MachineryOutcomeVisual[] | undefined) ?? []).slice(0, 4);
+          const outcomes = [
+            ...((m.outcomes as MachineryOutcomeVisual[] | undefined) ?? []),
+            ...((m.unpriced_outcomes as MachineryOutcomeVisual[] | undefined) ?? []),
+          ].slice(0, 4);
           const marketHasAnyArt = !scaleOrdered && outcomes.some((o) => Boolean(o.art?.url));
           return (
             <Link
@@ -720,7 +724,7 @@ function SiblingFieldsGridBlock({
                           <span
                             className={`break-words text-xs leading-snug ${
                               display.muted
-                                ? "font-medium text-text-muted"
+                                ? "font-medium text-text-secondary"
                                 : isFav
                                   ? "font-semibold text-text-primary"
                                   : "font-medium text-text-secondary"
@@ -731,7 +735,7 @@ function SiblingFieldsGridBlock({
                           <span
                             className={`shrink-0 whitespace-nowrap text-xs tabular-nums ${
                               display.muted
-                                ? "font-medium text-text-muted"
+                                ? "font-medium text-text-secondary"
                                 : isFav
                                   ? "font-bold text-text-primary"
                                   : "font-semibold text-text-secondary"
@@ -745,7 +749,7 @@ function SiblingFieldsGridBlock({
                             <div
                               className={`h-full rounded-full ${
                                 display.state === "sub_one_percent"
-                                  ? "bg-slate-300"
+                                  ? "bg-text-muted"
                                   : isFav
                                     ? "bg-accent-brand"
                                     : "bg-slate-400"
@@ -1088,7 +1092,10 @@ export default function MachinerySectionRenderer({
 export function MachineryDiscoverCard({ card }: { card: MachineryCardContract }) {
   const isEventCard =
     card.form_id === "coin_flip_matchups" || card.form_id === "matchup_slate";
-  const maxPct = card.rows.reduce(
+  const cardOutcomeRows = isEventCard
+    ? card.rows
+    : [...card.rows, ...(card.unpriced_outcomes ?? [])].slice(0, 4);
+  const maxPct = cardOutcomeRows.reduce(
     (acc, r) => Math.max(acc, Number(r.rendered_percent ?? 0)),
     0,
   );
@@ -1101,7 +1108,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
   const anyCardOutcomeArt =
     !isEventCard &&
     !card.scale_ordered &&
-    card.rows.some((r) => Boolean((r.art as MachinerySubjectArt | undefined)?.url));
+    cardOutcomeRows.some((r) => Boolean((r.art as MachinerySubjectArt | undefined)?.url));
 
   return (
     <Link
@@ -1257,7 +1264,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                 </div>
               );
             })
-          : card.rows.map((r) => {
+          : cardOutcomeRows.map((r) => {
               const oid = Number(r.outcome_id ?? 0);
               const name = String(r.name ?? "");
               const probability = r.probability == null ? NaN : Number(r.probability);
@@ -1272,10 +1279,6 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                   : display.state === "sub_one_percent"
                     ? "shrink-0 opacity-75"
                     : "shrink-0";
-              const labelSizeClass =
-                display.state === "eliminated" || display.state === "no_recent_probability"
-                  ? "text-xs"
-                  : "text-sm";
               return (
                 <div
                   key={`${oid}:${name}`}
@@ -1298,7 +1301,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                       <span
                         className={`break-words text-sm leading-snug ${
                           display.muted
-                            ? "font-medium text-text-muted"
+                            ? "font-medium text-text-secondary"
                             : isFav
                               ? "font-semibold text-text-primary"
                               : "font-medium text-text-secondary"
@@ -1307,9 +1310,9 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                         {name}
                       </span>
                       <span
-                        className={`shrink-0 whitespace-nowrap tabular-nums ${labelSizeClass} ${
+                        className={`shrink-0 whitespace-nowrap text-sm tabular-nums ${
                           display.muted
-                            ? "font-medium text-text-muted"
+                            ? "font-medium text-text-secondary"
                             : isFav
                               ? "font-bold text-text-primary"
                               : "font-semibold text-text-secondary"
@@ -1323,7 +1326,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                         <div
                           className={`h-full rounded-full ${
                             display.state === "sub_one_percent"
-                              ? "bg-slate-300"
+                              ? "bg-text-muted"
                               : isFav
                                 ? "bg-accent-brand"
                                 : "bg-slate-400"
