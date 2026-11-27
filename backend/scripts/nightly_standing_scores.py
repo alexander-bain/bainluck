@@ -1017,6 +1017,7 @@ def run_standing_scores(
                 re_detail, response_meta=re_detail_meta, fallback_now=clock_now
             )
             re_sport = str(re_detail.get("sport") or detail_sport or card_sport or "")
+            completed_list_status: str | None = None
             if re_detail_status in _COMPLETED_EVENT_STATUSES:
                 comp_card, comp_meta, comp_miss = _fetch_events_list_card("completed", eid, re_sport)
                 if comp_miss == "fetch_error":
@@ -1046,24 +1047,27 @@ def run_standing_scores(
                     if comp_diffs:
                         disagreements.extend(comp_diffs)
                         return True
-            live_tick_drifts.append(
-                {
-                    "event_id": eid,
-                    "sport_key": re_sport,
-                    "matchup": _matchup_label(re_detail),
-                    "surface": surface,
-                    "is_live": is_live_detail,
-                    "reason": (
-                        f"status_transitioned_off_surface:"
-                        f"{transition_spec[0]}->{re_detail_status or 'unknown'}"
-                    ),
-                    "detail_status": re_detail_status or None,
-                    "surface_copy_age": card_age,
-                    "detail_copy_age": re_detail_age,
-                    "fetch_gap_seconds": _fetch_gap_seconds(card_age, re_detail_age),
-                    "initial_diffs": card_diffs,
-                }
-            )
+                else:
+                    completed_list_status = "not_present"
+            drift_record: dict[str, Any] = {
+                "event_id": eid,
+                "sport_key": re_sport,
+                "matchup": _matchup_label(re_detail),
+                "surface": surface,
+                "is_live": is_live_detail,
+                "reason": (
+                    f"status_transitioned_off_surface:"
+                    f"{transition_spec[0]}->{re_detail_status or 'unknown'}"
+                ),
+                "detail_status": re_detail_status or None,
+                "surface_copy_age": card_age,
+                "detail_copy_age": re_detail_age,
+                "fetch_gap_seconds": _fetch_gap_seconds(card_age, re_detail_age),
+                "initial_diffs": card_diffs,
+            }
+            if completed_list_status is not None:
+                drift_record["completed_list"] = completed_list_status
+            live_tick_drifts.append(drift_record)
             return True
 
         for eid in [int(g["id"]) for g in selected_games if isinstance(g.get("id"), int)]:

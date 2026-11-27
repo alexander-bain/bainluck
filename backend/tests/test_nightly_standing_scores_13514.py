@@ -945,6 +945,7 @@ def test_live_game_transitioned_to_suspended_off_live_list_is_drift_not_incomple
     drift = result["list_vs_page"]["live_tick_drifts"][0]
     assert drift["reason"] == "status_transitioned_off_surface:live->suspended"
     assert drift["detail_status"] == "suspended"
+    assert "completed_list" not in drift
 
 
 def test_live_game_transitioned_to_completed_still_fails_when_completed_list_disagrees():
@@ -1001,6 +1002,7 @@ def test_live_game_transitioned_to_completed_and_agreed_on_completed_list_passes
         result["list_vs_page"]["live_tick_drifts"][0]["reason"]
         == "status_transitioned_off_surface:live->completed"
     )
+    assert "completed_list" not in result["list_vs_page"]["live_tick_drifts"][0]
 
 
 @pytest.mark.parametrize("reread_status_code", [200, 503])
@@ -1053,3 +1055,58 @@ def test_scheduled_game_transitioned_to_live_off_scheduled_list_is_drift():
         result["list_vs_page"]["live_tick_drifts"][0]["reason"]
         == "status_transitioned_off_surface:scheduled->live"
     )
+
+
+def test_failed_list_reread_stays_unconfirmed_even_when_detail_left_live_surface():
+    live_card = _event_payload(965, sport="tennis_atp", status="live", hours_from_now=-1.5, hero=0.96, books=0)
+    suspended_detail = _event_payload(
+        965, sport="tennis_atp", status="suspended", hours_from_now=-1.5, hero=1.0, books=0
+    )
+    transport = _list_transition_handler(
+        eid=965,
+        initial_card=live_card,
+        detail_card=suspended_detail,
+        reread_live_status=503,
+    )
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-27",
+        transport=transport,
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "INCOMPLETE"
+    assert result["list_vs_page"]["disagreements_count"] == 0
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 0
+    assert result["list_vs_page"]["unconfirmed_disagreements_count"] == 1
+    assert result["list_vs_page"]["unconfirmed_disagreements"][0]["reason"] == "list_reread_failed"
+
+
+def test_live_game_transitioned_to_completed_absent_from_completed_list_marks_not_present():
+    live_card = _event_payload(966, sport="tennis_atp", status="live", hours_from_now=-2.0, hero=0.90, books=0)
+    completed_detail = _event_payload(
+        966, sport="tennis_atp", status="completed", hours_from_now=-2.0, hero=1.00, books=0
+    )
+    transport = _list_transition_handler(
+        eid=966,
+        initial_card=live_card,
+        detail_card=completed_detail,
+        reread_live_events=[],
+        completed_events=[],
+    )
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-27",
+        transport=transport,
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "PASS"
+    assert result["list_vs_page"]["disagreements_count"] == 0
+    assert result["list_vs_page"]["unconfirmed_disagreements_count"] == 0
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 1
+    drift = result["list_vs_page"]["live_tick_drifts"][0]
+    assert drift["reason"] == "status_transitioned_off_surface:live->completed"
+    assert drift["completed_list"] == "not_present"
