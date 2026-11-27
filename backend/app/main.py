@@ -11,6 +11,7 @@ import uuid
 from contextlib import asynccontextmanager, suppress
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 import sentry_sdk
 
 # ---------------------------------------------------------------------------
@@ -405,3 +406,13 @@ async def root():
         "version": "0.1.0",
         "docs": "/docs",
     }
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt():
+    """Disallow crawlers on the API origin (#13350)."""
+    return PlainTextResponse(
+        "User-agent: *\nDisallow: /\n",
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
