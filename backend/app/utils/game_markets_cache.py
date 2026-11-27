@@ -196,52 +196,10 @@ def current_cache_version() -> str:
 #: Non-null means a venue contract behind a FINAL game is still open (#10610).
 OPEN_WINNER_QUOTE_FIELD = "open_winner_quote"
 
-#: Raw `Event.status` value for pre-kickoff games (#13573).
-SCHEDULED_STATUS = "scheduled"
-
-#: Scheduled pre-kickoff mirror ceiling: 1 hour (3,600 s), hard-capped at
-#: `source_commence_time` so a pre-game mirror never leaks into live play.
-STALE_SERVE_CEILING_SCHEDULED = 3600
-
-#: Additive envelope field: UTC ISO-8601 `Event.commence_time` stored when a
-#: `scheduled` payload is built (#13573).
-SOURCE_COMMENCE_TIME_FIELD = "source_commence_time"
-
 
 def is_final(status: Any) -> bool:
     """True when `status` is a finished game, by the tier's own definition."""
     return str(status or "").lower() in FINAL_STATUSES
-
-
-def is_scheduled(status: Any) -> bool:
-    """True when `status` is a scheduled (pre-kickoff) game."""
-    return str(status or "").lower() == SCHEDULED_STATUS
-
-
-def _normalize_utc(value: Any) -> datetime | None:
-    """Parse a `datetime` or ISO-8601 string into timezone-aware UTC."""
-    if isinstance(value, datetime):
-        return (
-            value.astimezone(timezone.utc)
-            if value.tzinfo
-            else value.replace(tzinfo=timezone.utc)
-        )
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return None
-        if raw.endswith("Z"):
-            raw = raw[:-1] + "+00:00"
-        try:
-            parsed = datetime.fromisoformat(raw)
-        except ValueError:
-            return None
-        return (
-            parsed.astimezone(timezone.utc)
-            if parsed.tzinfo
-            else parsed.replace(tzinfo=timezone.utc)
-        )
-    return None
 
 
 def fresh_ttl(status: Any) -> int:
@@ -282,14 +240,8 @@ def stale_serve_ceiling_seconds(status: Any, payload: Any = None) -> int:
     """How old a mirror of a payload with `status` may be and still be served.
 
     `payload` is optional so a caller with only a status (`related_futures_cache`)
-    keeps the status-only ceiling; a game-markets body passes itself (#10610),
-    and a scheduled body with `source_commence_time` gets the 1 h pre-kickoff
-    ceiling while legacy/un-stamped scheduled copies fail closed to 150 s (#13573).
+    keeps the status-only ceiling; a game-markets body passes itself (#10610).
     """
-    if is_scheduled(status):
-        if payload is None or source_commence_time_of(payload) is not None:
-            return STALE_SERVE_CEILING_SCHEDULED
-        return STALE_SERVE_CEILING * FRESH_TTL_LIVE
     return STALE_SERVE_CEILING * payload_fresh_ttl(status, payload)
 
 
@@ -325,7 +277,6 @@ def stamp(
     source_status: Any,
     created_at: datetime | None = None,
     lifecycle_watermark: datetime | None = None,
-    source_commence_time: datetime | str | None = None,
 ) -> dict[str, Any]:
     """Attach the producer half of the envelope, plus this tier's raw status.
 
@@ -341,9 +292,6 @@ def stamp(
     envelope = dict(enveloped.get(ENVELOPE_FIELD) or {})
     envelope[SOURCE_STATUS_FIELD] = str(source_status or "")
     envelope[BUILD_FIELD] = current_cache_version()
-    commence_dt = _normalize_utc(source_commence_time)
-    if commence_dt is not None:
-        envelope[SOURCE_COMMENCE_TIME_FIELD] = commence_dt.isoformat()
     enveloped[ENVELOPE_FIELD] = envelope
     return enveloped
 
@@ -394,86 +342,6 @@ def source_status_of(payload: Any) -> str:
     return str(envelope.get(SOURCE_STATUS_FIELD) or "")
 
 
-def source_commence_time_of(payload: Any) -> datetime | None:
-    """UTC kickoff stamped on a stored payload, or `None` when absent/invalid."""
-    if not isinstance(payload, dict):
-        return None
-    envelope = payload.get(ENVELOPE_FIELD)
-    if not isinstance(envelope, dict):
-        return None
-    return _normalize_utc(envelope.get(SOURCE_COMMENCE_TIME_FIELD))
-
-
-def with_source_commence_time(
-    payload: dict[str, Any], commence_time: datetime | str | None
-) -> dict[str, Any]:
-    """Attach normalized UTC `source_commence_time` to a stamped payload."""
-    commence_dt = _normalize_utc(commence_time)
-    if commence_dt is None:
-        return payload
-    updated = dict(payload)
-    envelope = dict(updated.get(ENVELOPE_FIELD) or {})
-    envelope[SOURCE_COMMENCE_TIME_FIELD] = commence_dt.isoformat()
-    updated[ENVELOPE_FIELD] = envelope
-    return updated
-
-
-def scheduled_kickoff_passed(payload: Any, now: datetime | None = None) -> bool:
-    """True when a scheduled payload's stamped kickoff is at or before `now`."""
-    if not is_scheduled(source_status_of(payload)):
-        return False
-    commence_at = source_commence_time_of(payload)
-    if commence_at is None:
-        return False
-    now_utc = _normalize_utc(now) if now is not None else datetime.now(timezone.utc)
-    return now_utc is not None and now_utc >= commence_at
-
-
-def resolve_commence_lookup_id(event_id: int, response: Any) -> int:
-    """Pick the canonical `event_id` carried by `response`, falling back to `event_id`."""
-    raw_eid = response.get("event_id") if isinstance(response, dict) else None
-    if isinstance(raw_eid, int) and not isinstance(raw_eid, bool):
-        return raw_eid
-    return event_id
-
-
-async def lookup_commence_time(db, event_id: int) -> datetime | None:
-    """Best-effort `Event.commence_time` lookup on a build (#13573)."""
-    try:
-        from sqlalchemy import select
-
-        from app.models.models import Event
-
-        commence_time = await db.scalar(
-            select(Event.commence_time).where(Event.id == event_id)
-        )
-    except Exception:
-        logger.warning("game-markets: commence_time query failed", exc_info=True)
-        return None
-    if not isinstance(commence_time, datetime):
-        return None
-    return _normalize_utc(commence_time)
-
-
-async def attach_scheduled_commence_time(
-    db,
-    event_id: int,
-    response: Any,
-    source_status: Any,
-    enveloped: dict[str, Any],
-    *,
-    lookup_fn=None,
-) -> dict[str, Any]:
-    """Resolve and stamp `source_commence_time` onto `scheduled` cache payloads."""
-    if not is_scheduled(source_status):
-        return enveloped
-    resolver = lookup_fn or lookup_commence_time
-    commence_time = await resolver(db, resolve_commence_lookup_id(event_id, response))
-    if commence_time is None:
-        return enveloped
-    return with_source_commence_time(enveloped, commence_time)
-
-
 def mirror_is_servable(
     payload: Any, now: datetime | None = None
 ) -> tuple[bool, str]:
@@ -492,8 +360,6 @@ def mirror_is_servable(
         # though it could — and here it would additionally be served under an
         # age bound that we are unable to evaluate.
         return False, "no_created_at"
-    if scheduled_kickoff_passed(payload, now):
-        return False, "kickoff_passed"
     ceiling = stale_serve_ceiling_seconds(source_status_of(payload), payload)
     if age > ceiling:
         return False, "too_old"

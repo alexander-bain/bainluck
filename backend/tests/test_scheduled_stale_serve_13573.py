@@ -1,5 +1,7 @@
-"""#13573: Keep scheduled Season Futures / game-markets copies servable while
-rebuilding (up to 1 hour pre-kickoff, hard-capped at `source_commence_time`).
+"""#13573: Keep scheduled `/related-futures` copies servable up to 10 minutes
+(600 s) pre-kickoff, hard-capped at `source_commence_time`, live-checked against
+`(Event.status, Event.commence_time)` once past 150 s, while `/game-markets` keeps
+its 150 s ceiling.
 """
 
 from __future__ import annotations
@@ -13,6 +15,14 @@ from app.routes import events as events_route
 from app.utils import event_concept_cache as concept_cache
 from app.utils import game_markets_cache as gmc
 from app.utils import related_futures_cache as rfc
+
+
+class _ScalarResult:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
 
 
 class _FakeRedis:
@@ -40,17 +50,34 @@ class _FakeRedis:
         return int(self.store.pop(k, None) is not None)
 
 
-class _SessionWithCommenceTime:
-    def __init__(self, commence_time=None, *, fail: bool = False):
+class _SessionWithEventSchedule:
+    def __init__(
+        self,
+        commence_time=None,
+        *,
+        status: str = "scheduled",
+        fail: bool = False,
+        row_present: bool = True,
+    ):
         self.commence_time = commence_time
+        self.status = status
         self.fail = fail
+        self.row_present = row_present
         self.scalar_calls = 0
+        self.execute_calls = 0
 
     async def scalar(self, *_a, **_k):
         self.scalar_calls += 1
         if self.fail:
             raise RuntimeError("db unavailable")
         return self.commence_time
+
+    async def execute(self, *_a, **_k):
+        self.execute_calls += 1
+        if self.fail:
+            raise RuntimeError("db unavailable")
+        row = (self.status, self.commence_time) if self.row_present else None
+        return _ScalarResult(row)
 
 
 @pytest.fixture(autouse=True)
@@ -111,29 +138,46 @@ def _stamped_tier(
     body = _rf_body() if tier is rfc else _gm_body()
     if open_winner_quote is not None:
         body[gmc.OPEN_WINNER_QUOTE_FIELD] = open_winner_quote
-    payload = tier.stamp(
-        body,
-        source_status=status,
-        created_at=created,
-        source_commence_time=commence,
-    )
+    if tier is rfc:
+        payload = rfc.stamp(
+            body,
+            source_status=status,
+            created_at=created,
+            source_commence_time=commence,
+        )
+    else:
+        payload = gmc.stamp(
+            body,
+            source_status=status,
+            created_at=created,
+        )
     if raw_commence is not None:
-        payload[concept_cache.ENVELOPE_FIELD][gmc.SOURCE_COMMENCE_TIME_FIELD] = (
+        payload[concept_cache.ENVELOPE_FIELD][rfc.SOURCE_COMMENCE_TIME_FIELD] = (
             raw_commence
         )
     return payload
 
 
 # ---------------------------------------------------------------------------
-# Ceiling & fresh TTL invariants across both tiers
+# Ceiling & fresh TTL invariants across tiers
 # ---------------------------------------------------------------------------
 
 
-def test_scheduled_ceiling_is_one_hour_and_shared_while_fresh_ttls_stay_unchanged():
-    assert rfc.STALE_SERVE_CEILING_SCHEDULED == 3600
-    assert gmc.STALE_SERVE_CEILING_SCHEDULED == 3600
-    assert rfc.stale_serve_ceiling_seconds("scheduled") == 3600
-    assert gmc.stale_serve_ceiling_seconds("scheduled") == 3600
+def test_scheduled_ceiling_is_ten_minutes_on_related_futures_and_game_markets_stays_150s():
+    now = datetime(2026, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
+    stamped_rf = _stamped_tier(
+        rfc, status="scheduled", age_s=10, commence_in_s=7200, now=now
+    )
+    stamped_gm = _stamped_tier(gmc, status="scheduled", age_s=10, now=now)
+    assert rfc.STALE_SERVE_CEILING_LIVE == 150
+    assert rfc.STALE_SERVE_CEILING_SCHEDULED == 600
+    assert not hasattr(gmc, "STALE_SERVE_CEILING_SCHEDULED")
+    # Status-only calls keep the page-level invariant matching `game_markets_cache`.
+    assert rfc.stale_serve_ceiling_seconds("scheduled") == 150
+    assert gmc.stale_serve_ceiling_seconds("scheduled") == 150
+    # Only stamped scheduled `/related-futures` payloads get the 600 s ceiling.
+    assert rfc.stale_serve_ceiling_seconds("scheduled", stamped_rf) == 600
+    assert gmc.stale_serve_ceiling_seconds("scheduled", stamped_gm) == 150
     assert rfc.stale_serve_ceiling_seconds("live") == 150
     assert gmc.stale_serve_ceiling_seconds("live") == 150
     assert rfc.stale_serve_ceiling_seconds("completed") == 18000
@@ -144,60 +188,73 @@ def test_scheduled_ceiling_is_one_hour_and_shared_while_fresh_ttls_stay_unchange
 
 
 # ---------------------------------------------------------------------------
-# Mirror servability bounds: 1 h pre-kickoff ceiling, kickoff cap, legacy fail-closed
+# Mirror servability bounds: 10 min pre-kickoff ceiling, kickoff cap, legacy
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("tier", [rfc, gmc], ids=["related_futures", "game_markets"])
-@pytest.mark.parametrize("age_s", [200, 1800, 3599])
-def test_pre_kickoff_scheduled_mirror_is_servable_up_to_one_hour(tier, age_s):
+@pytest.mark.parametrize("age_s", [151, 300, 599])
+def test_pre_kickoff_scheduled_related_futures_mirror_is_servable_up_to_ten_minutes(
+    age_s,
+):
     now = datetime(2026, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
     payload = _stamped_tier(
-        tier,
+        rfc,
         status="scheduled",
         age_s=age_s,
         commence_in_s=7200,
         now=now,
     )
-    assert tier.mirror_is_servable(payload, now=now) == (True, "fresh_enough")
+    assert rfc.mirror_is_servable(payload, now=now) == (True, "fresh_enough")
 
 
-@pytest.mark.parametrize("tier", [rfc, gmc], ids=["related_futures", "game_markets"])
-def test_pre_kickoff_scheduled_mirror_past_one_hour_is_refused(tier):
+def test_pre_kickoff_scheduled_related_futures_mirror_past_ten_minutes_is_refused():
     now = datetime(2026, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
     payload = _stamped_tier(
-        tier,
+        rfc,
         status="scheduled",
-        age_s=3601,
+        age_s=601,
         commence_in_s=7200,
         now=now,
     )
-    assert tier.mirror_is_servable(payload, now=now) == (False, "too_old")
+    assert rfc.mirror_is_servable(payload, now=now) == (False, "too_old")
 
 
-@pytest.mark.parametrize("tier", [rfc, gmc], ids=["related_futures", "game_markets"])
+def test_game_markets_scheduled_mirror_keeps_150s_ceiling():
+    now = datetime(2026, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
+    over = _stamped_tier(
+        gmc,
+        status="scheduled",
+        age_s=151,
+        commence_in_s=7200,
+        raw_commence=(now + timedelta(seconds=7200)).isoformat(),
+        now=now,
+    )
+    assert gmc.mirror_is_servable(over, now=now) == (False, "too_old")
+
+
 @pytest.mark.parametrize("commence_in_s", [0, -1, -300])
-def test_scheduled_mirror_at_or_past_kickoff_is_refused_immediately(tier, commence_in_s):
+def test_scheduled_related_futures_mirror_at_or_past_kickoff_is_refused_immediately(
+    commence_in_s,
+):
     """Even a 70 s young scheduled mirror must not leak once kickoff is reached."""
     now = datetime(2026, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
     payload = _stamped_tier(
-        tier,
+        rfc,
         status="scheduled",
         age_s=70,
         commence_in_s=commence_in_s,
         now=now,
     )
-    assert tier.mirror_is_servable(payload, now=now) == (False, "kickoff_passed")
+    assert rfc.mirror_is_servable(payload, now=now) == (False, "kickoff_passed")
 
 
-@pytest.mark.parametrize("tier", [rfc, gmc], ids=["related_futures", "game_markets"])
 @pytest.mark.parametrize("raw_commence", [None, "not-a-timestamp", ""])
 def test_legacy_scheduled_mirror_without_valid_commence_time_fails_closed_at_150s(
-    tier, raw_commence
+    raw_commence,
 ):
     now = datetime(2026, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
     young = _stamped_tier(
-        tier,
+        rfc,
         status="scheduled",
         age_s=140,
         commence_in_s=None,
@@ -205,21 +262,20 @@ def test_legacy_scheduled_mirror_without_valid_commence_time_fails_closed_at_150
         raw_commence=raw_commence,
     )
     over = _stamped_tier(
-        tier,
+        rfc,
         status="scheduled",
         age_s=151,
         commence_in_s=None,
         now=now,
         raw_commence=raw_commence,
     )
-    assert tier.mirror_is_servable(young, now=now) == (True, "fresh_enough")
-    assert tier.mirror_is_servable(over, now=now) == (False, "too_old")
+    assert rfc.mirror_is_servable(young, now=now) == (True, "fresh_enough")
+    assert rfc.mirror_is_servable(over, now=now) == (False, "too_old")
 
 
 @pytest.mark.parametrize("tier", [rfc, gmc], ids=["related_futures", "game_markets"])
 def test_live_and_completed_ceilings_are_unaffected_by_commence_time(tier):
     now = datetime(2026, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
-    # Even if a `live` payload somehow carries a future kickoff string, it keeps the 150 s ceiling.
     live_over = _stamped_tier(
         tier, status="live", age_s=151, commence_in_s=7200, now=now
     )
@@ -242,12 +298,86 @@ def test_live_and_completed_ceilings_are_unaffected_by_commence_time(tier):
 
 
 # ---------------------------------------------------------------------------
-# End-to-end route tests: section stays visible via `stale_ok` + async refresh
+# Live schedule check (> 150 s scheduled mirrors verify live DB state)
+# ---------------------------------------------------------------------------
+
+
+def test_extended_live_check_threshold_and_live_event_rules():
+    now = datetime(2026, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
+    starts_in_2h = now + timedelta(hours=2)
+
+    under_150 = _stamped_tier(
+        rfc, status="scheduled", age_s=150, commence_in_s=7200, now=now
+    )
+    over_150 = _stamped_tier(
+        rfc, status="scheduled", age_s=151, commence_in_s=7200, now=now
+    )
+    live_payload = _stamped_tier(
+        rfc, status="live", age_s=200, commence_in_s=7200, now=now
+    )
+    assert rfc.extended_scheduled_mirror_needs_live_check(under_150, now=now) is False
+    assert rfc.extended_scheduled_mirror_needs_live_check(over_150, now=now) is True
+    assert rfc.extended_scheduled_mirror_needs_live_check(live_payload, now=now) is False
+
+    assert rfc.live_event_allows_scheduled_mirror(
+        over_150, "scheduled", starts_in_2h, now=now
+    ) == (True, "still_scheduled")
+    assert rfc.live_event_allows_scheduled_mirror(
+        over_150, "live", starts_in_2h, now=now
+    ) == (False, "status_changed")
+    assert rfc.live_event_allows_scheduled_mirror(
+        over_150, "scheduled", now - timedelta(minutes=5), now=now
+    ) == (False, "live_kickoff_passed")
+    assert rfc.live_event_allows_scheduled_mirror(
+        over_150, "scheduled", now + timedelta(minutes=30), now=now
+    ) == (False, "commence_time_moved")
+    assert rfc.live_event_allows_scheduled_mirror(
+        over_150, "scheduled", None, now=now
+    ) == (False, "commence_time_missing")
+
+
+# ---------------------------------------------------------------------------
+# End-to-end route tests: stale_ok + async refresh + live DB guard
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_route_related_futures_serves_pre_kickoff_mirror_past_150s_and_rebuilds_async():
+async def test_route_related_futures_under_150s_serves_stale_ok_without_db_read():
+    rc = _FakeRedis()
+    builds = []
+    refreshed = []
+    mirror = _stamped_tier(
+        rfc,
+        status="scheduled",
+        age_s=120,
+        commence_in_s=7200,
+        now=datetime.now(timezone.utc),
+    )
+    rfc.write(7, mirror, rc=rc)
+    rc.delete(rfc.keys_for(7).primary)
+
+    async def _fake_build(event_id, db, debug=False):
+        builds.append(event_id)
+        return _rf_body(event_id), "scheduled", [], True
+
+    def _fake_refresh(name, rebuild):
+        refreshed.append(name)
+        return True
+
+    db = _SessionWithEventSchedule(datetime.now(timezone.utc) + timedelta(hours=2))
+    with patch.object(rfc, "get_client", return_value=rc), patch.object(
+        events_route, "_build_related_futures", _fake_build
+    ), patch.object(events_route, "_serve_stale_and_refresh", _fake_refresh):
+        served = await events_route.get_related_futures(7, False, db)
+
+    assert builds == []
+    assert db.execute_calls == 0
+    assert refreshed == ["related_futures:7"]
+    assert served[concept_cache.ENVELOPE_FIELD]["availability"] == "stale_ok"
+
+
+@pytest.mark.asyncio
+async def test_route_related_futures_past_150s_checks_live_db_and_serves_pre_kickoff():
     rc = _FakeRedis()
     builds = []
     refreshed = []
@@ -265,32 +395,153 @@ async def test_route_related_futures_serves_pre_kickoff_mirror_past_150s_and_reb
     with patch.object(rfc, "get_client", return_value=rc), patch.object(
         events_route, "_build_related_futures", _fake_build
     ):
-        db = _SessionWithCommenceTime(commence)
-        first = await events_route.get_related_futures(7, False, db)
+        publish_db = _SessionWithEventSchedule(commence)
+        first = await events_route.get_related_futures(7, False, publish_db)
         assert first[concept_cache.ENVELOPE_FIELD][rfc.SOURCE_COMMENCE_TIME_FIELD]
-        assert db.scalar_calls == 1
+        assert publish_db.scalar_calls == 1
 
-    # Simulate 36 minutes later (primary expired, mirror age ~2,160 s, still pre-kickoff):
-    # age exceeds 150 s, yet under 3,600 s so reader sees `stale_ok` and schedules 1 rebuild.
+    # Simulate 5 minutes later (age=300s > 150s and < 600s, still scheduled pre-kickoff):
+    # route performs 1 live (status, commence_time) read, serves `stale_ok`, refreshes async.
     older = _stamped_tier(
         rfc,
         status="scheduled",
-        age_s=2160,
+        age_s=300,
         now=datetime.now(timezone.utc),
-        commence_in_s=7200,
     )
+    older = rfc.with_source_commence_time(older, commence)
     rfc.write(7, older, rc=rc)
     rc.delete(rfc.keys_for(7).primary)
     events_route._related_futures_cache.clear()
 
+    check_db = _SessionWithEventSchedule(commence, status="scheduled")
     with patch.object(rfc, "get_client", return_value=rc), patch.object(
         events_route, "_build_related_futures", _fake_build
     ), patch.object(events_route, "_serve_stale_and_refresh", _fake_refresh):
-        served = await events_route.get_related_futures(7, False, _SessionWithCommenceTime())
+        served = await events_route.get_related_futures(7, False, check_db)
 
-    assert builds == [7], "pre-kickoff mirror should keep the section populated without blocking"
+    assert builds == [7]
+    assert check_db.execute_calls == 1
     assert refreshed == ["related_futures:7"]
     assert served[concept_cache.ENVELOPE_FIELD]["availability"] == "stale_ok"
+
+
+@pytest.mark.asyncio
+async def test_route_related_futures_refuses_extended_mirror_when_event_is_live_now():
+    """Guard: mirror stamped 'scheduled, starts in 2h' is refused when game is live now."""
+    rc = _FakeRedis()
+    builds = []
+    refreshed = []
+    now = datetime.now(timezone.utc)
+    starts_in_2h = now + timedelta(hours=2)
+    older = _stamped_tier(
+        rfc,
+        status="scheduled",
+        age_s=300,
+        now=now,
+    )
+    older = rfc.with_source_commence_time(older, starts_in_2h)
+    rfc.write(7, older, rc=rc)
+    rc.delete(rfc.keys_for(7).primary)
+
+    async def _fake_build(event_id, db, debug=False):
+        builds.append(event_id)
+        body = _rf_body(event_id)
+        body["event_status"] = "live"
+        return body, "live", [], True
+
+    def _fake_refresh(name, rebuild):
+        refreshed.append(name)
+        return True
+
+    live_db = _SessionWithEventSchedule(starts_in_2h, status="live")
+    with patch.object(rfc, "get_client", return_value=rc), patch.object(
+        events_route, "_build_related_futures", _fake_build
+    ), patch.object(events_route, "_serve_stale_and_refresh", _fake_refresh):
+        rebuilt = await events_route.get_related_futures(7, False, live_db)
+
+    assert live_db.execute_calls == 1
+    assert refreshed == []
+    assert builds == [7]
+    assert rebuilt[concept_cache.ENVELOPE_FIELD]["availability"] == "live"
+
+
+@pytest.mark.asyncio
+async def test_route_related_futures_refuses_extended_mirror_when_kickoff_moved_5m_ago():
+    """Guard: mirror stamped 'scheduled, starts in 2h' is refused if start moved to 5m ago."""
+    rc = _FakeRedis()
+    builds = []
+    refreshed = []
+    now = datetime.now(timezone.utc)
+    starts_in_2h = now + timedelta(hours=2)
+    five_min_ago = now - timedelta(minutes=5)
+    older = _stamped_tier(
+        rfc,
+        status="scheduled",
+        age_s=300,
+        now=now,
+    )
+    older = rfc.with_source_commence_time(older, starts_in_2h)
+    rfc.write(7, older, rc=rc)
+    rc.delete(rfc.keys_for(7).primary)
+
+    async def _fake_build(event_id, db, debug=False):
+        builds.append(event_id)
+        body = _rf_body(event_id)
+        body["event_status"] = "scheduled"
+        return body, "scheduled", [], True
+
+    def _fake_refresh(name, rebuild):
+        refreshed.append(name)
+        return True
+
+    moved_db = _SessionWithEventSchedule(five_min_ago, status="scheduled")
+    with patch.object(rfc, "get_client", return_value=rc), patch.object(
+        events_route, "_build_related_futures", _fake_build
+    ), patch.object(events_route, "_serve_stale_and_refresh", _fake_refresh):
+        rebuilt = await events_route.get_related_futures(7, False, moved_db)
+
+    assert moved_db.execute_calls == 1
+    assert refreshed == []
+    assert builds == [7]
+    assert rebuilt[concept_cache.ENVELOPE_FIELD]["availability"] == "live"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["moved_earlier_in_future", "db_failure"])
+async def test_route_related_futures_refuses_extended_mirror_on_moved_start_or_db_error(
+    case,
+):
+    rc = _FakeRedis()
+    builds = []
+    now = datetime.now(timezone.utc)
+    starts_in_2h = now + timedelta(hours=2)
+    older = _stamped_tier(
+        rfc,
+        status="scheduled",
+        age_s=300,
+        now=now,
+    )
+    older = rfc.with_source_commence_time(older, starts_in_2h)
+    rfc.write(7, older, rc=rc)
+    rc.delete(rfc.keys_for(7).primary)
+
+    async def _fake_build(event_id, db, debug=False):
+        builds.append(event_id)
+        return _rf_body(event_id), "scheduled", [], True
+
+    db = (
+        _SessionWithEventSchedule(now + timedelta(minutes=30), status="scheduled")
+        if case == "moved_earlier_in_future"
+        else _SessionWithEventSchedule(fail=True)
+    )
+    with patch.object(rfc, "get_client", return_value=rc), patch.object(
+        events_route, "_build_related_futures", _fake_build
+    ):
+        rebuilt = await events_route.get_related_futures(7, False, db)
+
+    assert db.execute_calls == 1
+    assert builds == [7]
+    assert rebuilt[concept_cache.ENVELOPE_FIELD]["availability"] == "live"
 
 
 @pytest.mark.asyncio
@@ -314,17 +565,19 @@ async def test_route_related_futures_refuses_mirror_after_kickoff_and_rebuilds_s
         body["event_status"] = "live"
         return body, "live", [], True
 
+    db = _SessionWithEventSchedule(commence, status="scheduled")
     with patch.object(rfc, "get_client", return_value=rc), patch.object(
         events_route, "_build_related_futures", _fake_build
     ):
-        rebuilt = await events_route.get_related_futures(7, False, _SessionWithCommenceTime())
+        rebuilt = await events_route.get_related_futures(7, False, db)
 
+    assert db.execute_calls == 0
     assert builds == [7]
     assert rebuilt[concept_cache.ENVELOPE_FIELD]["availability"] == "live"
 
 
 @pytest.mark.asyncio
-async def test_route_game_markets_obeys_same_scheduled_pre_kickoff_and_kickoff_law():
+async def test_route_game_markets_stays_at_150s_ceiling_and_does_not_query_commence_time():
     rc = _FakeRedis()
     builds = []
     refreshed = []
@@ -337,76 +590,62 @@ async def test_route_game_markets_obeys_same_scheduled_pre_kickoff_and_kickoff_l
         refreshed.append(name)
         return True
 
-    pre_kickoff = _stamped_tier(
+    over_150 = _stamped_tier(
         gmc,
         status="scheduled",
-        age_s=2160,
+        age_s=151,
         now=datetime.now(timezone.utc),
-        commence_in_s=7200,
     )
-    gmc.write(7, pre_kickoff, rc=rc)
+    gmc.write(7, over_150, rc=rc)
     rc.delete(gmc.keys_for(7).primary)
 
+    db = _SessionWithEventSchedule(datetime.now(timezone.utc) + timedelta(hours=2))
     with patch.object(gmc, "get_client", return_value=rc), patch.object(
         events_route, "_build_game_markets", _fake_build
     ), patch.object(events_route, "_serve_stale_and_refresh", _fake_refresh):
-        served = await events_route.get_game_markets(7, _SessionWithCommenceTime())
-
-    assert builds == []
-    assert refreshed == ["game_markets:7"]
-    assert served[concept_cache.ENVELOPE_FIELD]["availability"] == "stale_ok"
-
-    # Past kickoff forces synchronous rebuild.
-    past_kickoff = _stamped_tier(
-        gmc,
-        status="scheduled",
-        age_s=40,
-        now=datetime.now(timezone.utc),
-        commence_in_s=-5,
-    )
-    gmc.write(7, past_kickoff, rc=rc)
-    rc.delete(gmc.keys_for(7).primary)
-    events_route._game_markets_cache.clear()
-
-    with patch.object(gmc, "get_client", return_value=rc), patch.object(
-        events_route, "_build_game_markets", _fake_build
-    ):
-        rebuilt = await events_route.get_game_markets(7, _SessionWithCommenceTime())
+        rebuilt = await events_route.get_game_markets(7, db)
 
     assert builds == [7]
+    assert refreshed == []
+    assert db.scalar_calls == 0
+    assert db.execute_calls == 0
     assert rebuilt[concept_cache.ENVELOPE_FIELD]["availability"] == "live"
 
 
 # ---------------------------------------------------------------------------
-# Publish helpers stamp only `scheduled` and degrade fail-closed on DB errors
+# Publish helpers stamp only `scheduled` on `/related-futures` and fail closed
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_publish_stamps_commence_time_only_for_scheduled_and_handles_db_errors():
+async def test_publish_stamps_commence_time_only_for_scheduled_rf_and_handles_db_errors():
     rc = _FakeRedis()
     future_kickoff = datetime(2026, 11, 28, 18, 0, tzinfo=timezone.utc)
 
     with patch.object(rfc, "get_client", return_value=rc), patch.object(
         gmc, "get_client", return_value=rc
     ):
-        # Scheduled with valid commence_time -> stamped.
-        sched_db = _SessionWithCommenceTime(future_kickoff)
+        # Scheduled `/related-futures` with valid commence_time -> stamped.
+        sched_db = _SessionWithEventSchedule(future_kickoff)
         sched_rf = await events_route._publish_related_futures(
             7, "scheduled", _rf_body(7), [], sched_db
         )
         assert sched_db.scalar_calls == 1
         assert rfc.source_commence_time_of(sched_rf) == future_kickoff
 
-        sched_gm_db = _SessionWithCommenceTime(future_kickoff)
+        # `/game-markets` does not ride along (zero commence_time query/stamp).
+        sched_gm_db = _SessionWithEventSchedule(future_kickoff)
         sched_gm = await events_route._publish_game_markets(
             7, "scheduled", _gm_body(7), [], sched_gm_db
         )
-        assert sched_gm_db.scalar_calls == 1
-        assert gmc.source_commence_time_of(sched_gm) == future_kickoff
+        assert sched_gm_db.scalar_calls == 0
+        assert (
+            rfc.SOURCE_COMMENCE_TIME_FIELD
+            not in sched_gm[concept_cache.ENVELOPE_FIELD]
+        )
 
-        # Live and completed -> zero commence_time DB lookup and no field stamped.
-        live_db = _SessionWithCommenceTime(future_kickoff)
+        # Live `/related-futures` -> zero commence_time DB lookup and no field stamped.
+        live_db = _SessionWithEventSchedule(future_kickoff)
         live_rf = await events_route._publish_related_futures(
             8, "live", _rf_body(8), [], live_db
         )
@@ -414,10 +653,10 @@ async def test_publish_stamps_commence_time_only_for_scheduled_and_handles_db_er
         assert rfc.source_commence_time_of(live_rf) is None
 
         # Failing DB -> no raise, omits field, ceiling fails closed at 150 s.
-        bad_db = _SessionWithCommenceTime(fail=True)
+        bad_db = _SessionWithEventSchedule(fail=True)
         degraded = await events_route._publish_related_futures(
             9, "scheduled", _rf_body(9), [], bad_db
         )
         assert bad_db.scalar_calls == 1
         assert rfc.source_commence_time_of(degraded) is None
-        assert gmc.stale_serve_ceiling_seconds("scheduled", degraded) == 150
+        assert rfc.stale_serve_ceiling_seconds("scheduled", degraded) == 150
