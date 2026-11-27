@@ -95,6 +95,13 @@ enum DS {
         light: RGB(r: 0.02, g: 0.47, b: 0.34),       // #047857
         dark: RGB(r: 0.204, g: 0.827, b: 0.600)      // #34D399
     )
+    /// High-contrast foreground label color on filled accent buttons (`DS.blueReadable`):
+    /// 6.36:1 in light mode (`#FFFFFF` on `#005CC2`) and 7.02:1 in dark mode
+    /// (`#0F172A` on `#60A5FA`).
+    static let textOnAccent = adaptive(
+        light: RGB(r: 1.0, g: 1.0, b: 1.0),          // #FFFFFF
+        dark: RGB(r: 0.059, g: 0.090, b: 0.165)      // #0F172A
+    )
 
     static func probColor(_ value: Double) -> Color {
         if value >= 65 { return emerald }
