@@ -58,6 +58,14 @@ import {
   topicWins,
   totalPoints,
 } from "@/lib/guess/engine";
+import {
+  fetchGroupBoard,
+  generateGroupCode,
+  groupEntryToPlayerEntry,
+  GuessApiError,
+  mergeGroupPlayers,
+  submitGroupEntry,
+} from "@/lib/guess/api";
 import { decodeGroup, encodeGroup, mergeFromLink, shareMessage, stepShareMessage, uniqueName } from "@/lib/guess/link";
 import { roastHistory } from "@/lib/guess/roast";
 import { clearGame, loadGame, saveGame, type Phase, type SavedGame } from "@/lib/guess/storage";
@@ -283,9 +291,33 @@ function SharePanel({ message, canShare, testId }: { message: string; canShare: 
   );
 }
 
+function BoardErrorBanner({ message, canRetry, onRetry }: { message: string; canRetry: boolean; onRetry: () => void }) {
+  return (
+    <div className={PANEL} data-testid="board-error" role="alert">
+      <div className="text-sm font-black text-text-primary">Could not load the group board.</div>
+      <p className="mt-1 text-sm text-text-secondary">{message}</p>
+      {canRetry && (
+        <button type="button" className={`${QUIET} mt-3`} onClick={onRetry} data-testid="board-retry">
+          Try again
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 
-export default function ChanceGame({ pack }: { pack: GamePack }) {
+export default function ChanceGame({
+  pack,
+  initialGroupCode = null,
+  isLegacyPack = false,
+  initialGroupError = null,
+}: {
+  pack: GamePack;
+  initialGroupCode?: string | null;
+  isLegacyPack?: boolean;
+  initialGroupError?: string | null;
+}) {
   const [game, setGame] = useState<Game>(FRESH);
   const [saved, setSaved] = useState<SavedGame | null>(null);
   const [linkNote, setLinkNote] = useState<"" | "other-edition" | "unreadable">("");
@@ -294,33 +326,70 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
   const [draftState, setDraftState] = useState<{ at: string; value: number | null }>({ at: "", value: null });
   const [goodDraft, setGoodDraft] = useState<boolean[]>([]);
   const [canShare, setCanShare] = useState(false);
+  const [groupCode, setGroupCode] = useState<string | null>(initialGroupCode);
+  const [storedEntries, setStoredEntries] = useState<PlayerEntry[]>([]);
+  const [boardLoading, setBoardLoading] = useState<boolean>(Boolean(initialGroupCode && !isLegacyPack));
+  const [boardError, setBoardError] = useState<string | null>(initialGroupError);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "conflict" | "error">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [conflictName, setConflictName] = useState("");
+  const [conflictOldName, setConflictOldName] = useState("");
   // When the card in front of the current player was shown, to time the decision.
   const shownAt = useRef<{ at: string; time: number }>({ at: "", time: 0 });
+  const savedKeysRef = useRef<Set<string>>(new Set());
+  const autoSubmittedRef = useRef<string | null>(null);
 
   const total = pack.cards.length;
   const coin = useMemo(() => coinEntry(pack), [pack]);
 
-  // Read the link and anything kept on this phone, once, after the first paint.
+  const loadBoard = useCallback(
+    async (code: string) => {
+      if (isLegacyPack) return;
+      setBoardLoading(true);
+      setBoardError(null);
+      try {
+        const resp = await fetchGroupBoard(code, pack.id);
+        setStoredEntries(resp.entries.map((entry) => groupEntryToPlayerEntry(pack, entry)));
+      } catch (err) {
+        setBoardError(err instanceof Error ? err.message : "Could not load the group board right now.");
+      } finally {
+        setBoardLoading(false);
+      }
+    },
+    [pack, isLegacyPack],
+  );
+
+  // Read the link, the group board, and anything kept on this phone after first paint.
   useEffect(() => {
     const decoded = decodeGroup(pack, window.location.hash);
     const fromLink = decoded.ok ? decoded.players : [];
     if (!decoded.ok && decoded.reason !== "none") setLinkNote(decoded.reason);
-    const stored = loadGame(pack);
-    if (stored && stored.phase !== "home") {
-      const extra = mergeFromLink([...stored.here, ...stored.link], fromLink);
-      setSaved({ ...stored, link: [...stored.link, ...extra] });
+    const local = loadGame(pack);
+    if (local && local.phase !== "home") {
+      const extra = mergeFromLink([...local.here, ...local.link], fromLink);
+      const localLinks = [...local.link, ...extra];
+      if (!isLegacyPack && local.phase === "results" && initialGroupCode && local.groupCode === initialGroupCode) {
+        setGame({ phase: "results", index: local.index, turn: local.turn, here: local.here, link: localLinks });
+      } else {
+        setSaved({ ...local, link: localLinks });
+        setGame((g) => ({ ...g, link: fromLink }));
+      }
+    } else {
+      setGame((g) => ({ ...g, link: fromLink }));
     }
-    setGame((g) => ({ ...g, link: fromLink }));
+    if (initialGroupCode && !isLegacyPack) {
+      void loadBoard(initialGroupCode);
+    }
     setCanShare(typeof navigator !== "undefined" && typeof navigator.share === "function");
-  }, [pack]);
+  }, [pack, initialGroupCode, isLegacyPack, loadBoard]);
 
   useEffect(() => {
-    if (game.phase !== "home") saveGame({ packId: pack.id, ...game });
-  }, [game, pack.id]);
+    if (game.phase !== "home") saveGame({ packId: pack.id, groupCode, ...game });
+  }, [game, pack.id, groupCode]);
 
   const card: PackCard = pack.cards[Math.min(game.index, total - 1)];
   const step = stepOf(pack, Math.min(game.index, total - 1));
-  const people = useMemo(() => [...game.link, ...game.here], [game.link, game.here]);
+  const people = useMemo(() => mergeGroupPlayers(game.here, storedEntries, game.link), [game.here, storedEntries, game.link]);
   const coinOn = people.length <= 2;
   const board = useMemo(() => (coinOn ? [...people, coin] : people), [coinOn, people, coin]);
   const done = game.phase === "play" || game.phase === "home" ? game.index : game.phase === "results" ? total : game.index + 1;
@@ -352,7 +421,7 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
     return standings(pack, board, done).map((s) => ({
       name: s.entry.name,
       dot: s.entry.from === "house" ? HOUSE_DOT : dotOf(s.entry.name),
-      earlier: s.entry.from === "link",
+      earlier: s.entry.from === "link" || s.entry.from === "server",
       labels: pack.steps.map((_, i) => stepScoreLabel(pack, s.entry, i)),
       times: pack.steps.map((_, i) => s.entry.times[i] ?? 0),
       total: s.points,
@@ -384,30 +453,46 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
   const addName = useCallback(() => {
     const clean = cleanName(nameDraft);
     if (!clean || names.length >= MAX_HERE) return;
-    const taken = new Set([...names, ...game.link.map((p) => p.name), COIN_NAME, TOGETHER_NAME].map((n) => n.toLowerCase()));
+    const taken = new Set(
+      [...names, ...storedEntries.map((p) => p.name), ...game.link.map((p) => p.name), COIN_NAME, TOGETHER_NAME].map((n) => n.toLowerCase()),
+    );
     setNames((all) => [...all, uniqueName(clean, taken)]);
     setNameDraft("");
-  }, [nameDraft, names, game.link]);
+  }, [nameDraft, names, storedEntries, game.link]);
 
   const start = useCallback(() => {
     const pending = cleanName(nameDraft);
-    const taken = new Set([...names, ...game.link.map((p) => p.name), COIN_NAME, TOGETHER_NAME].map((n) => n.toLowerCase()));
+    const taken = new Set(
+      [...names, ...storedEntries.map((p) => p.name), ...game.link.map((p) => p.name), COIN_NAME, TOGETHER_NAME].map((n) => n.toLowerCase()),
+    );
     const all = pending && names.length < MAX_HERE ? [...names, uniqueName(pending, taken)] : names;
     if (all.length === 0) return;
     setNameDraft("");
+    savedKeysRef.current.clear();
+    autoSubmittedRef.current = null;
+    setSaveStatus("idle");
+    setSaveError(null);
     setGame((g) => ({ phase: "play", index: 0, turn: 0, here: all.map((n) => emptyEntry(pack, n, "here")), link: g.link }));
-  }, [nameDraft, names, game.link, pack]);
+  }, [nameDraft, names, storedEntries, game.link, pack]);
 
   const carryOn = useCallback(() => {
     if (!saved) return;
+    if (!isLegacyPack && saved.groupCode && !groupCode) {
+      setGroupCode(saved.groupCode);
+      void loadBoard(saved.groupCode);
+    }
     setGame({ phase: saved.phase, index: saved.index, turn: saved.turn, here: saved.here, link: saved.link });
     setSaved(null);
-  }, [saved]);
+  }, [saved, isLegacyPack, groupCode, loadBoard]);
 
   const startOver = useCallback(() => {
     clearGame();
     setSaved(null);
     setNames([]);
+    savedKeysRef.current.clear();
+    autoSubmittedRef.current = null;
+    setSaveStatus("idle");
+    setSaveError(null);
     setGame((g) => ({ ...FRESH, link: g.link }));
   }, []);
 
@@ -417,6 +502,10 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
     clearGame();
     setSaved(null);
     setNames([]);
+    savedKeysRef.current.clear();
+    autoSubmittedRef.current = null;
+    setSaveStatus("idle");
+    setSaveError(null);
     setGame((g) => ({
       ...FRESH,
       link: [...g.link, ...g.here.filter((p) => p.guesses.some((v) => v !== null)).map((p) => ({ ...p, from: "link" as const }))],
@@ -470,16 +559,132 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
     window.scrollTo(0, 0);
   }, [goodDraft, total]);
 
+  const submitFinishedPlayers = useCallback(
+    async (code: string, herePlayers: PlayerEntry[]) => {
+      const complete = herePlayers.filter(
+        (p) => p.guesses.length === pack.cards.length && p.guesses.every((g) => typeof g === "number"),
+      );
+      if (complete.length === 0) return;
+
+      const unsaved = complete.filter((p) => {
+        const key = p.name.toLowerCase();
+        if (savedKeysRef.current.has(key)) return false;
+        const alreadyStored = storedEntries.find((s) => s.name.toLowerCase() === key);
+        if (
+          alreadyStored &&
+          alreadyStored.guesses.every((val, idx) => val === p.guesses[idx])
+        ) {
+          savedKeysRef.current.add(key);
+          return false;
+        }
+        return true;
+      });
+      if (unsaved.length === 0) {
+        setSaveStatus("saved");
+        return;
+      }
+
+      setSaveStatus("saving");
+      setSaveError(null);
+      for (const player of unsaved) {
+        try {
+          const roundedTimes = pack.steps.map((_, s) =>
+            Math.max(0, Math.min(pack.perRound * MAX_CARD_SECONDS, Math.round(player.times[s] ?? 0))),
+          );
+          const resp = await submitGroupEntry(code, {
+            day: pack.id,
+            nickname: player.name,
+            answers: player.guesses.map((g) => (typeof g === "number" ? g : 0)),
+            step_times: roundedTimes,
+          });
+          setStoredEntries(resp.entries.map((entry) => groupEntryToPlayerEntry(pack, entry)));
+          savedKeysRef.current.add(player.name.toLowerCase());
+        } catch (err) {
+          if (err instanceof GuessApiError && err.status === 409) {
+            setSaveStatus("conflict");
+            setSaveError(err.message);
+            setConflictOldName(player.name);
+            setConflictName("");
+          } else {
+            setSaveStatus("error");
+            setSaveError(err instanceof Error ? err.message : "Could not save your finished game right now.");
+          }
+          return;
+        }
+      }
+      setSaveStatus("saved");
+    },
+    [pack, storedEntries],
+  );
+
+  useEffect(() => {
+    if (isLegacyPack || game.phase !== "results") return;
+    let code = groupCode;
+    if (!code) {
+      code = generateGroupCode();
+      setGroupCode(code);
+      if (typeof window !== "undefined") {
+        window.history.replaceState(
+          null,
+          "",
+          `/guess?group=${encodeURIComponent(code)}&day=${encodeURIComponent(pack.id)}${window.location.hash}`,
+        );
+      }
+    }
+    const key = `${code}:${game.here.map((p) => p.name).join(",")}`;
+    if (autoSubmittedRef.current === key) return;
+    autoSubmittedRef.current = key;
+    void submitFinishedPlayers(code, game.here);
+  }, [isLegacyPack, game.phase, game.here, groupCode, pack.id, submitFinishedPlayers]);
+
+  const renameConflictAndSave = useCallback(() => {
+    const nextName = cleanName(conflictName);
+    if (!nextName || !conflictOldName) return;
+    const taken = new Set(
+      [...storedEntries.map((p) => p.name), ...game.link.map((p) => p.name), COIN_NAME, TOGETHER_NAME].map((n) =>
+        n.toLowerCase(),
+      ),
+    );
+    const safeName = taken.has(nextName.toLowerCase()) ? uniqueName(nextName, taken) : nextName;
+    autoSubmittedRef.current = null;
+    setSaveStatus("idle");
+    setSaveError(null);
+    setConflictOldName("");
+    setConflictName("");
+    setGame((g) => ({
+      ...g,
+      here: g.here.map((p) => (p.name === conflictOldName ? { ...p, name: safeName } : p)),
+    }));
+  }, [conflictName, conflictOldName, storedEntries, game.link]);
+
+  const retrySave = useCallback(() => {
+    if (!groupCode) return;
+    autoSubmittedRef.current = null;
+    setSaveStatus("idle");
+    setSaveError(null);
+    void submitFinishedPlayers(groupCode, game.here);
+  }, [groupCode, game.here, submitFinishedPlayers]);
+
   const voteFun = useCallback((which: number) => {
     setGame((g) => ({ ...g, here: g.here.map((p, i) => (i === 0 ? { ...p, fun: p.fun === which ? 0 : which } : p)) }));
   }, []);
 
-  const url = typeof window === "undefined" ? "" : `${window.location.origin}/guess#${encodeGroup(pack, people)}`;
+  const hashPart = people.some((p) => p.from !== "house" && p.guesses.some((g) => g !== null))
+    ? `#${encodeGroup(pack, people)}`
+    : "";
+  const url =
+    typeof window === "undefined"
+      ? ""
+      : !isLegacyPack && groupCode && game.phase === "results"
+        ? `${window.location.origin}/guess?group=${encodeURIComponent(groupCode)}&day=${encodeURIComponent(pack.id)}`
+        : !isLegacyPack && groupCode
+          ? `${window.location.origin}/guess?group=${encodeURIComponent(groupCode)}&day=${encodeURIComponent(pack.id)}${hashPart}`
+          : `${window.location.origin}/guess${hashPart}`;
 
   // ---- screens -------------------------------------------------------------
 
   if (game.phase === "home") {
-    const earlier = game.link.map((p) => p.name);
+    const earlier = people.filter((p) => p.from !== "here").map((p) => p.name);
     return (
       <div className="px-1 pb-4">
         <div className="mx-auto max-w-md space-y-4">
@@ -493,6 +698,22 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
               {total} cards in {pack.steps.length} steps. Guess what the world thinks will happen.
             </p>
           </div>
+
+          {boardError && (
+            <BoardErrorBanner
+              message={boardError}
+              canRetry={Boolean(groupCode)}
+              onRetry={() => {
+                if (groupCode) void loadBoard(groupCode);
+              }}
+            />
+          )}
+
+          {boardLoading && !boardError && (
+            <p className={`${PANEL} text-sm text-text-secondary`} data-testid="board-loading">
+              Loading this group&apos;s board…
+            </p>
+          )}
 
           {linkNote === "other-edition" && (
             <p className={`${PANEL} text-sm font-semibold text-text-primary`} data-testid="link-note">
@@ -570,7 +791,9 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
               </button>
             </div>
             <p className="mt-2 text-xs text-text-secondary">
-              One name to play alone. Add more to pass one phone around. Names stay on this phone and in the link you send.
+              {isLegacyPack
+                ? "One name to play alone. Add more to pass one phone around. Names stay on this phone and in the link you send."
+                : "One name to play alone. Add more to pass one phone around. Finished games stay on this group's board for 30 days."}
             </p>
             <button
               type="button"
@@ -647,13 +870,22 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
 
   if (game.phase === "play") {
     const who = game.here[game.turn];
-    const earlier = game.link.filter((p) => p.guesses[game.index] !== null).map((p) => p.name);
+    const earlier = people.filter((p) => p.from !== "here" && p.guesses[game.index] !== null).map((p) => p.name);
     // A tap card has nothing to lock in until something is tapped.
     const action = ready ? `lock in ${guessLabel(card, draft)}` : "tap your answer";
     const lockLabel = game.here.length > 1 ? `${who.name}: ${action}` : `${action.charAt(0).toUpperCase()}${action.slice(1)}`;
     return (
       <div className="px-1 pb-4">
-        <div className="mx-auto max-w-md">
+        <div className="mx-auto max-w-md space-y-2">
+          {boardError && (
+            <BoardErrorBanner
+              message={boardError}
+              canRetry={Boolean(groupCode)}
+              onRetry={() => {
+                if (groupCode) void loadBoard(groupCode);
+              }}
+            />
+          )}
           <Board rows={rows} />
           <section className={`${PANEL} mt-2 space-y-3`} data-testid="card" data-kind={card.kind} data-flavor={card.flavor}>
             {cardHead(false)}
@@ -707,7 +939,16 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
       : "";
     return (
       <div className="px-1 pb-4">
-        <div className="mx-auto max-w-md">
+        <div className="mx-auto max-w-md space-y-2">
+          {boardError && (
+            <BoardErrorBanner
+              message={boardError}
+              canRetry={Boolean(groupCode)}
+              onRetry={() => {
+                if (groupCode) void loadBoard(groupCode);
+              }}
+            />
+          )}
           <Board rows={rows} />
           <section className={`${PANEL} mt-2 space-y-3`} data-testid="reveal" data-kind={card.kind} data-flavor={card.flavor}>
             {cardHead(true)}
@@ -784,6 +1025,15 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
       <div className="px-1 pb-4">
         <div className="mx-auto max-w-md space-y-4" data-testid="step-end" data-step={step + 1}>
           <Header pack={pack} right={`Step ${step + 1} of ${steps}`} />
+          {boardError && (
+            <BoardErrorBanner
+              message={boardError}
+              canRetry={Boolean(groupCode)}
+              onRetry={() => {
+                if (groupCode) void loadBoard(groupCode);
+              }}
+            />
+          )}
           <div>
             <div className="text-xs font-black uppercase tracking-wide text-text-secondary">{info.name}</div>
             <h2 className="text-2xl font-black text-text-primary" data-testid="step-headline">
@@ -889,6 +1139,51 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
     <div className="px-1 pb-4">
       <div className="mx-auto max-w-md space-y-4" data-testid="results">
         <Header pack={pack} right="" />
+        {boardError && (
+          <BoardErrorBanner
+            message={boardError}
+            canRetry={Boolean(groupCode)}
+            onRetry={() => {
+              if (groupCode) void loadBoard(groupCode);
+            }}
+          />
+        )}
+        {!isLegacyPack && saveStatus === "saving" && (
+          <p className={`${PANEL} text-sm text-text-secondary`} data-testid="save-status">
+            Saving your finished game to the group board…
+          </p>
+        )}
+        {!isLegacyPack && (saveStatus === "conflict" || saveStatus === "error") && saveError && (
+          <section className={PANEL} data-testid="save-error" role="alert">
+            <div className="text-sm font-black text-text-primary">Could not save to the group board.</div>
+            <p className="mt-1 text-sm text-text-secondary">{saveError}</p>
+            {saveStatus === "conflict" ? (
+              <div className="mt-3 flex gap-2">
+                <input
+                  value={conflictName}
+                  onChange={(e) => setConflictName(e.target.value)}
+                  maxLength={12}
+                  placeholder="Pick another nickname"
+                  data-testid="conflict-name-input"
+                  className="min-h-[44px] min-w-0 flex-1 rounded-2xl border-2 border-surface-border bg-surface-card px-3 text-sm font-bold text-text-primary placeholder:text-text-muted"
+                />
+                <button
+                  type="button"
+                  onClick={renameConflictAndSave}
+                  disabled={!cleanName(conflictName)}
+                  data-testid="conflict-save-button"
+                  className={QUIET}
+                >
+                  Save name
+                </button>
+              </div>
+            ) : (
+              <button type="button" onClick={retrySave} data-testid="save-retry-button" className={`${QUIET} mt-3`}>
+                Try saving again
+              </button>
+            )}
+          </section>
+        )}
         <div className="text-center">
           <div className="text-5xl" aria-hidden="true">
             {winners.includes(COIN_NAME) ? "🪙" : "🏆"}
@@ -938,7 +1233,9 @@ export default function ChanceGame({ pack }: { pack: GamePack }) {
         <section className={PANEL} data-testid="share">
           <div className="text-sm font-black text-text-primary">{solo ? "You set the bar. Send it." : "Send it on."}</div>
           <p className="mt-1 text-sm text-text-secondary">
-            Whoever opens the link plays the same cards and sees your guess after each one. They can send it on, and the link keeps everyone.
+            {isLegacyPack
+              ? "Whoever opens the link plays the same cards and sees your guess after each one. They can send it on, and the link keeps everyone."
+              : "Whoever opens this link plays today's cards against this group board and lands on the same standings when finished."}
           </p>
           <SharePanel message={message} canShare={canShare} testId="share-panel" />
         </section>

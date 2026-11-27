@@ -394,3 +394,7 @@ export const GUESS_PACK: GamePack = {
     }
   ]
 };
+
+export const LEGACY_PACKS_BY_CODE: Record<string, GamePack> = {
+  [GUESS_PACK.code]: GUESS_PACK,
+};

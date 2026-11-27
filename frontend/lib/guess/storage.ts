@@ -9,6 +9,7 @@ export type Phase = "home" | "play" | "reveal" | "round" | "results";
 
 export interface SavedGame {
   packId: string;
+  groupCode?: string | null;
   phase: Phase;
   index: number;
   turn: number;
@@ -62,7 +63,8 @@ export function loadGame(pack: GamePack): SavedGame | null {
     const phase = phases.includes(raw.phase as Phase) ? (raw.phase as Phase) : "home";
     const index = typeof raw.index === "number" ? Math.max(0, Math.min(pack.cards.length - 1, Math.trunc(raw.index))) : 0;
     const turn = typeof raw.turn === "number" ? Math.max(0, Math.min(here.length - 1, Math.trunc(raw.turn))) : 0;
-    return { packId: pack.id, phase, index, turn, here, link };
+    const groupCode = typeof raw.groupCode === "string" && raw.groupCode ? raw.groupCode : null;
+    return { packId: pack.id, groupCode, phase, index, turn, here, link };
   } catch {
     return null;
   }

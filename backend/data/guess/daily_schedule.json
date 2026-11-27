@@ -1,0 +1,4242 @@
+{
+  "days": {
+    "2026-11-27": {
+      "steps": [
+        {
+          "name": "Easy",
+          "how": "Above or below 50%? Which is more likely? One tap each."
+        },
+        {
+          "name": "Medium",
+          "how": "Pick one of four."
+        },
+        {
+          "name": "Hard",
+          "how": "Slide to the number. Closest wins."
+        }
+      ],
+      "topics": [
+        "Sports",
+        "Money & Tech",
+        "World & Culture"
+      ],
+      "step_cards": {
+        "easy": [
+          {
+            "id": "e1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "📉",
+            "extras": [
+              "💵",
+              "🏛️"
+            ],
+            "prompt": "A U.S. recession is declared before the end of 2026",
+            "short": "U.S. recession in 2026",
+            "context": "Official recession calls follow GDP declines and labor slowdowns.",
+            "source": {
+              "market_id": 113012,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "e2",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "Sports",
+            "emoji": "🏆",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "Georgia football vs Spurs title",
+            "context": "Georgia plays in a single-elimination college playoff; San Antonio faces four NBA series.",
+            "options": [
+              {
+                "market_id": 2,
+                "outcome_name": "San Antonio Spurs",
+                "label": "Spurs win the NBA title",
+                "short": "Spurs title",
+                "emoji": "🏀"
+              },
+              {
+                "market_id": 6601311,
+                "outcome_name": "Georgia Bulldogs",
+                "label": "Georgia wins college football",
+                "short": "Georgia football",
+                "emoji": "🏈"
+              }
+            ]
+          },
+          {
+            "id": "e3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "extras": [
+              "🏆",
+              "🗽"
+            ],
+            "prompt": "The New York Giants win the NFC East division",
+            "short": "Giants win NFC East",
+            "context": "NFC East counts New York, Washington, Dallas and Philadelphia.",
+            "source": {
+              "market_id": 53674,
+              "outcome_name": "New York Giants"
+            }
+          },
+          {
+            "id": "e4",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "World & Culture",
+            "emoji": "🎬",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "The Odyssey Best Picture vs Beyonce rock album",
+            "context": "Pits Hollywood's Best Picture frontrunner against Beyonce's next genre tag.",
+            "options": [
+              {
+                "market_id": 108306,
+                "outcome_name": "Rock",
+                "label": "Beyonce's next album is Rock",
+                "short": "Beyonce Rock",
+                "emoji": "🎸"
+              },
+              {
+                "market_id": 6173044,
+                "outcome_name": "The Odyssey",
+                "label": "The Odyssey wins Best Picture",
+                "short": "The Odyssey",
+                "emoji": "🎬"
+              }
+            ]
+          },
+          {
+            "id": "e5",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🤖",
+            "extras": [
+              "📈",
+              "💻"
+            ],
+            "prompt": "Anthropic joins the Nasdaq-100 index by December 31, 2026",
+            "short": "Anthropic in Nasdaq-100",
+            "context": "Joining the Nasdaq-100 first requires a public listing and enough size.",
+            "source": {
+              "market_id": 71380656,
+              "outcome_name": "December 31, 2026"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "m1",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "independent": false,
+            "market_id": 6601311,
+            "prompt": "Which school is favored for the college football title?",
+            "short": "College football favorite",
+            "context": "Four powerhouses vying for the expanded twelve-team playoff trophy.",
+            "options": [
+              {
+                "outcome_name": "Notre Dame Fighting Irish",
+                "label": "Notre Dame Fighting Irish",
+                "short": "Notre Dame",
+                "emoji": "☘️"
+              },
+              {
+                "outcome_name": "Georgia Bulldogs",
+                "label": "Georgia Bulldogs",
+                "short": "Georgia",
+                "emoji": "🐶"
+              },
+              {
+                "outcome_name": "Texas Longhorns",
+                "label": "Texas Longhorns",
+                "short": "Texas",
+                "emoji": "🤘"
+              },
+              {
+                "outcome_name": "Alabama Crimson Tide",
+                "label": "Alabama Crimson Tide",
+                "short": "Alabama",
+                "emoji": "🌊"
+              }
+            ]
+          },
+          {
+            "id": "m2",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "⚾",
+            "extras": [
+              "🏆",
+              "🌞"
+            ],
+            "prompt": "What chance do the Dodgers have to win the 2027 World Series?",
+            "short": "Dodgers 2027 Series chance",
+            "context": "Los Angeles headlines next season's baseball championship race.",
+            "source": {
+              "market_id": 68198529,
+              "outcome_name": "Los Angeles Dodgers"
+            }
+          },
+          {
+            "id": "m3",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎬",
+            "independent": false,
+            "market_id": 6173044,
+            "prompt": "Which film leads the Best Picture race?",
+            "short": "Best Picture favorite",
+            "context": "Early awards favorites ahead of winter critics' votes.",
+            "options": [
+              {
+                "outcome_name": "You Can See Everything",
+                "label": "You Can See Everything",
+                "short": "Everything",
+                "emoji": "🎞️"
+              },
+              {
+                "outcome_name": "Dune: Part Three",
+                "label": "Dune: Part Three",
+                "short": "Dune 3",
+                "emoji": "🏜️"
+              },
+              {
+                "outcome_name": "The Black Ball",
+                "label": "The Black Ball",
+                "short": "Black Ball",
+                "emoji": "🎱"
+              },
+              {
+                "outcome_name": "The Odyssey",
+                "label": "The Odyssey",
+                "short": "Odyssey",
+                "emoji": "⚔️"
+              }
+            ]
+          },
+          {
+            "id": "m4",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🤖",
+            "extras": [
+              "📈",
+              "🏦"
+            ],
+            "prompt": "What chance does OpenAI have to finish day one above $1.2T?",
+            "short": "OpenAI debut above $1.2T",
+            "context": "An initial listing value above $1.2T would top every tech debut on record.",
+            "source": {
+              "market_id": 115379,
+              "outcome_name": "$1.2T"
+            }
+          },
+          {
+            "id": "m5",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🤖",
+            "independent": false,
+            "market_id": 32127334,
+            "prompt": "Which lab is favored to hold the top AI model end of 2026?",
+            "short": "Top AI lab favorite",
+            "context": "Tracks the leading organization on major blind user rankings.",
+            "options": [
+              {
+                "outcome_name": "Anthropic",
+                "label": "Anthropic",
+                "short": "Anthropic",
+                "emoji": "🧠"
+              },
+              {
+                "outcome_name": "OpenAI",
+                "label": "OpenAI",
+                "short": "OpenAI",
+                "emoji": "🚀"
+              },
+              {
+                "outcome_name": "Meta",
+                "label": "Meta",
+                "short": "Meta",
+                "emoji": "🌐"
+              },
+              {
+                "outcome_name": "Google",
+                "label": "Google",
+                "short": "Google",
+                "emoji": "🔍"
+              }
+            ]
+          }
+        ],
+        "hard": [
+          {
+            "id": "h1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐻",
+            "extras": [
+              "🏒",
+              "❄️"
+            ],
+            "prompt": "Boston Bruins reach Round 2 of the 2027 NHL playoffs",
+            "short": "Bruins make Round 2",
+            "context": "Boston has to finish top four in the East first, then win a series.",
+            "source": {
+              "market_id": 61380674,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} rode Boston hard at {s}% vs {w}.",
+            "roastLow": "{g} wrote off Boston early at {s}% — the world is at {w}."
+          },
+          {
+            "id": "h2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "💻",
+            "extras": [
+              "🏛️",
+              "📊"
+            ],
+            "prompt": "U.S. government takes equity ownership in Nvidia",
+            "sub": "Any equity holding announced under this policy.",
+            "short": "U.S. equity in Nvidia",
+            "context": "Public focus on chip supply keeps strategic deals in the news.",
+            "source": {
+              "market_id": 13794309,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} saw {n} buying heavy at {s}% — the world has it at {w}.",
+            "roastLow": "{g} barely blinked at {s}% for {n}; the world sits at {w}."
+          },
+          {
+            "id": "h3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "extras": [
+              "🗳️",
+              "🌍"
+            ],
+            "prompt": "Marine Le Pen wins the next French presidential election",
+            "short": "Le Pen wins French vote",
+            "context": "Runoff coalitions in round two have historically shaped French elections.",
+            "source": {
+              "market_id": 113364,
+              "outcome_name": "Marine Le Pen"
+            },
+            "roastHigh": "{g} pushed Le Pen up to {s}% vs {w}.",
+            "roastLow": "{g} kept Le Pen low at {s}% against {w}."
+          },
+          {
+            "id": "h4",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "📰",
+            "extras": [
+              "✨",
+              "🏆"
+            ],
+            "prompt": "James Talarico is named 2026 TIME Person of the Year",
+            "short": "Talarico named Person of Year",
+            "context": "TIME announces its Person of the Year honoree every December.",
+            "source": {
+              "market_id": 27467306,
+              "outcome_name": "James Talarico"
+            },
+            "roastHigh": "{g} put {n} on the cover at {s}% vs {w}.",
+            "roastLow": "{g} went cautious at {s}% while the world says {w}."
+          },
+          {
+            "id": "h5",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🏛️",
+            "extras": [
+              "📜",
+              "🇺🇸"
+            ],
+            "prompt": "The House impeaches Donald Trump before January 1, 2028",
+            "short": "House vote before 2028",
+            "context": "Only a simple majority in the House is required to pass articles.",
+            "source": {
+              "market_id": 112818,
+              "outcome_name": "Before Jan 1, 2028"
+            },
+            "roastHigh": "{g} guessed {s}% on a House vote vs {w}.",
+            "roastLow": "{g} went down to {s}% when the world reads {w}."
+          }
+        ]
+      },
+      "spares": {
+        "easy": [
+          {
+            "id": "se1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇮",
+            "extras": [
+              "😊",
+              "🌍"
+            ],
+            "prompt": "Finland places first again in the 2027 World Happiness Report",
+            "short": "Finland tops happiness list",
+            "context": "Finland has ranked number one in the annual report eight years running.",
+            "source": {
+              "market_id": 70400892,
+              "outcome_name": "Finland"
+            }
+          },
+          {
+            "id": "se2",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🧪",
+            "extras": [
+              "🤖",
+              "📚"
+            ],
+            "prompt": "An OpenAI model scores 65% or higher on Humanity's Last Exam in 2026",
+            "short": "OpenAI hits 65% on HLE",
+            "context": "Humanity's Last Exam tests frontier AI systems across tough specialist problems.",
+            "source": {
+              "market_id": 56916361,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "se3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎨",
+            "extras": [
+              "🧱",
+              "🏙️"
+            ],
+            "prompt": "Banksy claims a new street artwork before December 31",
+            "short": "New Banksy mural this year",
+            "context": "Banksy confirms genuine pieces on Instagram and via Pest Control.",
+            "source": {
+              "market_id": 30587891,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "sm1",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "⚽",
+            "independent": false,
+            "market_id": 60607786,
+            "prompt": "Which club is favored to top the Champions League table?",
+            "short": "Champions League phase favorite",
+            "context": "Europe's 36 clubs play an eight-match league phase before the knockouts.",
+            "options": [
+              {
+                "outcome_name": "Paris Saint-Germain",
+                "label": "Paris Saint-Germain",
+                "short": "PSG",
+                "emoji": "🔵"
+              },
+              {
+                "outcome_name": "Barcelona",
+                "label": "Barcelona",
+                "short": "Barcelona",
+                "emoji": "🔴"
+              },
+              {
+                "outcome_name": "Real Madrid",
+                "label": "Real Madrid",
+                "short": "Real Madrid",
+                "emoji": "👑"
+              },
+              {
+                "outcome_name": "Arsenal",
+                "label": "Arsenal",
+                "short": "Arsenal",
+                "emoji": "🔫"
+              }
+            ]
+          },
+          {
+            "id": "sm2",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "extras": [
+              "📜",
+              "🏛️"
+            ],
+            "prompt": "What chance does France have to pass its national budget by December 31?",
+            "short": "France budget passes on time",
+            "context": "Divided parliaments in Paris have turned annual budgets into late battles.",
+            "source": {
+              "market_id": 7578123,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "sm3",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🚀",
+            "extras": [
+              "💼",
+              "🤖"
+            ],
+            "prompt": "What chance does Kimi (Moonshot AI) have to go public by March 2027?",
+            "short": "Kimi public by March 2027",
+            "context": "Moonshot AI builds the Kimi assistant in China.",
+            "source": {
+              "market_id": 60626093,
+              "outcome_name": "March 31, 2027"
+            }
+          }
+        ],
+        "hard": [
+          {
+            "id": "sh1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "⌨️",
+            "extras": [
+              "🤖",
+              "⚡"
+            ],
+            "prompt": "An AI model reaches 1550 on Chatbot Arena by December 31",
+            "short": "1550 Chatbot Arena score",
+            "context": "Blind head-to-head votes push top frontier scores upward each month.",
+            "source": {
+              "market_id": 13793198,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} handed out {s}% like new weights drop daily; {n} had {w}.",
+            "roastLow": "{g} stopped at {s}% on {n} — the board gives it {w}."
+          },
+          {
+            "id": "sh2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐆",
+            "extras": [
+              "🏈",
+              "🏆"
+            ],
+            "prompt": "Carolina Panthers win the NFC South division",
+            "short": "Panthers win NFC South",
+            "context": "Divisional ties come down to head-to-head records in January.",
+            "source": {
+              "market_id": 53672,
+              "outcome_name": "Carolina"
+            },
+            "roastHigh": "{g} went bold on Carolina at {s}% against {w}.",
+            "roastLow": "{g} dropped Carolina to {s}% when the world says {w}."
+          },
+          {
+            "id": "sh3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎨",
+            "extras": [
+              "🧱",
+              "🏙️"
+            ],
+            "prompt": "Banksy unveils a new street piece before December 31",
+            "short": "New Banksy before New Year",
+            "context": "Banksy works unannounced across London and international cities.",
+            "source": {
+              "market_id": 30587891,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} spotted fresh paint at {s}% against {w}.",
+            "roastLow": "{g} gave Banksy just {s}% when the world says {w}."
+          }
+        ]
+      }
+    },
+    "2026-11-28": {
+      "steps": [
+        {
+          "name": "Easy",
+          "how": "Above or below 50%? Which is more likely? One tap each."
+        },
+        {
+          "name": "Medium",
+          "how": "Pick one of four."
+        },
+        {
+          "name": "Hard",
+          "how": "Slide to the number. Closest wins."
+        }
+      ],
+      "topics": [
+        "Sports",
+        "Money & Tech",
+        "World & Culture"
+      ],
+      "step_cards": {
+        "easy": [
+          {
+            "id": "e1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇮",
+            "extras": [
+              "😊",
+              "🌍"
+            ],
+            "prompt": "Finland places first again in the 2027 World Happiness Report",
+            "short": "Finland tops happiness list",
+            "context": "Finland has ranked number one in the annual report eight years running.",
+            "source": {
+              "market_id": 70400892,
+              "outcome_name": "Finland"
+            }
+          },
+          {
+            "id": "e2",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "Money & Tech",
+            "emoji": "💼",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "OpenAI hits $1T vs Kimi June IPO",
+            "context": "Compares two major AI listing milestones for 2027.",
+            "options": [
+              {
+                "market_id": 60626093,
+                "outcome_name": "June 30, 2027",
+                "label": "Kimi lists publicly by June 2027",
+                "short": "Kimi IPO June",
+                "emoji": "🚀"
+              },
+              {
+                "market_id": 115379,
+                "outcome_name": "$1T",
+                "label": "OpenAI debuts at $1T or more",
+                "short": "OpenAI $1T+",
+                "emoji": "🤖"
+              }
+            ]
+          },
+          {
+            "id": "e3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎮",
+            "extras": [
+              "💻",
+              "🕹️"
+            ],
+            "prompt": "Rockstar releases GTA VI for PC before the end of 2026",
+            "short": "GTA VI PC in 2026",
+            "context": "Rockstar usually brings console titles to PC months or a year later.",
+            "source": {
+              "market_id": 67903133,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "e4",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "Sports",
+            "emoji": "🎾",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "Alcaraz in Melbourne vs Scheffler at Augusta",
+            "context": "Melbourne runs on hard courts in January; Augusta tests a 90-player field in April.",
+            "options": [
+              {
+                "market_id": 72081895,
+                "outcome_name": "Carlos Alcaraz",
+                "label": "Alcaraz wins 2027 Aussie Open",
+                "short": "Alcaraz Open",
+                "emoji": "🎾"
+              },
+              {
+                "market_id": 4,
+                "outcome_name": "Scottie Scheffler",
+                "label": "Scheffler wins the Masters",
+                "short": "Scheffler Masters",
+                "emoji": "⛳"
+              }
+            ]
+          },
+          {
+            "id": "e5",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🔍",
+            "extras": [
+              "🤖",
+              "⚡"
+            ],
+            "prompt": "Google holds the highest AI model ranking at the end of 2026",
+            "short": "Google leads AI end of 2026",
+            "context": "Arena leaderboards rank models from Google, Anthropic, OpenAI and others.",
+            "source": {
+              "market_id": 32127334,
+              "outcome_name": "Google"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "m1",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "⚽",
+            "independent": false,
+            "market_id": 60607786,
+            "prompt": "Which club is favored to top the Champions League table?",
+            "short": "Champions League phase favorite",
+            "context": "Europe's 36 clubs play an eight-match league phase before the knockouts.",
+            "options": [
+              {
+                "outcome_name": "Paris Saint-Germain",
+                "label": "Paris Saint-Germain",
+                "short": "PSG",
+                "emoji": "🔵"
+              },
+              {
+                "outcome_name": "Barcelona",
+                "label": "Barcelona",
+                "short": "Barcelona",
+                "emoji": "🔴"
+              },
+              {
+                "outcome_name": "Real Madrid",
+                "label": "Real Madrid",
+                "short": "Real Madrid",
+                "emoji": "👑"
+              },
+              {
+                "outcome_name": "Arsenal",
+                "label": "Arsenal",
+                "short": "Arsenal",
+                "emoji": "🔫"
+              }
+            ]
+          },
+          {
+            "id": "m2",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "💻",
+            "extras": [
+              "🏛️",
+              "🔌"
+            ],
+            "prompt": "What chance is given to U.S. government equity ownership in Nvidia?",
+            "short": "U.S. government Nvidia equity",
+            "context": "Measures public policy proposals touching strategic chipmakers.",
+            "source": {
+              "market_id": 13794309,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "m3",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎙️",
+            "independent": false,
+            "market_id": 108237,
+            "prompt": "Who leads to sing the next James Bond theme song?",
+            "short": "Bond theme favorite",
+            "context": "Four artists widely linked with the next 007 title track.",
+            "options": [
+              {
+                "outcome_name": "Raye",
+                "label": "Raye",
+                "short": "Raye",
+                "emoji": "🎤"
+              },
+              {
+                "outcome_name": "Olivia Dean",
+                "label": "Olivia Dean",
+                "short": "Olivia Dean",
+                "emoji": "🎶"
+              },
+              {
+                "outcome_name": "Lana Del Rey",
+                "label": "Lana Del Rey",
+                "short": "Lana",
+                "emoji": "🌹"
+              },
+              {
+                "outcome_name": "Dua Lipa",
+                "label": "Dua Lipa",
+                "short": "Dua Lipa",
+                "emoji": "💃"
+              }
+            ]
+          },
+          {
+            "id": "m4",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "extras": [
+              "🏆",
+              "🌉"
+            ],
+            "prompt": "What chance do the San Francisco 49ers have to win the Super Bowl?",
+            "short": "49ers Super Bowl chance",
+            "context": "San Francisco currently sits atop a crowded Super Bowl race.",
+            "source": {
+              "market_id": 86832,
+              "outcome_name": "San Francisco 49ers"
+            }
+          },
+          {
+            "id": "m5",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "independent": false,
+            "market_id": 113364,
+            "prompt": "Who leads the race to be France's next president?",
+            "short": "French presidency leader",
+            "context": "France votes in a two-round presidential election next spring.",
+            "options": [
+              {
+                "outcome_name": "David Lisnard",
+                "label": "David Lisnard",
+                "short": "Lisnard",
+                "emoji": "🇫🇷"
+              },
+              {
+                "outcome_name": "Marine Le Pen",
+                "label": "Marine Le Pen",
+                "short": "Le Pen",
+                "emoji": "🗳️"
+              },
+              {
+                "outcome_name": "Jean-Luc Mélenchon",
+                "label": "Jean-Luc Melenchon",
+                "short": "Melenchon",
+                "emoji": "🔴"
+              },
+              {
+                "outcome_name": "François Hollande",
+                "label": "Francois Hollande",
+                "short": "Hollande",
+                "emoji": "🏛️"
+              }
+            ]
+          }
+        ],
+        "hard": [
+          {
+            "id": "h1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐻",
+            "extras": [
+              "🏈",
+              "❄️"
+            ],
+            "prompt": "Chicago Bears win the NFC North division",
+            "short": "Bears win NFC North",
+            "context": "Chicago battles Minnesota and Detroit across seventeen weeks.",
+            "source": {
+              "market_id": 53673,
+              "outcome_name": "Chicago"
+            },
+            "roastHigh": "{g} trusted Chicago up to {s}% — the world is at {w}.",
+            "roastLow": "{g} sold Chicago short at {s}% vs {w}."
+          },
+          {
+            "id": "h2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🚀",
+            "extras": [
+              "🤖",
+              "📆"
+            ],
+            "prompt": "Kimi (Moonshot AI) goes public by June 30, 2027",
+            "short": "Kimi public by June 2027",
+            "context": "Tracks Moonshot AI completing a public stock debut by mid-2027.",
+            "source": {
+              "market_id": 60626093,
+              "outcome_name": "June 30, 2027"
+            },
+            "roastHigh": "{g} rushed Kimi onto the exchange at {s}% vs {w}.",
+            "roastLow": "{g} kept {n} on the bench at {s}% — the world says {w}."
+          },
+          {
+            "id": "h3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎬",
+            "extras": [
+              "🏆",
+              "⚔️"
+            ],
+            "prompt": "The Odyssey wins Best Picture at the Academy Awards",
+            "short": "The Odyssey wins Best Picture",
+            "context": "Ranked ballots mean broad support matters just as much as first-place votes.",
+            "source": {
+              "market_id": 6173044,
+              "outcome_name": "The Odyssey"
+            },
+            "roastHigh": "{g} handed out an Oscar at {s}% vs {w}.",
+            "roastLow": "{g} left The Odyssey at {s}% while the world says {w}."
+          },
+          {
+            "id": "h4",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐶",
+            "extras": [
+              "🏈",
+              "🏆"
+            ],
+            "prompt": "Georgia Bulldogs win the college football championship",
+            "short": "Georgia wins football title",
+            "context": "A twelve-team playoff demands three or four straight wins against ranked foes.",
+            "source": {
+              "market_id": 6601311,
+              "outcome_name": "Georgia Bulldogs"
+            },
+            "roastHigh": "{g} crowned Georgia early at {s}% vs {w}.",
+            "roastLow": "{g} gave Georgia barely {s}%, well under {w}."
+          },
+          {
+            "id": "h5",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🏦",
+            "extras": [
+              "🤖",
+              "📈"
+            ],
+            "prompt": "OpenAI finishes its first public trading day above $1T",
+            "short": "OpenAI debut tops $1T",
+            "context": "A $1T closing figure depends on private growth and public sentiment.",
+            "source": {
+              "market_id": 115379,
+              "outcome_name": "$1T"
+            },
+            "roastHigh": "{g} saw {n} at a full {s}%! Even {is} above the {w} world view.",
+            "roastLow": "{g} trimmed OpenAI down to {s}%, well shy of {w}."
+          }
+        ]
+      },
+      "spares": {
+        "easy": [
+          {
+            "id": "se1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "extras": [
+              "🏆",
+              "🗽"
+            ],
+            "prompt": "The New York Giants win the NFC East division",
+            "short": "Giants win NFC East",
+            "context": "NFC East counts New York, Washington, Dallas and Philadelphia.",
+            "source": {
+              "market_id": 53674,
+              "outcome_name": "New York Giants"
+            }
+          },
+          {
+            "id": "se2",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🏛️",
+            "extras": [
+              "💼",
+              "🏦"
+            ],
+            "prompt": "Kevin Warsh leaves the Fed chair role before July 2027",
+            "short": "Warsh out at Fed by mid-2027",
+            "context": "Central bank chairs rarely step down early once confirmed.",
+            "source": {
+              "market_id": 56995847,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "se3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎭",
+            "extras": [
+              "📺",
+              "🎙️"
+            ],
+            "prompt": "Donald Trump appears on Saturday Night Live during his current term",
+            "short": "Trump guest spot on SNL",
+            "context": "He last hosted Saturday Night Live in November 2015.",
+            "source": {
+              "market_id": 108339,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "sm1",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "⛳",
+            "extras": [
+              "🏆",
+              "🏌️"
+            ],
+            "prompt": "What chance does Scottie Scheffler have to win the PGA Championship?",
+            "short": "Scheffler PGA chance",
+            "context": "Winning any major golf tournament means topping a 156-player field.",
+            "source": {
+              "market_id": 5,
+              "outcome_name": "Scottie Scheffler"
+            }
+          },
+          {
+            "id": "sm2",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🤖",
+            "independent": false,
+            "market_id": 32127334,
+            "prompt": "Which lab is favored to hold the top AI model end of 2026?",
+            "short": "Top AI lab favorite",
+            "context": "Tracks the leading organization on major blind user rankings.",
+            "options": [
+              {
+                "outcome_name": "Anthropic",
+                "label": "Anthropic",
+                "short": "Anthropic",
+                "emoji": "🧠"
+              },
+              {
+                "outcome_name": "OpenAI",
+                "label": "OpenAI",
+                "short": "OpenAI",
+                "emoji": "🚀"
+              },
+              {
+                "outcome_name": "Meta",
+                "label": "Meta",
+                "short": "Meta",
+                "emoji": "🌐"
+              },
+              {
+                "outcome_name": "Google",
+                "label": "Google",
+                "short": "Google",
+                "emoji": "🔍"
+              }
+            ]
+          },
+          {
+            "id": "sm3",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "📰",
+            "extras": [
+              "🏆",
+              "✨"
+            ],
+            "prompt": "What chance does James Talarico have for 2026 TIME Person of the Year?",
+            "short": "Talarico TIME Person chance",
+            "context": "TIME editors pick the year's most talked-about figure each December.",
+            "source": {
+              "market_id": 27467306,
+              "outcome_name": "James Talarico"
+            }
+          }
+        ],
+        "hard": [
+          {
+            "id": "sh1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "📜",
+            "extras": [
+              "🇫🇷",
+              "💶"
+            ],
+            "prompt": "France passes a national budget before January 1",
+            "short": "France passes budget",
+            "context": "A missed deadline triggers emergency stopgap tax rules instead.",
+            "source": {
+              "market_id": 7578123,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} had Paris cruising at {s}% vs {w}.",
+            "roastLow": "{g} expected gridlock at {s}% — the world reads {w}."
+          },
+          {
+            "id": "sh2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "➗",
+            "extras": [
+              "🧠",
+              "✨"
+            ],
+            "prompt": "OpenAI announces another Millennium Prize solution in 2027",
+            "short": "OpenAI Millennium Prize 2027",
+            "context": "Six unsolved problems carry $1M prizes from the Clay Institute.",
+            "source": {
+              "market_id": 60607595,
+              "outcome_name": "December 31, 2027"
+            },
+            "roastHigh": "{g} expected a proof this year at {s}% vs {w}.",
+            "roastLow": "{g} kept math conservative at {s}% — the world has {w}."
+          },
+          {
+            "id": "sh3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "👑",
+            "extras": [
+              "⚽",
+              "🇪🇺"
+            ],
+            "prompt": "Real Madrid finishes first in the Champions League league phase",
+            "short": "Real Madrid tops Champions table",
+            "context": "Goal difference and eight fixtures separate first from second.",
+            "source": {
+              "market_id": 60607786,
+              "outcome_name": "Real Madrid"
+            },
+            "roastHigh": "{g} backed Madrid all the way to {s}% against {w}.",
+            "roastLow": "{g} cooled on Madrid at {s}% — the world reads {w}."
+          }
+        ]
+      }
+    },
+    "2026-11-29": {
+      "steps": [
+        {
+          "name": "Easy",
+          "how": "Above or below 50%? Which is more likely? One tap each."
+        },
+        {
+          "name": "Medium",
+          "how": "Pick one of four."
+        },
+        {
+          "name": "Hard",
+          "how": "Slide to the number. Closest wins."
+        }
+      ],
+      "topics": [
+        "Sports",
+        "Money & Tech",
+        "World & Culture"
+      ],
+      "step_cards": {
+        "easy": [
+          {
+            "id": "e1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🏦",
+            "extras": [
+              "💵",
+              "📊"
+            ],
+            "prompt": "The Federal Reserve delivers a quarter-point rate rise in December",
+            "short": "Fed December quarter-point move",
+            "context": "A quarter-point adjustment equals 0.25 percentage points at the meeting.",
+            "source": {
+              "market_id": 57574250,
+              "outcome_name": "Quarter-point increase"
+            }
+          },
+          {
+            "id": "e2",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "Sports",
+            "emoji": "🏒",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "Bruins Reach Round 2 vs Hurricanes Cup",
+            "context": "One team needs four wins in April; the other needs sixteen across four rounds.",
+            "options": [
+              {
+                "market_id": 61380674,
+                "outcome_name": "Yes",
+                "label": "Bruins reach NHL playoff Round 2",
+                "short": "Bruins Round 2",
+                "emoji": "🐻"
+              },
+              {
+                "market_id": 8,
+                "outcome_name": "Carolina Hurricanes",
+                "label": "Hurricanes win the Stanley Cup",
+                "short": "Canes Cup",
+                "emoji": "🏒"
+              }
+            ]
+          },
+          {
+            "id": "e3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎧",
+            "extras": [
+              "🎵",
+              "📱"
+            ],
+            "prompt": "Djo's 'End of Beginning' finishes 2026 as Spotify's top song",
+            "short": "Djo holds top Spotify song",
+            "context": "Spotify's year-end chart counts global streams across 2026.",
+            "source": {
+              "market_id": 70733200,
+              "outcome_name": "End of Beginning – Djo"
+            }
+          },
+          {
+            "id": "e4",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "World & Culture",
+            "emoji": "🕹️",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "GTA VI late PC vs House vote by May 2027",
+            "context": "Wait time for Rockstar's PC release alongside an early 2027 Congressional milestone.",
+            "options": [
+              {
+                "market_id": 112818,
+                "outcome_name": "Before May 1, 2027",
+                "label": "House impeaches Trump by May 2027",
+                "short": "Impeachment May",
+                "emoji": "🏛️"
+              },
+              {
+                "market_id": 67717832,
+                "outcome_name": "After March 2027",
+                "label": "GTA VI PC launches after March 2027",
+                "short": "GTA VI after Mar",
+                "emoji": "🎮"
+              }
+            ]
+          },
+          {
+            "id": "e5",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "💡",
+            "extras": [
+              "📊",
+              "🤖"
+            ],
+            "prompt": "OpenAI closes its listing day worth at least $1.4T",
+            "short": "OpenAI debut tops $1.4T",
+            "context": "A $1.4T valuation would rank OpenAI among the world's largest firms on day one.",
+            "source": {
+              "market_id": 115379,
+              "outcome_name": "$1.4T"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "m1",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏀",
+            "independent": false,
+            "market_id": 2,
+            "prompt": "Which team is favored for the NBA championship?",
+            "short": "NBA title favorite",
+            "context": "Four top contenders across East and West.",
+            "options": [
+              {
+                "outcome_name": "Oklahoma City Thunder",
+                "label": "Oklahoma City Thunder",
+                "short": "Thunder",
+                "emoji": "⚡"
+              },
+              {
+                "outcome_name": "San Antonio Spurs",
+                "label": "San Antonio Spurs",
+                "short": "Spurs",
+                "emoji": "🏀"
+              },
+              {
+                "outcome_name": "Boston Celtics",
+                "label": "Boston Celtics",
+                "short": "Celtics",
+                "emoji": "☘️"
+              },
+              {
+                "outcome_name": "Philadelphia 76ers",
+                "label": "Philadelphia 76ers",
+                "short": "Sixers",
+                "emoji": "🔔"
+              }
+            ]
+          },
+          {
+            "id": "m2",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🚀",
+            "extras": [
+              "💼",
+              "🤖"
+            ],
+            "prompt": "What chance does Kimi (Moonshot AI) have to go public by March 2027?",
+            "short": "Kimi public by March 2027",
+            "context": "Moonshot AI builds the Kimi assistant in China.",
+            "source": {
+              "market_id": 60626093,
+              "outcome_name": "March 31, 2027"
+            }
+          },
+          {
+            "id": "m3",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎵",
+            "independent": true,
+            "market_id": 108306,
+            "prompt": "Which genre leads for Beyonce's next album?",
+            "short": "Beyonce genre favorite",
+            "context": "An album can receive multiple genre tags upon release.",
+            "options": [
+              {
+                "outcome_name": "R&B/Hip-Hop",
+                "label": "R&B / Hip-Hop",
+                "short": "R&B",
+                "emoji": "💿"
+              },
+              {
+                "outcome_name": "Americana/Folk",
+                "label": "Americana / Folk",
+                "short": "Folk",
+                "emoji": "🪕"
+              },
+              {
+                "outcome_name": "Rock",
+                "label": "Rock",
+                "short": "Rock",
+                "emoji": "🎸"
+              },
+              {
+                "outcome_name": "Gospel",
+                "label": "Gospel",
+                "short": "Gospel",
+                "emoji": "🎶"
+              }
+            ]
+          },
+          {
+            "id": "m4",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🌀",
+            "extras": [
+              "🏒",
+              "🏆"
+            ],
+            "prompt": "What chance do the Carolina Hurricanes have to win the Stanley Cup?",
+            "short": "Hurricanes Stanley Cup chance",
+            "context": "Thirty-two NHL teams chase four playoff rounds each spring.",
+            "source": {
+              "market_id": 8,
+              "outcome_name": "Carolina Hurricanes"
+            }
+          },
+          {
+            "id": "m5",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🤖",
+            "independent": false,
+            "market_id": 32127334,
+            "prompt": "Which lab is favored to hold the top AI model end of 2026?",
+            "short": "Top AI lab favorite",
+            "context": "Tracks the leading organization on major blind user rankings.",
+            "options": [
+              {
+                "outcome_name": "Anthropic",
+                "label": "Anthropic",
+                "short": "Anthropic",
+                "emoji": "🧠"
+              },
+              {
+                "outcome_name": "OpenAI",
+                "label": "OpenAI",
+                "short": "OpenAI",
+                "emoji": "🚀"
+              },
+              {
+                "outcome_name": "Meta",
+                "label": "Meta",
+                "short": "Meta",
+                "emoji": "🌐"
+              },
+              {
+                "outcome_name": "Google",
+                "label": "Google",
+                "short": "Google",
+                "emoji": "🔍"
+              }
+            ]
+          }
+        ],
+        "hard": [
+          {
+            "id": "h1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🎾",
+            "extras": [
+              "🇦🇺",
+              "🏆"
+            ],
+            "prompt": "Carlos Alcaraz wins the 2027 Men's Australian Open",
+            "short": "Alcaraz wins 2027 Melbourne",
+            "context": "Melbourne is the one Slam trophy Alcaraz has yet to lift.",
+            "source": {
+              "market_id": 72081895,
+              "outcome_name": "Carlos Alcaraz"
+            },
+            "roastHigh": "{g} went heavy at {s}% for Melbourne; the world reads {w}.",
+            "roastLow": "{g} gave Alcaraz just {s}% in Melbourne vs {w}."
+          },
+          {
+            "id": "h2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "⌨️",
+            "extras": [
+              "🤖",
+              "⚡"
+            ],
+            "prompt": "An AI model reaches 1550 on Chatbot Arena by December 31",
+            "short": "1550 Chatbot Arena score",
+            "context": "Blind head-to-head votes push top frontier scores upward each month.",
+            "source": {
+              "market_id": 13793198,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} handed out {s}% like new weights drop daily; {n} had {w}.",
+            "roastLow": "{g} stopped at {s}% on {n} — the board gives it {w}."
+          },
+          {
+            "id": "h3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎙️",
+            "extras": [
+              "🎶",
+              "🎬"
+            ],
+            "prompt": "Raye sings the theme song for the next James Bond film",
+            "short": "Raye lands Bond theme",
+            "context": "Past winners include Adele, Billie Eilish and Sam Smith.",
+            "source": {
+              "market_id": 108237,
+              "outcome_name": "Raye"
+            },
+            "roastHigh": "{g} booked the studio early at {s}% against {w}.",
+            "roastLow": "{g} went tiny at {s}% while the world gives Raye {w}."
+          },
+          {
+            "id": "h4",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "📊",
+            "extras": [
+              "🚀",
+              "🏦"
+            ],
+            "prompt": "OpenAI debuts above $1.2T on its first trading day",
+            "short": "OpenAI debut tops $1.2T",
+            "context": "Counts only the closing valuation at the end of day one.",
+            "source": {
+              "market_id": 115379,
+              "outcome_name": "$1.2T"
+            },
+            "roastHigh": "{g} went bold at {s}% for {n}; the world reads {w}.",
+            "roastLow": "{g} cooled to {s}% on {n} while the world stays at {w}."
+          },
+          {
+            "id": "h5",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🗽",
+            "extras": [
+              "🏈",
+              "🏆"
+            ],
+            "prompt": "The New York Giants win the NFC East division",
+            "short": "Giants take NFC East",
+            "context": "New York leads Washington and Dallas in the division standings.",
+            "source": {
+              "market_id": 53674,
+              "outcome_name": "New York Giants"
+            },
+            "roastHigh": "{g} locked the Giants at {s}% vs {w}.",
+            "roastLow": "{g} doubted New York at {s}% — well short of {w}."
+          }
+        ]
+      },
+      "spares": {
+        "easy": [
+          {
+            "id": "se1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "extras": [
+              "🗳️",
+              "🌍"
+            ],
+            "prompt": "Marine Le Pen's French election chance dips below 40% this year",
+            "short": "Le Pen dips under 40%",
+            "context": "France's next presidential election is scheduled for spring 2027.",
+            "source": {
+              "market_id": 70883374,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "se2",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "⌨️",
+            "extras": [
+              "🤖",
+              "📈"
+            ],
+            "prompt": "Any AI model reaches a Chatbot Arena rating of 1550 by December 31",
+            "short": "AI reaches 1550 Arena score",
+            "context": "Chatbot Arena ratings update as users score blind side-by-side replies.",
+            "source": {
+              "market_id": 13793198,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "se3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "extras": [
+              "🏆",
+              "🗽"
+            ],
+            "prompt": "The New York Giants win the NFC East division",
+            "short": "Giants win NFC East",
+            "context": "NFC East counts New York, Washington, Dallas and Philadelphia.",
+            "source": {
+              "market_id": 53674,
+              "outcome_name": "New York Giants"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "sm1",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏒",
+            "extras": [
+              "🐻",
+              "❄️"
+            ],
+            "prompt": "What chance do the Bruins have to reach Round 2 of the 2027 NHL playoffs?",
+            "short": "Bruins reach NHL Round 2",
+            "context": "First-round series take seven games to settle in April.",
+            "source": {
+              "market_id": 61380674,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "sm2",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "independent": false,
+            "market_id": 6601311,
+            "prompt": "Which school is favored for the college football title?",
+            "short": "College football favorite",
+            "context": "Four powerhouses vying for the expanded twelve-team playoff trophy.",
+            "options": [
+              {
+                "outcome_name": "Notre Dame Fighting Irish",
+                "label": "Notre Dame Fighting Irish",
+                "short": "Notre Dame",
+                "emoji": "☘️"
+              },
+              {
+                "outcome_name": "Georgia Bulldogs",
+                "label": "Georgia Bulldogs",
+                "short": "Georgia",
+                "emoji": "🐶"
+              },
+              {
+                "outcome_name": "Texas Longhorns",
+                "label": "Texas Longhorns",
+                "short": "Texas",
+                "emoji": "🤘"
+              },
+              {
+                "outcome_name": "Alabama Crimson Tide",
+                "label": "Alabama Crimson Tide",
+                "short": "Alabama",
+                "emoji": "🌊"
+              }
+            ]
+          },
+          {
+            "id": "sm3",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "extras": [
+              "📜",
+              "🏛️"
+            ],
+            "prompt": "What chance does France have to pass its national budget by December 31?",
+            "short": "France budget passes on time",
+            "context": "Divided parliaments in Paris have turned annual budgets into late battles.",
+            "source": {
+              "market_id": 7578123,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "hard": [
+          {
+            "id": "sh1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎨",
+            "extras": [
+              "🧱",
+              "🏙️"
+            ],
+            "prompt": "Banksy unveils a new street piece before December 31",
+            "short": "New Banksy before New Year",
+            "context": "Banksy works unannounced across London and international cities.",
+            "source": {
+              "market_id": 30587891,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} spotted fresh paint at {s}% against {w}.",
+            "roastLow": "{g} gave Banksy just {s}% when the world says {w}."
+          },
+          {
+            "id": "sh2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "📈",
+            "extras": [
+              "🤖",
+              "🏛️"
+            ],
+            "prompt": "Anthropic joins the Nasdaq-100 index by end of 2026",
+            "short": "Anthropic enters Nasdaq-100",
+            "context": "Rebalancing happens once a year in December for eligible listings.",
+            "source": {
+              "market_id": 71380656,
+              "outcome_name": "December 31, 2026"
+            },
+            "roastHigh": "{g} pinned {n} at {s}% — near a lock, vs {w}.",
+            "roastLow": "{g} guessed just {s}% when the world puts {n} at {w}."
+          },
+          {
+            "id": "sh3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🎾",
+            "extras": [
+              "🏆",
+              "⚡"
+            ],
+            "prompt": "Aryna Sabalenka wins the 2027 Women's Australian Open",
+            "short": "Sabalenka wins Melbourne",
+            "context": "A 128-player draw gives even the favorite roughly one shot in five.",
+            "source": {
+              "market_id": 72081893,
+              "outcome_name": "Aryna Sabalenka"
+            },
+            "roastHigh": "{g} picked {s}% in a 128-player bracket — the world has {w}.",
+            "roastLow": "{g} dropped Sabalenka to {s}%; the world sits at {w}."
+          }
+        ]
+      }
+    },
+    "2026-11-30": {
+      "steps": [
+        {
+          "name": "Easy",
+          "how": "Above or below 50%? Which is more likely? One tap each."
+        },
+        {
+          "name": "Medium",
+          "how": "Pick one of four."
+        },
+        {
+          "name": "Hard",
+          "how": "Slide to the number. Closest wins."
+        }
+      ],
+      "topics": [
+        "Sports",
+        "Money & Tech",
+        "World & Culture"
+      ],
+      "step_cards": {
+        "easy": [
+          {
+            "id": "e1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎸",
+            "extras": [
+              "🎤",
+              "💿"
+            ],
+            "prompt": "Beyonce's next album earns a Rock genre listing",
+            "short": "Beyonce goes rock next",
+            "context": "Act III is widely rumored to follow country and dance with rock.",
+            "source": {
+              "market_id": 108306,
+              "outcome_name": "Rock"
+            }
+          },
+          {
+            "id": "e2",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "Money & Tech",
+            "emoji": "🧠",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "Anthropic AI lead vs U.S. Nvidia ownership",
+            "context": "Puts two major tech milestones side by side.",
+            "options": [
+              {
+                "market_id": 32127334,
+                "outcome_name": "Anthropic",
+                "label": "Anthropic leads AI rankings end of 2026",
+                "short": "Anthropic top AI",
+                "emoji": "🤖"
+              },
+              {
+                "market_id": 13794309,
+                "outcome_name": "Yes",
+                "label": "U.S. takes equity in Nvidia",
+                "short": "U.S. Nvidia equity",
+                "emoji": "🏛️"
+              }
+            ]
+          },
+          {
+            "id": "e3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🏛️",
+            "extras": [
+              "💼",
+              "🏦"
+            ],
+            "prompt": "Kevin Warsh leaves the Fed chair role before July 2027",
+            "short": "Warsh out at Fed by mid-2027",
+            "context": "Central bank chairs rarely step down early once confirmed.",
+            "source": {
+              "market_id": 56995847,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "e4",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "Sports",
+            "emoji": "🏆",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "Georgia football vs Spurs title",
+            "context": "Georgia plays in a single-elimination college playoff; San Antonio faces four NBA series.",
+            "options": [
+              {
+                "market_id": 2,
+                "outcome_name": "San Antonio Spurs",
+                "label": "Spurs win the NBA title",
+                "short": "Spurs title",
+                "emoji": "🏀"
+              },
+              {
+                "market_id": 6601311,
+                "outcome_name": "Georgia Bulldogs",
+                "label": "Georgia wins college football",
+                "short": "Georgia football",
+                "emoji": "🏈"
+              }
+            ]
+          },
+          {
+            "id": "e5",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎨",
+            "extras": [
+              "🧱",
+              "🏙️"
+            ],
+            "prompt": "Banksy claims a new street artwork before December 31",
+            "short": "New Banksy mural this year",
+            "context": "Banksy confirms genuine pieces on Instagram and via Pest Control.",
+            "source": {
+              "market_id": 30587891,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "m1",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🎾",
+            "independent": false,
+            "market_id": 72081895,
+            "prompt": "Who leads for the 2027 Men's Australian Open title?",
+            "short": "Melbourne men's favorite",
+            "context": "Melbourne opens the Grand Slam season each January.",
+            "options": [
+              {
+                "outcome_name": "Carlos Alcaraz",
+                "label": "Carlos Alcaraz",
+                "short": "Alcaraz",
+                "emoji": "🎾"
+              },
+              {
+                "outcome_name": "Alexander Zverev",
+                "label": "Alexander Zverev",
+                "short": "Zverev",
+                "emoji": "🏆"
+              },
+              {
+                "outcome_name": "Ben Shelton",
+                "label": "Ben Shelton",
+                "short": "Shelton",
+                "emoji": "🇺🇸"
+              },
+              {
+                "outcome_name": "Novak Djokovic",
+                "label": "Novak Djokovic",
+                "short": "Djokovic",
+                "emoji": "🇷🇸"
+              }
+            ]
+          },
+          {
+            "id": "m2",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "📰",
+            "extras": [
+              "🏆",
+              "✨"
+            ],
+            "prompt": "What chance does James Talarico have for 2026 TIME Person of the Year?",
+            "short": "Talarico TIME Person chance",
+            "context": "TIME editors pick the year's most talked-about figure each December.",
+            "source": {
+              "market_id": 27467306,
+              "outcome_name": "James Talarico"
+            }
+          },
+          {
+            "id": "m3",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "independent": false,
+            "market_id": 6601311,
+            "prompt": "Which school is favored for the college football title?",
+            "short": "College football favorite",
+            "context": "Four powerhouses vying for the expanded twelve-team playoff trophy.",
+            "options": [
+              {
+                "outcome_name": "Notre Dame Fighting Irish",
+                "label": "Notre Dame Fighting Irish",
+                "short": "Notre Dame",
+                "emoji": "☘️"
+              },
+              {
+                "outcome_name": "Georgia Bulldogs",
+                "label": "Georgia Bulldogs",
+                "short": "Georgia",
+                "emoji": "🐶"
+              },
+              {
+                "outcome_name": "Texas Longhorns",
+                "label": "Texas Longhorns",
+                "short": "Texas",
+                "emoji": "🤘"
+              },
+              {
+                "outcome_name": "Alabama Crimson Tide",
+                "label": "Alabama Crimson Tide",
+                "short": "Alabama",
+                "emoji": "🌊"
+              }
+            ]
+          },
+          {
+            "id": "m4",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🤖",
+            "extras": [
+              "📈",
+              "🏦"
+            ],
+            "prompt": "What chance does OpenAI have to finish day one above $1.2T?",
+            "short": "OpenAI debut above $1.2T",
+            "context": "An initial listing value above $1.2T would top every tech debut on record.",
+            "source": {
+              "market_id": 115379,
+              "outcome_name": "$1.2T"
+            }
+          },
+          {
+            "id": "m5",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "independent": false,
+            "market_id": 113364,
+            "prompt": "Who leads the race to be France's next president?",
+            "short": "French presidency leader",
+            "context": "France votes in a two-round presidential election next spring.",
+            "options": [
+              {
+                "outcome_name": "David Lisnard",
+                "label": "David Lisnard",
+                "short": "Lisnard",
+                "emoji": "🇫🇷"
+              },
+              {
+                "outcome_name": "Marine Le Pen",
+                "label": "Marine Le Pen",
+                "short": "Le Pen",
+                "emoji": "🗳️"
+              },
+              {
+                "outcome_name": "Jean-Luc Mélenchon",
+                "label": "Jean-Luc Melenchon",
+                "short": "Melenchon",
+                "emoji": "🔴"
+              },
+              {
+                "outcome_name": "François Hollande",
+                "label": "Francois Hollande",
+                "short": "Hollande",
+                "emoji": "🏛️"
+              }
+            ]
+          }
+        ],
+        "hard": [
+          {
+            "id": "h1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "👑",
+            "extras": [
+              "⚽",
+              "🇪🇺"
+            ],
+            "prompt": "Real Madrid finishes first in the Champions League league phase",
+            "short": "Real Madrid tops Champions table",
+            "context": "Goal difference and eight fixtures separate first from second.",
+            "source": {
+              "market_id": 60607786,
+              "outcome_name": "Real Madrid"
+            },
+            "roastHigh": "{g} backed Madrid all the way to {s}% against {w}.",
+            "roastLow": "{g} cooled on Madrid at {s}% — the world reads {w}."
+          },
+          {
+            "id": "h2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🔍",
+            "extras": [
+              "🤖",
+              "🏆"
+            ],
+            "prompt": "Google holds the number-one AI model spot at the end of 2026",
+            "short": "Google top AI at year-end",
+            "context": "Front-runners can swap quickly after major autumn releases.",
+            "source": {
+              "market_id": 32127334,
+              "outcome_name": "Google"
+            },
+            "roastHigh": "{g} went all-in at {s}% — higher even than the {w} consensus.",
+            "roastLow": "{g} faded Google down to {s}%, well below {w}."
+          },
+          {
+            "id": "h3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🎾",
+            "extras": [
+              "🏆",
+              "⚡"
+            ],
+            "prompt": "Aryna Sabalenka wins the 2027 Women's Australian Open",
+            "short": "Sabalenka wins Melbourne",
+            "context": "A 128-player draw gives even the favorite roughly one shot in five.",
+            "source": {
+              "market_id": 72081893,
+              "outcome_name": "Aryna Sabalenka"
+            },
+            "roastHigh": "{g} picked {s}% in a 128-player bracket — the world has {w}.",
+            "roastLow": "{g} dropped Sabalenka to {s}%; the world sits at {w}."
+          },
+          {
+            "id": "h4",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "➗",
+            "extras": [
+              "🧠",
+              "✨"
+            ],
+            "prompt": "OpenAI announces another Millennium Prize solution in 2027",
+            "short": "OpenAI Millennium Prize 2027",
+            "context": "Six unsolved problems carry $1M prizes from the Clay Institute.",
+            "source": {
+              "market_id": 60607595,
+              "outcome_name": "December 31, 2027"
+            },
+            "roastHigh": "{g} expected a proof this year at {s}% vs {w}.",
+            "roastLow": "{g} kept math conservative at {s}% — the world has {w}."
+          },
+          {
+            "id": "h5",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "💿",
+            "extras": [
+              "🎤",
+              "🎶"
+            ],
+            "prompt": "Beyonce's next album gets tagged R&B/Hip-Hop",
+            "short": "Beyonce next album R&B",
+            "context": "Genre tags reflect how major charts and awards classify the release.",
+            "source": {
+              "market_id": 108306,
+              "outcome_name": "R&B/Hip-Hop"
+            },
+            "roastHigh": "{g} went straight back to R&B at {s}% vs {w}.",
+            "roastLow": "{g} slid to {s}% on R&B while the world reads {w}."
+          }
+        ]
+      },
+      "spares": {
+        "easy": [
+          {
+            "id": "se1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "extras": [
+              "🏆",
+              "🗽"
+            ],
+            "prompt": "The New York Giants win the NFC East division",
+            "short": "Giants win NFC East",
+            "context": "NFC East counts New York, Washington, Dallas and Philadelphia.",
+            "source": {
+              "market_id": 53674,
+              "outcome_name": "New York Giants"
+            }
+          },
+          {
+            "id": "se2",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🕸️",
+            "extras": [
+              "🍿",
+              "🎬"
+            ],
+            "prompt": "Spider-Man: Brand New Day is 2026's highest-grossing film",
+            "short": "Spider-Man leads 2026 box office",
+            "context": "Measured by total worldwide theatrical ticket revenue in 2026.",
+            "source": {
+              "market_id": 113355,
+              "outcome_name": "Spider-Man: Brand New Day"
+            }
+          },
+          {
+            "id": "se3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "📉",
+            "extras": [
+              "💵",
+              "🏛️"
+            ],
+            "prompt": "A U.S. recession is declared before the end of 2026",
+            "short": "U.S. recession in 2026",
+            "context": "Official recession calls follow GDP declines and labor slowdowns.",
+            "source": {
+              "market_id": 113012,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "sm1",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "⚾",
+            "extras": [
+              "🏆",
+              "🌞"
+            ],
+            "prompt": "What chance do the Dodgers have to win the 2027 World Series?",
+            "short": "Dodgers 2027 Series chance",
+            "context": "Los Angeles headlines next season's baseball championship race.",
+            "source": {
+              "market_id": 68198529,
+              "outcome_name": "Los Angeles Dodgers"
+            }
+          },
+          {
+            "id": "sm2",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎧",
+            "independent": true,
+            "market_id": 109287,
+            "prompt": "Who leads among unvisited 2026 Joe Rogan guests?",
+            "short": "Joe Rogan guest leader",
+            "context": "More than one of these figures could appear on the show in 2026.",
+            "options": [
+              {
+                "outcome_name": "Sam Altman",
+                "label": "Sam Altman",
+                "short": "Altman",
+                "emoji": "🤖"
+              },
+              {
+                "outcome_name": "Tulsi Gabbard",
+                "label": "Tulsi Gabbard",
+                "short": "Gabbard",
+                "emoji": "🏛️"
+              },
+              {
+                "outcome_name": "Bernie Sanders",
+                "label": "Bernie Sanders",
+                "short": "Sanders",
+                "emoji": "🗣️"
+              },
+              {
+                "outcome_name": "Vivek Ramaswamy",
+                "label": "Vivek Ramaswamy",
+                "short": "Vivek",
+                "emoji": "🎙️"
+              }
+            ]
+          },
+          {
+            "id": "sm3",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "💻",
+            "extras": [
+              "🏛️",
+              "🔌"
+            ],
+            "prompt": "What chance is given to U.S. government equity ownership in Nvidia?",
+            "short": "U.S. government Nvidia equity",
+            "context": "Measures public policy proposals touching strategic chipmakers.",
+            "source": {
+              "market_id": 13794309,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "hard": [
+          {
+            "id": "sh1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐆",
+            "extras": [
+              "🏈",
+              "🏆"
+            ],
+            "prompt": "Carolina Panthers win the NFC South division",
+            "short": "Panthers win NFC South",
+            "context": "Divisional ties come down to head-to-head records in January.",
+            "source": {
+              "market_id": 53672,
+              "outcome_name": "Carolina"
+            },
+            "roastHigh": "{g} went bold on Carolina at {s}% against {w}.",
+            "roastLow": "{g} dropped Carolina to {s}% when the world says {w}."
+          },
+          {
+            "id": "sh2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎮",
+            "extras": [
+              "💻",
+              "📆"
+            ],
+            "prompt": "GTA VI launches on PC after March 2027",
+            "short": "GTA VI PC after March 2027",
+            "context": "Rockstar's PC releases have consistently trailed console launches.",
+            "source": {
+              "market_id": 67717832,
+              "outcome_name": "After March 2027"
+            },
+            "roastHigh": "{g} assumed another wait at {s}% vs {w}.",
+            "roastLow": "{g} expected an early port at {s}% — world says {w}."
+          },
+          {
+            "id": "sh3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "💻",
+            "extras": [
+              "🏛️",
+              "📊"
+            ],
+            "prompt": "U.S. government takes equity ownership in Nvidia",
+            "sub": "Any equity holding announced under this policy.",
+            "short": "U.S. equity in Nvidia",
+            "context": "Public focus on chip supply keeps strategic deals in the news.",
+            "source": {
+              "market_id": 13794309,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} saw {n} buying heavy at {s}% — the world has it at {w}.",
+            "roastLow": "{g} barely blinked at {s}% for {n}; the world sits at {w}."
+          }
+        ]
+      }
+    },
+    "2026-12-01": {
+      "steps": [
+        {
+          "name": "Easy",
+          "how": "Above or below 50%? Which is more likely? One tap each."
+        },
+        {
+          "name": "Medium",
+          "how": "Pick one of four."
+        },
+        {
+          "name": "Hard",
+          "how": "Slide to the number. Closest wins."
+        }
+      ],
+      "topics": [
+        "Sports",
+        "Money & Tech",
+        "World & Culture"
+      ],
+      "step_cards": {
+        "easy": [
+          {
+            "id": "e1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🕸️",
+            "extras": [
+              "🍿",
+              "🎬"
+            ],
+            "prompt": "Spider-Man: Brand New Day is 2026's highest-grossing film",
+            "short": "Spider-Man leads 2026 box office",
+            "context": "Measured by total worldwide theatrical ticket revenue in 2026.",
+            "source": {
+              "market_id": 113355,
+              "outcome_name": "Spider-Man: Brand New Day"
+            }
+          },
+          {
+            "id": "e2",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "Sports",
+            "emoji": "🎾",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "Alcaraz in Melbourne vs Scheffler at Augusta",
+            "context": "Melbourne runs on hard courts in January; Augusta tests a 90-player field in April.",
+            "options": [
+              {
+                "market_id": 72081895,
+                "outcome_name": "Carlos Alcaraz",
+                "label": "Alcaraz wins 2027 Aussie Open",
+                "short": "Alcaraz Open",
+                "emoji": "🎾"
+              },
+              {
+                "market_id": 4,
+                "outcome_name": "Scottie Scheffler",
+                "label": "Scheffler wins the Masters",
+                "short": "Scheffler Masters",
+                "emoji": "⛳"
+              }
+            ]
+          },
+          {
+            "id": "e3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🧪",
+            "extras": [
+              "🤖",
+              "📚"
+            ],
+            "prompt": "An OpenAI model scores 65% or higher on Humanity's Last Exam in 2026",
+            "short": "OpenAI hits 65% on HLE",
+            "context": "Humanity's Last Exam tests frontier AI systems across tough specialist problems.",
+            "source": {
+              "market_id": 56916361,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "e4",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "World & Culture",
+            "emoji": "🎬",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "The Odyssey Best Picture vs Beyonce rock album",
+            "context": "Pits Hollywood's Best Picture frontrunner against Beyonce's next genre tag.",
+            "options": [
+              {
+                "market_id": 108306,
+                "outcome_name": "Rock",
+                "label": "Beyonce's next album is Rock",
+                "short": "Beyonce Rock",
+                "emoji": "🎸"
+              },
+              {
+                "market_id": 6173044,
+                "outcome_name": "The Odyssey",
+                "label": "The Odyssey wins Best Picture",
+                "short": "The Odyssey",
+                "emoji": "🎬"
+              }
+            ]
+          },
+          {
+            "id": "e5",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🚀",
+            "extras": [
+              "🧠",
+              "🏦"
+            ],
+            "prompt": "OpenAI finishes its listing debut worth at least $800B",
+            "short": "OpenAI debut tops $800B",
+            "context": "Measured by closing company value on OpenAI's first trading day.",
+            "source": {
+              "market_id": 115379,
+              "outcome_name": "$800B"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "m1",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎧",
+            "independent": true,
+            "market_id": 109287,
+            "prompt": "Who leads among unvisited 2026 Joe Rogan guests?",
+            "short": "Joe Rogan guest leader",
+            "context": "More than one of these figures could appear on the show in 2026.",
+            "options": [
+              {
+                "outcome_name": "Sam Altman",
+                "label": "Sam Altman",
+                "short": "Altman",
+                "emoji": "🤖"
+              },
+              {
+                "outcome_name": "Tulsi Gabbard",
+                "label": "Tulsi Gabbard",
+                "short": "Gabbard",
+                "emoji": "🏛️"
+              },
+              {
+                "outcome_name": "Bernie Sanders",
+                "label": "Bernie Sanders",
+                "short": "Sanders",
+                "emoji": "🗣️"
+              },
+              {
+                "outcome_name": "Vivek Ramaswamy",
+                "label": "Vivek Ramaswamy",
+                "short": "Vivek",
+                "emoji": "🎙️"
+              }
+            ]
+          },
+          {
+            "id": "m2",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "⛳",
+            "extras": [
+              "🏆",
+              "🏌️"
+            ],
+            "prompt": "What chance does Scottie Scheffler have to win the PGA Championship?",
+            "short": "Scheffler PGA chance",
+            "context": "Winning any major golf tournament means topping a 156-player field.",
+            "source": {
+              "market_id": 5,
+              "outcome_name": "Scottie Scheffler"
+            }
+          },
+          {
+            "id": "m3",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🤖",
+            "independent": false,
+            "market_id": 32127334,
+            "prompt": "Which lab is favored to hold the top AI model end of 2026?",
+            "short": "Top AI lab favorite",
+            "context": "Tracks the leading organization on major blind user rankings.",
+            "options": [
+              {
+                "outcome_name": "Anthropic",
+                "label": "Anthropic",
+                "short": "Anthropic",
+                "emoji": "🧠"
+              },
+              {
+                "outcome_name": "OpenAI",
+                "label": "OpenAI",
+                "short": "OpenAI",
+                "emoji": "🚀"
+              },
+              {
+                "outcome_name": "Meta",
+                "label": "Meta",
+                "short": "Meta",
+                "emoji": "🌐"
+              },
+              {
+                "outcome_name": "Google",
+                "label": "Google",
+                "short": "Google",
+                "emoji": "🔍"
+              }
+            ]
+          },
+          {
+            "id": "m4",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏒",
+            "extras": [
+              "🐻",
+              "❄️"
+            ],
+            "prompt": "What chance do the Bruins have to reach Round 2 of the 2027 NHL playoffs?",
+            "short": "Bruins reach NHL Round 2",
+            "context": "First-round series take seven games to settle in April.",
+            "source": {
+              "market_id": 61380674,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "m5",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎮",
+            "independent": false,
+            "market_id": 67717832,
+            "prompt": "Which release window leads for GTA VI on PC?",
+            "short": "GTA VI PC window favorite",
+            "context": "Rockstar's PC launch window typically lags the console version.",
+            "options": [
+              {
+                "outcome_name": "January 2027",
+                "label": "January 2027",
+                "short": "Jan 2027",
+                "emoji": "❄️"
+              },
+              {
+                "outcome_name": "February 2027",
+                "label": "February 2027",
+                "short": "Feb 2027",
+                "emoji": "📅"
+              },
+              {
+                "outcome_name": "After March 2027",
+                "label": "After March 2027",
+                "short": "After Mar",
+                "emoji": "⏳"
+              },
+              {
+                "outcome_name": "March 2027",
+                "label": "March 2027",
+                "short": "Mar 2027",
+                "emoji": "🎮"
+              }
+            ]
+          }
+        ],
+        "hard": [
+          {
+            "id": "h1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐆",
+            "extras": [
+              "🏈",
+              "🏆"
+            ],
+            "prompt": "Carolina Panthers win the NFC South division",
+            "short": "Panthers win NFC South",
+            "context": "Divisional ties come down to head-to-head records in January.",
+            "source": {
+              "market_id": 53672,
+              "outcome_name": "Carolina"
+            },
+            "roastHigh": "{g} went bold on Carolina at {s}% against {w}.",
+            "roastLow": "{g} dropped Carolina to {s}% when the world says {w}."
+          },
+          {
+            "id": "h2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "📈",
+            "extras": [
+              "🤖",
+              "🏛️"
+            ],
+            "prompt": "Anthropic joins the Nasdaq-100 index by end of 2026",
+            "short": "Anthropic enters Nasdaq-100",
+            "context": "Rebalancing happens once a year in December for eligible listings.",
+            "source": {
+              "market_id": 71380656,
+              "outcome_name": "December 31, 2026"
+            },
+            "roastHigh": "{g} pinned {n} at {s}% — near a lock, vs {w}.",
+            "roastLow": "{g} guessed just {s}% when the world puts {n} at {w}."
+          },
+          {
+            "id": "h3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎮",
+            "extras": [
+              "💻",
+              "📆"
+            ],
+            "prompt": "GTA VI launches on PC after March 2027",
+            "short": "GTA VI PC after March 2027",
+            "context": "Rockstar's PC releases have consistently trailed console launches.",
+            "source": {
+              "market_id": 67717832,
+              "outcome_name": "After March 2027"
+            },
+            "roastHigh": "{g} assumed another wait at {s}% vs {w}.",
+            "roastLow": "{g} expected an early port at {s}% — world says {w}."
+          },
+          {
+            "id": "h4",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐶",
+            "extras": [
+              "🏈",
+              "🏆"
+            ],
+            "prompt": "Georgia Bulldogs win the college football championship",
+            "short": "Georgia wins football title",
+            "context": "A twelve-team playoff demands three or four straight wins against ranked foes.",
+            "source": {
+              "market_id": 6601311,
+              "outcome_name": "Georgia Bulldogs"
+            },
+            "roastHigh": "{g} crowned Georgia early at {s}% vs {w}.",
+            "roastLow": "{g} gave Georgia barely {s}%, well under {w}."
+          },
+          {
+            "id": "h5",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🏦",
+            "extras": [
+              "🤖",
+              "📈"
+            ],
+            "prompt": "OpenAI finishes its first public trading day above $1T",
+            "short": "OpenAI debut tops $1T",
+            "context": "A $1T closing figure depends on private growth and public sentiment.",
+            "source": {
+              "market_id": 115379,
+              "outcome_name": "$1T"
+            },
+            "roastHigh": "{g} saw {n} at a full {s}%! Even {is} above the {w} world view.",
+            "roastLow": "{g} trimmed OpenAI down to {s}%, well shy of {w}."
+          }
+        ]
+      },
+      "spares": {
+        "easy": [
+          {
+            "id": "se1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "extras": [
+              "🏆",
+              "🗽"
+            ],
+            "prompt": "The New York Giants win the NFC East division",
+            "short": "Giants win NFC East",
+            "context": "NFC East counts New York, Washington, Dallas and Philadelphia.",
+            "source": {
+              "market_id": 53674,
+              "outcome_name": "New York Giants"
+            }
+          },
+          {
+            "id": "se2",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🛸",
+            "extras": [
+              "🛰️",
+              "🌍"
+            ],
+            "prompt": "The U.S. government confirms alien life exists before 2029",
+            "short": "U.S. confirms alien life",
+            "context": "Covers an official government announcement before January 20, 2029.",
+            "source": {
+              "market_id": 109435,
+              "outcome_name": "Before Jan 20, 2029"
+            }
+          },
+          {
+            "id": "se3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎭",
+            "extras": [
+              "📺",
+              "🎙️"
+            ],
+            "prompt": "Donald Trump appears on Saturday Night Live during his current term",
+            "short": "Trump guest spot on SNL",
+            "context": "He last hosted Saturday Night Live in November 2015.",
+            "source": {
+              "market_id": 108339,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "sm1",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏀",
+            "independent": false,
+            "market_id": 2,
+            "prompt": "Which team is favored for the NBA championship?",
+            "short": "NBA title favorite",
+            "context": "Four top contenders across East and West.",
+            "options": [
+              {
+                "outcome_name": "Oklahoma City Thunder",
+                "label": "Oklahoma City Thunder",
+                "short": "Thunder",
+                "emoji": "⚡"
+              },
+              {
+                "outcome_name": "San Antonio Spurs",
+                "label": "San Antonio Spurs",
+                "short": "Spurs",
+                "emoji": "🏀"
+              },
+              {
+                "outcome_name": "Boston Celtics",
+                "label": "Boston Celtics",
+                "short": "Celtics",
+                "emoji": "☘️"
+              },
+              {
+                "outcome_name": "Philadelphia 76ers",
+                "label": "Philadelphia 76ers",
+                "short": "Sixers",
+                "emoji": "🔔"
+              }
+            ]
+          },
+          {
+            "id": "sm2",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "extras": [
+              "📜",
+              "🏛️"
+            ],
+            "prompt": "What chance does France have to pass its national budget by December 31?",
+            "short": "France budget passes on time",
+            "context": "Divided parliaments in Paris have turned annual budgets into late battles.",
+            "source": {
+              "market_id": 7578123,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "sm3",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🚀",
+            "extras": [
+              "💼",
+              "🤖"
+            ],
+            "prompt": "What chance does Kimi (Moonshot AI) have to go public by March 2027?",
+            "short": "Kimi public by March 2027",
+            "context": "Moonshot AI builds the Kimi assistant in China.",
+            "source": {
+              "market_id": 60626093,
+              "outcome_name": "March 31, 2027"
+            }
+          }
+        ],
+        "hard": [
+          {
+            "id": "sh1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "📜",
+            "extras": [
+              "🇫🇷",
+              "💶"
+            ],
+            "prompt": "France passes a national budget before January 1",
+            "short": "France passes budget",
+            "context": "A missed deadline triggers emergency stopgap tax rules instead.",
+            "source": {
+              "market_id": 7578123,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} had Paris cruising at {s}% vs {w}.",
+            "roastLow": "{g} expected gridlock at {s}% — the world reads {w}."
+          },
+          {
+            "id": "sh2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐻",
+            "extras": [
+              "🏈",
+              "❄️"
+            ],
+            "prompt": "Chicago Bears win the NFC North division",
+            "short": "Bears win NFC North",
+            "context": "Chicago battles Minnesota and Detroit across seventeen weeks.",
+            "source": {
+              "market_id": 53673,
+              "outcome_name": "Chicago"
+            },
+            "roastHigh": "{g} trusted Chicago up to {s}% — the world is at {w}.",
+            "roastLow": "{g} sold Chicago short at {s}% vs {w}."
+          },
+          {
+            "id": "sh3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "⌨️",
+            "extras": [
+              "🤖",
+              "⚡"
+            ],
+            "prompt": "An AI model reaches 1550 on Chatbot Arena by December 31",
+            "short": "1550 Chatbot Arena score",
+            "context": "Blind head-to-head votes push top frontier scores upward each month.",
+            "source": {
+              "market_id": 13793198,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} handed out {s}% like new weights drop daily; {n} had {w}.",
+            "roastLow": "{g} stopped at {s}% on {n} — the board gives it {w}."
+          }
+        ]
+      }
+    },
+    "2026-12-02": {
+      "steps": [
+        {
+          "name": "Easy",
+          "how": "Above or below 50%? Which is more likely? One tap each."
+        },
+        {
+          "name": "Medium",
+          "how": "Pick one of four."
+        },
+        {
+          "name": "Hard",
+          "how": "Slide to the number. Closest wins."
+        }
+      ],
+      "topics": [
+        "Sports",
+        "Money & Tech",
+        "World & Culture"
+      ],
+      "step_cards": {
+        "easy": [
+          {
+            "id": "e1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🏆",
+            "extras": [
+              "🎥",
+              "✨"
+            ],
+            "prompt": "The Odyssey gets nominated for Best Picture at the Oscars",
+            "short": "Odyssey nominated Best Picture",
+            "context": "Christopher Nolan directs Matt Damon in the 2026 epic adaptation.",
+            "source": {
+              "market_id": 5165726,
+              "outcome_name": "The Odyssey"
+            }
+          },
+          {
+            "id": "e2",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "Money & Tech",
+            "emoji": "💼",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "OpenAI hits $1T vs Kimi June IPO",
+            "context": "Compares two major AI listing milestones for 2027.",
+            "options": [
+              {
+                "market_id": 60626093,
+                "outcome_name": "June 30, 2027",
+                "label": "Kimi lists publicly by June 2027",
+                "short": "Kimi IPO June",
+                "emoji": "🚀"
+              },
+              {
+                "market_id": 115379,
+                "outcome_name": "$1T",
+                "label": "OpenAI debuts at $1T or more",
+                "short": "OpenAI $1T+",
+                "emoji": "🤖"
+              }
+            ]
+          },
+          {
+            "id": "e3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🛸",
+            "extras": [
+              "🛰️",
+              "🌍"
+            ],
+            "prompt": "The U.S. government confirms alien life exists before 2029",
+            "short": "U.S. confirms alien life",
+            "context": "Covers an official government announcement before January 20, 2029.",
+            "source": {
+              "market_id": 109435,
+              "outcome_name": "Before Jan 20, 2029"
+            }
+          },
+          {
+            "id": "e4",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "Sports",
+            "emoji": "🏒",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "Bruins Reach Round 2 vs Hurricanes Cup",
+            "context": "One team needs four wins in April; the other needs sixteen across four rounds.",
+            "options": [
+              {
+                "market_id": 61380674,
+                "outcome_name": "Yes",
+                "label": "Bruins reach NHL playoff Round 2",
+                "short": "Bruins Round 2",
+                "emoji": "🐻"
+              },
+              {
+                "market_id": 8,
+                "outcome_name": "Carolina Hurricanes",
+                "label": "Hurricanes win the Stanley Cup",
+                "short": "Canes Cup",
+                "emoji": "🏒"
+              }
+            ]
+          },
+          {
+            "id": "e5",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "extras": [
+              "🏆",
+              "🗽"
+            ],
+            "prompt": "The New York Giants win the NFC East division",
+            "short": "Giants win NFC East",
+            "context": "NFC East counts New York, Washington, Dallas and Philadelphia.",
+            "source": {
+              "market_id": 53674,
+              "outcome_name": "New York Giants"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "m1",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎙️",
+            "independent": false,
+            "market_id": 108237,
+            "prompt": "Who leads to sing the next James Bond theme song?",
+            "short": "Bond theme favorite",
+            "context": "Four artists widely linked with the next 007 title track.",
+            "options": [
+              {
+                "outcome_name": "Raye",
+                "label": "Raye",
+                "short": "Raye",
+                "emoji": "🎤"
+              },
+              {
+                "outcome_name": "Olivia Dean",
+                "label": "Olivia Dean",
+                "short": "Olivia Dean",
+                "emoji": "🎶"
+              },
+              {
+                "outcome_name": "Lana Del Rey",
+                "label": "Lana Del Rey",
+                "short": "Lana",
+                "emoji": "🌹"
+              },
+              {
+                "outcome_name": "Dua Lipa",
+                "label": "Dua Lipa",
+                "short": "Dua Lipa",
+                "emoji": "💃"
+              }
+            ]
+          },
+          {
+            "id": "m2",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🌀",
+            "extras": [
+              "🏒",
+              "🏆"
+            ],
+            "prompt": "What chance do the Carolina Hurricanes have to win the Stanley Cup?",
+            "short": "Hurricanes Stanley Cup chance",
+            "context": "Thirty-two NHL teams chase four playoff rounds each spring.",
+            "source": {
+              "market_id": 8,
+              "outcome_name": "Carolina Hurricanes"
+            }
+          },
+          {
+            "id": "m3",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🎾",
+            "independent": false,
+            "market_id": 72081895,
+            "prompt": "Who leads for the 2027 Men's Australian Open title?",
+            "short": "Melbourne men's favorite",
+            "context": "Melbourne opens the Grand Slam season each January.",
+            "options": [
+              {
+                "outcome_name": "Carlos Alcaraz",
+                "label": "Carlos Alcaraz",
+                "short": "Alcaraz",
+                "emoji": "🎾"
+              },
+              {
+                "outcome_name": "Alexander Zverev",
+                "label": "Alexander Zverev",
+                "short": "Zverev",
+                "emoji": "🏆"
+              },
+              {
+                "outcome_name": "Ben Shelton",
+                "label": "Ben Shelton",
+                "short": "Shelton",
+                "emoji": "🇺🇸"
+              },
+              {
+                "outcome_name": "Novak Djokovic",
+                "label": "Novak Djokovic",
+                "short": "Djokovic",
+                "emoji": "🇷🇸"
+              }
+            ]
+          },
+          {
+            "id": "m4",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "💻",
+            "extras": [
+              "🏛️",
+              "🔌"
+            ],
+            "prompt": "What chance is given to U.S. government equity ownership in Nvidia?",
+            "short": "U.S. government Nvidia equity",
+            "context": "Measures public policy proposals touching strategic chipmakers.",
+            "source": {
+              "market_id": 13794309,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "m5",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏀",
+            "independent": false,
+            "market_id": 2,
+            "prompt": "Which team is favored for the NBA championship?",
+            "short": "NBA title favorite",
+            "context": "Four top contenders across East and West.",
+            "options": [
+              {
+                "outcome_name": "Oklahoma City Thunder",
+                "label": "Oklahoma City Thunder",
+                "short": "Thunder",
+                "emoji": "⚡"
+              },
+              {
+                "outcome_name": "San Antonio Spurs",
+                "label": "San Antonio Spurs",
+                "short": "Spurs",
+                "emoji": "🏀"
+              },
+              {
+                "outcome_name": "Boston Celtics",
+                "label": "Boston Celtics",
+                "short": "Celtics",
+                "emoji": "☘️"
+              },
+              {
+                "outcome_name": "Philadelphia 76ers",
+                "label": "Philadelphia 76ers",
+                "short": "Sixers",
+                "emoji": "🔔"
+              }
+            ]
+          }
+        ],
+        "hard": [
+          {
+            "id": "h1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🗽",
+            "extras": [
+              "🏈",
+              "🏆"
+            ],
+            "prompt": "The New York Giants win the NFC East division",
+            "short": "Giants take NFC East",
+            "context": "New York leads Washington and Dallas in the division standings.",
+            "source": {
+              "market_id": 53674,
+              "outcome_name": "New York Giants"
+            },
+            "roastHigh": "{g} locked the Giants at {s}% vs {w}.",
+            "roastLow": "{g} doubted New York at {s}% — well short of {w}."
+          },
+          {
+            "id": "h2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎨",
+            "extras": [
+              "🧱",
+              "🏙️"
+            ],
+            "prompt": "Banksy unveils a new street piece before December 31",
+            "short": "New Banksy before New Year",
+            "context": "Banksy works unannounced across London and international cities.",
+            "source": {
+              "market_id": 30587891,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} spotted fresh paint at {s}% against {w}.",
+            "roastLow": "{g} gave Banksy just {s}% when the world says {w}."
+          },
+          {
+            "id": "h3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🚀",
+            "extras": [
+              "🤖",
+              "📆"
+            ],
+            "prompt": "Kimi (Moonshot AI) goes public by June 30, 2027",
+            "short": "Kimi public by June 2027",
+            "context": "Tracks Moonshot AI completing a public stock debut by mid-2027.",
+            "source": {
+              "market_id": 60626093,
+              "outcome_name": "June 30, 2027"
+            },
+            "roastHigh": "{g} rushed Kimi onto the exchange at {s}% vs {w}.",
+            "roastLow": "{g} kept {n} on the bench at {s}% — the world says {w}."
+          },
+          {
+            "id": "h4",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "📰",
+            "extras": [
+              "✨",
+              "🏆"
+            ],
+            "prompt": "James Talarico is named 2026 TIME Person of the Year",
+            "short": "Talarico named Person of Year",
+            "context": "TIME announces its Person of the Year honoree every December.",
+            "source": {
+              "market_id": 27467306,
+              "outcome_name": "James Talarico"
+            },
+            "roastHigh": "{g} put {n} on the cover at {s}% vs {w}.",
+            "roastLow": "{g} went cautious at {s}% while the world says {w}."
+          },
+          {
+            "id": "h5",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "➗",
+            "extras": [
+              "🧠",
+              "✨"
+            ],
+            "prompt": "OpenAI announces another Millennium Prize solution in 2027",
+            "short": "OpenAI Millennium Prize 2027",
+            "context": "Six unsolved problems carry $1M prizes from the Clay Institute.",
+            "source": {
+              "market_id": 60607595,
+              "outcome_name": "December 31, 2027"
+            },
+            "roastHigh": "{g} expected a proof this year at {s}% vs {w}.",
+            "roastLow": "{g} kept math conservative at {s}% — the world has {w}."
+          }
+        ]
+      },
+      "spares": {
+        "easy": [
+          {
+            "id": "se1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "extras": [
+              "🗳️",
+              "🌍"
+            ],
+            "prompt": "Marine Le Pen's French election chance dips below 40% this year",
+            "short": "Le Pen dips under 40%",
+            "context": "France's next presidential election is scheduled for spring 2027.",
+            "source": {
+              "market_id": 70883374,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "se2",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "⌨️",
+            "extras": [
+              "🤖",
+              "📈"
+            ],
+            "prompt": "Any AI model reaches a Chatbot Arena rating of 1550 by December 31",
+            "short": "AI reaches 1550 Arena score",
+            "context": "Chatbot Arena ratings update as users score blind side-by-side replies.",
+            "source": {
+              "market_id": 13793198,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "se3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇮",
+            "extras": [
+              "😊",
+              "🌍"
+            ],
+            "prompt": "Finland places first again in the 2027 World Happiness Report",
+            "short": "Finland tops happiness list",
+            "context": "Finland has ranked number one in the annual report eight years running.",
+            "source": {
+              "market_id": 70400892,
+              "outcome_name": "Finland"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "sm1",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "extras": [
+              "📜",
+              "🏛️"
+            ],
+            "prompt": "What chance does France have to pass its national budget by December 31?",
+            "short": "France budget passes on time",
+            "context": "Divided parliaments in Paris have turned annual budgets into late battles.",
+            "source": {
+              "market_id": 7578123,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "sm2",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎬",
+            "independent": false,
+            "market_id": 6173044,
+            "prompt": "Which film leads the Best Picture race?",
+            "short": "Best Picture favorite",
+            "context": "Early awards favorites ahead of winter critics' votes.",
+            "options": [
+              {
+                "outcome_name": "You Can See Everything",
+                "label": "You Can See Everything",
+                "short": "Everything",
+                "emoji": "🎞️"
+              },
+              {
+                "outcome_name": "Dune: Part Three",
+                "label": "Dune: Part Three",
+                "short": "Dune 3",
+                "emoji": "🏜️"
+              },
+              {
+                "outcome_name": "The Black Ball",
+                "label": "The Black Ball",
+                "short": "Black Ball",
+                "emoji": "🎱"
+              },
+              {
+                "outcome_name": "The Odyssey",
+                "label": "The Odyssey",
+                "short": "Odyssey",
+                "emoji": "⚔️"
+              }
+            ]
+          },
+          {
+            "id": "sm3",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🤖",
+            "extras": [
+              "📈",
+              "🏦"
+            ],
+            "prompt": "What chance does OpenAI have to finish day one above $1.2T?",
+            "short": "OpenAI debut above $1.2T",
+            "context": "An initial listing value above $1.2T would top every tech debut on record.",
+            "source": {
+              "market_id": 115379,
+              "outcome_name": "$1.2T"
+            }
+          }
+        ],
+        "hard": [
+          {
+            "id": "sh1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐻",
+            "extras": [
+              "🏒",
+              "❄️"
+            ],
+            "prompt": "Boston Bruins reach Round 2 of the 2027 NHL playoffs",
+            "short": "Bruins make Round 2",
+            "context": "Boston has to finish top four in the East first, then win a series.",
+            "source": {
+              "market_id": 61380674,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} rode Boston hard at {s}% vs {w}.",
+            "roastLow": "{g} wrote off Boston early at {s}% — the world is at {w}."
+          },
+          {
+            "id": "sh2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎬",
+            "extras": [
+              "🏆",
+              "⚔️"
+            ],
+            "prompt": "The Odyssey wins Best Picture at the Academy Awards",
+            "short": "The Odyssey wins Best Picture",
+            "context": "Ranked ballots mean broad support matters just as much as first-place votes.",
+            "source": {
+              "market_id": 6173044,
+              "outcome_name": "The Odyssey"
+            },
+            "roastHigh": "{g} handed out an Oscar at {s}% vs {w}.",
+            "roastLow": "{g} left The Odyssey at {s}% while the world says {w}."
+          },
+          {
+            "id": "sh3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🔍",
+            "extras": [
+              "🤖",
+              "🏆"
+            ],
+            "prompt": "Google holds the number-one AI model spot at the end of 2026",
+            "short": "Google top AI at year-end",
+            "context": "Front-runners can swap quickly after major autumn releases.",
+            "source": {
+              "market_id": 32127334,
+              "outcome_name": "Google"
+            },
+            "roastHigh": "{g} went all-in at {s}% — higher even than the {w} consensus.",
+            "roastLow": "{g} faded Google down to {s}%, well below {w}."
+          }
+        ]
+      }
+    },
+    "2026-12-03": {
+      "steps": [
+        {
+          "name": "Easy",
+          "how": "Above or below 50%? Which is more likely? One tap each."
+        },
+        {
+          "name": "Medium",
+          "how": "Pick one of four."
+        },
+        {
+          "name": "Hard",
+          "how": "Slide to the number. Closest wins."
+        }
+      ],
+      "topics": [
+        "Sports",
+        "Money & Tech",
+        "World & Culture"
+      ],
+      "step_cards": {
+        "easy": [
+          {
+            "id": "e1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "extras": [
+              "🗳️",
+              "🌍"
+            ],
+            "prompt": "Marine Le Pen's French election chance dips below 40% this year",
+            "short": "Le Pen dips under 40%",
+            "context": "France's next presidential election is scheduled for spring 2027.",
+            "source": {
+              "market_id": 70883374,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "e2",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "World & Culture",
+            "emoji": "🕹️",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "GTA VI late PC vs House vote by May 2027",
+            "context": "Wait time for Rockstar's PC release alongside an early 2027 Congressional milestone.",
+            "options": [
+              {
+                "market_id": 112818,
+                "outcome_name": "Before May 1, 2027",
+                "label": "House impeaches Trump by May 2027",
+                "short": "Impeachment May",
+                "emoji": "🏛️"
+              },
+              {
+                "market_id": 67717832,
+                "outcome_name": "After March 2027",
+                "label": "GTA VI PC launches after March 2027",
+                "short": "GTA VI after Mar",
+                "emoji": "🎮"
+              }
+            ]
+          },
+          {
+            "id": "e3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "⌨️",
+            "extras": [
+              "🤖",
+              "📈"
+            ],
+            "prompt": "Any AI model reaches a Chatbot Arena rating of 1550 by December 31",
+            "short": "AI reaches 1550 Arena score",
+            "context": "Chatbot Arena ratings update as users score blind side-by-side replies.",
+            "source": {
+              "market_id": 13793198,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "e4",
+            "kind": "versus",
+            "flavor": "versus",
+            "topic": "Money & Tech",
+            "emoji": "🧠",
+            "ours": true,
+            "prompt": "Which is more likely?",
+            "short": "Anthropic AI lead vs U.S. Nvidia ownership",
+            "context": "Puts two major tech milestones side by side.",
+            "options": [
+              {
+                "market_id": 32127334,
+                "outcome_name": "Anthropic",
+                "label": "Anthropic leads AI rankings end of 2026",
+                "short": "Anthropic top AI",
+                "emoji": "🤖"
+              },
+              {
+                "market_id": 13794309,
+                "outcome_name": "Yes",
+                "label": "U.S. takes equity in Nvidia",
+                "short": "U.S. Nvidia equity",
+                "emoji": "🏛️"
+              }
+            ]
+          },
+          {
+            "id": "e5",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎭",
+            "extras": [
+              "📺",
+              "🎙️"
+            ],
+            "prompt": "Donald Trump appears on Saturday Night Live during his current term",
+            "short": "Trump guest spot on SNL",
+            "context": "He last hosted Saturday Night Live in November 2015.",
+            "source": {
+              "market_id": 108339,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "m1",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "⚽",
+            "independent": false,
+            "market_id": 60607786,
+            "prompt": "Which club is favored to top the Champions League table?",
+            "short": "Champions League phase favorite",
+            "context": "Europe's 36 clubs play an eight-match league phase before the knockouts.",
+            "options": [
+              {
+                "outcome_name": "Paris Saint-Germain",
+                "label": "Paris Saint-Germain",
+                "short": "PSG",
+                "emoji": "🔵"
+              },
+              {
+                "outcome_name": "Barcelona",
+                "label": "Barcelona",
+                "short": "Barcelona",
+                "emoji": "🔴"
+              },
+              {
+                "outcome_name": "Real Madrid",
+                "label": "Real Madrid",
+                "short": "Real Madrid",
+                "emoji": "👑"
+              },
+              {
+                "outcome_name": "Arsenal",
+                "label": "Arsenal",
+                "short": "Arsenal",
+                "emoji": "🔫"
+              }
+            ]
+          },
+          {
+            "id": "m2",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇷",
+            "extras": [
+              "📜",
+              "🏛️"
+            ],
+            "prompt": "What chance does France have to pass its national budget by December 31?",
+            "short": "France budget passes on time",
+            "context": "Divided parliaments in Paris have turned annual budgets into late battles.",
+            "source": {
+              "market_id": 7578123,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "m3",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎬",
+            "independent": false,
+            "market_id": 6173044,
+            "prompt": "Which film leads the Best Picture race?",
+            "short": "Best Picture favorite",
+            "context": "Early awards favorites ahead of winter critics' votes.",
+            "options": [
+              {
+                "outcome_name": "You Can See Everything",
+                "label": "You Can See Everything",
+                "short": "Everything",
+                "emoji": "🎞️"
+              },
+              {
+                "outcome_name": "Dune: Part Three",
+                "label": "Dune: Part Three",
+                "short": "Dune 3",
+                "emoji": "🏜️"
+              },
+              {
+                "outcome_name": "The Black Ball",
+                "label": "The Black Ball",
+                "short": "Black Ball",
+                "emoji": "🎱"
+              },
+              {
+                "outcome_name": "The Odyssey",
+                "label": "The Odyssey",
+                "short": "Odyssey",
+                "emoji": "⚔️"
+              }
+            ]
+          },
+          {
+            "id": "m4",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "extras": [
+              "🏆",
+              "🌉"
+            ],
+            "prompt": "What chance do the San Francisco 49ers have to win the Super Bowl?",
+            "short": "49ers Super Bowl chance",
+            "context": "San Francisco currently sits atop a crowded Super Bowl race.",
+            "source": {
+              "market_id": 86832,
+              "outcome_name": "San Francisco 49ers"
+            }
+          },
+          {
+            "id": "m5",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎵",
+            "independent": true,
+            "market_id": 108306,
+            "prompt": "Which genre leads for Beyonce's next album?",
+            "short": "Beyonce genre favorite",
+            "context": "An album can receive multiple genre tags upon release.",
+            "options": [
+              {
+                "outcome_name": "R&B/Hip-Hop",
+                "label": "R&B / Hip-Hop",
+                "short": "R&B",
+                "emoji": "💿"
+              },
+              {
+                "outcome_name": "Americana/Folk",
+                "label": "Americana / Folk",
+                "short": "Folk",
+                "emoji": "🪕"
+              },
+              {
+                "outcome_name": "Rock",
+                "label": "Rock",
+                "short": "Rock",
+                "emoji": "🎸"
+              },
+              {
+                "outcome_name": "Gospel",
+                "label": "Gospel",
+                "short": "Gospel",
+                "emoji": "🎶"
+              }
+            ]
+          }
+        ],
+        "hard": [
+          {
+            "id": "h1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐻",
+            "extras": [
+              "🏒",
+              "❄️"
+            ],
+            "prompt": "Boston Bruins reach Round 2 of the 2027 NHL playoffs",
+            "short": "Bruins make Round 2",
+            "context": "Boston has to finish top four in the East first, then win a series.",
+            "source": {
+              "market_id": 61380674,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} rode Boston hard at {s}% vs {w}.",
+            "roastLow": "{g} wrote off Boston early at {s}% — the world is at {w}."
+          },
+          {
+            "id": "h2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "💻",
+            "extras": [
+              "🏛️",
+              "📊"
+            ],
+            "prompt": "U.S. government takes equity ownership in Nvidia",
+            "sub": "Any equity holding announced under this policy.",
+            "short": "U.S. equity in Nvidia",
+            "context": "Public focus on chip supply keeps strategic deals in the news.",
+            "source": {
+              "market_id": 13794309,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} saw {n} buying heavy at {s}% — the world has it at {w}.",
+            "roastLow": "{g} barely blinked at {s}% for {n}; the world sits at {w}."
+          },
+          {
+            "id": "h3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🎾",
+            "extras": [
+              "🏆",
+              "⚡"
+            ],
+            "prompt": "Aryna Sabalenka wins the 2027 Women's Australian Open",
+            "short": "Sabalenka wins Melbourne",
+            "context": "A 128-player draw gives even the favorite roughly one shot in five.",
+            "source": {
+              "market_id": 72081893,
+              "outcome_name": "Aryna Sabalenka"
+            },
+            "roastHigh": "{g} picked {s}% in a 128-player bracket — the world has {w}.",
+            "roastLow": "{g} dropped Sabalenka to {s}%; the world sits at {w}."
+          },
+          {
+            "id": "h4",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "📜",
+            "extras": [
+              "🇫🇷",
+              "💶"
+            ],
+            "prompt": "France passes a national budget before January 1",
+            "short": "France passes budget",
+            "context": "A missed deadline triggers emergency stopgap tax rules instead.",
+            "source": {
+              "market_id": 7578123,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} had Paris cruising at {s}% vs {w}.",
+            "roastLow": "{g} expected gridlock at {s}% — the world reads {w}."
+          },
+          {
+            "id": "h5",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "📊",
+            "extras": [
+              "🚀",
+              "🏦"
+            ],
+            "prompt": "OpenAI debuts above $1.2T on its first trading day",
+            "short": "OpenAI debut tops $1.2T",
+            "context": "Counts only the closing valuation at the end of day one.",
+            "source": {
+              "market_id": 115379,
+              "outcome_name": "$1.2T"
+            },
+            "roastHigh": "{g} went bold at {s}% for {n}; the world reads {w}.",
+            "roastLow": "{g} cooled to {s}% on {n} while the world stays at {w}."
+          }
+        ]
+      },
+      "spares": {
+        "easy": [
+          {
+            "id": "se1",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🏈",
+            "extras": [
+              "🏆",
+              "🗽"
+            ],
+            "prompt": "The New York Giants win the NFC East division",
+            "short": "Giants win NFC East",
+            "context": "NFC East counts New York, Washington, Dallas and Philadelphia.",
+            "source": {
+              "market_id": 53674,
+              "outcome_name": "New York Giants"
+            }
+          },
+          {
+            "id": "se2",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "📉",
+            "extras": [
+              "💵",
+              "🏛️"
+            ],
+            "prompt": "A U.S. recession is declared before the end of 2026",
+            "short": "U.S. recession in 2026",
+            "context": "Official recession calls follow GDP declines and labor slowdowns.",
+            "source": {
+              "market_id": 113012,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "se3",
+            "kind": "side",
+            "flavor": "side",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🇫🇮",
+            "extras": [
+              "😊",
+              "🌍"
+            ],
+            "prompt": "Finland places first again in the 2027 World Happiness Report",
+            "short": "Finland tops happiness list",
+            "context": "Finland has ranked number one in the annual report eight years running.",
+            "source": {
+              "market_id": 70400892,
+              "outcome_name": "Finland"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "sm1",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "⚾",
+            "extras": [
+              "🏆",
+              "🌞"
+            ],
+            "prompt": "What chance do the Dodgers have to win the 2027 World Series?",
+            "short": "Dodgers 2027 Series chance",
+            "context": "Los Angeles headlines next season's baseball championship race.",
+            "source": {
+              "market_id": 68198529,
+              "outcome_name": "Los Angeles Dodgers"
+            }
+          },
+          {
+            "id": "sm2",
+            "kind": "leader",
+            "flavor": "leader",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🤖",
+            "independent": false,
+            "market_id": 32127334,
+            "prompt": "Which lab is favored to hold the top AI model end of 2026?",
+            "short": "Top AI lab favorite",
+            "context": "Tracks the leading organization on major blind user rankings.",
+            "options": [
+              {
+                "outcome_name": "Anthropic",
+                "label": "Anthropic",
+                "short": "Anthropic",
+                "emoji": "🧠"
+              },
+              {
+                "outcome_name": "OpenAI",
+                "label": "OpenAI",
+                "short": "OpenAI",
+                "emoji": "🚀"
+              },
+              {
+                "outcome_name": "Meta",
+                "label": "Meta",
+                "short": "Meta",
+                "emoji": "🌐"
+              },
+              {
+                "outcome_name": "Google",
+                "label": "Google",
+                "short": "Google",
+                "emoji": "🔍"
+              }
+            ]
+          },
+          {
+            "id": "sm3",
+            "kind": "four",
+            "flavor": "four",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "🚀",
+            "extras": [
+              "💼",
+              "🤖"
+            ],
+            "prompt": "What chance does Kimi (Moonshot AI) have to go public by March 2027?",
+            "short": "Kimi public by March 2027",
+            "context": "Moonshot AI builds the Kimi assistant in China.",
+            "source": {
+              "market_id": 60626093,
+              "outcome_name": "March 31, 2027"
+            }
+          }
+        ],
+        "hard": [
+          {
+            "id": "sh1",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Sports",
+            "emoji": "🐻",
+            "extras": [
+              "🏈",
+              "❄️"
+            ],
+            "prompt": "Chicago Bears win the NFC North division",
+            "short": "Bears win NFC North",
+            "context": "Chicago battles Minnesota and Detroit across seventeen weeks.",
+            "source": {
+              "market_id": 53673,
+              "outcome_name": "Chicago"
+            },
+            "roastHigh": "{g} trusted Chicago up to {s}% — the world is at {w}.",
+            "roastLow": "{g} sold Chicago short at {s}% vs {w}."
+          },
+          {
+            "id": "sh2",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "World & Culture",
+            "emoji": "🎙️",
+            "extras": [
+              "🎶",
+              "🎬"
+            ],
+            "prompt": "Raye sings the theme song for the next James Bond film",
+            "short": "Raye lands Bond theme",
+            "context": "Past winners include Adele, Billie Eilish and Sam Smith.",
+            "source": {
+              "market_id": 108237,
+              "outcome_name": "Raye"
+            },
+            "roastHigh": "{g} booked the studio early at {s}% against {w}.",
+            "roastLow": "{g} went tiny at {s}% while the world gives Raye {w}."
+          },
+          {
+            "id": "sh3",
+            "kind": "chance",
+            "flavor": "straight",
+            "ours": false,
+            "topic": "Money & Tech",
+            "emoji": "⌨️",
+            "extras": [
+              "🤖",
+              "⚡"
+            ],
+            "prompt": "An AI model reaches 1550 on Chatbot Arena by December 31",
+            "short": "1550 Chatbot Arena score",
+            "context": "Blind head-to-head votes push top frontier scores upward each month.",
+            "source": {
+              "market_id": 13793198,
+              "outcome_name": "Yes"
+            },
+            "roastHigh": "{g} handed out {s}% like new weights drop daily; {n} had {w}.",
+            "roastLow": "{g} stopped at {s}% on {n} — the board gives it {w}."
+          }
+        ]
+      }
+    }
+  }
+}
