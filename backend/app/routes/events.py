@@ -29726,6 +29726,13 @@ async def get_related_futures(
         _write_related_futures_memo(event_id, rfc.source_status_of(body), body)
         return body
     if state == "stale_ok" and body is not None:
+        live_ok, _live_reason = await rfc.confirm_scheduled_mirror_live(
+            db, event_id, body
+        )
+        if not live_ok:
+            state = "stale_too_old"
+            body = None
+    if state == "stale_ok" and body is not None:
         _strip_related_futures_american_odds(body)
         # Exactly one rebuild behind the mirror, fleet-wide-ish: single-flight is
         # per process (`_STALE_REFRESH_INFLIGHT`), and the shared slot the
@@ -29861,6 +29868,9 @@ async def _publish_related_futures(
     # genuinely unencodable value would disable this cache SILENTLY.
     enveloped = jsonable_encoder(
         rfc.stamp(response, source_status=source_status, lifecycle_watermark=watermark)
+    )
+    enveloped = await rfc.attach_scheduled_commence_time(
+        db, event_id, response, source_status, enveloped
     )
     rfc.write(event_id, enveloped)
     served = rfc.with_availability(enveloped, rfc.AVAILABILITY_LIVE)
@@ -32472,8 +32482,12 @@ async def _load_fast_nugget_stakes(
 
     try:
         l2_rf, state = rfc.read(resolved_id)
-        if state in ("live", "stale_ok") and isinstance(l2_rf, dict):
+        if state == "live" and isinstance(l2_rf, dict):
             return l2_rf
+        if state == "stale_ok" and isinstance(l2_rf, dict):
+            live_ok, _ = await rfc.confirm_scheduled_mirror_live(db, resolved_id, l2_rf)
+            if live_ok:
+                return l2_rf
     except Exception as exc:
         logger.debug("nuggets: L2 related_futures cache read failed for event %s: %s", resolved_id, exc)
 
