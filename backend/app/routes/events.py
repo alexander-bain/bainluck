@@ -26694,6 +26694,9 @@ async def _publish_game_markets(
             response, source_status=source_status, lifecycle_watermark=watermark
         )
     )
+    enveloped = await gmc.attach_scheduled_commence_time(
+        db, event_id, response, source_status, enveloped
+    )
     served = gmc.with_availability(enveloped, gmc.AVAILABILITY_LIVE)
     # #6975: publish under the id the caller ASKED FOR as well as the row the
     # payload was built from — the detail route's Q050 rule, applied to this
@@ -29861,6 +29864,9 @@ async def _publish_related_futures(
     # genuinely unencodable value would disable this cache SILENTLY.
     enveloped = jsonable_encoder(
         rfc.stamp(response, source_status=source_status, lifecycle_watermark=watermark)
+    )
+    enveloped = await rfc.attach_scheduled_commence_time(
+        db, event_id, response, source_status, enveloped
     )
     rfc.write(event_id, enveloped)
     served = rfc.with_availability(enveloped, rfc.AVAILABILITY_LIVE)

@@ -155,6 +155,9 @@ SOURCE_STATUS_FIELD = _gmc.SOURCE_STATUS_FIELD
 #: is why that mattered — age alone cannot express "built by code that no longer
 #: exists", because the payload a release invalidates is YOUNG, not old.
 BUILD_FIELD = _gmc.BUILD_FIELD
+SCHEDULED_STATUS = _gmc.SCHEDULED_STATUS
+STALE_SERVE_CEILING_SCHEDULED = _gmc.STALE_SERVE_CEILING_SCHEDULED
+SOURCE_COMMENCE_TIME_FIELD = _gmc.SOURCE_COMMENCE_TIME_FIELD
 
 #: Explicit content/contract version stamped into `/related-futures` cache
 #: entries (#13573). Bump whenever `_build_related_futures` changes what a
@@ -172,6 +175,11 @@ def current_cache_version() -> str:
 def is_final(status: Any) -> bool:
     """True when `status` is a finished game, by the page's own definition."""
     return _gmc.is_final(status)
+
+
+def is_scheduled(status: Any) -> bool:
+    """True when `status` is a scheduled (pre-kickoff) game."""
+    return _gmc.is_scheduled(status)
 
 
 def fresh_ttl(status: Any) -> int:
@@ -200,6 +208,7 @@ def stamp(
     source_status: Any,
     created_at: datetime | None = None,
     lifecycle_watermark: datetime | None = None,
+    source_commence_time: datetime | str | None = None,
 ) -> dict[str, Any]:
     """Attach the producer half of the envelope, plus this tier's raw status.
 
@@ -215,6 +224,9 @@ def stamp(
     envelope = dict(enveloped.get(ENVELOPE_FIELD) or {})
     envelope[SOURCE_STATUS_FIELD] = str(source_status or "")
     envelope[BUILD_FIELD] = current_cache_version()
+    commence_dt = _gmc._normalize_utc(source_commence_time)
+    if commence_dt is not None:
+        envelope[SOURCE_COMMENCE_TIME_FIELD] = commence_dt.isoformat()
     enveloped[ENVELOPE_FIELD] = envelope
     return enveloped
 
@@ -254,6 +266,50 @@ def source_status_of(payload: Any) -> str:
     return _gmc.source_status_of(payload)
 
 
+def source_commence_time_of(payload: Any) -> datetime | None:
+    """UTC kickoff stamped on a stored payload, or `None` when absent/invalid."""
+    return _gmc.source_commence_time_of(payload)
+
+
+def with_source_commence_time(
+    payload: dict[str, Any], commence_time: datetime | str | None
+) -> dict[str, Any]:
+    """Attach normalized UTC `source_commence_time` to a stamped payload."""
+    return _gmc.with_source_commence_time(payload, commence_time)
+
+
+async def lookup_commence_time(db, event_id: int) -> datetime | None:
+    """Best-effort `Event.commence_time` lookup on a build (#13573)."""
+    try:
+        from sqlalchemy import select
+
+        from app.models.models import Event
+
+        commence_time = await db.scalar(
+            select(Event.commence_time).where(Event.id == event_id)
+        )
+    except Exception:
+        logger.warning("related-futures: commence_time query failed", exc_info=True)
+        return None
+    if not isinstance(commence_time, datetime):
+        return None
+    return _gmc._normalize_utc(commence_time)
+
+
+async def attach_scheduled_commence_time(
+    db, event_id: int, response: Any, source_status: Any, enveloped: dict[str, Any]
+) -> dict[str, Any]:
+    """Resolve and stamp `source_commence_time` onto `scheduled` cache payloads."""
+    return await _gmc.attach_scheduled_commence_time(
+        db,
+        event_id,
+        response,
+        source_status,
+        enveloped,
+        lookup_fn=lookup_commence_time,
+    )
+
+
 def mirror_is_servable(
     payload: Any, now: datetime | None = None
 ) -> tuple[bool, str]:
@@ -272,7 +328,14 @@ def mirror_is_servable(
         # though it could — and here it would additionally be served under an
         # age bound we are unable to evaluate.
         return False, "no_created_at"
-    ceiling = stale_serve_ceiling_seconds(source_status_of(payload))
+    if _gmc.scheduled_kickoff_passed(payload, now):
+        return False, "kickoff_passed"
+    status = source_status_of(payload)
+    ceiling = (
+        _gmc.stale_serve_ceiling_seconds(status, payload)
+        if is_scheduled(status)
+        else stale_serve_ceiling_seconds(status)
+    )
     if age > ceiling:
         return False, "too_old"
     return True, "fresh_enough"
