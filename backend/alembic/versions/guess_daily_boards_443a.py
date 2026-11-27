@@ -46,6 +46,7 @@ def upgrade():
         sa.Column("nickname_lower", sa.String(length=12), nullable=False),
         sa.Column("answers", _JSON_TYPE, nullable=False),
         sa.Column("step_times", _JSON_TYPE, nullable=False),
+        sa.Column("hidden_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "day_pt",

@@ -359,6 +359,23 @@
             "id": "se1",
             "kind": "side",
             "topic": "Odd stuff",
+            "emoji": "🧱",
+            "extras": [
+              "🎮",
+              "💼"
+            ],
+            "prompt": "Roblox is worth more than Epic Games on December 31",
+            "short": "Roblox worth more than Epic",
+            "context": "Epic Games makes Fortnite. Roblox is a public company and Epic is not.",
+            "source": {
+              "market_id": 23449653,
+              "outcome_name": "Roblox"
+            }
+          },
+          {
+            "id": "se2",
+            "kind": "side",
+            "topic": "Odd stuff",
             "emoji": "❄️",
             "extras": [
               "🎅",
@@ -378,17 +395,17 @@
             "id": "sm1",
             "kind": "four",
             "topic": "Odd stuff",
-            "emoji": "🧱",
+            "emoji": "🍿",
             "extras": [
-              "🎮",
-              "💼"
+              "🎟️",
+              "📊"
             ],
-            "prompt": "Roblox is worth more than Epic Games on December 31",
-            "short": "Roblox worth more than Epic",
-            "context": "Epic Games makes Fortnite. Roblox is a public company and Epic is not.",
+            "prompt": "2026 ends as the seventh, eighth or ninth biggest year ever at the US box office",
+            "short": "2026’s place at the box office",
+            "context": "The biggest year on record is 2018, when US theaters sold $11.9 billion in tickets.",
             "source": {
-              "market_id": 23449653,
-              "outcome_name": "Roblox"
+              "market_id": 58610625,
+              "outcome_name": "7th-9th"
             }
           }
         ],
@@ -502,22 +519,22 @@
             "topic": "Stars",
             "emoji": "🎞️",
             "prompt": "Which is more likely?",
-            "short": "An Oscar nod for Toy Story 5’s song, or one for Dune: Part Three",
-            "context": "Oscar nominations come out in January. Five songs and ten films make those two lists.",
+            "short": "An Oscar nod for Dune: Part Three, or one for Toy Story 5’s song",
+            "context": "Oscar nominations come out in January. Ten films and five songs make those two lists.",
             "options": [
-              {
-                "market_id": 66135184,
-                "outcome_name": "Yes",
-                "label": "Toy Story 5’s song gets an Oscar nomination",
-                "short": "Toy Story 5’s song",
-                "emoji": "🤠"
-              },
               {
                 "market_id": 27988778,
                 "outcome_name": "Yes",
                 "label": "Dune: Part Three gets a best picture nomination",
                 "short": "Dune: Part Three",
                 "emoji": "🏜️"
+              },
+              {
+                "market_id": 66135184,
+                "outcome_name": "Yes",
+                "label": "Toy Story 5’s song gets an Oscar nomination",
+                "short": "Toy Story 5’s song",
+                "emoji": "🤠"
               }
             ]
           },
@@ -666,7 +683,7 @@
               "market_id": 113766,
               "outcome_name": "<5"
             },
-            "answer_slot": 2
+            "answer_slot": 3
           }
         ],
         "hard": [

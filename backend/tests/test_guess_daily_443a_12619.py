@@ -504,7 +504,11 @@ def test_guess_group_entry_schema_stores_only_privacy_allowed_columns():
         "nickname_lower",
         "answers",
         "step_times",
+        "hidden_at",
     }
+    hidden_col = GuessGroupEntry.__table__.columns["hidden_at"]
+    assert hidden_col.nullable is True
+    assert getattr(hidden_col.type, "timezone", False) is True
     forbidden = {"user_id", "account_id", "email", "device_id", "ip", "ip_address", "score", "points"}
     assert cols.isdisjoint(forbidden)
 

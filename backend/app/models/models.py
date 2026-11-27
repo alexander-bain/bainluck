@@ -3901,8 +3901,9 @@ class GuessDailyEdition(Base):
 class GuessGroupEntry(Base):
     """One finished daily /guess entry inside a single group link (#12619, 443: A).
 
-    Stores ONLY day_pt, group_code, nickname(+lower), 15 answers, and per-step
-    decision times — zero user/account/device/IP/address/score columns.
+    Stores ONLY day_pt, group_code, nickname(+lower), 15 answers, per-step
+    decision times, and nullable moderation hidden_at — zero user/account/
+    device/IP/address/score columns.
     """
 
     __tablename__ = "guess_group_entries"
@@ -3917,6 +3918,9 @@ class GuessGroupEntry(Base):
     )
     step_times: Mapped[list] = mapped_column(
         JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+    hidden_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     __table_args__ = (
