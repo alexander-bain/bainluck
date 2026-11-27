@@ -215,8 +215,8 @@ async def cu_labeling_submit(
             payload.model_dump(),
             existing_market_rows=existing_rows,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as validation_err:
+        raise HTTPException(status_code=422, detail=str(validation_err)) from validation_err
 
     now = datetime.now(timezone.utc)
     stmt = pg_insert(CuFactLabel).values(
