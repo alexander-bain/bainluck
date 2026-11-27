@@ -3,14 +3,15 @@
 // /guess — GUESS THE CHANCE (425: C, 426: A, 430: A, 443: A). An unlisted daily
 // challenge: the server hands out each Pacific Time day's fifteen cards from
 // open numbers frozen that morning, and finishers in a group link share one
-// board stored for 30 days. Pre-existing `#g=...` links keep working.
+// board stored for 30 days. Pre-existing `#g=...` links keep working offline,
+// and an unreachable daily edition degrades to the built-in set instead of dead-ending.
 
 import { useCallback, useEffect, useState } from "react";
 
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
-import { extractLegacyHashCode, fetchTodayPack, isValidGroupCode } from "@/lib/guess/api";
-import { LEGACY_PACKS_BY_CODE } from "@/lib/guess/pack";
+import { extractLegacyHashCode, fetchTodayPack, formatDayLabel, GuessApiError, isValidGroupCode } from "@/lib/guess/api";
+import { GUESS_PACK, LEGACY_PACKS_BY_CODE } from "@/lib/guess/pack";
 import type { GamePack } from "@/lib/guess/types";
 
 import ChanceGame from "./ChanceGame";
@@ -20,6 +21,9 @@ interface ResolvedEdition {
   initialGroupCode: string | null;
   isLegacyPack: boolean;
   initialGroupError: string | null;
+  earlierDayNotice: string | null;
+  expiredDayNotice: string | null;
+  fallbackNotice: string | null;
 }
 
 export default function GuessPage() {
@@ -28,10 +32,8 @@ export default function GuessPage() {
   useEngagementTime({ pageType: "guess" });
 
   const [edition, setEdition] = useState<ResolvedEdition | null>(null);
-  const [editionError, setEditionError] = useState<string | null>(null);
 
   const loadEdition = useCallback(async () => {
-    setEditionError(null);
     const params = new URLSearchParams(window.location.search);
     const rawGroup = params.get("group");
     const rawDay = params.get("day");
@@ -43,6 +45,9 @@ export default function GuessPage() {
         initialGroupCode: null,
         isLegacyPack: true,
         initialGroupError: null,
+        earlierDayNotice: null,
+        expiredDayNotice: null,
+        fallbackNotice: null,
       });
       return;
     }
@@ -52,14 +57,53 @@ export default function GuessPage() {
 
     try {
       const resp = await fetchTodayPack(rawDay);
+      const earlierNotice =
+        resp.is_today === false ? `You are viewing ${formatDayLabel(resp.day)}'s cards and board.` : null;
       setEdition({
         pack: resp.pack,
         initialGroupCode: validGroup,
         isLegacyPack: false,
         initialGroupError: groupErr,
+        earlierDayNotice: earlierNotice,
+        expiredDayNotice: null,
+        fallbackNotice: null,
       });
     } catch (err) {
-      setEditionError(err instanceof Error ? err.message : "Could not load today's cards right now.");
+      if (rawDay && err instanceof GuessApiError && err.status === 404) {
+        try {
+          const todayResp = await fetchTodayPack(null);
+          setEdition({
+            pack: todayResp.pack,
+            initialGroupCode: null,
+            isLegacyPack: false,
+            initialGroupError: null,
+            earlierDayNotice: null,
+            expiredDayNotice: "That day's cards and board are gone (games are kept for 30 days). Here are today's cards.",
+            fallbackNotice: null,
+          });
+          return;
+        } catch {
+          setEdition({
+            pack: GUESS_PACK,
+            initialGroupCode: null,
+            isLegacyPack: true,
+            initialGroupError: null,
+            earlierDayNotice: null,
+            expiredDayNotice: null,
+            fallbackNotice: "That day's cards are gone and today's live cards could not be reached, so you are playing the built-in set.",
+          });
+          return;
+        }
+      }
+      setEdition({
+        pack: GUESS_PACK,
+        initialGroupCode: null,
+        isLegacyPack: true,
+        initialGroupError: null,
+        earlierDayNotice: null,
+        expiredDayNotice: null,
+        fallbackNotice: "Today's live cards could not be reached, so you are playing the built-in set.",
+      });
     }
   }, []);
 
@@ -82,26 +126,11 @@ export default function GuessPage() {
           initialGroupCode={edition.initialGroupCode}
           isLegacyPack={edition.isLegacyPack}
           initialGroupError={edition.initialGroupError}
+          earlierDayNotice={edition.earlierDayNotice}
+          expiredDayNotice={edition.expiredDayNotice}
+          fallbackNotice={edition.fallbackNotice}
+          onRetryLive={edition.fallbackNotice ? () => void loadEdition() : null}
         />
-      ) : editionError ? (
-        <div className="px-4 py-8">
-          <div
-            className="mx-auto max-w-md space-y-3 rounded-3xl border-2 border-surface-border bg-surface-card p-5 text-center"
-            data-testid="edition-error"
-          >
-            <h1 className="text-2xl font-black text-text-primary">Guess the Chance</h1>
-            <p className="text-sm font-bold text-text-primary">Could not load today&apos;s cards.</p>
-            <p className="text-sm text-text-secondary">{editionError}</p>
-            <button
-              type="button"
-              onClick={() => void loadEdition()}
-              className="min-h-[48px] w-full rounded-2xl bg-text-primary px-5 text-base font-black text-white active:scale-95"
-              data-testid="edition-retry"
-            >
-              Try again
-            </button>
-          </div>
-        </div>
       ) : (
         <div className="px-4 py-8">
           <div

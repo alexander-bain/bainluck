@@ -1,6 +1,7 @@
-// Where an unfinished game waits on this phone. Browser storage only: it never
-// leaves the device, and the game works without it (a private window, blocked
-// storage) by simply not remembering.
+// Where finished and unfinished games wait on this phone, keyed by packId
+// so multiple editions (`c1`, `d1`, daily PT packs) never overwrite each other.
+// Browser storage only: it never leaves the device on its own, and the game
+// works without it by simply not remembering.
 
 import { isValidGuess, MAX_CARD_SECONDS } from "./engine";
 import type { GamePack, PlayerEntry } from "./types";
@@ -10,6 +11,7 @@ export type Phase = "home" | "play" | "reveal" | "round" | "results";
 export interface SavedGame {
   packId: string;
   groupCode?: string | null;
+  joinedGroups?: string[];
   phase: Phase;
   index: number;
   turn: number;
@@ -46,12 +48,28 @@ function cleanEntry(pack: GamePack, raw: unknown, from: PlayerEntry["from"]): Pl
   };
 }
 
-export function loadGame(pack: GamePack): SavedGame | null {
+function readStoreMap(): Record<string, unknown> {
   try {
     const text = window.localStorage.getItem(SLOT);
-    if (!text) return null;
-    const raw = JSON.parse(text) as Record<string, unknown>;
-    if (raw.packId !== pack.id) return null;
+    if (!text) return {};
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (parsed && typeof parsed.byPack === "object" && parsed.byPack !== null && !Array.isArray(parsed.byPack)) {
+      return { ...(parsed.byPack as Record<string, unknown>) };
+    }
+    if (typeof parsed?.packId === "string" && parsed.packId) {
+      return { [parsed.packId]: parsed };
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+export function loadGame(pack: GamePack): SavedGame | null {
+  try {
+    const map = readStoreMap();
+    const raw = map[pack.id] as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object" || raw.packId !== pack.id) return null;
     const here = (Array.isArray(raw.here) ? raw.here : [])
       .map((e) => cleanEntry(pack, e, "here"))
       .filter((e): e is PlayerEntry => e !== null);
@@ -64,7 +82,12 @@ export function loadGame(pack: GamePack): SavedGame | null {
     const index = typeof raw.index === "number" ? Math.max(0, Math.min(pack.cards.length - 1, Math.trunc(raw.index))) : 0;
     const turn = typeof raw.turn === "number" ? Math.max(0, Math.min(here.length - 1, Math.trunc(raw.turn))) : 0;
     const groupCode = typeof raw.groupCode === "string" && raw.groupCode ? raw.groupCode : null;
-    return { packId: pack.id, groupCode, phase, index, turn, here, link };
+    const joinedGroups = Array.isArray(raw.joinedGroups)
+      ? raw.joinedGroups.filter((g): g is string => typeof g === "string" && g.length > 0)
+      : groupCode
+        ? [groupCode]
+        : [];
+    return { packId: pack.id, groupCode, joinedGroups, phase, index, turn, here, link };
   } catch {
     return null;
   }
@@ -72,15 +95,28 @@ export function loadGame(pack: GamePack): SavedGame | null {
 
 export function saveGame(game: SavedGame): void {
   try {
-    window.localStorage.setItem(SLOT, JSON.stringify(game));
+    const map = readStoreMap();
+    map[game.packId] = game;
+    window.localStorage.setItem(SLOT, JSON.stringify({ byPack: map }));
   } catch {
     // Storage is a convenience. A phone that refuses it still plays.
   }
 }
 
-export function clearGame(): void {
+export function clearGame(packId?: string): void {
   try {
-    window.localStorage.removeItem(SLOT);
+    if (!packId) {
+      window.localStorage.removeItem(SLOT);
+      return;
+    }
+    const map = readStoreMap();
+    if (!(packId in map)) return;
+    delete map[packId];
+    if (Object.keys(map).length === 0) {
+      window.localStorage.removeItem(SLOT);
+    } else {
+      window.localStorage.setItem(SLOT, JSON.stringify({ byPack: map }));
+    }
   } catch {
     // Nothing to clear.
   }

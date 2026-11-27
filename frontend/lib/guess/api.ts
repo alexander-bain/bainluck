@@ -11,6 +11,8 @@ const CODE_CHARS = "0123456789abcdefghijklmnopqrstuvwxyz";
 
 export interface DailyEditionResponse {
   day: string;
+  today_day?: string;
+  is_today?: boolean;
   edition_code: string;
   frozen_at: string;
   pack: GamePack;
@@ -159,4 +161,33 @@ export function mergeGroupPlayers(here: PlayerEntry[], stored: PlayerEntry[], fr
   for (const p of stored) add(p);
   for (const p of fromLink) add(p);
   return out;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Format a YYYY-MM-DD day string as a short readable label without timezone shift. */
+export function formatDayLabel(dayIso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayIso.trim());
+  if (!m) return dayIso;
+  const monthIdx = Number(m[2]) - 1;
+  const dayNum = Number(m[3]);
+  const monthName = MONTHS[monthIdx];
+  if (!monthName || !Number.isInteger(dayNum) || dayNum < 1 || dayNum > 31) return dayIso;
+  return `${monthName} ${dayNum}`;
+}
+
+/** Decide whether a finished local player opening a group link lands on Results and needs one-tap Add. */
+export function evaluateGroupVisitOnResults(
+  isLegacyPack: boolean,
+  saved: { phase: string; groupCode?: string | null; joinedGroups?: string[] } | null,
+  initialGroupCode: string | null,
+): { restoreResults: boolean; needsAddTap: boolean } {
+  if (isLegacyPack || !saved || saved.phase !== "results") {
+    return { restoreResults: false, needsAddTap: false };
+  }
+  if (!initialGroupCode) {
+    return { restoreResults: true, needsAddTap: false };
+  }
+  const joined = new Set([...(saved.joinedGroups ?? []), ...(saved.groupCode ? [saved.groupCode] : [])]);
+  return { restoreResults: true, needsAddTap: !joined.has(initialGroupCode) };
 }

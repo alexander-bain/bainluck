@@ -1,9 +1,10 @@
 """Server logic for the daily /guess challenge and group boards (#12619, 443: A).
 
-Freezes once per Pacific Time calendar day from real open FuturesMarket +
-FuturesOutcome rows (never fabricated numbers, no LLM calls). Groups are
-isolated by random URL group codes with strict privacy-only persistence:
-(day_pt, group_code, nickname, answers, step_times), swept after 30 days.
+Freezes once per Pacific Time calendar day from live site-formatted futures
+details (`get_futures_market(..., representation="verified_title")`), never
+fabricated numbers, with zero LLM calls. Groups are isolated by random URL
+group codes with strict privacy-only persistence:
+`(day_pt, group_code, nickname, answers, step_times)`, swept after 30 days.
 """
 
 from __future__ import annotations
@@ -18,13 +19,15 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from fastapi import HTTPException
 from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.models.models import FuturesMarket, GuessDailyEdition, GuessGroupEntry
+from app.models.models import GuessDailyEdition, GuessGroupEntry
+from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+from app.utils.market_staleness import is_title_implied_stale
 
 PT_TZ = ZoneInfo("America/Los_Angeles")
 SCHEDULE_PATH = Path(__file__).resolve().parents[2] / "data" / "guess" / "daily_schedule.json"
@@ -39,6 +42,9 @@ SIDE_GAP = 8
 VERSUS_GAP = 8
 LEAD_GAP = 5
 OPTION_GAP = 10
+CHANCE_MID_GAP = 5
+EARNED_MISS = 20
+LONGEST_LINE = 110
 
 RETENTION_DAYS = 30
 MAX_GROUP_ENTRIES = 30
@@ -46,6 +52,9 @@ GROUP_CODE_RE = re.compile(r"^[a-z0-9]{8,24}$")
 
 _TAP_KINDS = frozenset({"side", "versus", "four", "leader"})
 _RESERVED_NICKNAMES = frozenset({"the coin", "together"})
+_LEGACY_EDITION_CODES = frozenset({"c1", "d1"})
+_NON_PLAYABLE_OUTCOME_STATUSES = frozenset({"settled", "closed", "voided", "cancelled"})
+_EXTREME_RENDERED_PERCENTS = frozenset({"<1%", ">99%"})
 _EDITION_LOCK_NS = 0x47554553  # 'GUES'
 _GROUP_LOCK_NS = 0x47525053  # 'GRPS'
 _BASE36_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
@@ -101,11 +110,15 @@ def _to_base36(value: int) -> str:
 
 
 def edition_code_for_day(day_pt: date) -> str:
-    """Short [a-z0-9]{4,6} daily edition code, disjoint from 2-char legacy codes."""
+    """Short [a-z0-9]{4,6} daily edition code, strictly disjoint from c1/d1."""
     offset = (day_pt - date(2026, 1, 1)).days
     if offset >= 0:
-        return f"p{_to_base36(offset).rjust(3, '0')}"
-    return f"q{_to_base36(-offset).rjust(3, '0')}"
+        code = f"p{_to_base36(offset).rjust(3, '0')}"
+    else:
+        code = f"q{_to_base36(-offset).rjust(3, '0')}"
+    if code in _LEGACY_EDITION_CODES or len(code) < 4:
+        raise AssertionError(f"Invalid edition code generated: {code!r}")
+    return code
 
 
 def format_as_of_pt(frozen_at: datetime) -> str:
@@ -310,8 +323,46 @@ def score_answers(
 
 
 # ---------------------------------------------------------------------------
-# Resolving live markets into a frozen daily pack
+# Resolving live site-printed market details into a frozen daily pack
 # ---------------------------------------------------------------------------
+
+
+async def load_site_market_details(
+    db: AsyncSession, market_ids: Sequence[int]
+) -> dict[int, dict[str, Any]]:
+    """Fetch each referenced market via the site's verified-title detail reader."""
+    from app.routes.futures import REPRESENTATION_VERIFIED_TITLE, get_futures_market
+
+    details: dict[int, dict[str, Any]] = {}
+    for mid in sorted({int(m) for m in market_ids}):
+        try:
+            detail = await get_futures_market(
+                market_id=mid, db=db, representation=REPRESENTATION_VERIFIED_TITLE
+            )
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                continue
+            raise
+        if isinstance(detail, dict):
+            details[mid] = detail
+    return details
+
+
+def _parse_utc_datetime(raw: Any) -> Optional[datetime]:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+    if isinstance(raw, str):
+        text_val = raw.strip()
+        if not text_val:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text_val.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    return None
 
 
 def _norm_outcome_name(name: Any) -> str:
@@ -320,40 +371,59 @@ def _norm_outcome_name(name: Any) -> str:
     return re.sub(r"\s+", " ", name.replace("’", "'").replace("‘", "'")).strip().casefold()
 
 
-def _market_is_open(market: FuturesMarket, reference_time: datetime) -> bool:
-    if getattr(market, "status", None) != "open":
+def _detail_is_open(detail: Mapping[str, Any], reference_time: datetime) -> bool:
+    if detail.get("status") != "open":
         return False
-    end_dt = getattr(market, "end_date", None)
-    if isinstance(end_dt, datetime):
-        if end_dt.tzinfo is None:
-            end_dt = end_dt.replace(tzinfo=timezone.utc)
-        if end_dt <= reference_time:
+    for key in ("end_date", "resolution_date"):
+        dt = _parse_utc_datetime(detail.get(key))
+        if dt is not None and dt <= reference_time:
             return False
+    sport_cat = detail.get("sport_category") or detail.get("llm_sport_category")
+    if is_title_implied_stale(detail.get("name"), sport_cat, reference_time) is not None:
+        return False
     return True
 
 
 def _read_outcome_percent(
-    markets_by_id: Mapping[int, FuturesMarket],
+    market_details: Mapping[int, Mapping[str, Any]],
     market_id: int,
     outcome_name: str,
     reference_time: datetime,
-) -> Optional[tuple[int, float, int]]:
-    """Return `(pct_1_99, raw_prob, outcome_id)` or None if closed/missing/unpriced."""
-    market = markets_by_id.get(int(market_id))
-    if market is None or not _market_is_open(market, reference_time):
+) -> Optional[tuple[int, float, int, str]]:
+    """Return `(pct_1_99, raw_prob, outcome_id, representation)` from site detail."""
+    detail = market_details.get(int(market_id))
+    if not isinstance(detail, Mapping) or not _detail_is_open(detail, reference_time):
         return None
+
     target_norm = _norm_outcome_name(outcome_name)
     if not target_norm:
         return None
-    for outcome in getattr(market, "outcomes", None) or ():
-        status = getattr(outcome, "status", None)
-        if status in {"settled", "closed", "voided", "cancelled"}:
+
+    purged_cutoff = reference_time - timedelta(days=PROVABLY_PURGED_AGE_DAYS)
+    for outcome in detail.get("outcomes") or ():
+        if not isinstance(outcome, Mapping):
             continue
-        if _norm_outcome_name(getattr(outcome, "name", None)) != target_norm:
+        if _norm_outcome_name(outcome.get("name")) != target_norm:
             continue
-        raw_p = getattr(outcome, "probability", None)
-        if raw_p is None:
-            raw_p = getattr(outcome, "current_probability", None)
+        if outcome.get("is_winner") is True or outcome.get("is_out") is True:
+            return None
+        if outcome.get("status") in _NON_PLAYABLE_OUTCOME_STATUSES:
+            return None
+        if outcome.get("kalshi_no_bid"):
+            return None
+        if outcome.get("rendered_percent") in _EXTREME_RENDERED_PERCENTS:
+            return None
+        source_mark = outcome.get("source_mark")
+        if isinstance(source_mark, Mapping) and source_mark.get("state") in {
+            "unsupported",
+            "settled",
+        }:
+            return None
+        last_updated = _parse_utc_datetime(outcome.get("last_updated"))
+        if last_updated is not None and last_updated < purged_cutoff:
+            return None
+
+        raw_p = outcome.get("probability")
         if (
             raw_p is None
             or isinstance(raw_p, bool)
@@ -367,38 +437,58 @@ def _read_outcome_percent(
         pct = int(math.floor(prob * 100.0 + 0.5))
         if not (1 <= pct <= 99):
             return None
-        return pct, prob, int(getattr(outcome, "id", 0) or 0)
+        rep = str(detail.get("representation") or "source")
+        return pct, prob, int(outcome.get("id") or 0), rep
     return None
 
 
-def _build_four_options(answer: int, seed_str: str) -> Optional[list[int]]:
-    """Build 4 ascending percentages in [2..98] with >= OPTION_GAP separation."""
-    if not (2 <= answer <= 98):
+def _build_four_options(
+    answer: int, seed_str: str, answer_slot: Optional[int] = None
+) -> Optional[list[int]]:
+    """Build 4 ascending percentages in [1..99] with >= OPTION_GAP separation."""
+    if not (1 <= answer <= 99):
         return None
-    rng = _seeded_rng(f"four:{seed_str}:{answer}")
-    valid_slots = [
-        slot
-        for slot in range(4)
-        if answer - slot * OPTION_GAP >= 2 and answer + (3 - slot) * OPTION_GAP <= 98
-    ]
-    if not valid_slots:
-        return None
-    slot = valid_slots[int(rng() * len(valid_slots)) % len(valid_slots)]
+
+    def _fits_slot(slot: int) -> bool:
+        return answer - slot * OPTION_GAP >= 1 and answer + (3 - slot) * OPTION_GAP <= 99
+
+    if answer_slot is not None:
+        if (
+            isinstance(answer_slot, bool)
+            or not isinstance(answer_slot, int)
+            or not (0 <= answer_slot <= 3)
+            or not _fits_slot(answer_slot)
+        ):
+            return None
+        slot = answer_slot
+    else:
+        valid_slots = [s for s in range(4) if _fits_slot(s)]
+        if not valid_slots:
+            return None
+        rng_pick = _seeded_rng(f"four-slot:{seed_str}:{answer}")
+        slot = valid_slots[int(rng_pick() * len(valid_slots)) % len(valid_slots)]
+
+    rng = _seeded_rng(f"four:{seed_str}:{answer}:{slot}")
     opts = [0, 0, 0, 0]
     opts[slot] = answer
     for i in range(slot - 1, -1, -1):
         max_here = opts[i + 1] - OPTION_GAP
-        min_here = 2 + i * OPTION_GAP
+        min_here = 1 + i * OPTION_GAP
         span = max(0, max_here - min_here)
-        step_down = min(span, 3 + int(rng() * 10))
+        step_down = min(span, 2 + int(rng() * 10))
         opts[i] = max(min_here, max_here - step_down)
     for i in range(slot + 1, 4):
         min_here = opts[i - 1] + OPTION_GAP
-        max_here = 98 - (3 - i) * OPTION_GAP
+        max_here = 99 - (3 - i) * OPTION_GAP
         span = max(0, max_here - min_here)
-        step_up = min(span, 3 + int(rng() * 10))
+        step_up = min(span, 2 + int(rng() * 10))
         opts[i] = min(max_here, min_here + step_up)
-    if len(set(opts)) != 4 or any(b - a < OPTION_GAP for a, b in zip(opts, opts[1:])):
+    if (
+        len(set(opts)) != 4
+        or opts.count(answer) != 1
+        or any(not (1 <= x <= 99) for x in opts)
+        or any(b - a < OPTION_GAP for a, b in zip(opts, opts[1:]))
+    ):
         return None
     return opts
 
@@ -407,8 +497,8 @@ def _base_card_dict(template: Mapping[str, Any]) -> dict[str, Any]:
     card: dict[str, Any] = {
         "id": str(template["id"]),
         "kind": str(template["kind"]),
-        "flavor": str(template.get("flavor") or template["kind"]),
-        "ours": bool(template.get("ours", False)),
+        "flavor": "straight" if template["kind"] == "chance" else str(template["kind"]),
+        "ours": str(template["kind"]) == "versus",
         "topic": str(template["topic"]),
         "emoji": str(template["emoji"]),
         "prompt": str(template["prompt"]),
@@ -422,27 +512,31 @@ def _base_card_dict(template: Mapping[str, Any]) -> dict[str, Any]:
 
 def resolve_card_from_markets(
     template: Mapping[str, Any],
-    markets_by_id: Mapping[int, FuturesMarket],
+    market_details: Mapping[int, Mapping[str, Any]],
     reference_time: datetime,
     *,
     day_seed: str,
+    answer_slot_override: Optional[int] = None,
 ) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
-    """Resolve one scheduled card template against live DB markets, or None if unplayable."""
+    """Resolve one scheduled card template against live site-printed market details."""
     kind = str(template["kind"])
     card = _base_card_dict(template)
     provenance: list[dict[str, Any]] = []
 
     if kind == "side":
+        extras = list(template.get("extras") or [])
+        if len(extras) != 2:
+            return None
         src = template["source"]
         resolved = _read_outcome_percent(
-            markets_by_id, int(src["market_id"]), str(src["outcome_name"]), reference_time
+            market_details, int(src["market_id"]), str(src["outcome_name"]), reference_time
         )
         if resolved is None:
             return None
-        pct, raw_prob, outcome_id = resolved
+        pct, raw_prob, outcome_id, rep = resolved
         if abs(pct - 50) < SIDE_GAP:
             return None
-        card["extras"] = list(template.get("extras") or [])
+        card["extras"] = [str(e) for e in extras]
         card["answer"] = pct
         provenance.append(
             {
@@ -452,6 +546,7 @@ def resolve_card_from_markets(
                 "outcome_name": str(src["outcome_name"]),
                 "probability": raw_prob,
                 "percent": pct,
+                "representation": rep,
             }
         )
         return card, provenance
@@ -463,11 +558,11 @@ def resolve_card_from_markets(
         built_opts: list[dict[str, Any]] = []
         for opt in raw_opts:
             resolved = _read_outcome_percent(
-                markets_by_id, int(opt["market_id"]), str(opt["outcome_name"]), reference_time
+                market_details, int(opt["market_id"]), str(opt["outcome_name"]), reference_time
             )
             if resolved is None:
                 return None
-            pct, raw_prob, outcome_id = resolved
+            pct, raw_prob, outcome_id, rep = resolved
             built_opts.append(
                 {
                     "label": str(opt["label"]),
@@ -484,6 +579,7 @@ def resolve_card_from_markets(
                     "outcome_name": str(opt["outcome_name"]),
                     "probability": raw_prob,
                     "percent": pct,
+                    "representation": rep,
                 }
             )
         if abs(built_opts[0]["percent"] - built_opts[1]["percent"]) < VERSUS_GAP:
@@ -492,17 +588,21 @@ def resolve_card_from_markets(
         return card, provenance
 
     if kind == "four":
+        extras = list(template.get("extras") or [])
+        if len(extras) != 2:
+            return None
         src = template["source"]
         resolved = _read_outcome_percent(
-            markets_by_id, int(src["market_id"]), str(src["outcome_name"]), reference_time
+            market_details, int(src["market_id"]), str(src["outcome_name"]), reference_time
         )
         if resolved is None:
             return None
-        pct, raw_prob, outcome_id = resolved
-        four_opts = _build_four_options(pct, f"{day_seed}:{card['id']}")
+        pct, raw_prob, outcome_id, rep = resolved
+        slot = answer_slot_override if answer_slot_override is not None else template.get("answer_slot")
+        four_opts = _build_four_options(pct, f"{day_seed}:{card['id']}", answer_slot=slot)
         if four_opts is None:
             return None
-        card["extras"] = list(template.get("extras") or [])
+        card["extras"] = [str(e) for e in extras]
         card["answer"] = pct
         card["options"] = four_opts
         provenance.append(
@@ -513,6 +613,7 @@ def resolve_card_from_markets(
                 "outcome_name": str(src["outcome_name"]),
                 "probability": raw_prob,
                 "percent": pct,
+                "representation": rep,
             }
         )
         return card, provenance
@@ -525,11 +626,11 @@ def resolve_card_from_markets(
         built_opts = []
         for opt in raw_opts:
             resolved = _read_outcome_percent(
-                markets_by_id, market_id, str(opt["outcome_name"]), reference_time
+                market_details, market_id, str(opt["outcome_name"]), reference_time
             )
             if resolved is None:
                 return None
-            pct, raw_prob, outcome_id = resolved
+            pct, raw_prob, outcome_id, rep = resolved
             built_opts.append(
                 {
                     "label": str(opt["label"]),
@@ -546,32 +647,48 @@ def resolve_card_from_markets(
                     "outcome_name": str(opt["outcome_name"]),
                     "probability": raw_prob,
                     "percent": pct,
+                    "representation": rep,
                 }
             )
+        if len({o["label"] for o in built_opts}) != 4:
+            return None
+        independent = bool(template.get("independent", False))
+        if not independent and sum(o["percent"] for o in built_opts) > 100:
+            return None
         top_two = sorted((o["percent"] for o in built_opts), reverse=True)[:2]
         if top_two[0] - top_two[1] < LEAD_GAP:
             return None
-        card["independent"] = bool(template.get("independent", False))
+        card["independent"] = independent
         card["options"] = built_opts
         return card, provenance
 
     if kind == "chance":
+        extras = list(template.get("extras") or [])
+        if len(extras) != 2:
+            return None
         src = template["source"]
         resolved = _read_outcome_percent(
-            markets_by_id, int(src["market_id"]), str(src["outcome_name"]), reference_time
+            market_details, int(src["market_id"]), str(src["outcome_name"]), reference_time
         )
         if resolved is None:
             return None
-        pct, raw_prob, outcome_id = resolved
-        card["extras"] = list(template.get("extras") or [])
-        card["answer"] = pct
-        # Keep only roast lines a guess in [0..100] can actually earn (miss >= 20).
-        if pct <= 80 and template.get("roastHigh"):
-            card["roastHigh"] = str(template["roastHigh"])
-        if pct >= 20 and template.get("roastLow"):
-            card["roastLow"] = str(template["roastLow"])
-        if not card.get("roastHigh") and not card.get("roastLow"):
+        pct, raw_prob, outcome_id, rep = resolved
+        if abs(pct - 50) < CHANCE_MID_GAP:
             return None
+        want_high = pct + EARNED_MISS <= 100
+        want_low = pct - EARNED_MISS >= 0
+        raw_high = str(template.get("roastHigh") or "").strip()
+        raw_low = str(template.get("roastLow") or "").strip()
+        if want_high and (not raw_high or len(raw_high) > LONGEST_LINE):
+            return None
+        if want_low and (not raw_low or len(raw_low) > LONGEST_LINE):
+            return None
+        card["extras"] = [str(e) for e in extras]
+        card["answer"] = pct
+        if want_high:
+            card["roastHigh"] = raw_high
+        if want_low:
+            card["roastLow"] = raw_low
         provenance.append(
             {
                 "card_id": card["id"],
@@ -580,6 +697,7 @@ def resolve_card_from_markets(
                 "outcome_name": str(src["outcome_name"]),
                 "probability": raw_prob,
                 "percent": pct,
+                "representation": rep,
             }
         )
         return card, provenance
@@ -588,7 +706,7 @@ def resolve_card_from_markets(
 
 
 def _draw_coin_taps(cards: Sequence[Mapping[str, Any]], seed_str: str) -> list[Optional[int]]:
-    """Draw fair ordinary coin flips (2-3/5 Easy, 1-2/5 Medium, None Hard)."""
+    """Draw fair ordinary coin flips (2-3/5 Easy, exact 1/5 Medium, None Hard)."""
     rng = _seeded_rng(f"coin:{seed_str}")
     # Step 0: indices 0..4 (2-way taps)
     for _ in range(128):
@@ -597,28 +715,112 @@ def _draw_coin_taps(cards: Sequence[Mapping[str, Any]], seed_str: str) -> list[O
         if right in (2, 3) and 0 < sum(easy) < 5:
             break
     else:
-        easy = [full_guess(cards[0]), full_guess(cards[1]), 1 - full_guess(cards[2]), 1 - full_guess(cards[3]), full_guess(cards[4])]
+        easy = [
+            full_guess(cards[0]),
+            full_guess(cards[1]),
+            1 - full_guess(cards[2]),
+            1 - full_guess(cards[3]),
+            1 - full_guess(cards[4]),
+        ]
 
-    # Step 1: indices 5..9 (4-way taps)
-    for _ in range(128):
+    # Step 1: indices 5..9 (4-way taps) -> ordinary coin gets 1 of 5 right.
+    for _ in range(256):
         med = [int(rng() * 4) % 4 for _ in range(5)]
         right = sum(1 for i in range(5, 10) if med[i - 5] == full_guess(cards[i]))
-        if right in (1, 2):
+        if right == 1:
             break
     else:
-        f5 = full_guess(cards[5])
-        med = [f5, (f5 + 1) % 4, (full_guess(cards[7]) + 2) % 4, (full_guess(cards[8]) + 3) % 4, (full_guess(cards[9]) + 1) % 4]
+        med = [
+            full_guess(cards[5]),
+            *((full_guess(cards[i]) + 1) % 4 for i in range(6, 10)),
+        ]
 
     return [*easy, *med, None, None, None, None, None]
+
+
+def _resolve_with_step_fit(
+    template: Mapping[str, Any],
+    market_details: Mapping[int, Mapping[str, Any]],
+    frozen_at: datetime,
+    *,
+    day_seed: str,
+    step_key: str,
+    kept_in_step: Sequence[Mapping[str, Any]],
+    prev_global_card: Optional[Mapping[str, Any]],
+) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
+    kind = str(template.get("kind") or "")
+    if step_key == "easy" and kind not in {"side", "versus"}:
+        return None
+    if step_key == "medium" and kind not in {"four", "leader"}:
+        return None
+    if step_key == "hard" and kind != "chance":
+        return None
+    if kind == "versus" and prev_global_card is not None and prev_global_card.get("ours"):
+        return None
+
+    used_versus = {full_guess(c) for c in kept_in_step if c["kind"] == "versus"}
+    used_leader = {full_guess(c) for c in kept_in_step if c["kind"] == "leader"}
+    used_four = {full_guess(c) for c in kept_in_step if c["kind"] == "four"}
+
+    if kind == "four" and template.get("answer_slot") is None:
+        # Spare `four` cards pick a valid slot not yet used in this step when available.
+        for candidate_slot in range(4):
+            if candidate_slot in used_four:
+                continue
+            outcome = resolve_card_from_markets(
+                template,
+                market_details,
+                frozen_at,
+                day_seed=day_seed,
+                answer_slot_override=candidate_slot,
+            )
+            if outcome is not None:
+                return outcome
+        return None
+
+    outcome = resolve_card_from_markets(
+        template, market_details, frozen_at, day_seed=day_seed
+    )
+    if outcome is None:
+        return None
+    card, prov = outcome
+    ans = full_guess(card)
+    if kind == "versus" and ans in used_versus:
+        return None
+    if kind == "leader" and ans in used_leader:
+        return None
+    if kind == "four" and ans in used_four:
+        return None
+    return card, prov
+
+
+def _validate_pack_invariants(pack: Mapping[str, Any], day_str: str) -> None:
+    cards = list(pack.get("cards") or [])
+    topics = list(pack.get("topics") or [])
+    if len(cards) != 15 or len(topics) != 3:
+        raise GuessEditionUnavailableError(f"Pack {day_str} must have 15 cards and 3 topics.")
+    for topic in topics:
+        if sum(1 for c in cards if c.get("topic") == topic) < 3:
+            raise GuessEditionUnavailableError(f"Pack {day_str} topic '{topic}' fell below 3 cards.")
+    ours_count = sum(1 for c in cards if c.get("ours"))
+    if ours_count < 1 or ours_count > 7:
+        raise GuessEditionUnavailableError(f"Pack {day_str} has invalid ours count {ours_count}.")
+    for a, b in zip(cards, cards[1:]):
+        if a.get("ours") and b.get("ours"):
+            raise GuessEditionUnavailableError(f"Pack {day_str} places two ours cards in a row.")
+
+    sides = [c for c in cards[:5] if c.get("kind") == "side"]
+    if len(sides) < 2 or len({full_guess(c) for c in sides}) != 2:
+        raise GuessEditionUnavailableError(f"Pack {day_str} Easy step must have both <50 and >50 sides.")
 
 
 def build_daily_pack(
     day_pt: date,
     schedule_day: Mapping[str, Any],
-    markets_by_id: Mapping[int, FuturesMarket],
+    market_details: Mapping[int, Mapping[str, Any]],
     frozen_at: datetime,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Resolve 15 live cards (5 per step), swapping spares for closed/unpriced primaries."""
+    """Resolve 15 live cards (5 per step), swapping spares for closed/unplayable primaries."""
     steps = list(schedule_day.get("steps") or [])
     if len(steps) != 3:
         raise GuessEditionUnavailableError(f"Schedule for {day_pt} must define 3 steps.")
@@ -632,13 +834,20 @@ def build_daily_pack(
     for step_idx, step_key in enumerate(("easy", "medium", "hard")):
         primaries = list(step_cards.get(step_key) or [])
         spare_pool = list(spares.get(step_key) or [])
-        spare_cursor = 0
+        consumed_spares: set[int] = set()
         kept_in_step: list[dict[str, Any]] = []
         used_ids: set[str] = {c["id"] for c in resolved_cards}
 
         for primary_idx, tmpl in enumerate(primaries):
-            outcome = resolve_card_from_markets(
-                tmpl, markets_by_id, frozen_at, day_seed=day_str
+            prev_card = kept_in_step[-1] if kept_in_step else (resolved_cards[-1] if resolved_cards else None)
+            outcome = _resolve_with_step_fit(
+                tmpl,
+                market_details,
+                frozen_at,
+                day_seed=day_str,
+                step_key=step_key,
+                kept_in_step=kept_in_step,
+                prev_global_card=prev_card,
             )
             if outcome is not None:
                 card, prov = outcome
@@ -647,16 +856,22 @@ def build_daily_pack(
                 used_ids.add(card["id"])
                 continue
 
-            # Primary closed, unpriced, or drifted too close to call: swap for step spare.
             swapped = False
-            while spare_cursor < len(spare_pool):
-                candidate = spare_pool[spare_cursor]
-                spare_cursor += 1
-                spare_outcome = resolve_card_from_markets(
-                    candidate, markets_by_id, frozen_at, day_seed=day_str
+            for s_idx, candidate in enumerate(spare_pool):
+                if s_idx in consumed_spares:
+                    continue
+                spare_outcome = _resolve_with_step_fit(
+                    candidate,
+                    market_details,
+                    frozen_at,
+                    day_seed=day_str,
+                    step_key=step_key,
+                    kept_in_step=kept_in_step,
+                    prev_global_card=prev_card,
                 )
                 if spare_outcome is None:
                     continue
+                consumed_spares.add(s_idx)
                 card, prov = spare_outcome
                 if card["id"] in used_ids:
                     card["id"] = f"{card['id']}_{step_idx}_{primary_idx}"
@@ -692,6 +907,7 @@ def build_daily_pack(
         "topics": list(schedule_day["topics"]),
         "cards": resolved_cards,
     }
+    _validate_pack_invariants(pack, day_str)
     return pack, provenance
 
 
@@ -740,6 +956,7 @@ async def get_or_freeze_daily_edition(
     *,
     now_utc: Optional[datetime] = None,
     schedule: Optional[Mapping[str, Any]] = None,
+    market_details: Optional[Mapping[int, Mapping[str, Any]]] = None,
 ) -> GuessDailyEdition:
     """Return the frozen edition for `requested_day`, freezing today on first read."""
     now = now_utc or datetime.now(timezone.utc)
@@ -777,18 +994,13 @@ async def get_or_freeze_daily_edition(
         )
 
     market_ids = _schedule_market_ids(day_entry)
-    markets_by_id: dict[int, FuturesMarket] = {}
-    if market_ids:
-        rows = (
-            await db.scalars(
-                select(FuturesMarket)
-                .options(selectinload(FuturesMarket.outcomes))
-                .where(FuturesMarket.id.in_(market_ids))
-            )
-        ).all()
-        markets_by_id = {int(m.id): m for m in rows}
+    resolved_details = (
+        market_details
+        if market_details is not None
+        else await load_site_market_details(db, market_ids)
+    )
 
-    pack, provenance = build_daily_pack(day, day_entry, markets_by_id, now)
+    pack, provenance = build_daily_pack(day, day_entry, resolved_details, now)
     code = str(pack["code"])
 
     try:

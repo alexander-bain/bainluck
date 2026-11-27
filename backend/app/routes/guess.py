@@ -33,6 +33,7 @@ from app.utils.guess_daily import (
     get_or_freeze_daily_edition,
     group_lock_key,
     score_answers,
+    today_pt,
     validate_group_code,
     GuessEditionNotFoundError,
     GuessEditionUnavailableError,
@@ -134,8 +135,11 @@ async def get_today_guess_pack(
     except GuessEditionUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    current_pt = today_pt()
     return {
         "day": edition.day_pt.isoformat(),
+        "today_day": current_pt.isoformat(),
+        "is_today": edition.day_pt == current_pt,
         "edition_code": edition.edition_code,
         "frozen_at": edition.frozen_at.isoformat(),
         "pack": edition.pack_json,
