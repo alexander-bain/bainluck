@@ -61,6 +61,29 @@ enum EventSportHeadlines12472 {
         )
     }
 
+    /// Ruling 250: A — When a draw-priced soccer match prints Home's probability with
+    /// Away withheld (no explicit draw probability), the Away cell prints
+    /// `"No probability yet"` before the game has had any number and `"No recent probability"`
+    /// after, never an empty box.
+    nonisolated static func resolveWithheldAwayNotice(
+        for event: EventDetail,
+        now: Date = Date()
+    ) -> String {
+        let hasPriorOdds = event.openingOdds?.homeProbability != nil
+            || event.openingOdds?.awayProbability != nil
+            || event.prematchOdds?.homeProbability != nil
+            || event.prematchOdds?.awayProbability != nil
+            || event.prematchOdds?.drawProbability != nil
+        if hasPriorOdds {
+            return EventAtlasStates11666.noRecentPrice
+        }
+        return resolveProbabilityUnavailableNotice(
+            for: event,
+            hasCurrentChance: false,
+            now: now
+        ) ?? EventAtlasStates11666.noRecentPrice
+    }
+
     nonisolated enum Phase: String, Equatable, Sendable, CaseIterable {
         case before
         case during
@@ -192,6 +215,9 @@ enum EventSportHeadlines12472 {
         var emphasizedColumns: Set<Int> = []
         /// Optional per-column tiebreak superscripts (e.g. `7` with superscript `"7"` / `6` with `"4"`).
         var cellSuperscripts: [Int: String] = [:]
+        /// Column indices carrying a quiet plain-English status notice (e.g. Ruling 250: A
+        /// withheld Away cell on soccer) rather than a primary team-coloured number.
+        var quietNoticeColumns: Set<Int> = []
         var abbreviation: String? = nil
         var opponentAbbreviation: String? = nil
     }
@@ -888,13 +914,19 @@ enum EventSportHeadlines12472 {
             }
         }
 
+        var awayChanceIsQuietNotice = false
+        if awayChance.isEmpty && !homeChance.isEmpty {
+            awayChance = resolveWithheldAwayNotice(for: event, now: now)
+            awayChanceIsQuietNotice = true
+        }
+
         if !homeChance.isEmpty,
            let proj = pregameProj,
            ProjectedFinalChanceGuard240A.conflicts(
                projectedHome: printedHeadlineProjectedValue(proj.rawHome, sportKey: event.sport),
                projectedAway: printedHeadlineProjectedValue(proj.rawAway, sportKey: event.sport),
                homeChance: homeProb,
-               awayChance: awayChance.isEmpty ? nil : awayProb,
+               awayChance: (awayChanceIsQuietNotice || awayChance.isEmpty) ? nil : awayProb,
                sportKey: event.sport
            ) {
             pregameProj = nil
@@ -941,8 +973,9 @@ enum EventSportHeadlines12472 {
             logoURL: awayLogo,
             record: awayRecord,
             cells: awayCells,
-            rawProbability: awayChance.isEmpty ? nil : awayProb,
-            won: nil
+            rawProbability: (awayChanceIsQuietNotice || awayChance.isEmpty) ? nil : awayProb,
+            won: nil,
+            quietNoticeColumns: awayChanceIsQuietNotice ? [awayCells.count - 1] : []
         )
         let homeRow = CompetitorRow(
             role: .home,
@@ -1252,13 +1285,19 @@ enum EventSportHeadlines12472 {
             }
         }
 
+        var awayNowIsQuietNotice = false
+        if awayNow.isEmpty && !homeNow.isEmpty {
+            awayNow = resolveWithheldAwayNotice(for: event, now: now)
+            awayNowIsQuietNotice = true
+        }
+
         if !homeNow.isEmpty,
            let proj = liveProjNumbers,
            ProjectedFinalChanceGuard240A.conflicts(
                projectedHome: printedHeadlineProjectedValue(proj.rawHome, sportKey: event.sport),
                projectedAway: printedHeadlineProjectedValue(proj.rawAway, sportKey: event.sport),
                homeChance: homeProb,
-               awayChance: awayNow.isEmpty ? nil : awayProb,
+               awayChance: (awayNowIsQuietNotice || awayNow.isEmpty) ? nil : awayProb,
                sportKey: event.sport
            ) {
             liveProjNumbers = nil
@@ -1340,10 +1379,11 @@ enum EventSportHeadlines12472 {
             logoURL: awayLogo,
             record: nil,
             cells: awayCells,
-            rawProbability: awayNow.isEmpty ? nil : awayProb,
+            rawProbability: (awayNowIsQuietNotice || awayNow.isEmpty) ? nil : awayProb,
             won: nil,
             emphasizedColumns: awayEmph,
-            cellSuperscripts: awaySuperscripts
+            cellSuperscripts: awaySuperscripts,
+            quietNoticeColumns: awayNowIsQuietNotice ? [awayCells.count - 1] : []
         )
         let homeRow = CompetitorRow(
             role: .home,
