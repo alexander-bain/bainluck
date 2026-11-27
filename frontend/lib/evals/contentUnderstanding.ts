@@ -1,4 +1,4 @@
-import RAW_SCORECARD from "@/lib/evals/data/cu-scorecard-2026-11.json";
+import RAW_SCORECARD from "@/lib/evals/data/cu-scorecard.json";
 import { sourceLink } from "@/lib/evals/sources";
 import { issueRef, type MeasuredTruth, type Truth } from "@/lib/evals/truth";
 

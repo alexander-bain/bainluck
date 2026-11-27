@@ -458,7 +458,7 @@ export const CU_SCORECARD_COPY = {
   title: "How well Bain Luck understands its markets",
   lead: "Every market gets facts read by fixed rules and by AI. Here we score each field on a sealed test set against two-person labels, with what the run cost.",
   detail:
-    "For each field we separate rules-decided entries from AI-decided entries and count right, wrong, blank and said not known.",
+    "For each field we separate rules-decided entries from AI-decided entries and count right, wrong, blank and said it did not know.",
   notMeasuredYet: "Not measured yet as of",
   notMeasuredDetail:
     "The first published numbers come from the sealed test set once two people have finished labeling its facts.",
@@ -473,7 +473,7 @@ export const CU_SCORECARD_COPY = {
   fieldCol: "Field",
   rulesCol: "Fixed rules",
   aiCol: "AI",
-  countsLegend: "right / wrong / blank / said not known",
+  countsLegend: "right / wrong / blank / said it did not know",
   sliceMarkets: "markets",
 } as const;
 

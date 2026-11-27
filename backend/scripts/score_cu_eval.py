@@ -4,12 +4,12 @@
 Usage:
   # Emit the pre-label placeholder file for /evals:
   python3 scripts/score_cu_eval.py --not-measured-yet --date 2026-11-27 \
-    --out ../frontend/lib/evals/data/cu-scorecard-2026-11.json
+    --out ../frontend/lib/evals/data/cu-scorecard.json
 
   # Score a writer run file against an answer key JSON:
   python3 scripts/score_cu_eval.py --answers path/to/answers.json \
     --predictions path/to/predictions.json --date 2026-12-11 \
-    --out ../frontend/lib/evals/data/cu-scorecard-2026-12.json
+    --out ../frontend/lib/evals/data/cu-scorecard.json
 """
 
 from __future__ import annotations
@@ -53,6 +53,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--writer-rev", type=int, default=None, help="Override writer revision")
     parser.add_argument("--model", default=None, help="Override model name")
     parser.add_argument("--cost-usd", type=float, default=None, help="Override total USD spend")
+    parser.add_argument(
+        "--allow-missing-predictions",
+        action="store_true",
+        help="Allow writing output even when some answer-key markets lack predictions",
+    )
     parser.add_argument("--out", type=Path, default=None, help="Optional output JSON file")
     args = parser.parse_args(argv)
 
@@ -87,6 +92,14 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(format_scorecard_table(scorecard))
+    missing = int(scorecard.get("missing_predictions", 0) or 0)
+    if not args.not_measured_yet and missing > 0 and not args.allow_missing_predictions:
+        print(
+            f"ERROR: Refusing to write scorecard: {missing} answer-key market(s) have no prediction "
+            "(pass --allow-missing-predictions to write anyway).",
+            file=sys.stderr,
+        )
+        return 2
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         write_scorecard_json(scorecard, str(args.out))

@@ -85,7 +85,7 @@
     {
       "field": "geography",
       "label": "Region",
-      "decided_by": "model",
+      "decided_by": "code_and_model",
       "code": {
         "right": 0,
         "wrong": 0,
@@ -137,7 +137,7 @@
     {
       "field": "event_date",
       "label": "Day of the event",
-      "decided_by": "model",
+      "decided_by": "code_and_model",
       "code": {
         "right": 0,
         "wrong": 0,
@@ -189,7 +189,7 @@
     {
       "field": "stakes",
       "label": "Real-world stakes",
-      "decided_by": "model",
+      "decided_by": "code_and_model",
       "code": {
         "right": 0,
         "wrong": 0,
@@ -215,7 +215,7 @@
     {
       "field": "breadth",
       "label": "How wide the audience is",
-      "decided_by": "model",
+      "decided_by": "code_and_model",
       "code": {
         "right": 0,
         "wrong": 0,
@@ -293,7 +293,7 @@
     {
       "field": "junk_flags",
       "label": "Format warnings",
-      "decided_by": "model",
+      "decided_by": "code_and_model",
       "code": {
         "right": 0,
         "wrong": 0,

@@ -50,6 +50,10 @@ describe("Content Understanding section on /evals (#13901)", () => {
     expect(el.querySelectorAll("[data-evals-figure]")).toHaveLength(0);
     expect(el.querySelector('[data-cu-group="code"] [data-cu-planned-field="liveness"]')?.textContent).toBe("Trading activity");
     expect(el.querySelector('[data-cu-group="model"] [data-cu-planned-field="topic"]')?.textContent).toBe("Topic");
+    for (const sharedField of ["geography", "event_date", "stakes", "breadth", "junk_flags"]) {
+      expect(el.querySelector(`[data-cu-group="code"] [data-cu-planned-field="${sharedField}"]`)).not.toBeNull();
+      expect(el.querySelector(`[data-cu-group="model"] [data-cu-planned-field="${sharedField}"]`)).not.toBeNull();
+    }
 
     expect(scanEvalsDom(el)).toEqual({ bareNumbers: [], figuresInPlanned: [], figuresOutsideScope: [] });
     const hits = findBannedCopy((el.textContent ?? "").replace(/\s+/g, " "), [
@@ -58,6 +62,7 @@ describe("Content Understanding section on /evals (#13901)", () => {
       ...EVALS_COPY_RULES,
     ]);
     expect(hits).toEqual([]);
+    expect(el.textContent).not.toContain("said not known");
   });
 
   it("renders measured per-field code/model columns, cost, revision and slices under Figure rules", async () => {
@@ -110,6 +115,7 @@ describe("Content Understanding section on /evals (#13901)", () => {
     expect(el.querySelector('[data-cu-row="topic"] [data-cu-decider="model"]')?.textContent).toContain("280");
     expect(el.querySelector('[data-cu-slice="by_exposure"]')?.textContent).toContain("What readers see");
     expect(el.textContent).toContain("$0.140");
+    expect(el.textContent).toContain("said it did not know");
     expect(scanEvalsDom(el)).toEqual({ bareNumbers: [], figuresInPlanned: [], figuresOutsideScope: [] });
   });
 });

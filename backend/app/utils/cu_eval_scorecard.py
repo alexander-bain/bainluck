@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from app.utils.cu_event_facts import cu_event_facts
 from app.utils.cu_frame import NO_SUBJECT_MARKER, UNRESOLVED_PREFIX
 from app.utils.cu_junk_flags import cu_junk_flags
 
@@ -24,7 +26,7 @@ class FieldSpec:
 
     key: str
     label: str
-    default_decider: str  # "code" | "model"
+    default_decider: str  # "code" | "model" | "code_and_model"
     kind: str  # "str" | "date" | "int" | "flags" | "frame" | "subject" | "entities"
     in_pilot_core: bool = False
 
@@ -32,15 +34,15 @@ class FieldSpec:
 CU_SCORECARD_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("topic", "Topic", "model", "str", in_pilot_core=True),
     FieldSpec("subtopic", "Specific area", "model", "str"),
-    FieldSpec("geography", "Region", "model", "str", in_pilot_core=True),
+    FieldSpec("geography", "Region", "code_and_model", "str", in_pilot_core=True),
     FieldSpec("temporal_class", "How time works", "model", "str", in_pilot_core=True),
-    FieldSpec("event_date", "Day of the event", "model", "date"),
+    FieldSpec("event_date", "Day of the event", "code_and_model", "date"),
     FieldSpec("recurrence", "How often it repeats", "model", "str"),
-    FieldSpec("stakes", "Real-world stakes", "model", "int", in_pilot_core=True),
-    FieldSpec("breadth", "How wide the audience is", "model", "int", in_pilot_core=True),
+    FieldSpec("stakes", "Real-world stakes", "code_and_model", "int", in_pilot_core=True),
+    FieldSpec("breadth", "How wide the audience is", "code_and_model", "int", in_pilot_core=True),
     FieldSpec("oddity", "How unusual it is", "model", "int", in_pilot_core=True),
     FieldSpec("arc", "Kind of story", "model", "str"),
-    FieldSpec("junk_flags", "Format warnings", "model", "flags"),
+    FieldSpec("junk_flags", "Format warnings", "code_and_model", "flags"),
     FieldSpec("liveness", "Trading activity", "code", "str"),
     FieldSpec("subject_ref", "Main subject link", "code", "subject"),
     FieldSpec("frame", "Number and comparison", "model", "frame"),
@@ -169,6 +171,35 @@ def classify_field_prediction(expected: Any, predicted: Any, spec: FieldSpec) ->
     return "wrong"
 
 
+def _parse_iso_dt(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value.strip():
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _derived_event_facts(market_meta: dict[str, Any]) -> dict[str, Any]:
+    event_facts = market_meta.get("event_facts")
+    if isinstance(event_facts, dict):
+        return event_facts
+    title = market_meta.get("title") or market_meta.get("name") or ""
+    if not isinstance(title, str) or not title.strip():
+        return {}
+    return cu_event_facts(
+        title,
+        linked_game_id=market_meta.get("linked_game_id")
+        if market_meta.get("linked_game_id") is not None
+        else market_meta.get("event_id"),
+        linked_start=_parse_iso_dt(market_meta.get("linked_start")),
+        start_source=market_meta.get("start_source"),
+        linked_league=market_meta.get("linked_league"),
+        home_team_league=market_meta.get("home_team_league"),
+        away_team_league=market_meta.get("away_team_league"),
+    )
+
+
 def infer_field_decider(
     field_key: str,
     prediction_row: dict[str, Any],
@@ -186,23 +217,28 @@ def infer_field_decider(
         return "code"
 
     if market_meta:
-        event_facts = market_meta.get("event_facts")
-        if isinstance(event_facts, dict) and field_key in event_facts:
+        event_facts = _derived_event_facts(market_meta)
+        if field_key in event_facts:
             return "code"
         if field_key == "junk_flags" and market_meta.get("outcome_names"):
             if cu_junk_flags(market_meta["outcome_names"], []):
                 return "code"
 
-    return spec.default_decider
+    return "model" if spec.default_decider == "code_and_model" else spec.default_decider
 
 
 def _infer_market_shape(row: dict[str, Any]) -> str:
     explicit = row.get("market_shape") or row.get("shape")
     if isinstance(explicit, str) and explicit.strip():
         return explicit.strip().lower()
-    outcome_names = row.get("outcome_names") or []
+    outcome_names = row.get("outcome_names") or [
+        o.get("name")
+        for o in (row.get("outcomes") or [])
+        if isinstance(o, dict) and o.get("name")
+    ]
     if outcome_names:
-        flags = set(cu_junk_flags(outcome_names, row.get("junk_flags")))
+        # Slicing comes strictly from market inputs; never use model-predicted flags.
+        flags = set(cu_junk_flags(outcome_names, []))
         if "ladder" in flags:
             return "ladder"
         if "dated_bucket" in flags:
@@ -416,7 +452,6 @@ def score_cu_eval_run(
     }
     for mid in market_ids:
         ans_row = answers_by_id[mid]
-        pred_row = preds_by_id.get(mid, {})
         venue = str(ans_row.get("source") or ans_row.get("venue") or "unknown").strip().lower() or "unknown"
         category = str(
             ans_row.get("category")
@@ -424,7 +459,12 @@ def score_cu_eval_run(
             or _extract_answer_fields(ans_row).get("topic")
             or "unknown"
         ).strip().lower() or "unknown"
-        shape = _infer_market_shape({**ans_row, "junk_flags": _extract_profile(pred_row).get("junk_flags")})
+        slice_inputs = (
+            {**ans_row, **ans_row["market_meta"]}
+            if isinstance(ans_row.get("market_meta"), dict)
+            else ans_row
+        )
+        shape = _infer_market_shape(slice_inputs)
         exposure = _infer_exposure(ans_row)
 
         slice_buckets["by_venue"].setdefault(venue, []).append(mid)
@@ -469,7 +509,7 @@ def format_scorecard_table(scorecard: dict[str, Any]) -> str:
     lines = [
         f"CU Eval Scorecard ({scorecard.get('as_of')}) — {scorecard.get('dataset')} set "
         f"| rev={scorecard.get('writer_rev')} | model={scorecard.get('model')} "
-        f"| markets={scorecard.get('market_count')}",
+        f"| markets={scorecard.get('market_count')} | missing_predictions={scorecard.get('missing_predictions', 0)}",
     ]
     cost = scorecard.get("cost") or {}
     if cost.get("total_usd") is not None:

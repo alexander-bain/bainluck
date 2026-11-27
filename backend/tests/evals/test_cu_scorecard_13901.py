@@ -223,3 +223,107 @@ def test_unlabeled_builder_and_cli_round_trip(tmp_path):
     assert unmeasured["status"] == "not_measured_yet"
     assert unmeasured["as_of"] == "2026-06-01"
     assert [f["field"] for f in unmeasured["fields"]] == [s.key for s in CU_SCORECARD_FIELDS]
+    by_unmeasured = {f["field"]: f["decided_by"] for f in unmeasured["fields"]}
+    for shared_field in ("geography", "event_date", "stakes", "breadth", "junk_flags"):
+        assert by_unmeasured[shared_field] == "code_and_model"
+
+
+def test_cli_refuses_missing_predictions_by_default_and_prints_count(tmp_path):
+    answers = _sample_answers()
+    preds = [_sample_predictions()[0]]  # Market 102 missing
+
+    ans_file = tmp_path / "answers.json"
+    pred_file = tmp_path / "predictions.json"
+    out_file = tmp_path / "scorecard.json"
+    ans_file.write_text(json.dumps({"rows": answers}), encoding="utf-8")
+    pred_file.write_text(json.dumps({"rows": preds}), encoding="utf-8")
+
+    refused = subprocess.run(
+        [
+            sys.executable,
+            "scripts/score_cu_eval.py",
+            "--answers",
+            str(ans_file),
+            "--predictions",
+            str(pred_file),
+            "--date",
+            "2026-06-15",
+            "--out",
+            str(out_file),
+        ],
+        cwd=BACKEND_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert refused.returncode == 2
+    assert "missing_predictions=1" in refused.stdout
+    assert "Refusing to write scorecard: 1 answer-key market(s) have no prediction" in refused.stderr
+    assert not out_file.exists()
+
+    allowed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/score_cu_eval.py",
+            "--answers",
+            str(ans_file),
+            "--predictions",
+            str(pred_file),
+            "--date",
+            "2026-06-15",
+            "--allow-missing-predictions",
+            "--out",
+            str(out_file),
+        ],
+        cwd=BACKEND_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert allowed.returncode == 0, allowed.stderr
+    assert "missing_predictions=1" in allowed.stdout
+    written = json.loads(out_file.read_text(encoding="utf-8"))
+    assert written["missing_predictions"] == 1
+
+
+def test_input_only_slices_and_recomputed_cu_event_facts_decider():
+    # Neither field_deciders nor precomputed event_facts is present on this state house race,
+    # and the prediction falsely claims junk_flags=["ladder"] on a binary ["Yes", "No"] market.
+    answers = [
+        {
+            "market_id": 70136122,
+            "source": "kalshi",
+            "category": "politics",
+            "title": "Vermont House Orleans-3 winner? (2028)",
+            "outcome_names": ["Yes", "No"],
+            "readers_see": True,
+            "answers": {
+                "geography": "local",
+                "event_date": "2028-11-07",
+                "stakes": 1,
+                "breadth": 1,
+                "junk_flags": [],
+            },
+        }
+    ]
+    preds = [
+        {
+            "market_id": 70136122,
+            "profile": {
+                "geography": "local",
+                "event_date": "2028-11-07",
+                "stakes": 1,
+                "breadth": 1,
+                "junk_flags": ["ladder"],
+            },
+        }
+    ]
+    result = score_cu_eval_run(answers, preds, as_of="2026-06-15", dataset="sealed")
+    by_field = {row["field"]: row for row in result["fields"]}
+    for code_fact_field in ("geography", "event_date", "stakes", "breadth"):
+        assert by_field[code_fact_field]["decided_by"] == "code"
+        assert by_field[code_fact_field]["code"]["right"] == 1
+        assert by_field[code_fact_field]["model"]["total"] == 0
+
+    # Market shape slice ignores prediction junk_flags=["ladder"] and classifies binary by inputs.
+    assert set(result["slices"]["by_market_shape"].keys()) == {"binary"}
