@@ -1,0 +1,12 @@
+{
+  "checks/context.mjs": "30151ddadab694973f0521ae96d571762b23feb2ff4dee4c4fbaad34c5ca1c5d",
+  "checks/crash-child.mjs": "be5704d7b7561c3d2c0b52651bbf10188937d7783611c6e924be4d8568507186",
+  "checks/postgres.mjs": "26b9da74eac7c4c870917e04b1ef449369b5e9a78afcc8e4aef4f105a3e2b210",
+  "checks/unit.mjs": "0b184734b5b21f5880c94a7ec13c45da9b6e181db01d5235179b0545204cefcb",
+  "package-lock.json": "b420f13f2794c63410b882c1c3511584ffe399b426744ec50a91a6f5e1b95f02",
+  "package.json": "5ae38969aa6f25be966d09015220729b7ff60c9b1de8eba51bb437a10254ea11",
+  "run.sh": "edd638c7a366317ab5ff9600b0bc658717413f09247a187fac587ce99a204e9e",
+  "src/client.mjs": "1bcad480d08216513dc2f5670e80ab13ace0110523925aad72331ff66b2a1119",
+  "src/pipeline.mjs": "e511b2af9f27d65784bb5851bbf6cc85f39bba0c1021dfefc039dc1a5c2b961e",
+  "src/postgres.mjs": "9cca1f5daa734175fee7ffaa150f7c836e519c56f427f242308063723e25716d"
+}
