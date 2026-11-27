@@ -11,6 +11,12 @@ interface MetricSectionProps {
   action?: string;
   actionHref?: string;
   defaultExpanded?: boolean;
+  /**
+   * #847: the section's numbers are history, not a current call (a saved
+   * snapshot with no reviewed freshness horizon, or no number at all), so the
+   * status dot and icon are drawn neutral. `status` still decides auto-expand.
+   */
+  verdictMuted?: boolean;
   children: React.ReactNode;
 }
 
@@ -36,12 +42,13 @@ export default function MetricSection({
   action,
   actionHref,
   defaultExpanded,
+  verdictMuted = false,
   children,
 }: MetricSectionProps) {
   const autoExpand = defaultExpanded ?? (status === "warning" || status === "critical");
   const [expanded, setExpanded] = useState(autoExpand);
 
-  const Icon = STATUS_ICON[status];
+  const Icon = verdictMuted ? null : STATUS_ICON[status];
 
   return (
     <div className="bg-surface-card border border-surface-border rounded-xl overflow-hidden">
@@ -49,7 +56,7 @@ export default function MetricSection({
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-elevated/40 transition-colors"
       >
-        <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[status]}`} />
+        <span className={`w-2 h-2 rounded-full shrink-0 ${verdictMuted ? "bg-surface-border" : STATUS_DOT[status]}`} data-verdict-muted={verdictMuted ? "" : undefined} />
         <span className="flex-1 min-w-0">
           <span className="text-sm font-medium text-text-primary">{question}</span>
           <span className="ml-2 text-sm text-text-secondary">{summary}</span>
