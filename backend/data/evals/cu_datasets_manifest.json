@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "seed": "cu-sealed-v1-2026-11-27",
+  "drawn_at_utc": "2026-11-27T22:26:04.867468+00:00",
+  "quarterly_refresh_rule": "Each quarter, retire the third of the sealed set (100 markets) that has been settled longest (by settled_at, then resolution_date) and draw replacements from non-pilot, non-sealed open markets using a newly posted seed.",
+  "reader_exposure_date_range": [
+    "2026-11-14",
+    "2026-11-27"
+  ],
+  "db_query_row_counts": {
+    "open_futures_markets_scanned": 55635,
+    "distinct_roster_combinations_open": 100,
+    "distinct_slate_markets_eligible_open": 589,
+    "frozen_markets_fetched": 500,
+    "frozen_outcomes_fetched": 5422,
+    "sealed_total": 300,
+    "sealed_strata_covered": 100,
+    "dev_total": 200
+  },
+  "files": {
+    "cu_sealed_300_v1.json": {
+      "path": "backend/data/evals/cu_sealed_300_v1.json",
+      "sha256": "f15e175ec4813abd5f19c62c6a3cc709fc03e1169297820321a5caec4a7817f1",
+      "count": 300
+    },
+    "cu_dev_200_v1.json": {
+      "path": "backend/data/evals/cu_dev_200_v1.json",
+      "sha256": "5f555e016af5656d8d67c411f3c70245f94eeefcc4ba08e54ee850308f8a8927",
+      "count": 200
+    }
+  }
+}
