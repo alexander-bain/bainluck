@@ -2358,6 +2358,7 @@ export interface FeedRoundupContract {
   paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet | null;
   machinery_card?: import("@/components/collections/MachinerySectionRenderer").MachineryCardContract | null;
   rows: FeedRoundupRow[];
+  unpriced_outcomes?: import("@/lib/collections").MachineryOutcomeVisual[];
 }
 
 // #9925: where a theme card's "View collection" goes. `name` is the
