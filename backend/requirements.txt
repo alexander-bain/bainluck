@@ -38,7 +38,7 @@ cryptography==50.0.2
 # Keep the reviewed task-binding contract; 5.7 requires a separate upgrade.
 celery==5.6.3
 # Pin to production-verified 8.1.0; redis 8.2.0 (PyPI Nov 23) hangs/times out #10090 async Redis tests in CI.
-redis==8.1.0
+redis==8.2.0
 
 # Rate Limiting
 limits==5.8.0
