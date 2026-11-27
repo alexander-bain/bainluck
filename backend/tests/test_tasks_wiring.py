@@ -579,6 +579,8 @@ class TestBeatScheduleCompleteness:
         "sync-espn-standings-records",
         # #13606 Part 1 — periodic finished-game `/history` chart durable materialization.
         "materialize-finished-event-charts",
+        # #12619 (443: A) — daily PT freeze & 30-day /guess group-board retention sweep.
+        "guess-daily-maintenance",
     }
 
     def test_no_missing_entries(self):
