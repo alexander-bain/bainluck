@@ -225,6 +225,8 @@ def _sorted_outcomes(market: Mapping[str, Any]) -> list[dict[str, Any]]:
             "is_winner": o.get("is_winner"),
             "resolution_source": o.get("resolution_source"),
             "_orig_rp": o.get("rendered_percent"),
+            "provenance_market_id": o.get("provenance_market_id"),
+            "provenance_outcome_id": o.get("provenance_outcome_id"),
         })
     if not items:
         return []
@@ -256,6 +258,8 @@ def _sorted_outcomes(market: Mapping[str, Any]) -> list[dict[str, Any]]:
             "prob": prob,
             "rendered_percent": int(rp) if rp is not None else _pct_int(prob),
             "is_winner": bool(o.get("is_winner")),
+            "provenance_market_id": o.get("provenance_market_id"),
+            "provenance_outcome_id": o.get("provenance_outcome_id"),
         })
     out.sort(key=lambda r: (-r["prob"], r["name"]))
     return out
@@ -357,13 +361,23 @@ def _norm_outcome_phrase(name: str) -> str:
     return re.sub(r"\s+", " ", low).strip()
 
 
-def _binary_matches_multi_parent(binary_mkt: Mapping[str, Any], parent_outcomes: set[str]) -> bool:
-    if not parent_outcomes or not _is_binary_market(binary_mkt):
+def _binary_matches_multi_parent(
+    binary_mkt: Mapping[str, Any],
+    parent_outcomes: set[str],
+    *,
+    parent_pred_tokens: set[str] | frozenset[str] = frozenset(),
+) -> bool:
+    if not _is_binary_market(binary_mkt):
         return False
-    title_norm = f" {_norm_outcome_phrase(str(binary_mkt.get('name') or binary_mkt.get('title') or ''))} "
+    raw_title = str(binary_mkt.get("name") or binary_mkt.get("title") or "")
+    title_norm = f" {_norm_outcome_phrase(raw_title)} "
     if not title_norm.strip():
         return False
-    return any(len(oname) >= 3 and f" {oname} " in title_norm for oname in parent_outcomes)
+    if parent_outcomes and any(len(oname) >= 3 and f" {oname} " in title_norm for oname in parent_outcomes):
+        return True
+    if parent_pred_tokens and (_predicate_tokens(raw_title) & parent_pred_tokens):
+        return True
+    return False
 
 
 def _canonical_question_and_deadline(
@@ -394,53 +408,42 @@ def _canonical_question_and_deadline(
     return stem_qkey, canon_date
 
 
-def _blend_binary_twin_bucket(bucket: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Pick lead twin and combine binary probabilities across distinct venues when sources disagree."""
+def _select_lead_twin(
+    bucket: Sequence[Mapping[str, Any]],
+    unlinked_twins_out: list[dict[str, Any]] | None = None,
+    *,
+    dedupe_key: str = "",
+) -> dict[str, Any]:
+    """Pick highest-coverage/highest-volume twin preserving exact market-page numbers (never average)."""
     ordered = sorted(
         (dict(x) for x in bucket),
         key=lambda x: (-_sources_count(x), -int(x.get("volume_24h") or 0), int(x.get("id") or 0)),
     )
     lead = dict(ordered[0])
-    sources = {str(x.get("source") or "kalshi").lower() for x in ordered}
-    lead["sources_count"] = max(_sources_count(lead), len(sources))
-    if len(sources) >= 2 and all(_is_binary_market(x) for x in ordered):
-        by_src: dict[str, tuple[int, float]] = {}
-        for x in ordered:
-            src_k = str(x.get("source") or "kalshi").lower()
-            vol = int(x.get("volume_24h") or 0)
-            frac, _, _ = _top_outcome_cell(x)
-            if src_k not in by_src or vol > by_src[src_k][0]:
-                by_src[src_k] = (vol, frac)
-        if len(by_src) >= 2:
-            combined_prob = max(0.0, min(1.0, sum(v[1] for v in by_src.values()) / len(by_src)))
-            combined_pct = rendered_percent(combined_prob)
-            new_outs = []
-            for o in lead.get("outcomes") or ():
-                if not isinstance(o, Mapping):
-                    continue
-                oc = dict(o)
-                oname = str(oc.get("name") or "").strip().lower()
-                if oname == "yes":
-                    oc["probability"] = combined_prob
-                    oc["current_probability"] = combined_prob
-                    oc["rendered_percent"] = combined_pct
-                elif oname == "no":
-                    no_p = max(0.0, min(1.0, 1.0 - combined_prob))
-                    oc["probability"] = no_p
-                    oc["current_probability"] = no_p
-                    oc["rendered_percent"] = rendered_percent(no_p)
-                else:
-                    oc["probability"] = combined_prob
-                    oc["current_probability"] = combined_prob
-                    oc["rendered_percent"] = combined_pct
-                new_outs.append(oc)
-            if new_outs:
-                lead["outcomes"] = new_outs
+    if unlinked_twins_out is not None:
+        lead_id = lead.get("id")
+        for drop in ordered[1:]:
+            if drop.get("id") == lead_id:
+                continue
+            unlinked_twins_out.append({
+                "kind": "binary_twin",
+                "dedupe_key": dedupe_key,
+                "lead_market_id": lead_id,
+                "dropped_market_id": drop.get("id"),
+                "lead_source": lead.get("source"),
+                "dropped_source": drop.get("source"),
+                "lead_name": lead.get("name") or lead.get("title"),
+                "dropped_name": drop.get("name") or drop.get("title"),
+            })
     return lead
 
 
-def _dedupe_twins(markets: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Collapse cross-venue twins (including before Jan 1 / by Dec 31 equivalents) and same-group clones."""
+def _dedupe_twins(
+    markets: Sequence[Mapping[str, Any]],
+    *,
+    unlinked_twins_out: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Collapse unlinked twins & same-group children page-wide without inventing averaged probabilities."""
     ref_now = datetime.now(timezone.utc)
     default_year = ref_now.year
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -465,9 +468,12 @@ def _dedupe_twins(markets: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
             dedupe_key = f"q:{qkey}" if qkey else f"gid:{gid}:{item.get('id')}"
         groups[dedupe_key].append(item)
 
-    deduped = [_blend_binary_twin_bucket(bucket) for bucket in groups.values()]
+    deduped = [
+        _select_lead_twin(bucket, unlinked_twins_out, dedupe_key=dkey)
+        for dkey, bucket in groups.items()
+    ]
 
-    # Absorb binary markets duplicating a rung on a multi-outcome date-ladder market, combining distinct sources.
+    # Collapse binary markets duplicating a rung on a multi-outcome date-ladder market (no averaging).
     multi_date_rungs: dict[tuple[str, str], tuple[dict[str, Any], dict[str, Any]]] = {}
     for m in deduped:
         if _is_binary_market(m):
@@ -497,25 +503,27 @@ def _dedupe_twins(markets: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
             )
             if not b_stem or not b_date or (b_stem, b_date) not in multi_date_rungs:
                 continue
-            parent_m, rung_o = multi_date_rungs[(b_stem, b_date)]
-            src_parent = str(parent_m.get("source") or "kalshi").lower()
-            src_bin = str(m.get("source") or "kalshi").lower()
-            if src_parent != src_bin:
-                p_rung = _normalize_prob(rung_o.get("current_probability") if rung_o.get("current_probability") is not None else rung_o.get("probability"))
-                p_bin, _, _ = _top_outcome_cell(m)
-                if p_rung is not None:
-                    blended = max(0.0, min(1.0, (p_rung + p_bin) / 2.0))
-                    rung_o["probability"] = blended
-                    rung_o["current_probability"] = blended
-                    rung_o["rendered_percent"] = rendered_percent(blended)
-                    parent_m["sources_count"] = max(_sources_count(parent_m), 2)
+            parent_m, _ = multi_date_rungs[(b_stem, b_date)]
+            if unlinked_twins_out is not None and m.get("id") != parent_m.get("id"):
+                unlinked_twins_out.append({
+                    "kind": "multi_date_rung",
+                    "dedupe_key": f"rung:{b_stem}@{b_date}",
+                    "lead_market_id": parent_m.get("id"),
+                    "dropped_market_id": m.get("id"),
+                    "lead_source": parent_m.get("source"),
+                    "dropped_source": m.get("source"),
+                    "lead_name": parent_m.get("name") or parent_m.get("title"),
+                    "dropped_name": m.get("name") or m.get("title"),
+                })
             absorbed_ids.add(int(m["id"]))
         if absorbed_ids:
             deduped = [m for m in deduped if m.get("id") not in absorbed_ids]
 
-    # Collapse binary submarkets that share a group_id with an eligible multi-outcome parent
-    # (e.g. "Will Clavicular visit Russia?" alongside "Which countries will Clavicular visit?").
+    # Unify same-group_id binary siblings with their eligible multi-outcome parent so one
+    # non-exclusive family (e.g. "Which countries will Clavicular visit?" + binary visits) never splits.
+    parent_by_gid: dict[str, dict[str, Any]] = {}
     parent_outcomes_by_gid: dict[str, set[str]] = defaultdict(set)
+    parent_preds_by_gid: dict[str, set[str]] = defaultdict(set)
     for m in deduped:
         gid = str(m.get("group_id") or "").strip()
         if not gid or _is_binary_market(m):
@@ -524,10 +532,15 @@ def _dedupe_twins(markets: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         if len(outs) < 2:
             outs = [o for o in _sorted_outcomes(m) if not o.get("is_field")]
         if len(outs) >= 2:
-            for o in outs:
+            if gid not in parent_by_gid or int(m.get("volume_24h") or 0) > int(parent_by_gid[gid].get("volume_24h") or 0):
+                parent_by_gid[gid] = m
+            for o in m.get("outcomes") or ():
+                if not isinstance(o, Mapping):
+                    continue
                 oname = _norm_outcome_phrase(str(o.get("name") or ""))
                 if len(oname) >= 3:
                     parent_outcomes_by_gid[gid].add(oname)
+            parent_preds_by_gid[gid] |= _predicate_tokens(str(m.get("name") or m.get("title") or ""))
 
     if not parent_outcomes_by_gid:
         return deduped
@@ -535,7 +548,61 @@ def _dedupe_twins(markets: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     collapsed: list[dict[str, Any]] = []
     for m in deduped:
         gid = str(m.get("group_id") or "").strip()
-        if gid in parent_outcomes_by_gid and _binary_matches_multi_parent(m, parent_outcomes_by_gid[gid]):
+        if gid in parent_by_gid and _binary_matches_multi_parent(
+            m,
+            parent_outcomes_by_gid[gid],
+            parent_pred_tokens=parent_preds_by_gid[gid],
+        ):
+            parent_m = parent_by_gid[gid]
+            raw_title = str(m.get("name") or m.get("title") or "")
+            # Fold unseen sibling outcome into parent when parent allows multiple outcomes.
+            if parent_m.get("mutually_exclusive") is False and not any(
+                len(oname) >= 3 and f" {oname} " in f" {_norm_outcome_phrase(raw_title)} "
+                for oname in parent_outcomes_by_gid[gid]
+            ):
+                b_pred = _predicate_tokens(raw_title) & parent_preds_by_gid[gid]
+                if b_pred:
+                    def _strip_trail_date(q: str) -> list[str]:
+                        s_raw = str(q or "").strip().rstrip("?.! ")
+                        dm_q = _parse_date_marker(s_raw, default_year=default_year)
+                        if dm_q is not None:
+                            s_raw = str(dm_q.get("display_stem") or dm_q.get("stem") or s_raw).strip().rstrip("?.! ")
+                        return s_raw.split()
+
+                    sib_toks_list = [
+                        _strip_trail_date(str(x.get("name") or x.get("title") or ""))
+                        for x in deduped
+                        if str(x.get("group_id") or "").strip() == gid and _is_binary_market(x)
+                    ]
+                    sib_toks_list = [t for t in sib_toks_list if t]
+                    cur_toks = _strip_trail_date(raw_title)
+                    if len(sib_toks_list) >= 2 and cur_toks:
+                        pfx = 0
+                        min_l = min(len(t) for t in sib_toks_list)
+                        while pfx < min_l and len({t[pfx].lower() for t in sib_toks_list}) == 1:
+                            pfx += 1
+                        sfx = 0
+                        while sfx < (min_l - pfx) and len({t[-1 - sfx].lower() for t in sib_toks_list}) == 1:
+                            sfx += 1
+                        end_idx = len(cur_toks) - sfx if sfx > 0 else len(cur_toks)
+                        clean_target = " ".join(cur_toks[pfx:end_idx]).strip(" ,:;?!.-")
+                    else:
+                        clean_target = _distinguishing_row_label(raw_title, [raw_title], max_len=48).rstrip("?.! ")
+                    tnorm = _norm_outcome_phrase(clean_target)
+                    if clean_target and tnorm and tnorm not in parent_outcomes_by_gid[gid] and not _INTERROGATIVE_START_RE.match(clean_target):
+                        frac, yes_oid, pct = _top_outcome_cell(m)
+                        parent_outs = list(parent_m.get("outcomes") or [])
+                        parent_outs.append({
+                            "id": yes_oid,
+                            "name": clean_target,
+                            "probability": frac,
+                            "current_probability": frac,
+                            "rendered_percent": pct,
+                            "provenance_market_id": int(m["id"]),
+                            "provenance_outcome_id": yes_oid,
+                        })
+                        parent_m["outcomes"] = parent_outs
+                        parent_outcomes_by_gid[gid].add(tnorm)
             continue
         collapsed.append(m)
     return collapsed
@@ -561,7 +628,12 @@ def derive_common_headline(
     if family_label:
         if not _passes_taste_and_harm(str(family_label)):
             return None, "refused_scout_taste_or_harm_guard"
-        clean_fl = re.sub(r"[?!.:]+$", "", str(family_label)).strip()
+        raw_fl = str(family_label).strip()
+        clean_fl = (
+            raw_fl
+            if re.search(r"(?:^|\s)(?:[A-Za-z]\.){2,}$", raw_fl)
+            else re.sub(r"[?!.:]+$", "", raw_fl).strip()
+        )
         fl_words = clean_fl.split()
         if len(fl_words) == 1 and len(fl_words[0]) >= 3 and not _STAT_NOISE_RE.search(clean_fl):
             w0 = fl_words[0]
@@ -837,26 +909,33 @@ def _deadline_fallback_headlines(
     if variant == "one_in_n" or (all_pcts and len(all_pcts) == len(rows_meta or []) and max(all_pcts) <= 15):
         cands.extend(["Long Shots", "Outside Bets", "Sub-15% Odds"])
 
-    # Concrete shared deadline when every row falls on or before that exact cutoff date
+    # Concrete shared deadline: a specific "By <Month Day>" heading requires every row to share that date.
     if max_dt is not None:
+        unique_dates = {dt.date() for dt in dts}
         mon_full = (
             "", "January", "February", "March", "April", "May", "June",
             "July", "August", "September", "October", "November", "December",
         )[max_dt.month]
         mon_abbr = _MONTH_ABBR[max_dt.month]
-        if max_days is not None and max_days <= 7:
-            cands.append("Closing This Week")
-        if max_dt.year == cur_year and max_dt.month == 11 and max_dt.day == 30:
-            cands.append("By November 30")
-        elif max_dt.year == cur_year and max_dt.month == 12 and max_dt.day == 31:
-            cands.append("By December 31")
-            cands.append("Before Year End")
-        elif max_days is not None and max_days <= 45 and max_dt.year == cur_year:
-            cands.append(f"By {mon_abbr} {max_dt.day}")
-            cands.append("Next 45 Days")
+        if len(unique_dates) == 1:
+            if max_days is not None and max_days <= 7:
+                cands.append("Closing This Week")
+            if max_dt.year == cur_year and max_dt.month == 11 and max_dt.day == 30:
+                cands.append("By November 30")
+            elif max_dt.year == cur_year and max_dt.month == 12 and max_dt.day == 31:
+                cands.append("By December 31")
+                cands.append("Before Year End")
+            elif max_days is not None and max_days <= 45 and max_dt.year == cur_year:
+                cands.append(f"By {mon_abbr} {max_dt.day}")
+                cands.append("Next 45 Days")
+            else:
+                cands.append(f"Through {mon_abbr} {max_dt.year}")
+                cands.append(f"By {mon_full} {max_dt.year}")
         else:
             cands.append(f"Through {mon_abbr} {max_dt.year}")
-            cands.append(f"By {mon_full} {max_dt.year}")
+            if max_dt.year == cur_year and max_dt.month == 12:
+                cands.append("Before Year End")
+            cands.append(f"Through {mon_full}")
 
     if variant == "countdown" and max_days is not None:
         if max_days <= 7:
@@ -1104,6 +1183,15 @@ def _distinguishing_row_label(title: str, all_titles: Sequence[str], *, max_len:
         diff_tokens = tokens[prefix_len:end_idx]
         if lead_low in {"least", "most"} and prev_low == "at":
             break
+    if (
+        diff_tokens
+        and diff_tokens[0].lower().strip("?!.,") in {"below", "above", "under", "over"}
+        and prefix_len >= 2
+        and tokens[prefix_len - 2].lower() == "at"
+        and tokens[prefix_len - 1].lower() == "or"
+    ):
+        prefix_len -= 2
+        diff_tokens = tokens[prefix_len:end_idx]
 
     # Point 3: never strip leading subject / "Will" into ungrammatical verb fragments
     # (e.g. "Criminally charges...", "6500 measles cases in the U.S. in") unless reducing cleanly to a compact value/threshold.
@@ -1713,6 +1801,85 @@ def _infer_binary_default_prep(title_str: str) -> str:
     return "on"
 
 
+def _select_dated_tile_rows(
+    entries: Sequence[Mapping[str, Any]],
+    *,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    """Select up to ``limit`` rows; on >= 4-rung threshold ladders keep the 50%-straddling pair first."""
+    items = [dict(e) for e in entries]
+    if len(items) <= limit:
+        return items
+
+    rungs: dict[int, tuple[str, int, float]] = {}
+    by_family: dict[tuple[str, int], list[int]] = defaultdict(list)
+    for idx, entry in enumerate(items):
+        rung = _extract_threshold_rung(str(entry.get("rung_text") or entry.get("label") or ""))
+        if rung is not None:
+            rungs[idx] = rung
+            by_family[(rung[0], rung[1])].append(idx)
+
+    dom_idxs = max(by_family.values(), key=len, default=[])
+    if len(dom_idxs) < 4:
+        return items[:limit]
+
+    dom_set = set(dom_idxs)
+    other_idxs = [i for i in range(len(items)) if i not in dom_set]
+
+    # Pick the date column with the best spread around 50% (otherwise mean closeness across columns).
+    col_values: dict[str, list[int]] = defaultdict(list)
+    for i in dom_idxs:
+        for col_lbl, pct in (items[i].get("pct_by_col") or {}).items():
+            col_values[col_lbl].append(int(pct))
+
+    def _row_anchor_pct(idx: int) -> float:
+        pdict = items[idx].get("pct_by_col") or {}
+        if not pdict:
+            return float(items[idx].get("peak_pct") or 0)
+        # Prefer columns shared across most rungs that have values both >= 50 and < 50.
+        shared_cols = [
+            c for c, vals in col_values.items()
+            if len(vals) >= max(3, len(dom_idxs) // 2)
+        ]
+        straddle_cols = [
+            c for c in shared_cols
+            if any(v >= 50 for v in col_values[c]) and any(v < 50 for v in col_values[c])
+        ]
+        best_c = (
+            max(straddle_cols, key=lambda c: (len(col_values[c]), max(col_values[c]) - min(col_values[c])))
+            if straddle_cols
+            else (max(shared_cols, key=lambda c: len(col_values[c])) if shared_cols else None)
+        )
+        if best_c and best_c in pdict:
+            return float(pdict[best_c])
+        vals = list(pdict.values())
+        return float(min(vals, key=lambda v: abs(v - 50)))
+
+    scores = {i: _row_anchor_pct(i) for i in dom_idxs}
+    above50 = sorted([i for i in dom_idxs if scores[i] >= 50.0], key=lambda i: (scores[i] - 50.0, i))
+    below50 = sorted([i for i in dom_idxs if scores[i] < 50.0], key=lambda i: (50.0 - scores[i], i))
+
+    chosen_dom: list[int] = []
+    if above50:
+        chosen_dom.append(above50[0])
+    if below50:
+        chosen_dom.append(below50[0])
+    remaining = sorted(
+        [i for i in dom_idxs if i not in chosen_dom],
+        key=lambda i: (abs(scores[i] - 50.0), -abs(rungs[i][2]), i),
+    )
+    dom_cap = max(1, limit - (1 if other_idxs else 0))
+    while len(chosen_dom) < min(limit, len(dom_idxs), dom_cap) and remaining:
+        chosen_dom.append(remaining.pop(0))
+
+    # Preserve natural threshold ordering (loosest -> strictest) across chosen ladder rungs.
+    chosen_dom.sort(key=lambda i: (rungs[i][2], i))
+    selected = [items[i] for i in chosen_dom]
+    if other_idxs and len(selected) < limit:
+        selected.extend(items[i] for i in other_idxs[: limit - len(selected)])
+    return selected[:limit]
+
+
 def _build_dated_tiles_section(
     slug: str,
     kicker: str,
@@ -1795,7 +1962,7 @@ def _build_dated_tiles_section(
     candidate_entries: list[dict[str, Any]] = []
     seen_norm_stems: set[str] = set()
 
-    for ladder in binary_ladders[:8]:
+    for ladder in binary_ladders[:12]:
         ranked_ladder = sorted(
             ladder,
             key=lambda mp: (
@@ -1845,7 +2012,7 @@ def _build_dated_tiles_section(
             })
             if frac > best_row_frac or (frac == best_row_frac and idx_c == len(ordered) - 1):
                 best_row_frac = frac
-                row_lead_caption = _caption_for_row(stem_title, f"sits at {pct_str} {p['phrase']}")
+                row_lead_caption = _caption_for_row(stem_title, f"stands at {pct_str} {p['phrase']}")
 
         candidate_entries.append({
             "kind": "binary",
@@ -1898,7 +2065,7 @@ def _build_dated_tiles_section(
             })
             if frac > best_row_frac or (frac == best_row_frac and idx_c == len(ordered_r) - 1):
                 best_row_frac = frac
-                row_lead_caption = _caption_for_row(stem_title, f"sits at {pct_str} {p['phrase']}")
+                row_lead_caption = _caption_for_row(stem_title, f"stands at {pct_str} {p['phrase']}")
 
         candidate_entries.append({
             "kind": "multi",
@@ -1919,8 +2086,11 @@ def _build_dated_tiles_section(
             "peak_pct": peak_pct,
         })
 
-    # Drop any inverted threshold rungs (e.g. $1.5T > $1.4T) before choosing the top 3 rows.
-    monotonic_entries = _drop_inverted_threshold_rows(candidate_entries)[:3]
+    # Drop any inverted threshold rungs, then keep the rungs straddling 50% + next nearest (#13696 Point 2).
+    monotonic_entries = _select_dated_tile_rows(
+        _drop_inverted_threshold_rows(candidate_entries),
+        limit=3,
+    )
     if not monotonic_entries:
         return None
 
@@ -2398,9 +2568,11 @@ def _build_casting_sheet_section(
             prob = float(o["prob"])
             pct = int(o["rendered_percent"])
             pct_str = _pct_display(prob, pct)
+            prov_mid = int(o.get("provenance_market_id") or mid)
+            prov_oid = o.get("provenance_outcome_id") if o.get("provenance_market_id") is not None else o.get("id")
             items.append({
                 "id": f"{slug}-cs-{mid}-{idx_o}",
-                "provenance": {"market_id": mid, "outcome_id": o.get("id")},
+                "provenance": {"market_id": prov_mid, "outcome_id": prov_oid},
                 "marks": [
                     pic,
                     _mark_word(o["name"], style="row", tone="primary", align="left", width="flex", bold=(idx_o == 0)),
@@ -2414,13 +2586,14 @@ def _build_casting_sheet_section(
             eff_subj,
             seen_headlines,
         )
+        lead_verb = "is most likely for" if m.get("mutually_exclusive") is False else "is the favorite for"
         card = _finalize_section(_make_kit_card(
             card_id=f"{slug}-casting-sheet",
             layout="stack",
             variant="casting_sheet",
             kicker=f"{kicker} · CONTENDERS",
             common_headline=headline,
-            stat_caption=f"{top_o['name']} is the favorite for {headline} at {top_pct_str}",
+            stat_caption=f"{top_o['name']} {lead_verb} {headline} at {top_pct_str}",
             source_count=_sources_count(m),
             route_slug=slug,
             body={"header_layout": "none", "header_marks": [], "items": items},
@@ -2458,9 +2631,11 @@ def _build_plain_bar_stack_section(
             prob = float(o["prob"])
             pct = int(o["rendered_percent"])
             pct_str = _pct_display(prob, pct)
+            prov_mid = int(o.get("provenance_market_id") or mid)
+            prov_oid = o.get("provenance_outcome_id") if o.get("provenance_market_id") is not None else o.get("id")
             items.append({
                 "id": f"{slug}-bar-m-{mid}-{idx_o}",
-                "provenance": {"market_id": mid, "outcome_id": o.get("id")},
+                "provenance": {"market_id": prov_mid, "outcome_id": prov_oid},
                 "marks": [
                     _mark_word(o["name"], style="row", tone="primary", align="left", width="flex", bold=(idx_o == 0)),
                     _mark_bar_single(prob, width="sm"),
@@ -2474,13 +2649,14 @@ def _build_plain_bar_stack_section(
             eff_subj,
             seen_headlines,
         )
+        lead_verb = "is most likely for" if m.get("mutually_exclusive") is False else "is the favorite for"
         card = _finalize_section(_make_kit_card(
             card_id=f"{slug}-plain-bars",
             layout="stack",
             variant="plain_bar_stack",
             kicker=f"{kicker} · RACE",
             common_headline=headline,
-            stat_caption=f"{top_o['name']} is the favorite for {headline} at {top_pct_str}",
+            stat_caption=f"{top_o['name']} {lead_verb} {headline} at {top_pct_str}",
             source_count=_sources_count(m),
             route_slug=slug,
             body={"header_layout": "none", "header_marks": [], "items": items},
@@ -2600,7 +2776,8 @@ def propose_container_page_for_family(
             "variants": [],
         }
 
-    clean_markets = _dedupe_twins(safe_list)
+    unlinked_twins: list[dict[str, Any]] = []
+    clean_markets = _dedupe_twins(safe_list, unlinked_twins_out=unlinked_twins)
     if len(clean_markets) < 5:
         return {
             "accepted": False,
@@ -2609,6 +2786,7 @@ def propose_container_page_for_family(
             "market_count": len(clean_markets),
             "sections_built": 0,
             "variants": [],
+            "unlinked_twins": unlinked_twins,
         }
 
     titles = [str(m.get("name") or m.get("title") or "") for m in clean_markets]
@@ -2756,7 +2934,7 @@ def propose_container_page_for_family(
         "variants": [str(s["variant"]) for s in sections],
         "sections": sections,
     }
-    return {"accepted": True, "refusal_reason": None, "page": page}
+    return {"accepted": True, "refusal_reason": None, "page": page, "unlinked_twins": unlinked_twins}
 
 
 def _parse_rendered_pct_value(text: str) -> int | None:
@@ -2892,11 +3070,31 @@ def audit_container_page_invariants(
         elif variant in ("shared_scale", "countdown", "one_in_n", "plain_bar_stack", "casting_sheet"):
             seq = body.get("series") if variant == "shared_scale" else body.get("items")
             row_items = list(seq or ())
-            single_market_field = len({
-                (it.get("provenance") or {}).get("market_id")
+            row_mids = {
+                int((it.get("provenance") or {}).get("market_id"))
                 for it in row_items
                 if (it.get("provenance") or {}).get("market_id") is not None
-            }) == 1 and len(row_items) >= 2 and variant in ("casting_sheet", "plain_bar_stack")
+            }
+            row_gids = (
+                {
+                    str(markets_by_id[mid].get("group_id") or "").strip()
+                    for mid in row_mids
+                    if mid in markets_by_id
+                }
+                if markets_by_id is not None
+                else set()
+            )
+            single_market_field = len(row_items) >= 2 and variant in ("casting_sheet", "plain_bar_stack") and (
+                len(row_mids) == 1
+                or (
+                    markets_by_id is not None
+                    and len(row_mids) > 0
+                    and all(mid in markets_by_id for mid in row_mids)
+                    and len(row_gids) == 1
+                    and "" not in row_gids
+                )
+            )
+            seen_field_labels: set[str] = set()
 
             if single_market_field:
                 if any(g in hl_low.split() for g in ("milestones", "developments", "watch", "watchlist")):
@@ -2934,7 +3132,13 @@ def audit_container_page_invariants(
                     ),
                     None,
                 )
-                if not single_market_field:
+                if single_market_field:
+                    norm_lbl = _norm_outcome_phrase(lbl)
+                    if norm_lbl:
+                        if norm_lbl in seen_field_labels:
+                            violations.append(f"{sec_id}: duplicate contender row {lbl!r}")
+                        seen_field_labels.add(norm_lbl)
+                else:
                     if mid is not None and markets_by_id and int(mid) in markets_by_id:
                         full_name = str(markets_by_id[int(mid)].get("name") or lbl)
                     else:
@@ -2979,5 +3183,19 @@ def audit_container_page_invariants(
                 violations.append(
                     f"{sec_id}: thematic headline {hl!r} not true for all {len(raw_texts_for_theme)} rows"
                 )
+
+        # 5c. "By <Month Day>" headline is only valid if every dated row in the section shares that month-day
+        hl_by_date = _parse_date_marker(hl, default_year=ref_year) if re.match(r"^by\s+[A-Za-z]+\s+\d{1,2}\b", hl_low) else None
+        if hl_by_date is not None and hl_by_date.get("has_day"):
+            target_md = (hl_by_date["sort_dt"].month, hl_by_date["sort_dt"].day)
+            for mid in section_market_ids:
+                m_obj = markets_by_id.get(int(mid)) if markets_by_id else None
+                if not m_obj:
+                    continue
+                row_dt = _closing_deadline_dt(m_obj)
+                if row_dt is not None and (row_dt.month, row_dt.day) != target_md:
+                    violations.append(
+                        f"{sec_id}: deadline headline {hl!r} does not match market {mid} date {row_dt.date().isoformat()}"
+                    )
 
     return violations

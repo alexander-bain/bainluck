@@ -287,7 +287,9 @@ def _generic_stem_key(market: Mapping[str, Any]) -> tuple[str, str] | None:
     raw_words = title.split()
     cleaned_words: list[str] = []
     for w in raw_words:
-        tok = re.sub(r"^(?:['\"\u201c(]+)|(?:['\"\u201d),:;?!.]+)$", "", w)
+        tok = re.sub(r"^(?:['\"\u201c(]+)|(?:['\"\u201d),:;?!]+)$", "", w)
+        if tok.endswith(".") and not re.search(r"(?:^|[.\s])(?:[A-Za-z]\.){2,}$", tok):
+            tok = tok.rstrip(".")
         tok = re.sub(r"[\'\u2019]s$", "", tok)
         cleaned_words.append(tok)
 
@@ -660,6 +662,8 @@ def propose_top_containers(
 
     pages: list[dict[str, Any]] = []
     audit: list[dict[str, Any]] = []
+    unlinked_twins: list[dict[str, Any]] = []
+    seen_unlinked_twins: set[tuple[Any, Any, Any]] = set()
     used_slugs: set[str] = set()
     used_subject_tokens: list[set[str]] = []
     _subj_noise = frozenset({"outlook", "timeline", "updates", "the", "part", "and", "for", "of", "in", "by", "on", "to"})
@@ -689,6 +693,12 @@ def propose_top_containers(
                 kicker=kicker,
                 family_fingerprint=fam.fingerprint,
             )
+
+        for tw in outcome.get("unlinked_twins") or ():
+            tw_key = (tw.get("kind"), tw.get("lead_market_id"), tw.get("dropped_market_id"))
+            if tw_key not in seen_unlinked_twins:
+                seen_unlinked_twins.add(tw_key)
+                unlinked_twins.append({"family_key": fam.key, **dict(tw)})
 
         entry: dict[str, Any] = {
             "rank": rank_idx,
@@ -761,4 +771,5 @@ def propose_top_containers(
         "count": len(pages),
         "pages": pages,
         "ranked_audit": audit,
+        "unlinked_twins": unlinked_twins,
     }

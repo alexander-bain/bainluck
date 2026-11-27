@@ -1316,7 +1316,22 @@ def test_13696_fable_nov26_rework_six_invariants():
             {"days": 35, "pct": 5, "deadline_dt": datetime(2026, 12, 31, tzinfo=timezone.utc)},
         ],
     )
-    assert hl_mix == "By December 31", hl_mix
+    assert hl_mix == "Through Dec 2026", hl_mix
+    hl_same_dec = _derive_section_headline(
+        "countdown",
+        [
+            "Region action against Sector A by December 31, 2026",
+            "Will Region make Official C a citizen by December 31, 2026?",
+            "Will Region launch an operation in Sector B by December 31, 2026?",
+        ],
+        "Region Outlook",
+        rows_meta=[
+            {"days": 35, "pct": 18, "deadline_dt": datetime(2026, 12, 31, tzinfo=timezone.utc)},
+            {"days": 35, "pct": 7, "deadline_dt": datetime(2026, 12, 31, tzinfo=timezone.utc)},
+            {"days": 35, "pct": 5, "deadline_dt": datetime(2026, 12, 31, tzinfo=timezone.utc)},
+        ],
+    )
+    assert hl_same_dec == "By December 31", hl_same_dec
 
     # Dec 31 of NEXT year must not claim "By December 31"
     hl_2027 = _derive_section_headline(
@@ -1452,13 +1467,20 @@ def test_13696_fable_nov27_seven_fixes_and_must_not_headings(monkeypatch):
         {**_bin(77006, "Will OpenAI acquire Windsurf in 2026?", 7, res_days=30, vol=15000), "source": "kalshi"},
         {**_bin(77007, "Will OpenAI face antitrust lawsuit in 2027?", 11, res_days=220, vol=15000), "source": "kalshi"},
     ]
-    deduped_ai = _dedupe_twins(openai_mkts)
+    from app.utils.kit_container_page_builder import _pct_int, _sources_count
+    twins_seen: list[dict] = []
+    deduped_ai = _dedupe_twins(openai_mkts, unlinked_twins_out=twins_seen)
     rsi_rows = [m for m in deduped_ai if "recursive" in m["name"].lower() and "2028" not in m["name"]]
     assert len(rsi_rows) == 1, rsi_rows
-    # (0.18 + 0.13) / 2 = 0.155 -> rendered_percent 16
-    assert rsi_rows[0]["outcomes"][0]["rendered_percent"] == 16, rsi_rows[0]
+    # Never average unlinked twins (0.18 vs 0.13): preserve lead market 77001's exact 18% and log unlinked pair.
+    assert rsi_rows[0]["id"] == 77001, rsi_rows[0]
+    assert _pct_int(rsi_rows[0]["outcomes"][0]["current_probability"]) == 18, rsi_rows[0]
+    assert rsi_rows[0]["outcomes"][0]["current_probability"] == 0.18, rsi_rows[0]
+    assert _sources_count(rsi_rows[0]) == 1, rsi_rows[0]
+    assert len(twins_seen) == 1 and twins_seen[0]["lead_market_id"] == 77001 and twins_seen[0]["dropped_market_id"] == 77002, twins_seen
     page_ai = propose_container_page_for_family("OpenAI Outlook", openai_mkts, now=REF_NOW)
     assert page_ai["accepted"], page_ai
+    assert len(page_ai.get("unlinked_twins") or []) == 1, page_ai.get("unlinked_twins")
     assert audit_container_page_invariants(page_ai["page"], markets_by_id={m["id"]: m for m in openai_mkts}) == []
 
     # Point 3: Scoreboard grid with 2 deadlines uses "Deadline" leading column, uniform dates, and market-naming headline.
@@ -1556,3 +1578,206 @@ def test_13696_fable_nov27_seven_fixes_and_must_not_headings(monkeypatch):
         lbl = _distinguishing_row_label(q, sibling_qs)
         assert not lbl.lower().endswith((" in", " by", " on", " at")), lbl
         assert lbl.startswith("Will "), lbl
+
+
+def test_13696_fable_nov27_1007am_four_review_fixes() -> None:
+    """Fable 10:07 AM PT 4-point review: no twin averaging, midpoint ladder rungs, non-excl group fold, copy fixes."""
+    from app.utils.kit_container_page_builder import _distinguishing_row_label
+
+    # Point 2: Dated 5-rung ladder keeps the 50%-straddling rungs (including midpoint 38.0 even with highest ID),
+    # and uses "stands at" (never "sits at") in dated_tiles caption.
+    ladder_mkts = [
+        _bin(88010, "Will Widget approval rating reach 37.0 or higher by Dec 31, 2026?", 81, series="KXWIDGET", res_days=37),
+        _bin(88011, "Will Widget approval rating reach 39.0 or higher by Dec 31, 2026?", 5, series="KXWIDGET", res_days=37),
+        _bin(88012, "Will Widget approval rating reach 40.0 or higher by Dec 31, 2026?", 3, series="KXWIDGET", res_days=37),
+        _bin(88013, "Will Widget approval rating reach 36.0 or higher by Dec 31, 2026?", 93, series="KXWIDGET", res_days=37),
+        _bin(88014, "Will Widget approval rating reach 38.0 or higher by Dec 31, 2026?", 19, series="KXWIDGET", res_days=37),
+        _bin(88015, "Will Widget approval rating reach 37.0 or higher by Nov 30, 2026?", 98, series="KXWIDGET", res_days=6),
+        _bin(88016, "Will Widget approval rating reach 39.0 or higher by Nov 30, 2026?", 2, series="KXWIDGET", res_days=6),
+        _bin(88017, "Will Widget approval rating reach 40.0 or higher by Nov 30, 2026?", 1, series="KXWIDGET", res_days=6),
+        _bin(88018, "Will Widget approval rating reach 36.0 or higher by Nov 30, 2026?", 99, series="KXWIDGET", res_days=6),
+        _bin(88019, "Will Widget approval rating reach 38.0 or higher by Nov 30, 2026?", 12, series="KXWIDGET", res_days=6),
+        _bin(88020, "Will Widget Corp sign trade deal in 2026?", 42, series="KXWIDGET", res_days=37),
+        _bin(88021, "Will Widget Corp pass bill by Q1 2027?", 64, series="KXWIDGET", res_days=120),
+        _bin(88022, "Will Widget Corp hold summit in 2027?", 28, series="KXWIDGET", res_days=150),
+        {
+            "id": 88023,
+            "source": "kalshi",
+            "name": "Who will Widget Corp pick as CEO next?",
+            "category": "tech",
+            "mutually_exclusive": True,
+            "resolution_date": REF_NOW + timedelta(days=90),
+            "volume_24h": 40000,
+            "outcomes": [
+                {"id": 88301, "name": "Alice Smith", "current_probability": 0.48},
+                {"id": 88302, "name": "Bob Jones", "current_probability": 0.31},
+                {"id": 88303, "name": "Carol Lee", "current_probability": 0.14},
+            ],
+        },
+        _bin(88024, "Will Widget Corp launch new chip before Dec 31, 2026?", 11, series="KXWIDGET", res_days=37),
+    ]
+    ladder_page = propose_container_page_for_family("Widget Outlook", ladder_mkts, now=REF_NOW)
+    assert ladder_page["accepted"], ladder_page
+    dated_secs = [s for s in ladder_page["page"]["sections"] if s["variant"] == "dated_tiles"]
+    assert dated_secs, ladder_page["page"]["sections"]
+    tile_texts = [
+        f"{(r.get('leading') or [{}])[0].get('text', '')} "
+        + " ".join((m.get("center_label") or "") for c in (r.get("cells") or []) for m in (c.get("marks") or []))
+        for r in dated_secs[0]["body"]["rows"]
+    ]
+    assert any("38.0" in t or "19%" in t for t in tile_texts), tile_texts
+    assert "stands at" in dated_secs[0]["stat_caption"].lower(), dated_secs[0]["stat_caption"]
+    assert "sits at" not in dated_secs[0]["stat_caption"].lower(), dated_secs[0]["stat_caption"]
+
+    # Point 3: Non-exclusive multi-outcome parent + same-group_id sibling binaries unify into ONE section,
+    # sorted descending by probability, preserving exact provenance and using "most likely".
+    non_excl_mkts = [
+        {
+            "id": 89001,
+            "source": "polymarket",
+            "group_id": "polymarket:exp_703",
+            "name": "Which cities will Mars Rover visit in 2026?",
+            "category": "science",
+            "mutually_exclusive": False,
+            "resolution_date": REF_NOW + timedelta(days=60),
+            "volume_24h": 50000,
+            "max_movement_24h": 0.04,
+            "outcomes": [
+                {"id": 9101, "name": "Tokyo", "current_probability": 0.56},
+                {"id": 9102, "name": "Berlin", "current_probability": 0.09},
+                {"id": 9103, "name": "Cairo", "current_probability": 0.06},
+            ],
+        },
+        _bin(89002, "Will Mars Rover visit Seoul in 2026?", 22, category="science", series="KXMARS", group_id="polymarket:exp_703", res_days=60, vol=30000),
+        _bin(89003, "Will Mars Rover visit Toronto in 2026?", 15, category="science", series="KXMARS", group_id="polymarket:exp_703", res_days=60, vol=25000),
+        _bin(89004, "Will Mars Rover visit Sydney in 2026?", 8, category="science", series="KXMARS", group_id="polymarket:exp_703", res_days=60, vol=20000),
+        _bin(89010, "Will Mars Rover find ice by Nov 30, 2026?", 68, category="science", series="KXMARS", res_days=6, vol=18000),
+        _bin(89011, "Will Mars Rover launch upgrade by Nov 30, 2026?", 9, category="science", series="KXMARS", res_days=6, vol=16000),
+        _bin(89012, "Will Mars Rover deploy drill by Dec 31, 2026?", 31, category="science", series="KXMARS", res_days=37, vol=15000),
+        _bin(89013, "Will Mars Rover transmit 4k video by Dec 31, 2026?", 52, category="science", series="KXMARS", res_days=37, vol=14000),
+        {
+            "id": 89014,
+            "source": "kalshi",
+            "name": "When will Mars Rover reach ridge?",
+            "category": "science",
+            "mutually_exclusive": True,
+            "resolution_date": REF_NOW + timedelta(days=180),
+            "volume_24h": 22000,
+            "outcomes": [
+                {"id": 9201, "name": "By March 2027", "current_probability": 0.35},
+                {"id": 9202, "name": "By June 2027", "current_probability": 0.62},
+                {"id": 9203, "name": "By December 2027", "current_probability": 0.88},
+            ],
+        },
+    ]
+    non_excl_page = propose_container_page_for_family("Mars Rover Outlook", non_excl_mkts, now=REF_NOW)
+    assert non_excl_page["accepted"], non_excl_page
+    visit_secs = [
+        s for s in non_excl_page["page"]["sections"]
+        if any(
+            m.get("text") in {"Tokyo", "Seoul", "Toronto"}
+            for it in (s.get("body", {}).get("items") or [])
+            for m in (it.get("marks") or [])
+        )
+    ]
+    assert len(visit_secs) == 1, visit_secs
+    visit_items = visit_secs[0]["body"]["items"]
+    visit_labels = [next((m["text"] for m in it["marks"] if m.get("mark") == "word"), "") for it in visit_items]
+    assert visit_labels[:4] == ["Tokyo", "Seoul", "Toronto", "Berlin"], visit_labels
+    assert "most likely" in visit_secs[0]["stat_caption"].lower(), visit_secs[0]["stat_caption"]
+    assert "favorite" not in visit_secs[0]["stat_caption"].lower(), visit_secs[0]["stat_caption"]
+    seoul_item = next(
+        it for it in visit_items
+        if any(m.get("text") == "Seoul" for m in (it.get("marks") or []))
+    )
+    assert seoul_item["provenance"]["market_id"] == 89002, seoul_item
+    assert audit_container_page_invariants(non_excl_page["page"], markets_by_id={m["id"]: m for m in non_excl_mkts}) == []
+
+    # Point 4a: Preserve dotted initialism "U.S." in derive_common_headline and discover_candidate_families.
+    us_mkts = [
+        _bin(90001, "Will U.S. GDP growth exceed 3% by Nov 30, 2026?", 22, series="KXUS", res_days=6),
+        _bin(90002, "Will U.S. GDP growth exceed 3% by Dec 31, 2026?", 45, series="KXUS", res_days=35),
+        _bin(90003, "Will U.S. unemployment stay under 4.5% by Nov 30, 2026?", 61, series="KXUS", res_days=6),
+        _bin(90004, "Will U.S. unemployment stay under 4.5% by Dec 31, 2026?", 55, series="KXUS", res_days=35),
+        _bin(90005, "Will U.S. launch digital treasury note in 2027?", 9, series="KXUS", res_days=180),
+        _bin(90008, "Will U.S. sign tariff treaty before 2028?", 11, series="KXUS", res_days=240),
+        {
+            "id": 90006,
+            "source": "kalshi",
+            "name": "Who will lead U.S. Central Desk next?",
+            "category": "economics",
+            "mutually_exclusive": True,
+            "resolution_date": REF_NOW + timedelta(days=90),
+            "volume_24h": 42000,
+            "outcomes": [
+                {"id": 90301, "name": "Jane Doe", "current_probability": 0.44},
+                {"id": 90302, "name": "Mark Smith", "current_probability": 0.29},
+                {"id": 90303, "name": "Pat Lee", "current_probability": 0.17},
+            ],
+        },
+        {
+            "id": 90007,
+            "source": "kalshi",
+            "name": "When will U.S. balance the federal budget?",
+            "category": "economics",
+            "mutually_exclusive": True,
+            "resolution_date": REF_NOW + timedelta(days=365),
+            "volume_24h": 31000,
+            "outcomes": [
+                {"id": 90311, "name": "2027", "current_probability": 0.11},
+                {"id": 90312, "name": "2028", "current_probability": 0.23},
+                {"id": 90313, "name": "2029", "current_probability": 0.38},
+            ],
+        },
+    ]
+    fams, _ = discover_candidate_families(us_mkts, now=REF_NOW, min_markets=5)
+    us_fams = [f for f in fams if "u.s." in f.label.lower()]
+    assert us_fams, [f.label for f in fams]
+    assert any("U.S." in f.label and "U.S " not in f.label for f in us_fams), [f.label for f in us_fams]
+    us_page = propose_container_page_for_family("U.S.", us_mkts, now=REF_NOW)
+    assert us_page["accepted"], us_page
+    assert us_page["page"]["title"].startswith("U.S."), us_page["page"]["title"]
+
+    # Point 4b: Never emit "By December 31" when grouped binaries mix November 30 and December 31 deadlines.
+    mixed_date_mkts = [
+        _bin(91001, "Will Nimbus build 50 towers by Nov 30, 2026?", 32, series="KXNIMB", res_days=6),
+        _bin(91002, "Will Nimbus ship 10k units by Nov 30, 2026?", 71, series="KXNIMB", res_days=6),
+        _bin(91003, "Will Nimbus pass safety review by Dec 31, 2026?", 88, series="KXNIMB", res_days=37),
+        _bin(91004, "Will Nimbus sign airport deal before Jan 1, 2027?", 14, series="KXNIMB", res_days=37),
+        _bin(91005, "Will Nimbus open factory in 2027?", 8, series="KXNIMB", res_days=140),
+        _bin(91006, "Will Nimbus acquire supplier by Q3 2027?", 6, series="KXNIMB", res_days=240),
+        {
+            "id": 91007,
+            "source": "kalshi",
+            "name": "Who will Nimbus pick as chair?",
+            "category": "tech",
+            "mutually_exclusive": True,
+            "resolution_date": REF_NOW + timedelta(days=90),
+            "volume_24h": 35000,
+            "outcomes": [
+                {"id": 91301, "name": "Nora Chen", "current_probability": 0.51},
+                {"id": 91302, "name": "Omar Patel", "current_probability": 0.27},
+                {"id": 91303, "name": "Dana Fox", "current_probability": 0.14},
+            ],
+        },
+        _bin(91008, "Will Nimbus reach $20B revenue before Jan 1, 2027?", 41, series="KXNIMB", res_days=37),
+        _bin(91009, "Will Nimbus reach $20B revenue before Nov 30, 2026?", 29, series="KXNIMB", res_days=6),
+    ]
+    mixed_page = propose_container_page_for_family("Nimbus Outlook", mixed_date_mkts, now=REF_NOW)
+    assert mixed_page["accepted"], mixed_page
+    for sec in mixed_page["page"]["sections"]:
+        assert sec.get("common_headline") != "By December 31", sec
+
+    # Point 4c: Keep "at or" intact on threshold sibling labels ("At or below $15", never "Below $15").
+    thresh_qs = [
+        "Will Cobalt futures settle at or below $15 by Dec 31?",
+        "Will Cobalt futures settle at or below $18 by Dec 31?",
+        "Will Cobalt futures settle at or below $20 by Dec 31?",
+    ]
+    lbl15 = _distinguishing_row_label(thresh_qs[0], thresh_qs)
+    assert "at or below $15" in lbl15.lower(), lbl15
+
+    # Ensure no Condition 1 banned terms exist across all newly proposed pages.
+    dumped = json.dumps([ladder_page["page"], non_excl_page["page"], us_page["page"], mixed_page["page"]]).lower()
+    for term in _BANNED_TERMS:
+        assert term not in dumped, term

@@ -230,6 +230,18 @@ async def run_nightly_container_proposer(
         dismissed_keys=dismissed_keys,
     )
     propose_ms = round((time.perf_counter() - t_propose_start) * 1000.0, 2)
+    unlinked_twins = list(result.get("unlinked_twins") or [])
+    for tw in unlinked_twins:
+        logger.info(
+            "container_proposer.unlinked_twin family=%s kind=%s lead=%s:%s dropped=%s:%s key=%s",
+            tw.get("family_key"),
+            tw.get("kind"),
+            tw.get("lead_source"),
+            tw.get("lead_market_id"),
+            tw.get("dropped_source"),
+            tw.get("dropped_market_id"),
+            tw.get("dedupe_key"),
+        )
     total_ms = round((time.perf_counter() - t_total_start) * 1000.0, 2)
     timings_ms = {
         "snapshot_load_ms": snapshot_load_ms,
