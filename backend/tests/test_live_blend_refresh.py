@@ -1389,8 +1389,8 @@ def _refuse_redis_without_a_socket(monkeypatch):
     local Redis does, but with no DNS lookup, no socket and no retry backoff.
     A real lookup of ``localhost`` ran out a 0.25 s wait on CI (#11485)."""
     import redis.asyncio as aioredis
+    from redis.asyncio.retry import Retry
     from redis.backoff import NoBackoff
-    from redis.retry import Retry
 
     class _Refused(aioredis.Connection):
         async def _connect(self):

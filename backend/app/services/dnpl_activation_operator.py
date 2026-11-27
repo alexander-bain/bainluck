@@ -233,8 +233,8 @@ async def execute_plan(
 
 async def configured_plan(plan, *, budgets=OperatorBudgets(), **kwargs):
     from redis.asyncio import Redis
+    from redis.asyncio.retry import Retry
     from redis.backoff import NoBackoff
-    from redis.retry import Retry
     from sqlalchemy.engine import make_url
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool

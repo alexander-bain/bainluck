@@ -1171,7 +1171,10 @@ if sentry_dsn:
     # 2,999 `default`) against a 5,000/MONTH allowance, i.e. the month spent on
     # day 8. The filter existed; it was wired to the one process that does not
     # generate the flood. Shared policy, both entry points.
-    from app.utils.sentry_filter import build_before_send
+    from app.utils.sentry_filter import (
+        SENTRY_NO_PII_DATA_COLLECTION,
+        build_before_send,
+    )
 
     # WE KEEP ZERO SENTRY CRON MONITORS. `monitor_beat_tasks=True` auto-created
     # ONE PAID CRON MONITOR PER BEAT TASK — 129 of them — and consumed the entire
@@ -1190,7 +1193,7 @@ if sentry_dsn:
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
         release=os.getenv("HEROKU_SLUG_COMMIT"),
         traces_sample_rate=0.05,  # 5% of tasks for performance monitoring
-        send_default_pii=False,
+        data_collection=SENTRY_NO_PII_DATA_COLLECTION,
         before_send=build_before_send(),
         integrations=[
             build_celery_integration(),

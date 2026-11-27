@@ -1,9 +1,12 @@
 """Full 106-library transitive lock contract for ``backend/requirements.txt`` (#13491).
 
 ``#13494`` (351: A) pinned the 33 direct declarations in ``backend/requirements.txt``.
-Follow-up ``#13491`` locks all 73 remaining transitive packages installed by the
-``41de6f5c`` (``v6586``) production build log so future ``pip install -r`` runs on
-Heroku and CI resolve the exact same 106-package graph without unannounced drift.
+Follow-up ``#13491`` locks all 106 packages at the freshly resolved versions upgraded
+from the ``41de6f5c`` (``v6586``) production baseline (``anthropic 2.13.0``,
+``google-cloud-storage 3.17.2``, ``openai 3.58.0``, ``PyYAML 6.0.4``,
+and ``sentry-sdk 3.0.0``, with ``redis`` held at ``8.1.0`` per review) so future
+``pip install -r`` runs on Heroku and CI resolve the exact same 106-package graph
+without unannounced drift.
 """
 
 from __future__ import annotations
@@ -20,13 +23,13 @@ _EXACT_PIN_RE = re.compile(
     r"^[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_.,-]+\])?==[A-Za-z0-9_.+-]+$"
 )
 
-# Exact 106 packages installed by the live 41de6f5c (v6586) Heroku deploy build.
+# Exact 106 packages in the upgraded lock vs the live 41de6f5c (v6586) Heroku deploy build.
 EXPECTED_41DE6F5C_LOCK: dict[str, str] = {
     "alembic": "1.20.1",
     "amqp": "5.4.2",
     "annotated-doc": "0.0.7",
     "annotated-types": "0.8.0",
-    "anthropic": "2.11.0",
+    "anthropic": "2.13.0",
     "anyio": "4.16.0",
     "asyncpg": "0.32.0",
     "billiard": "4.3.2",
@@ -52,7 +55,7 @@ EXPECTED_41DE6F5C_LOCK: dict[str, str] = {
     "google-auth-httplib2": "0.4.4",
     "google-cloud-core": "2.8.0",
     "google-cloud-firestore": "2.34.1",
-    "google-cloud-storage": "3.17.1",
+    "google-cloud-storage": "3.17.2",
     "google-crc32c": "1.9.0",
     "google-resumable-media": "2.11.0",
     "googleapis-common-protos": "1.76.0",
@@ -78,7 +81,7 @@ EXPECTED_41DE6F5C_LOCK: dict[str, str] = {
     "markupsafe": "3.0.4",
     "msgpack": "1.2.4",
     "mypy-extensions": "1.2.0",
-    "openai": "3.55.1",
+    "openai": "3.58.0",
     "opentelemetry-api": "1.45.2",
     "orjson": "3.13.0",
     "packaging": "26.3",
@@ -105,11 +108,11 @@ EXPECTED_41DE6F5C_LOCK: dict[str, str] = {
     "python-dotenv": "1.2.4",
     "python-json-logger": "4.2.0",
     "pytokens": "0.4.1",
-    "pyyaml": "6.0.3",
+    "pyyaml": "6.0.4",
     "redis": "8.1.0",
     "requests": "2.34.2",
     "ruff": "0.17.6",
-    "sentry-sdk": "2.75.0",
+    "sentry-sdk": "3.0.0",
     "sniffio": "1.3.1",
     "sqlalchemy": "2.0.58",
     "sqlglot": "30.33.0",

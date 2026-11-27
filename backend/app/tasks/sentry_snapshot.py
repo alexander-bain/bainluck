@@ -150,7 +150,7 @@ async def _run_sentry_snapshot() -> dict:
         try:
             import sentry_sdk
 
-            with sentry_sdk.push_scope() as scope:
+            with sentry_sdk.new_scope() as scope:
                 scope.fingerprint = ["redis-connection-churn-threshold"]
                 scope.set_extra("redis_error_24h", redis_error_24h)
                 scope.set_extra("threshold", REDIS_ERROR_ALARM_THRESHOLD)

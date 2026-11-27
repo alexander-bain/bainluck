@@ -103,8 +103,8 @@ async def preview(
 
 async def _configured_preview(expected, primary, *, budgets=OperatorBudgets()):
     from redis.asyncio import Redis
+    from redis.asyncio.retry import Retry
     from redis.backoff import NoBackoff
-    from redis.retry import Retry
     from sqlalchemy.engine import make_url
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool

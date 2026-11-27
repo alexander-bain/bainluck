@@ -2,10 +2,12 @@
 Redis-based adaptive polling state management.
 """
 
+import errno
 import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 
@@ -164,6 +166,79 @@ def _redis_fast_fail_retry():
     from redis.backoff import EqualJitterBackoff
 
     return Retry(EqualJitterBackoff(cap=0.1, base=0.02), 1)
+
+
+_ERRNO_RE = re.compile(r"\[Errno (\d+)\]")
+
+
+def _is_connection_refused(exc: BaseException) -> bool:
+    """Return True when *exc* is a pure TCP connection refusal (not a TLS EOF or reset).
+
+    In Python 3.11+, ``loop.create_connection`` to dual-stack ``localhost`` raises
+    ``OSError("Multiple exceptions: [Errno ...] ..., [Errno ...] ...")`` with
+    ``errno=None`` when both ``::1`` and ``127.0.0.1`` refuse. Retrying a dead local
+    port in ``redis>=8.2`` sleeps across ``EqualJitterBackoff`` on every call,
+    burning sub-second admission budgets and stalling tests that freeze the clock.
+    Transient mid-stream failures (``SSLEOFError``, ``ConnectionResetError``,
+    ``TimeoutError``) return False so ``#1197`` still reconnects and retries.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if (
+            isinstance(cur, ConnectionRefusedError)
+            or getattr(cur, "errno", None) == errno.ECONNREFUSED
+        ):
+            return True
+        if isinstance(cur, OSError) and getattr(cur, "errno", None) is None:
+            msg = str(cur)
+            if msg.startswith("Multiple exceptions: "):
+                codes = _ERRNO_RE.findall(msg)
+                if codes and all(int(code) == errno.ECONNREFUSED for code in codes):
+                    return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+def _async_redis_retry():
+    """Native async retry policy for ``get_async_redis_client()`` (#13491).
+
+    Matches ``_redis_retry()`` (3 attempts, equal-jitter backoff cap 1s) using
+    ``redis.asyncio.retry.Retry`` directly so ``redis>=8.2`` emits no sync-to-async
+    conversion warning, and skips retry sleeps on immediate ``ECONNREFUSED``.
+    Subclasses ``Retry.call_with_retry`` rather than passing ``is_retryable=`` to
+    ``__init__`` so it works identically on both pinned ``redis==8.1.0`` and ``8.2+``.
+    """
+    from redis.asyncio.retry import Retry as AsyncRetry
+    from redis.backoff import EqualJitterBackoff
+
+    class _FailFastConnectionRefusedAsyncRetry(AsyncRetry):
+        async def call_with_retry(
+            self,
+            do,
+            fail,
+            is_retryable=None,
+            with_failure_count=False,
+            **kwargs,
+        ):
+            def _combined_is_retryable(exc: Exception) -> bool:
+                if _is_connection_refused(exc):
+                    return False
+                return True if is_retryable is None else bool(is_retryable(exc))
+
+            return await super().call_with_retry(
+                do,
+                fail,
+                is_retryable=_combined_is_retryable,
+                with_failure_count=with_failure_count,
+                **kwargs,
+            )
+
+    return _FailFastConnectionRefusedAsyncRetry(
+        EqualJitterBackoff(cap=1.0, base=0.05),
+        3,
+    )
 
 
 def _redis_retry_on_errors():
@@ -409,8 +484,8 @@ def get_async_redis_client():
         "socket_keepalive": True,
         "health_check_interval": 25,
         "retry_on_timeout": True,
-        # #1197: transparently retry the TLS-handshake ConnectionError + bound pool.
-        "retry": _redis_retry(),
+        # #1197 / #13491: native async retry for TLS-handshake ConnectionError + bounded pool.
+        "retry": _async_redis_retry(),
         "retry_on_error": _redis_retry_on_errors(),
         "max_connections": _REDIS_MAX_CONNECTIONS,
     }

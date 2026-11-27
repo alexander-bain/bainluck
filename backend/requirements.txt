@@ -37,7 +37,7 @@ cryptography==50.0.2
 # Background Tasks
 # Keep the reviewed task-binding contract; 5.7 requires a separate upgrade.
 celery==5.6.3
-# Pin to production-verified 8.1.0; redis 8.2.0 (PyPI Nov 23) hangs/times out #10090 async Redis tests in CI.
+# Hold at 8.1.0 per #13541 review (revisit 8.2+ after two weeks of stability).
 redis==8.1.0
 
 # Rate Limiting
@@ -62,15 +62,17 @@ python-json-logger==4.2.0
 
 # Utilities
 python-dateutil==4.0.0
-PyYAML==6.0.3  # Horizon Calendar (majors_calendar.yaml, Queue #223)
+PyYAML==6.0.4  # Horizon Calendar (majors_calendar.yaml, Queue #223)
 Pillow==12.3.0  # TestFlight screenshot compression & vision resize (#12857, 249-A)
 
 # LLM (for smart categorization, etc.)
-openai==3.55.1
-anthropic==2.11.0
+openai==3.58.0
+anthropic==2.13.0
 
 # Error Tracking
-sentry-sdk[fastapi,celery]==2.75.0
+# sentry-sdk 3.0.0 removed the [fastapi,celery] extras; Starlette/FastAPI and Celery
+# integrations auto-enable or are passed via CeleryIntegration directly.
+sentry-sdk==3.0.0
 
 # Development
 pytest==9.2.0
@@ -92,8 +94,8 @@ ruff==0.17.6
 sqlglot==30.33.0
 
 # Full transitive dependency lock (#13491): all remaining 73 packages installed by
-# the 41de6f5c (v6586) Heroku deploy build log, exact-pinned alongside the 33 direct
-# declarations above so every production and CI install resolves the identical 106-library graph.
+# the freshly resolved Python 3.11 graph (upgraded from the 41de6f5c v6586 baseline),
+# exact-pinned alongside the 33 direct declarations above (106 total packages).
 amqp==5.4.2
 annotated-doc==0.0.7
 annotated-types==0.8.0
@@ -114,7 +116,7 @@ google-auth==2.63.1
 google-auth-httplib2==0.4.4
 google-cloud-core==2.8.0
 google-cloud-firestore==2.34.1
-google-cloud-storage==3.17.1
+google-cloud-storage==3.17.2
 google-crc32c==1.9.0
 google-resumable-media==2.11.0
 googleapis-common-protos==1.76.0
