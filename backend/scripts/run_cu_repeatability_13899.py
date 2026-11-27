@@ -95,21 +95,42 @@ def _parse_dt(value: Any) -> datetime | None:
 
 
 def _item_event_facts(item: dict[str, Any]) -> dict[str, Any]:
+    linked_game_id = (
+        item.get("linked_game_id")
+        if item.get("linked_game_id") is not None
+        else item.get("event_id")
+    )
     return cu_event_facts(
         item.get("title") or item.get("name") or "",
-        linked_game_id=item.get("event_id"),
+        linked_game_id=linked_game_id,
         linked_start=_parse_dt(item.get("linked_start")),
         start_source=item.get("start_source"),
-        linked_league=item.get("llm_sport_category"),
+        linked_league=item.get("linked_league"),
+        home_team_league=item.get("home_team_league"),
+        away_team_league=item.get("away_team_league"),
     )
+
+
+def _ordered_outcomes(item: dict[str, Any]) -> list[dict[str, Any]]:
+    outcomes_raw = [o for o in (item.get("outcomes") or []) if isinstance(o, dict)]
+    if any(o.get("rank") is not None for o in outcomes_raw):
+        return sorted(
+            outcomes_raw,
+            key=lambda o: (
+                o.get("rank") is None,
+                int(o["rank"]) if o.get("rank") is not None else 0,
+                int(o["id"]) if o.get("id") is not None else 0,
+            ),
+        )
+    return outcomes_raw
 
 
 def build_prompt_for_market(item: dict[str, Any]) -> str:
     """Render the exact CU v2 prompt for one frozen development-set market."""
-    outcomes_raw = item.get("outcomes") or []
-    outcome_lines = [_cu_prompt_outcome(o) for o in outcomes_raw[:8]]
+    outcomes_ordered = _ordered_outcomes(item)
+    outcome_lines = [_cu_prompt_outcome(o) for o in outcomes_ordered[:8]]
     settlement_at = _parse_dt(item.get("resolution_date"))
-    category = item.get("llm_sport_category") or item.get("category") or ""
+    category = item.get("llm_sport_category") or item.get("category") or "other"
     event_facts = _item_event_facts(item)
 
     prompt = _CU_V2_PROMPT.format(
@@ -134,7 +155,7 @@ def apply_writer_postprocess(
 ) -> dict[str, Any]:
     """Apply CU v2 deterministic rules and sanitizers without any DB write."""
     title = item.get("title") or item.get("name") or ""
-    outcomes_raw = item.get("outcomes") or []
+    outcomes_raw = _ordered_outcomes(item)
     outcome_names = item.get("outcome_names") or [o.get("name") for o in outcomes_raw]
     all_probs = [float(o["prob"]) for o in outcomes_raw if o.get("prob") is not None]
     settlement_at = _parse_dt(item.get("resolution_date"))
@@ -154,9 +175,9 @@ def apply_writer_postprocess(
         "entities": raw.get("entities", []),
         "geography": cu_model_geography(
             raw.get("geography"),
-            linked_league=item.get("llm_sport_category"),
-            home_team_league=None,
-            away_team_league=None,
+            linked_league=item.get("linked_league"),
+            home_team_league=item.get("home_team_league"),
+            away_team_league=item.get("away_team_league"),
         ),
         "story_key": raw.get("story_key"),
         "series_key": _cu_series_key(raw.get("series_key")),
@@ -263,17 +284,6 @@ def compare_cu_runs(
     }
 
 
-def _load_dotenv(env_path: Path) -> None:
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        k, v = stripped.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip("\"'"))
-
-
 def execute_repeatability_runs(
     dev_path: Path,
     *,
@@ -283,10 +293,11 @@ def execute_repeatability_runs(
     if max_budget_usd <= 0 or max_budget_usd > MAX_TOTAL_USD:
         raise ValueError(f"max_budget_usd must be in (0, {MAX_TOTAL_USD}], got {max_budget_usd}")
 
-    _load_dotenv(REPO_ROOT / "backend" / ".env")
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required")
+        raise RuntimeError(
+            "OPENAI_API_KEY must be set in the environment (this script never reads .env files)"
+        )
 
     from openai import OpenAI
 
