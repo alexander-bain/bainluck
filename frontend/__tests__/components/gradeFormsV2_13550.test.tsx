@@ -31,7 +31,7 @@ jest.mock("@/components/admin/AdminAuthProvider", () => ({
   }),
 }));
 
-import formsDeck from "@/data/forms_blind_deck_public_2026_11_23.json";
+import formsDeck from "@/data/forms_blind_deck_public_2026_11_27.json";
 import GradeFormsDeckPage from "@/app/grade/forms/page";
 import {
   addEmptyPile,
@@ -44,16 +44,17 @@ import {
   removeCardPreservingEmptyPiles,
 } from "@/lib/ranking/blindDeckGrade363a";
 
-describe("#13550 (363: A) — /grade/forms v2 pile sort", () => {
-  test("renders empty Pile 1, worked example, Start over, and verbatim instructions on initial load", () => {
+describe("#13550 (363: A) & #13551 — /grade/forms v2 pile sort", () => {
+  test("renders empty Pile 1, worked example, Start over, Export JSON, and one-sentence instructions on initial load", () => {
     const html = renderToStaticMarkup(React.createElement(GradeFormsDeckPage));
     const initial = createInitialEmptyPiles();
     expect(initial).toHaveLength(1);
     expect(initial[0].item_ids).toEqual([]);
 
+    expect(formsDeck.forms).toHaveLength(11);
     expect(html).toContain("Forms deck");
     expect(html).toContain(
-      "Put cards that look like the same kind of card in the same pile. We are counting how many different looks a reader sees.",
+      "Put cards with the same visual layout in the same pile, ignoring the topic, then save once all 11 cards are placed.",
     );
     expect(html).toContain("Worked example");
     expect(html).toContain("Pile 1 · Bars &amp; rows");
@@ -61,6 +62,7 @@ describe("#13550 (363: A) — /grade/forms v2 pile sort", () => {
     expect(html).toContain("Different layout");
     expect(html).toContain(`data-testid="start-over-btn"`);
     expect(html).toContain("Start over");
+    expect(html).toContain(`data-testid="export-piles-btn"`);
     expect(html).toContain(`data-testid="pile-bucket-${initial[0].pile_id}"`);
     expect(html).toContain("Pile 1 · 0 cards");
     expect(html).toContain(`data-testid="save-panel"`);
@@ -79,6 +81,13 @@ describe("#13550 (363: A) — /grade/forms v2 pile sort", () => {
       "nominations",
       "mvp",
       "ladder",
+      "scoreboard",
+      "dated_tiles",
+      "one_in_n",
+      "casting_sheet",
+      "anchor",
+      "candidate",
+      "kit-",
     ];
     for (const token of forbiddenTokens) {
       expect(html.toLowerCase()).not.toContain(token);
@@ -160,11 +169,86 @@ describe("#13550 (363: A) — /grade/forms v2 pile sort", () => {
       isPostFixFormsJudgmentRow(
         {
           created_at: "2026-11-24T22:11:00Z",
-          label_metadata: { ui_version: 2, piles: validPiles, timestamp: "2026-11-24T22:11:00Z" },
+          label_metadata: {
+            ui_version: 2,
+            deck_id: "forms-blind-deck-2026-11-27",
+            piles: validPiles,
+            timestamp: "2026-11-24T22:11:00Z",
+          },
         },
         "2026-11-24T22:10:00Z",
+        "forms-blind-deck-2026-11-27",
       ),
     ).toBe(true);
+
+    // Other deck_id (e.g. Nov 23 archive save) -> ignored for Nov 27 deck
+    expect(
+      isPostFixFormsJudgmentRow(
+        {
+          created_at: "2026-11-25T01:26:59Z",
+          label_metadata: {
+            ui_version: 2,
+            deck_id: "forms-blind-deck-2026-11-23",
+            piles: validPiles,
+            timestamp: "2026-11-25T01:26:59Z",
+          },
+        },
+        null,
+        "forms-blind-deck-2026-11-27",
+      ),
+    ).toBe(false);
+
+    // Voided runs (label === "void", meta.void === true, or meta.sort_state === "void") -> ignored
+    expect(
+      isPostFixFormsJudgmentRow(
+        {
+          label: "void",
+          created_at: "2026-11-26T14:00:00Z",
+          label_metadata: {
+            ui_version: 2,
+            deck_id: "forms-blind-deck-2026-11-27",
+            piles: validPiles,
+            timestamp: "2026-11-26T14:00:00Z",
+          },
+        },
+        null,
+        "forms-blind-deck-2026-11-27",
+      ),
+    ).toBe(false);
+    expect(
+      isPostFixFormsJudgmentRow(
+        {
+          label: "complete",
+          created_at: "2026-11-26T14:00:00Z",
+          label_metadata: {
+            ui_version: 2,
+            deck_id: "forms-blind-deck-2026-11-27",
+            void: true,
+            piles: validPiles,
+            timestamp: "2026-11-26T14:00:00Z",
+          },
+        },
+        null,
+        "forms-blind-deck-2026-11-27",
+      ),
+    ).toBe(false);
+    expect(
+      isPostFixFormsJudgmentRow(
+        {
+          label: "complete",
+          created_at: "2026-11-26T14:00:00Z",
+          label_metadata: {
+            ui_version: 2,
+            deck_id: "forms-blind-deck-2026-11-27",
+            sort_state: "void",
+            piles: validPiles,
+            timestamp: "2026-11-26T14:00:00Z",
+          },
+        },
+        null,
+        "forms-blind-deck-2026-11-27",
+      ),
+    ).toBe(false);
   });
 
   test("POST payload strings fit RankingJudgment VARCHAR column limits", () => {
@@ -196,5 +280,21 @@ describe("#13550 (363: A) — /grade/forms v2 pile sort", () => {
     expect(pageSrc).toContain('data-testid={`quick-place-thumb-${pile.pile_id}`}');
     expect(pageSrc).toContain("src={firstCard.image_url}");
     expect(pageSrc).toContain("draggable={false}");
+  });
+
+  test("#13843 all 11 Friday deck cards are self-hosted under public/forms-deck-2026-11-27 with exact PNG dimensions", () => {
+    const publicDir = path.resolve(__dirname, "../../public");
+    expect(formsDeck.forms).toHaveLength(11);
+    for (const card of formsDeck.forms) {
+      expect(card.image_url).toMatch(/^\/forms-deck-2026-11-27\/card-\d{2}\.png$/);
+      expect(card.image_url).not.toContain("raw.githubusercontent.com");
+      const filePath = path.join(publicDir, card.image_url.replace(/^\//, ""));
+      expect(fs.existsSync(filePath)).toBe(true);
+      const buf = fs.readFileSync(filePath);
+      expect(buf.toString("ascii", 1, 4)).toBe("PNG");
+      expect(buf.readUInt32BE(16)).toBe(card.width_px);
+      expect(buf.readUInt32BE(20)).toBe(card.height_px);
+      expect(card.width_px).toBe(780);
+    }
   });
 });

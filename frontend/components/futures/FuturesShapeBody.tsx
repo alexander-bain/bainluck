@@ -282,6 +282,7 @@ function MovementRail({
 
 export interface FuturesShapeBodyProps {
   outcomes: FuturesOutcome[];
+  totalOutcomeCount?: number;
   sortedOutcomes: FuturesOutcome[];
   pricedOutcomes: FuturesOutcome[];
   renderedById: Map<number, RenderedPair>;
@@ -300,6 +301,7 @@ export interface FuturesShapeBodyProps {
 
 export default function FuturesShapeBody({
   outcomes,
+  totalOutcomeCount = outcomes.length,
   sortedOutcomes,
   pricedOutcomes,
   renderedById,
@@ -317,7 +319,7 @@ export default function FuturesShapeBody({
 }: FuturesShapeBodyProps) {
   const bodyKind = resolveAtlasBodyKind({
     marketShape,
-    outcomeCount: outcomes.length,
+    outcomeCount: totalOutcomeCount,
     mutuallyExclusive,
     hasThresholdGroups,
   });
@@ -367,7 +369,7 @@ export default function FuturesShapeBody({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [sheetOpen]);
 
-  if (!bodyKind || bodyKind === "quantity") {
+  if (!bodyKind || bodyKind === "quantity" || orderedOutcomes.length === 0) {
     return null;
   }
 
@@ -884,12 +886,6 @@ export default function FuturesShapeBody({
           <span>Search all {outcomes.length} outcomes</span>
         </button>
       )}
-
-      <p className="mt-2.5 text-xs text-text-secondary">
-        {isQualifier
-          ? "Each contender can qualify. These chances do not add to 100%."
-          : "Full-field shares. Every outcome prints the server's number."}
-      </p>
 
       {mounted &&
         sheetOpen &&

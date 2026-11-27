@@ -59,7 +59,7 @@ let ACTIVE_MARKET: unknown = null;
 /**
  * The settled caption ("Settled — X won.") lives INSIDE the price-trend card,
  * which the page only renders when `historyData && historyOutcomes.length > 0`
- * (page.tsx:820). With no history the page draws "Not enough price history yet"
+ * (page.tsx:820). With no history the page draws "Not enough probability history yet"
  * instead and the caption never mounts — so a caption assertion against a
  * history-less fixture tests nothing at all.
  *

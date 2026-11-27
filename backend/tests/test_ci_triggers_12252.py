@@ -29,7 +29,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 CI = Path(os.environ.get("CI_WORKFLOW_PATH") or ROOT / ".github" / "workflows" / "ci.yml")
 
-FULL = ["change-scope", "fast-gate", "backend-tests", "database-integration", "frontend-build", "search-recall"]
+FULL = ["change-scope", "fast-gate", "backend-tests", "database-integration", "frontend-build", "search-recall", "shard-completeness"]
 
 EVALUATOR = r"""
 const fs = require('node:fs');
@@ -43,11 +43,11 @@ function evaluate(expr, github, needs = {}, parentsPassed = true) {
     `return (${e})`)(github, needs, (list, v) => list.includes(v), (v, p) => String(v).startsWith(p),
       (f, ...a) => f.replace(/\{(\d+)\}/g, (_, i) => a[+i]), () => false, () => true, () => parentsPassed);
 }
-function shape(action, labels = ['tier-b']) {
+function shape(action, labels = ['tier-b'], draft = false) {
   return action === 'push'
-    ? {event_name: 'push', ref: 'refs/heads/master', run_id: 42, event: {pull_request: {labels: []}}}
-    : {event_name: 'pull_request', ref: 'refs/pull/777/merge', run_id: 42,
-       event: {action, pull_request: {number: 777, labels: labels.map(name => ({name}))}}};
+    ? {event_name: 'push', ref: 'refs/heads/master', sha: 'abc1234', run_id: 42, event: {pull_request: {draft: false, labels: []}}}
+    : {event_name: 'pull_request', ref: 'refs/pull/777/merge', sha: 'abc1234', run_id: 42,
+       event: {action, pull_request: {number: 777, draft, labels: labels.map(name => ({name}))}}};
 }
 function queued(github) {
   const states = {}, selected = [];
@@ -65,6 +65,8 @@ function queued(github) {
 const out = {};
 for (const [k, g] of Object.entries({
   opened: shape('opened'), synchronize: shape('synchronize'), reopened: shape('reopened'),
+  ready_for_review: shape('ready_for_review'),
+  draft_opened: shape('opened', ['tier-b'], true),
   eval_synchronize: shape('synchronize', ['tier-b', 'eval-candidate']), push: shape('push'),
 })) out[k] = {selected: queued(g),
               slot: [evaluate(wf.concurrency.group, g), Boolean(evaluate(wf.concurrency['cancel-in-progress'], g))]};
@@ -88,23 +90,32 @@ def _run() -> dict:
 
 
 def test_only_events_that_change_the_commit_trigger_a_pull_request_run():
-    assert _workflow()["on"]["pull_request"]["types"] == ["opened", "synchronize", "reopened"]
+    # #412: D adds `ready_for_review` so heavy jobs skipped on draft PRs run when marked ready.
+    assert _workflow()["on"]["pull_request"]["types"] == ["opened", "synchronize", "reopened", "ready_for_review"]
 
 
 def test_no_condition_is_left_reading_an_event_that_can_no_longer_arrive():
-    """Dead branches for `labeled`/`edited` would read as if those events still ran."""
+    """Dead branches for `labeled`/`edited`/`converted_to_draft` would read as if those events still ran."""
     text = CI.read_text()
     code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    assert not re.search(r"github\.event\.action\s*==\s*'(?:labeled|unlabeled|edited)'", code)
+    assert not re.search(r"github\.event\.action\s*==\s*'(?:labeled|unlabeled|edited|converted_to_draft)'", code)
     assert "github.event.changes" not in code and "github.event.label.name" not in code
 
 
 def test_a_commit_runs_everything_and_supersedes_the_older_run():
     out = _run()
-    for case in ("opened", "synchronize", "reopened"):
+    for case in ("opened", "synchronize", "reopened", "ready_for_review"):
         for job in FULL:
             assert job in out[case]["selected"], (case, job)
         assert out[case]["slot"] == ["ci-pr-777", True], (case, out[case]["slot"])
+
+
+def test_a_draft_pr_runs_change_scope_and_fast_gate_and_skips_heavy_jobs():
+    out = _run()
+    selected = set(out["draft_opened"]["selected"])
+    assert {"change-scope", "fast-gate"} <= selected
+    for heavy in ("backend-tests", "database-integration", "frontend-build", "search-recall", "shard-completeness"):
+        assert heavy not in selected, (heavy, selected)
 
 
 def test_an_eval_candidate_pr_still_queues_nothing_on_its_next_commit():
@@ -114,5 +125,5 @@ def test_an_eval_candidate_pr_still_queues_nothing_on_its_next_commit():
 
 def test_master_pushes_keep_their_release_path_and_group():
     out = _run()
-    assert "deploy" in out["push"]["selected"]
-    assert out["push"]["slot"] == ["ci-push-refs/heads/master", False]
+    assert "deploy" in out["push"]["selected"] or "deploy-after-full" in out["push"]["selected"]
+    assert out["push"]["slot"] == ["ci-push-master-abc1234", False]

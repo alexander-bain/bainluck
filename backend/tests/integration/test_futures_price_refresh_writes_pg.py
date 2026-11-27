@@ -148,6 +148,35 @@ def _stats():
 
 
 class TestTheWriterActuallyWrites:
+    async def test_a_zero_bid_updates_the_ceiling_without_a_price_snapshot(self, db):
+        from decimal import Decimal
+
+        from app.tasks.futures_price_refresh import _write_prices
+
+        market, outcome = await _seed_market(db, is_winner=False)
+        old_observation = datetime.now(timezone.utc) - timedelta(hours=1)
+        outcome.current_probability = Decimal("0.05")
+        outcome.current_yes_bid = Decimal("0.04")
+        outcome.current_yes_ask = Decimal("0.06")
+        outcome.last_updated = old_observation
+        await db.commit()
+
+        written = await _write_prices(db, market.id, _BOOKMAKER, [{
+            "external_id": outcome.external_id,
+            "probability": None,
+            "venue_quotes_no_price": True,
+            "yes_bid": 0,
+            "yes_ask": 0.05,
+        }], _stats())
+        await db.commit()
+        await db.refresh(outcome)
+
+        assert written == await _snapshot_count(db, outcome.id) == 0
+        assert outcome.current_probability is None
+        assert outcome.current_yes_bid == 0
+        assert outcome.current_yes_ask == Decimal("0.05")
+        assert outcome.last_updated > old_observation
+
     async def test_an_unsettled_outcome_gets_a_snapshot(self, db):
         """THE founding case. `is_winner=False` is what production stores.
 
@@ -2107,6 +2136,48 @@ async def test_kalshi_population_is_shown_minus_both_socket_arms(poll_db):
     assert "KXGAME-WIN-H" not in polled_arm_off and "KXGAME-LIVE-H" not in polled_arm_off
 
 
+async def test_population_excludes_old_suspended_props_and_retires_settled_single_winner_markets_413a(poll_db, monkeypatch):
+    """#13673 / 413:A: old suspended props excluded, recent suspended & live props polled,
+    settled expected_winners=1 market excluded even when winner is api_settlement, and
+    multi-winner (expected_winners=2) keeps unsettled siblings."""
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
+    db = poll_db
+    old_susp = await _vp_event(db, status="suspended", starts_in=timedelta(hours=-48))
+    rec_susp = await _vp_event(db, status="suspended", starts_in=timedelta(hours=-4))
+    live_ev = await _vp_event(db, status="live", starts_in=timedelta(hours=-1))
+
+    prop_cu = {"v": 1, "semantic_type": "player_prop", "venue_type": "prop"}
+    moneyline_cu = {"v": 1, "semantic_type": "winner", "venue_type": "moneyline"}
+
+    await _vp_market(db, source="polymarket", ext="PM-OLD-SUSP", event_id=old_susp, tier=5,
+                     legs=[("0x-old-susp", False, None)],
+                     metadata={"polymarket_event_id": "old", "content_understanding_v1": prop_cu})
+    await _vp_market(db, source="polymarket", ext="PM-REC-SUSP", event_id=rec_susp, tier=5,
+                     legs=[("0x-rec-susp", False, None)],
+                     metadata={"polymarket_event_id": "rec", "content_understanding_v1": prop_cu})
+    await _vp_market(db, source="polymarket", ext="PM-LIVE-PROP", event_id=live_ev, tier=5,
+                     legs=[("0x-live-prop", False, None)],
+                     metadata={"polymarket_event_id": "live", "content_understanding_v1": prop_cu})
+    await _vp_market(db, source="polymarket", ext="PM-LIVE-ML", event_id=live_ev, tier=5,
+                     legs=[("0x-live-ml", False, None)],
+                     metadata={"polymarket_event_id": "ml", "content_understanding_v1": moneyline_cu})
+    await _vp_market(db, source="polymarket", ext="PM-ONE-WIN",
+                     legs=[("0x-one-win-y", True, "api_settlement"), ("0x-one-win-n", False, None)],
+                     metadata={"polymarket_event_id": "onewin", "shape": {"expected_winners": "1"}})
+    await _vp_market(db, source="polymarket", ext="PM-TWO-WIN",
+                     legs=[("0x-two-win-y", True, None), ("0x-two-win-n", False, None)],
+                     metadata={"polymarket_event_id": "twowin", "shape": {"expected_winners": "2"}})
+    await db.commit()
+
+    polled = await _vp_population(db, "polymarket", open_arm=False)
+    assert "0x-rec-susp" in polled
+    assert "0x-live-prop" in polled
+    assert "0x-two-win-n" in polled
+    assert "0x-old-susp" not in polled
+    assert "0x-live-ml" not in polled
+    assert "0x-one-win-n" not in polled
+
+
 async def test_polymarket_population_drops_tokened_markets_only_while_the_open_arm_is_on(poll_db):
     db = poll_db
     await _vp_market(db, source="polymarket", ext="9001", legs=[("0xaaa", False, None)],
@@ -2212,6 +2283,45 @@ async def test_a_row_a_newer_writer_touched_is_left_alone_with_no_point(poll_db,
     prob, points = await _vp_row(db, ids["KXN-A"])
     assert float(prob) == pytest.approx(0.40) and points == 0
     assert stats["legs_newer_writer"] == 1
+
+
+async def test_the_30_second_poll_clears_a_price_above_the_new_lone_ask(poll_db, vp_deferred):
+    from sqlalchemy import select
+
+    from app.models.models import FuturesOutcome
+    from app.services.kalshi_api import KalshiAPIService
+    from app.tasks.venue_poll_30s import _items_for_market, kalshi_items, write_market
+    from tests.test_venue_poll_30s_10090 import _raw
+
+    db = poll_db
+    ticker = "KXCEILING-A"
+    market_id, ids = await _vp_market(
+        db, source="kalshi", ext="KXCEILING", legs=[(ticker, False, None)]
+    )
+    await db.commit()
+    outcome_id = ids[ticker]
+    stats = {"unknown_outcomes": 0}
+    service = KalshiAPIService(api_key="fixture")
+    for bid, ask in (("0.0500", "0.0700"), ("0.0000", "0.0300")):
+        found = kalshi_items(service, [_raw(ticker, bid=bid, ask=ask, last="0.0600")], stats)
+        poll = await _vp_poll(
+            db, ids.values(), fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5)
+        )
+        await write_market(
+            db, venue="kalshi", market_id=market_id,
+            priced=_items_for_market("kalshi", [(outcome_id, ticker)], found),
+            poll=poll, stats=stats, deferred=_vp_points(),
+        )
+    row = (await db.execute(
+        select(
+            FuturesOutcome.current_probability,
+            FuturesOutcome.current_yes_bid,
+            FuturesOutcome.current_yes_ask,
+        ).where(FuturesOutcome.id == outcome_id)
+    )).one()
+    assert row[0] is None
+    assert tuple(float(value) for value in row[1:]) == pytest.approx((0.0, 0.03))
+    assert (await _vp_row(db, outcome_id))[1] == 1
 
 
 async def test_a_move_inside_the_interval_moves_the_row_and_gains_its_point_later(poll_db, vp_deferred):

@@ -1,0 +1,66 @@
+/* Scoped dark-appearance token and utility overrides used strictly inside the
+ * private /admin/containers-kit-preview parity inspector so web TSX keeps light
+ * semantic utility classes only (no raw `dark:` classes or TSX hex literals).
+ */
+.darkSurface {
+  --surface-deep: #0b0f17;
+  --surface-card: #141a24;
+  --surface-elevated: #1c2432;
+  --surface-border: #2a3444;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-secondary-strong: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-inverse: #0b0f17;
+  --accent-brand: #34d399;
+  --kit-primary: #f8fafc;
+  --kit-secondary: #cbd5e1;
+  --kit-muted: #94a3b8;
+  --kit-accent: #34d399;
+  --kit-warn: #fbbf24;
+  --kit-track: #243042;
+  --kit-inverse: #ffffff;
+  background-color: #0b0f17 !important;
+  color: #f8fafc !important;
+  border-color: #2a3444 !important;
+}
+
+.darkSurface :global(.bg-surface-deep) { background-color: #0b0f17 !important; }
+.darkSurface :global(.bg-surface-card) { background-color: #141a24 !important; }
+.darkSurface :global(.bg-surface-base) { background-color: #111620 !important; }
+.darkSurface :global(.bg-surface-elevated) { background-color: #1c2432 !important; }
+.darkSurface :global(.bg-surface-elevated\/60) { background-color: rgba(28, 36, 50, 0.65) !important; }
+.darkSurface :global(.bg-surface-elevated\/80) { background-color: rgba(28, 36, 50, 0.85) !important; }
+.darkSurface :global(.bg-surface-border) { background-color: #2a3444 !important; }
+.darkSurface :global(.border-surface-border) { border-color: #2a3444 !important; }
+.darkSurface :global(.border-surface-border\/50) { border-color: rgba(42, 52, 68, 0.6) !important; }
+.darkSurface :global(.border-surface-border\/60) { border-color: rgba(42, 52, 68, 0.7) !important; }
+.darkSurface :global(.border-surface-card) { border-color: #141a24 !important; }
+.darkSurface :global(.text-text-primary) { color: #f8fafc !important; }
+.darkSurface :global(.text-text-secondary) { color: #cbd5e1 !important; }
+.darkSurface :global(.text-text-muted) { color: #94a3b8 !important; }
+.darkSurface :global(.text-text-inverse) { color: #0b0f17 !important; }
+.darkSurface :global(.text-accent-brand) { color: #34d399 !important; }
+.darkSurface :global(.text-accent-danger) { color: #f87171 !important; }
+.darkSurface :global(.bg-accent-brand) { background-color: #10b981 !important; }
+.darkSurface :global(.bg-accent-brand\/15) { background-color: rgba(52, 211, 153, 0.18) !important; }
+.darkSurface :global(.bg-accent-brand\/25) { background-color: rgba(52, 211, 153, 0.28) !important; }
+.darkSurface :global(.bg-accent-live) { background-color: #22c55e !important; }
+.darkSurface :global(.bg-text-muted) { background-color: #64748b !important; }
+.darkSurface :global(.border-accent-brand) { border-color: #34d399 !important; }
+.darkSurface :global(.border-accent-brand\/30) { border-color: rgba(52, 211, 153, 0.4) !important; }
+.darkSurface :global(.border-accent-brand\/40) { border-color: rgba(52, 211, 153, 0.5) !important; }
+.darkSurface :global(.text-kit-primary) { color: #f8fafc !important; }
+.darkSurface :global(.text-kit-secondary) { color: #cbd5e1 !important; }
+.darkSurface :global(.text-kit-muted) { color: #94a3b8 !important; }
+.darkSurface :global(.text-kit-accent) { color: #34d399 !important; }
+.darkSurface :global(.text-kit-warn) { color: #fbbf24 !important; }
+.darkSurface :global(.text-kit-inverse) { color: #ffffff !important; }
+.darkSurface :global(.bg-kit-track) { background-color: #243042 !important; }
+.darkSurface :global(.bg-kit-accent) { background-color: #059669 !important; }
+.darkSurface :global(.bg-kit-accent\/\[0\.18\]) { background-color: rgba(52, 211, 153, 0.22) !important; }
+.darkSurface :global(.bg-kit-accent\/10) { background-color: rgba(52, 211, 153, 0.14) !important; }
+.darkSurface :global(.border-kit-accent) { border-color: #34d399 !important; }
+.darkSurface :global(.border-kit-accent\/65) { border-color: rgba(52, 211, 153, 0.65) !important; }
+.darkSurface :global(.border-kit-accent\/45) { border-color: rgba(52, 211, 153, 0.45) !important; }
+.darkSurface :global(.ring-kit-accent) { --tw-ring-color: #34d399 !important; }

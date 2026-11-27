@@ -208,6 +208,7 @@ export interface FactoryData {
   signals: {
     tests: string;
     testflight: string;
+    now_lines_issue?: number;
     checks_queue?: ChecksQueue;
     tests_at?: string;
     oldest_running_ci_at?: string | null;

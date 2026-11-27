@@ -210,7 +210,7 @@ describe("noPricedOutcomesNote", () => {
   it("says the honest thing once and claims nothing about why", () => {
     // Not "no outcomes" — the rows exist, one tap below. Notice 34: no method
     // note, no count, no explanation of the emptiness.
-    expect(NO_PRICED_OUTCOMES_NOTE).toBe("No current prices for this market.");
+    expect(NO_PRICED_OUTCOMES_NOTE).toBe("No recent probability.");
     expect(NO_PRICED_OUTCOMES_NOTE).not.toMatch(/withheld|book|stale|untraded/i);
   });
 });
@@ -220,10 +220,10 @@ describe("noPricedOutcomesNote", () => {
 describe("/futures/109681 — all 16 legs withheld", () => {
   const html = () => render(cpiAllWithheld(), "109681");
 
-  it("prints the honest line above the fold", () => {
+  it("uses the disclosure as the empty state", () => {
     const { beforeFold } = splitAtFold(html());
-    expect(beforeFold).toContain(NOTE);
-    expect(beforeFold).toContain(NO_PRICED_OUTCOMES_NOTE);
+    expect(beforeFold).not.toContain(NOTE);
+    expect(splitAtFold(html()).insideFold).toMatch(/<summary[^>]*>No recent probability<\/summary>/);
   });
 
   it("draws no sort toolbar — there is nothing to order", () => {
@@ -251,7 +251,7 @@ describe("/futures/109681 — all 16 legs withheld", () => {
     const out = html();
     expect(out).toContain("All Outcomes");
     expect(out).toContain(FOLD_MARKER);
-    expect(out).toContain("More outcomes (16)");
+    expect(splitAtFold(out).insideFold).toMatch(/<summary[^>]*>No recent probability<\/summary>/);
   });
 
   it("keeps all 16 rows, folded, and invents no price for any of them", () => {

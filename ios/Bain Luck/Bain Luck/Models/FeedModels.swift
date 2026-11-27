@@ -976,6 +976,13 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     var awaySourceMark: SourceMark? = nil
     var pregameSourceMark: SourceMark? = nil
     var awayPregameSourceMark: SourceMark? = nil
+    /// #13775 — server-resolved hero win probability pair (`hero_probability` /
+    /// `hero_probability_away`) carried alongside `hero_probability_source`.
+    /// Read through `CompactGameCard12616.currentOddsForCard` when `current_odds`
+    /// is nil or carries no current probability (e.g. prediction-market-only upcoming
+    /// games with `bookmaker_count == 0`).
+    var heroProbability: Double? = nil
+    var heroProbabilityAway: Double? = nil
 }
 
 /// What a card should draw in one participant's avatar slot, and how.
@@ -1015,6 +1022,13 @@ extension FeedEventData {
 /// Futures-market payload embedded inside a futures-type feed card.
 nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     var fullFieldRendered: Bool? = nil
+    var fieldPriceCoverageIncomplete: Bool? = nil
+
+    var withdrawnProbabilityNotice: String? {
+        guard status == "open", fieldPriceCoverageIncomplete == true else { return nil }
+        return EventAtlasStates11666.noRecentPrice
+    }
+
     let id: Int
     /// Fresh leaf identity; older cached feed bodies may omit it.
     var externalId: String? = nil
@@ -1181,8 +1195,29 @@ nonisolated struct FeedDiscoverThresholdPoint: Decodable, Identifiable, Sendable
     let direction: String?
     let probability: Double?
     let needsSiblingMarkets: Bool?
+    var movement: Double? = nil
 
     var id: String { label }
+
+    init(
+        source: String?,
+        label: String,
+        value: Double?,
+        unit: String?,
+        direction: String?,
+        probability: Double?,
+        needsSiblingMarkets: Bool?,
+        movement: Double? = nil
+    ) {
+        self.source = source
+        self.label = label
+        self.value = value
+        self.unit = unit
+        self.direction = direction
+        self.probability = probability
+        self.needsSiblingMarkets = needsSiblingMarkets
+        self.movement = movement
+    }
 }
 
 /// Single outcome row for distribution-style cards.

@@ -137,15 +137,18 @@ final class ThemeCollectionReaderTests: XCTestCase {
 
     @MainActor
     func testTransientFailureRetainsLastGoodBut404ClosesOutstandingReads() async throws {
-        let service = ThemeReaderService(), vm = ContainerHubViewModel(slug: "ai", service: service)
+        let service = ThemeReaderService()
+        let vm = ContainerHubViewModel(slug: "ai", service: service, retryDelayNanoseconds: 0)
         try await seed(vm, service)
         let refresh = Task { await vm.load() }; await service.wait(2)
-        await service.fail(1, .httpError(statusCode: 503, body: nil)); await refresh.value
+        await service.fail(1, .httpError(statusCode: 503, body: nil))
+        await service.wait(3)
+        await service.fail(2, .httpError(statusCode: 503, body: nil)); await refresh.value
         XCTAssertEqual(try loaded(vm).members.count, 1); XCTAssertNotNil(vm.refreshError)
-        let more = Task { await vm.loadMore() }; await service.wait(3)
-        let missing = Task { await vm.load() }; await service.wait(4)
-        await service.fail(3, .httpError(statusCode: 404, body: nil)); await missing.value
-        await service.reply(2, try page(2)); await more.value
+        let more = Task { await vm.loadMore() }; await service.wait(4)
+        let missing = Task { await vm.load() }; await service.wait(5)
+        await service.fail(4, .httpError(statusCode: 404, body: nil)); await missing.value
+        await service.reply(3, try page(2)); await more.value
         guard case .unavailable = vm.state else { return XCTFail("404 cannot be revived by delayed page") }
         XCTAssertNil(vm.context.identity)
     }

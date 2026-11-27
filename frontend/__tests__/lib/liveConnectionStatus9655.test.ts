@@ -191,7 +191,7 @@ describe('#10200 truth outranks a healthy socket; the finish outranks everything
 
   it('an old price is named even while the socket is open and a receipt is fresh', () => {
     const p = presentConnectionStatus(fresh, { ...QUIET, status: 'open', priceMayBeOld: true }, T0 + 5_000);
-    expect(p.label).toBe('Price may be old');
+    expect(p.label).toBe('Probability may be old');
     expect(p.tone).toBe('neutral');
     expect(p.breathes).toBe(false);
   });

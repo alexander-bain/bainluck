@@ -18,24 +18,24 @@ on:
   # after `opened` no longer cancels that first run (#12235's skip still holds
   # for every later event; the Tier-B policy still blocks the merge).
   # Guarded by backend/tests/test_ci_triggers_12252.py.
+  # #412: D adds `ready_for_review` so heavy CI jobs skipped on draft PRs run the
+  # moment a PR is marked ready, plus on every subsequent synchronize push.
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [master, 'integrator/compose-**']
 
-# Decide 76 (Alex, Nov 6; restored per #13352 revert trigger after v6556 hit >60m):
-# a push shares ONE group per ref, so a newer master push displaces an older run
-# still waiting for a runner (a group holds one pending run). The newest master
-# head contains every earlier merge, and `ci-deploy-base.sh` widens its range back
-# to the last deployed commit, so nothing a superseded run would have tested goes
-# untested. An IN-PROGRESS push run is never cancelled (`cancel-in-progress` is
-# false for pushes). Re-run the NEWEST master run, never an older one: an old run
-# re-queued into the group displaces the newest pending run. 16 backend shards and
-# the `shared-middle-2` split remain enabled; `deploy` stays serialized under
-# `heroku-deploy` with the never-backwards guard. Guarded by
-# backend/tests/test_ci_supersede_concurrency.py.
+# Ruling 394 Change 3 + Decide 76:
+# - PRs share one cancellable group per PR (`ci-pr-<number>`).
+# - Compose pushes share one serial non-cancelling group per ref.
+# - Master pushes use per-commit workflow groups (`ci-push-master-<sha>`) so
+#   rapid batch merges do NOT queue their fast `deploy` behind a prior run's
+#   22-minute full suite (`heroku-deploy` serializes the actual Heroku push, and
+#   beside-release full-suite jobs supersede in-flight mid-batch runs via their
+#   own `ci-master-full-*` job concurrency groups so the full suite runs once,
+#   never four times).
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-push-{0}', github.ref) }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || (github.ref == 'refs/heads/master' && format('ci-push-master-{0}', github.sha) || format('ci-push-{0}', github.ref)) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -105,6 +105,7 @@ jobs:
         id: decide
         run: |
           set -uo pipefail
+          BASE_RESOLVED=1
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             # The MERGE BASE, not the base branch tip. A two-dot diff against a
             # base that has moved reports master's own advances as part of this
@@ -125,10 +126,18 @@ jobs:
             # PUSH, not the last thing that reached a dyno, so a delta whose own
             # run never deployed is never reclassified by anybody. The resolver
             # is always an ancestor of the fallback, so the range can only widen.
-            BASE="$(bash .github/scripts/ci-deploy-base.sh \
-                      '${{ github.event.before }}' "$HEAD" \
-                     || echo '${{ github.event.before }}')"
-            [ -n "$BASE" ] || BASE='${{ github.event.before }}'
+            _base_err="$(mktemp)"
+            if BASE="$(bash .github/scripts/ci-deploy-base.sh \
+                      '${{ github.event.before }}' "$HEAD" 2>"$_base_err")" \
+               && [ -n "$BASE" ] \
+               && grep -qE "production (already )?serves " "$_base_err"; then
+              BASE_RESOLVED=1
+            else
+              BASE_RESOLVED=0
+              [ -n "$BASE" ] || BASE='${{ github.event.before }}'
+            fi
+            cat "$_base_err" >&2 || true
+            rm -f "$_base_err"
           fi
           # `|| echo full` is the last fail-safe: if the script cannot run at
           # all, we run everything.
@@ -137,10 +146,13 @@ jobs:
           case "$SCOPE" in
             full|frontend) ;;
             native)
-              # #10708 (Alex 77: A). Push events are never native: master and
-              # compose runs feed the deploy path and always run everything.
-              if [ "${{ github.event_name }}" != "pull_request" ]; then
-                echo "native scope on a push — push runs are always full"; SCOPE=full
+              # #10708 + Alex ruling 381: A (widens 77: A, #12538): PRs
+              # and pure-ios/ master pushes with a resolved deploy base use native
+              # backend readers; compose pushes and unresolved bases stay full.
+              if [ "${{ github.event_name }}" != "pull_request" ] && { [ "${{ github.event_name }}" != "push" ] || [ "${GITHUB_REF:-}" != "refs/heads/master" ]; }; then
+                echo "native scope on non-master push — compose push runs are always full"; SCOPE=full
+              elif [ "${{ github.event_name }}" = "push" ] && [ "${BASE_RESOLVED:-0}" != "1" ]; then
+                echo "native scope on master push with unresolved deploy base — defaulting to full"; SCOPE=full
               else
                 # The roster ∪ every backend test that names a native path. A
                 # refusal or an empty set falls back to full, never a partial list.
@@ -244,7 +256,7 @@ jobs:
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
       CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
       - name: Require this run's change-scope attempt
         if: needs.change-scope.outputs.live == 'true'
@@ -263,12 +275,15 @@ jobs:
         run: echo "Full CI validates this candidate; no live-path gate is selected."
 
       - uses: actions/checkout@v6
+        with:
+          # test_mutation_guard and deploy-base guards diff git history.
+          fetch-depth: 0
+          filter: blob:none
       - name: Check call keywords across backend/app (#13281)
         run: python3 .github/scripts/check_call_keywords.py backend/app
       - name: Post-deploy smoke rollback stand-in 500 dry-run (#13283)
         run: python3 .github/scripts/post_deploy_smoke_rollback.py --self-test-500
       - uses: actions/setup-python@v7
-        if: needs.change-scope.outputs.live == 'true'
         with:
           python-version: "3.11"
           cache: pip
@@ -283,8 +298,9 @@ jobs:
         run: python3 tools/release/verify_fast.py
 
       - name: Install dependencies
-        if: needs.change-scope.outputs.live == 'true'
         run: pip install -r backend/requirements.txt
+      - name: "Run housekeeping guard tests (412: D)"
+        run: python3 .github/scripts/run_fast_gate_housekeeping.py
       - name: Python 3.11 syntax, smoke test and change-scope selected tests
         if: needs.change-scope.outputs.live == 'true'
         env:
@@ -312,8 +328,11 @@ jobs:
     # itself needs change-scope). It never reads the scope, so the matrix always
     # expands and the per-leg contexts always exist.
     needs: [change-scope, fast-gate, native-backend-readers]
-    if: ${{ !cancelled() && needs.fast-gate.result == 'success' }}
+    if: ${{ !cancelled() && needs.fast-gate.result == 'success' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && format('ci-master-full-backend-tests-{0}', matrix.shard) || format('ci-run-{0}-backend-tests-{1}', github.run_id, matrix.shard) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
       CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
@@ -451,7 +470,7 @@ jobs:
     # Return to full: change `native)` in change-scope's decide step to set
     # SCOPE=full (or revert this PR) — every other job then runs as before.
     needs: [change-scope, fast-gate]
-    if: needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
@@ -510,8 +529,11 @@ jobs:
     # #5007 — this proves the SHARD PARTITION is complete, so it is meaningful
     # only when the shards run. Skipped with them, never independently.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && 'ci-master-full-shard-completeness' || format('ci-run-{0}-shard-completeness', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     defaults:
       run:
         working-directory: backend
@@ -613,8 +635,11 @@ jobs:
     # #5007 — the recall rail exercises backend search. A candidate confined to
     # `frontend/` and touching no cross-tier path cannot change what it measures.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && format('ci-master-full-db-{0}', matrix.group) || format('ci-run-{0}-db-{1}', github.run_id, matrix.group) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     defaults:
       run:
         working-directory: backend
@@ -765,8 +790,8 @@ jobs:
             exit 1
           }
           cat /tmp/onboarding13338.txt
-          grep -qE "[^0-9]17 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
-            echo "::error::#13338 onboarding gate did not run all seventeen cases"
+          grep -qE "[^0-9]18 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
+            echo "::error::#13338 onboarding gate did not run all eighteen cases"
             exit 1
           }
       - name: "#12519 team-merge dedup keeps distinct names (real Postgres)"
@@ -5023,7 +5048,7 @@ jobs:
         id: db_308_12288_grouping_preview_loads_every_candid
         # Random disposable schema; runs _load_snapshot_from_db and preview error logging over every candidate definition.
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "python -m pytest tests/integration/test_container_machinery_snapshot_12288_pg.py -v -rs > /tmp/machinerysnapshot12288.txt 2>&1 || {\n  cat /tmp/machinerysnapshot12288.txt\n  exit 1\n}\ncat /tmp/machinerysnapshot12288.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/machinerysnapshot12288.txt; then\n  echo \"::error::#12288 machinery snapshot gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]5 passed([,[:space:]]|$)\" /tmp/machinerysnapshot12288.txt || {\n  echo \"::error::#12288 machinery snapshot gate did not run all five cases\"\n  exit 1\n}\n"
+        run: "python -m pytest tests/integration/test_container_machinery_snapshot_12288_pg.py -v -rs > /tmp/machinerysnapshot12288.txt 2>&1 || {\n  cat /tmp/machinerysnapshot12288.txt\n  exit 1\n}\ncat /tmp/machinerysnapshot12288.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/machinerysnapshot12288.txt; then\n  echo \"::error::#12288 machinery snapshot gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]7 passed([,[:space:]]|$)\" /tmp/machinerysnapshot12288.txt || {\n  echo \"::error::#12288 machinery snapshot gate did not run all seven cases\"\n  exit 1\n}\n"
       - name: "#12612 feed static tag filter (real Postgres)"
         id: db_12612_feed_static_tag_filter
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
@@ -5041,7 +5066,7 @@ jobs:
       - name: "#13573 team futures Q1 rewrite equivalence (real Postgres)"
         id: db_13573_team_futures_q1_pg
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "python -m pytest tests/integration/test_team_futures_q1_pg_13573.py -v -rs > /tmp/teamfuturesq113573.txt 2>&1 || {\n  cat /tmp/teamfuturesq113573.txt\n  exit 1\n}\ncat /tmp/teamfuturesq113573.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/teamfuturesq113573.txt; then\n  echo \"::error::#13573 team futures Q1 gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]1 passed([,[:space:]]|$)\" /tmp/teamfuturesq113573.txt || {\n  echo \"::error::#13573 team futures Q1 gate did not execute its case\"\n  exit 1\n}\n"
+        run: "python -m pytest tests/integration/test_team_futures_q1_pg_13573.py -v -rs > /tmp/teamfuturesq113573.txt 2>&1 || {\n  cat /tmp/teamfuturesq113573.txt\n  exit 1\n}\ncat /tmp/teamfuturesq113573.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/teamfuturesq113573.txt; then\n  echo \"::error::#13573 team futures Q1 gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]2 passed([,[:space:]]|$)\" /tmp/teamfuturesq113573.txt || {\n  echo \"::error::#13573 team futures Q1 gate did not execute both cases\"\n  exit 1\n}\n"
       - name: "#12818 search untraded 60-row window guard (real Postgres)"
         id: db_12818_search_untraded_window_guard
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
@@ -5081,9 +5106,12 @@ jobs:
   # or turns a run red. Skipped when nothing is quarantined.
   flaky-canary:
     needs: change-scope
-    if: ${{ !cancelled() && needs.change-scope.result == 'success' && needs.change-scope.outputs.quarantine != '[]' && needs.change-scope.outputs.quarantine != '' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true' }}
+    if: ${{ !cancelled() && needs.change-scope.result == 'success' && needs.change-scope.outputs.quarantine != '[]' && needs.change-scope.outputs.quarantine != '' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     continue-on-error: true
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && 'ci-master-full-flaky-canary' || format('ci-run-{0}-flaky-canary', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     timeout-minutes: 20
     defaults:
       run:
@@ -5128,8 +5156,11 @@ jobs:
         run: bash ../.github/scripts/flaky-canary.sh
   search-recall:
     needs: [change-scope, database-integration, backend-tests]
-    if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
+    if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) && !(github.event_name == 'push' && github.ref == 'refs/heads/master' && (needs.backend-tests.result == 'cancelled' || needs.database-integration.result == 'cancelled')) }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && 'ci-master-full-search-recall' || format('ci-run-{0}-search-recall', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     steps:
       - name: Every database integration group passed
         env:
@@ -5155,8 +5186,11 @@ jobs:
   frontend-build:
     needs: [change-scope, fast-gate]
     # #10708: a pure-ios/ candidate cannot reach the frontend build.
-    if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'native'
+    if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'native' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && 'ci-master-full-frontend-build' || format('ci-run-{0}-frontend-build', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     defaults:
       run:
         working-directory: frontend
@@ -5368,6 +5402,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       required: ${{ steps.decide.outputs.required }}
+      wait_full: ${{ steps.decide.outputs.wait_full }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -5384,10 +5419,14 @@ jobs:
           # did not release — the next push's base moved past it and this gate
           # never saw it again. `ci-deploy-base.sh` returns the deployed sha when
           # it is BELOW the fallback, so the range only ever grows.
+          CI_DEPLOY_BASE_STATUS_FILE=/tmp/deploy-base-status
+          export CI_DEPLOY_BASE_STATUS_FILE
           BASE="$(bash .github/scripts/ci-deploy-base.sh \
                     '${{ github.event.before }}' '${{ github.sha }}' \
                    || echo '${{ github.event.before }}')"
           [ -n "$BASE" ] || BASE='${{ github.event.before }}'
+          BASE_STATUS="unresolved"
+          [ -r /tmp/deploy-base-status ] && BASE_STATUS="$(cat /tmp/deploy-base-status)"
           # `|| echo true` is the last fail-safe: if the script itself cannot run,
           # we release.
           REQUIRED="$(bash .github/scripts/heroku-release-required.sh \
@@ -5396,69 +5435,25 @@ jobs:
             true|false) ;;
             *) echo "unparseable decision '$REQUIRED' — defaulting to release"; REQUIRED=true ;;
           esac
+          WAIT_FULL="$(bash .github/scripts/heroku-release-wait-full.sh \
+                         "$BASE" '${{ github.sha }}' "$BASE_STATUS" || echo true)"
+          case "$WAIT_FULL" in
+            true|false) ;;
+            *) echo "unparseable wait_full '$WAIT_FULL' — defaulting to wait for full run"; WAIT_FULL=true ;;
+          esac
           echo "required=$REQUIRED" >> "$GITHUB_OUTPUT"
-          echo "release required: $REQUIRED"
+          echo "wait_full=$WAIT_FULL" >> "$GITHUB_OUTPUT"
+          echo "release required: $REQUIRED (wait_full=$WAIT_FULL base_status=$BASE_STATUS)"
 
   deploy:
-    # #1494: the database integration groups (the recall gate among them) are
-    # deploy-blocking, so the reverted search speed-up cannot re-land without
-    # them going green. Fable, Wed Nov 18: deploy reads `database-integration`
-    # itself rather than through `search-recall`, which only re-checks the same
-    # result and cost a 1-3 minute wait for a runner. A matrix dependency is
-    # satisfied only when every group succeeds, as with `backend-tests` below.
-    # `search-recall` stays: it is the required check on pull requests.
-    # `backend-tests` stays a BARE job name even though it is now a 4-leg matrix:
-    # a matrix dependency is satisfied only when EVERY leg succeeds, so one red
-    # shard still blocks the release. Enumerating shard names here would have to
-    # be edited every time the matrix changes, and forgetting would silently drop
-    # a shard from the deploy gate.
-    # shard-completeness is required too — without it a partition that skips
-    # files could deploy on a green built from a smaller suite.
-    # release-required (#4456) is a GATE, not a test: it decides whether this
-    # push needs a Heroku dyno cycle at all. It shares `deploy`'s exact `if`, so
-    # the two are never inconsistently skipped, and it fails toward `true`.
-    needs: [change-scope, fast-gate, backend-tests, shard-completeness, database-integration, frontend-build, e2e-contract, release-required]
-    # KEEP THIS CONDITION ON ONE LINE. ciTriggerCoverage's "an any-base PR cannot
-    # release" assertion matches `if:.*github.event_name == 'push'` with a
-    # single-line regex; folding this into a `>-` block scalar hides the
-    # event_name/ref guards from it and the suite goes red. That test is the only
-    # thing standing between a pull_request run and a Heroku release, so it must
-    # stay able to SEE the guard, not merely have the guard be present.
-    if: always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && needs.release-required.result == 'success' && needs.release-required.outputs.required != 'false' && needs.change-scope.result == 'success' && needs.fast-gate.result == 'success' && needs.backend-tests.result == 'success' && needs.e2e-contract.result == 'success' && (needs.change-scope.outputs.live == 'true' || (needs.shard-completeness.result == 'success' && needs.database-integration.result == 'success' && needs.frontend-build.result == 'success'))
+    # Ruling 394(a): release on merge for classified non-migration/non-.github changes
+    # with a resolved deploy base, waiting only on change-scope, fast-gate, and
+    # release-required while the full suite runs beside it in parallel.
+    # KEEP THIS CONDITION ON ONE LINE (ciTriggerCoverage.contract.test.js).
+    needs: [change-scope, fast-gate, release-required]
+    if: always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && needs.release-required.result == 'success' && needs.release-required.outputs.required != 'false' && needs.release-required.outputs.wait_full == 'false' && needs.change-scope.result == 'success' && (needs.change-scope.outputs.scope == 'full' || needs.change-scope.outputs.scope == 'frontend') && needs.fast-gate.result == 'success'
     runs-on: ubuntu-latest
     # THRU-F: the group SERIALIZES releases; it must not KILL one mid-release.
-    #
-    # Two different things can be cancelled here, and only one of them is safe:
-    #
-    #   1. A PENDING deploy — a run that has the group's queue slot but has not
-    #      started. Cancelling it is free and is what keeps a merge burst from
-    #      turning into one Heroku build per merge.
-    #   2. An IN-PROGRESS deploy — a run inside `git push heroku`. That push is
-    #      not a handshake: Heroku streams the whole build and release back over
-    #      it, so the job sits "in progress" for MINUTES while production is
-    #      actually being changed.
-    #
-    # `cancel-in-progress: true` cancelled BOTH. Killing (2) does not stop the
-    # Heroku side — once the ref moves, the build and release run to completion
-    # server-side — it only removes our half of the conversation. The release
-    # still lands, the run reads `cancelled`, and every line of reconciliation
-    # below (the rejection branch, the ancestry re-read, the fail-closed refusal)
-    # is skipped, because there is no longer a job to run it. A deploy we cannot
-    # observe or adjudicate is worse than a deploy that waits.
-    #
-    # Setting it to `false` keeps (1) and drops (2): cancellation of a PENDING
-    # job is not governed by this flag at all. A concurrency group holds exactly
-    # one pending job, and a newly queued one always cancels the previously
-    # pending one — that coalescing is what we wanted from the flag, and we keep
-    # it for free. So a burst of ten merges still costs at most two Heroku
-    # builds (the one already running, then the newest queued sha), not ten.
-    #
-    # Release SELECTION is then made once, explicitly, by the never-backwards
-    # guard in the step below — which reads what is actually LIVE and skips when
-    # something newer is already deployed. That is one selection rule, applied
-    # when the slot is held, instead of two racing ones. `cancel-in-progress`
-    # was the second, blind selector: it chose by arrival time, could not see
-    # Heroku at all, and its only lever was to kill.
     concurrency:
       group: heroku-deploy
       cancel-in-progress: false
@@ -5494,205 +5489,118 @@ jobs:
           SCOPE_HEAD: ${{ needs.change-scope.outputs.head }}
         run: python3 tools/release/verify_fast.py
 
+      - uses: actions/setup-python@v7
+        if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'frontend'
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'frontend'
+        run: pip install -r backend/requirements.txt
+
+      - name: Boot check for release (compile backend and run startup test, Ruling 394 Change 1)
+        if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'frontend'
+        working-directory: backend
+        run: |
+          python -m compileall -q app
+          python -m pytest tests/test_startup.py -q
+
       - name: Deploy to Heroku (never-backwards guarded)
         id: heroku_deploy
+        run: bash .github/scripts/heroku-deploy.sh
+
+  deploy-after-full:
+    # Ruling 394(b) fail-closed path: waits for the full suite whenever
+    # release-required.outputs.wait_full != 'false' (migrations, .github/,
+    # unclassifiable changes, or unresolved base).
+    # KEEP THIS CONDITION ON ONE LINE (ciTriggerCoverage.contract.test.js).
+    needs: [change-scope, fast-gate, backend-tests, shard-completeness, database-integration, frontend-build, e2e-contract, release-required]
+    if: always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && needs.release-required.result == 'success' && needs.release-required.outputs.required != 'false' && !(needs.release-required.outputs.wait_full == 'false' && (needs.change-scope.outputs.scope == 'full' || needs.change-scope.outputs.scope == 'frontend')) && needs.change-scope.result == 'success' && needs.fast-gate.result == 'success' && needs.backend-tests.result == 'success' && needs.e2e-contract.result == 'success' && (needs.change-scope.outputs.live == 'true' || (needs.shard-completeness.result == 'success' && needs.database-integration.result == 'success' && needs.frontend-build.result == 'success'))
+    runs-on: ubuntu-latest
+    concurrency:
+      group: heroku-deploy
+      cancel-in-progress: false
+    outputs:
+      deployed: ${{ steps.heroku_deploy.outputs.deployed }}
+      prev_live_sha: ${{ steps.heroku_deploy.outputs.prev_live_sha }}
+    env:
+      HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          # Never-backwards guard (L2-57, reference point repaired for #3171).
-          #
-          # The hazard is real: the concurrency group above only ever cancels a
-          # deploy that is still QUEUED, so an OLDER commit's re-run whose deploy
-          # starts AFTER a newer commit already released is never cancelled and
-          # would rewind production (bitten twice: v3320=older landed after
-          # v3319=newer). Serialization orders the releases; it does not decide
-          # which ones SHOULD release. That decision is this guard's, and this
-          # guard's alone — see the THRU-F note on the concurrency block.
-          #
-          # The original guard answered it by asking "am I the origin/master
-          # tip?" — the wrong reference, because the tip is not what is live.
-          # When merges land faster than CI completes, no run is still the tip by
-          # the time its deploy job starts, so EVERY deploy skipped: production
-          # sat 80 minutes and ten merge commits behind master with certified
-          # ships undeployed, every run green, nothing released (#3171).
-          #
-          # Ask what the hazard actually poses instead: is something NEWER
-          # already live? Skip only when Heroku's master IS this commit (nothing
-          # to do) or a strict DESCENDANT of it (genuinely newer). Otherwise
-          # deploy — pushing a descendant of what is live is forward progress and
-          # cannot clobber anything.
-          #
-          # Gotcha #9: the check lives inside the run block, not a step-level
-          # `if` with secrets.
-          if [ -z "$HEROKU_API_KEY" ]; then
-            echo "HEROKU_API_KEY not set — skipping deploy"
-            exit 0
-          fi
-          # Receipt reads are trusted master-push code and run while this job
-          # owns heroku-deploy. A failed read refuses release; no catch-and-pass.
-          check_source_veto () {
-            if [ -f tools/release/discover.py ]; then
-              python3 - <<'SOURCE_VETO'
-          import os, sys
-          sys.path.insert(0, 'tools/release')
-          import discover
-          if os.environ['GITHUB_SHA'] in discover.failed_sources(discover.receipt_rows('heroku')):
-              raise SystemExit('REFUSING to release a source rejected by the full-suite watchdog')
-          SOURCE_VETO
-            fi
-          }
-          git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/bainluck.git 2>/dev/null || true
-
-          # `|| true` keeps an unreadable live ref from reddening the job (and
-          # holds under `-o pipefail` too); it falls through to the push, where
-          # git adjudicates it for us.
-          LIVE="$(git ls-remote heroku refs/heads/master 2>/dev/null | cut -f1 || true)"
-          git fetch --quiet heroku refs/heads/master 2>/dev/null || true
-          if [ -z "$LIVE" ]; then
-            echo "Could not read Heroku's live commit — deferring to the push below."
-          elif [ "$LIVE" = "$GITHUB_SHA" ]; then
-            echo "Skipping deploy: $GITHUB_SHA is already the live commit."
-            exit 0
-          elif git merge-base --is-ancestor "$GITHUB_SHA" "$LIVE"; then
-            echo "Skipping deploy: this run's commit ($GITHUB_SHA) is an ancestor of"
-            echo "the live commit ($LIVE) — something newer is already deployed."
-            echo "An older re-run can no longer clobber a newer deploy."
-            exit 0
-          else
-            echo "Deploying $GITHUB_SHA over live commit ${LIVE:-<unknown>}."
-          fi
-
-          _push_log="$(mktemp)"
-          verify_push () {
-            local _rc="$1" _allow_non_ff="${2:-0}" _v=0
-            cat "$_push_log"
-            if python3 .github/scripts/check_heroku_push.py \
-              --log "$_push_log" --push-exit "$_rc" \
-              --require-release-done --verify-api \
-              --app bainluck --expected-sha "$GITHUB_SHA"; then
-              _v=0
-            else
-              _v=$?
-            fi
-            if [ "$_allow_non_ff" = 1 ] && [ "$_v" = 2 ]; then return 2; fi
-            rm -f "$_push_log"
-            if [ "$_v" = 0 ]; then return 0; fi
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
             exit 1
-          }
-
-          # The check above is a read followed by a write, so it cannot close the
-          # race by itself. Push WITHOUT --force and let git refuse a
-          # non-fast-forward: if a newer deploy won the race in between, the
-          # server rejects us instead of quietly rewinding production. Push the
-          # SHA explicitly rather than the local `master` branch, so what gets
-          # released is the commit this run actually gated.
-          check_source_veto
-          exec 3>&1 4>&2 >"$_push_log" 2>&1
-          if git push heroku "$GITHUB_SHA:refs/heads/master"; then
-            _push_rc=0
-          else
-            _push_rc=$?
-          fi
-          exec 1>&3 2>&4 3>&- 4>&-
-          if verify_push "$_push_rc" 1; then _pv=0; else _pv=$?; fi
-          if [ "$_pv" = 0 ]; then
-            echo "Deployed $GITHUB_SHA."
-            [ -z "${GITHUB_OUTPUT:-}" ] || { echo "deployed=true"; echo "prev_live_sha=${LIVE:-}"; } >> "$GITHUB_OUTPUT"
-            exit 0
           fi
 
-          # Rejected. Do NOT force by reflex. A rejection can perfectly well mean
-          # a NEWER deploy won the race, and forcing then rewinds production —
-          # the exact incident this guard exists to prevent. So establish what is
-          # live and whether we can REASON about it before doing anything, and
-          # treat "cannot prove" as a refusal rather than as permission.
-          LIVE_NOW="$(git ls-remote heroku refs/heads/master 2>/dev/null | cut -f1 || true)"
-          git fetch --quiet heroku refs/heads/master 2>/dev/null || true
-          # Ancestry is only meaningful for a commit whose object we actually
-          # hold. `merge-base --is-ancestor` on a commit we never fetched exits
-          # non-zero, which reads identically to a truthful "no" — so ask
-          # directly instead of inferring it from a failure.
-          HAVE_LIVE=0
-          if [ -n "$LIVE_NOW" ] && git cat-file -e "${LIVE_NOW}^{commit}" 2>/dev/null; then
-            HAVE_LIVE=1
-          fi
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-          if [ "$HAVE_LIVE" = 1 ] && git merge-base --is-ancestor "$GITHUB_SHA" "$LIVE_NOW"; then
-            rm -f "$_push_log"
-            echo "Superseded mid-push: $LIVE_NOW is newer than $GITHUB_SHA. Leaving it."
-            exit 0
-          fi
+      - name: Recheck current fast eligibility
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          SCOPE_HEAD: ${{ needs.change-scope.outputs.head }}
+        run: python3 tools/release/verify_fast.py
 
-          if [ "$HAVE_LIVE" = 1 ] && git merge-base --is-ancestor "$LIVE_NOW" "$GITHUB_SHA"; then
-            # The live commit is provably BEHIND us, so a fast-forward does exist
-            # and the rejection was transient. Retry as a fast-forward — never as
-            # a force. A second rejection reddens the job under `-e`, which is
-            # the honest outcome: somebody should look.
-            echo "Live commit $LIVE_NOW is behind $GITHUB_SHA and a fast-forward exists; retrying."
-            check_source_veto
-            exec 3>&1 4>&2 >"$_push_log" 2>&1
-            if git push heroku "$GITHUB_SHA:refs/heads/master"; then
-              _push_rc=0
-            else
-              _push_rc=$?
-            fi
-            exec 1>&3 2>&4 3>&- 4>&-
-            verify_push "$_push_rc" 0
-            echo "Deployed $GITHUB_SHA."
-            [ -z "${GITHUB_OUTPUT:-}" ] || { echo "deployed=true"; echo "prev_live_sha=${LIVE_NOW:-}"; } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+      - uses: actions/setup-python@v7
+        if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'frontend'
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
 
-          # What is left is either genuinely diverged history, or a live commit
-          # whose ancestry we cannot establish. A force push in EITHER state can
-          # rewind a newer production, so both fail closed.
-          #
-          # One exception, and only one: when this commit IS GitHub's current
-          # master tip there is no newer commit for a force to lose, so a history
-          # rewrite can still self-heal without a human. Note the direction of
-          # the test — the tip is used here to NARROW when forcing is allowed,
-          # never to decide whether to deploy. That inversion is #3171.
-          ORIGIN_TIP="$(git ls-remote origin refs/heads/master 2>/dev/null | cut -f1 || true)"
-          if [ -n "$ORIGIN_TIP" ] && [ "$ORIGIN_TIP" = "$GITHUB_SHA" ]; then
-            echo "Push rejected and the live commit (${LIVE_NOW:-<unreadable>}) has no provable"
-            echo "ancestry with $GITHUB_SHA — but this commit IS origin/master's tip, so there is"
-            echo "no newer commit to rewind past. History diverged; forcing."
-            check_source_veto
-            exec 3>&1 4>&2 >"$_push_log" 2>&1
-            if git push heroku "$GITHUB_SHA:refs/heads/master" --force; then
-              _push_rc=0
-            else
-              _push_rc=$?
-            fi
-            exec 1>&3 2>&4 3>&- 4>&-
-            verify_push "$_push_rc" 0
-            [ -z "${GITHUB_OUTPUT:-}" ] || { echo "deployed=true"; echo "prev_live_sha=${LIVE_NOW:-}"; } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+      - name: Install dependencies
+        if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'frontend'
+        run: pip install -r backend/requirements.txt
 
-          rm -f "$_push_log"
-          echo "REFUSING to deploy. The push was rejected, the live commit"
-          echo "(${LIVE_NOW:-<unreadable>}) has no provable ancestry with $GITHUB_SHA, and this"
-          echo "commit is not origin/master's tip (${ORIGIN_TIP:-<unreadable>}). Forcing from here"
-          echo "could rewind a newer production, so this fails closed. Deploy by hand once the"
-          echo "divergence is understood."
-          exit 1
+      - name: Boot check for release (compile backend and run startup test, Ruling 394 Change 1)
+        if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'frontend'
+        working-directory: backend
+        run: |
+          python -m compileall -q app
+          python -m pytest tests/test_startup.py -q
 
-  post-deploy-smoke-dry-run:
-    needs: [deploy]
-    if: always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && needs.deploy.result == 'success' && needs.deploy.outputs.deployed == 'true'
+      - name: Deploy to Heroku (never-backwards guarded)
+        id: heroku_deploy
+        run: bash .github/scripts/heroku-deploy.sh
+
+  post-deploy-smoke:
+    needs: [deploy, deploy-after-full]
+    if: always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && ((needs.deploy.result == 'success' && needs.deploy.outputs.deployed == 'true') || (needs.deploy-after-full.result == 'success' && needs.deploy-after-full.outputs.deployed == 'true'))
+    permissions:
+      contents: read
+      issues: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Post-deploy smoke rollback check (dry-run only)
+      - name: Post-deploy smoke rollback check (#13283, Ruling 394c)
         env:
           AUTO_ROLLBACK_ENABLED: ${{ vars.AUTO_ROLLBACK_ENABLED }}
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NOW_LINES_ISSUE: "13580"
           EXPECTED_SHA: ${{ github.sha }}
-          PREV_LIVE_SHA: ${{ needs.deploy.outputs.prev_live_sha }}
+          PREV_LIVE_SHA: ${{ needs.deploy.outputs.prev_live_sha || needs.deploy-after-full.outputs.prev_live_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python3 .github/scripts/post_deploy_smoke_rollback.py \
-            --dry-run \
+            --execute \
             --base-url https://api.bainluck.com \
             --expected-sha "$EXPECTED_SHA" \
             --prev-sha "$PREV_LIVE_SHA"

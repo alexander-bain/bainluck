@@ -1795,7 +1795,7 @@ def _deadline_yes_display_mark(
     # top-outcome row is the witness at production; its checked mark survives
     # the bundler's JSON round trip. A matching number alone is insufficient.
     display_value = _readable_probability(printed_row)
-    method = "The card scales the Yes and No prices together to total 100%"
+    method = "The card scales the Yes and No probabilities together to total 100%"
     scaled_mark = {**mark, "method": method}
     uses_scaling = (
         display_value is not None and abs(display_value - yes) > 1e-8

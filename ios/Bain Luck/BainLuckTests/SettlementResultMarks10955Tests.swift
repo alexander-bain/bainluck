@@ -239,7 +239,7 @@ final class SettlementResultMarks10955Tests: XCTestCase {
             XCTAssertEqual(EvolutionChartView.cardBody(
                 windowPoints: chart.entries.count, windowInstants: chart.drawn.timeline.count,
                 totalInstants: chart.drawn.timeline.count, windowWord: "in this range"),
-                .sparse(.init(note: "No price history yet", hint: nil)), label)
+                .sparse(.init(note: "No probability history yet", hint: nil)), label)
         }
     }
 
@@ -257,7 +257,7 @@ final class SettlementResultMarks10955Tests: XCTestCase {
         XCTAssertEqual(EvolutionChartView.cardBody(
             windowPoints: chart.entries.count, windowInstants: chart.drawn.timeline.count,
             totalInstants: chart.drawn.timeline.count, windowWord: "in this range"),
-            .sparse(.init(note: "Only one price seen so far", hint: nil)))
+            .sparse(.init(note: "Only one reading seen so far", hint: nil)))
     }
 
     // MARK: - G5: a line with no settlement point draws exactly as before

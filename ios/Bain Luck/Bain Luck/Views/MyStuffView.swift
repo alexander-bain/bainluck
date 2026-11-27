@@ -268,7 +268,7 @@ struct MyStuffView: View {
             PinManagementView().environmentObject(pinManager)
         }
         .sheet(item: $checklistStepToOpen364A) { row in
-            FirstRunChecklistRootView364A(initialStep: row)
+            FirstRunChecklistRootView364A(initialStep: row, entryPoint: "my_stuff_banner")
                 .environmentObject(authManager)
                 .environmentObject(pinManager)
                 .environment(\.followManager295A, followManager)
@@ -276,7 +276,10 @@ struct MyStuffView: View {
         }
         // #10011 — pinned content is read from the saved IDs themselves, so it
         // never depends on the team feed, onboarding or sign-in state.
-        .task(id: pinManager.savedPins) { await pinContent.load(pinManager.savedPins) }
+        .task(id: pinManager.savedPins) {
+            vm.setHasPins(hasPins)
+            await pinContent.load(pinManager.savedPins)
+        }
         // #10874 — saved pins it described (or found gone) reach Spotlight.
         .spotlightSavedContent10874(pinContent, pins: pinManager)
         .onChange(of: pinManager.identityGeneration) { _, _ in
@@ -284,6 +287,7 @@ struct MyStuffView: View {
             Task { await pinContent.load(pinManager.savedPins) }
         }
         .onAppear {
+            vm.setHasPins(hasPins)
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
             checklistStore.syncFollowCount(followManager.subjects.count)
             checklistStore.syncAuthState(isAuthenticated: authManager.isAuthenticated)
@@ -478,12 +482,12 @@ struct MyStuffView: View {
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingView()
+            OnboardingView(entryPoint: "my_stuff")
                 .environmentObject(authManager)
         }
         #else
         .sheet(isPresented: $showOnboarding) {
-            OnboardingView()
+            OnboardingView(entryPoint: "my_stuff")
                 .environmentObject(authManager)
                 .frame(minWidth: 500, minHeight: 400)
         }
@@ -691,6 +695,8 @@ struct MyStuffView: View {
                 }
             }
             .padding(.horizontal, 16)
+            .frame(maxWidth: sizeClass == .regular ? MyStuffLandingLayout13770.singleColumnMaxWidth : .infinity)
+            .frame(maxWidth: .infinity)
             .accessibilityIdentifier("myStuffPinnedContent")
         }
     }

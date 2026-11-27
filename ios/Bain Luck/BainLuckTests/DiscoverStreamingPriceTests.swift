@@ -1,5 +1,9 @@
 import XCTest
 import Combine
+#if os(iOS)
+import SwiftUI
+import Vision
+#endif
 @testable import Bain_Luck
 
 @MainActor
@@ -99,6 +103,85 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         XCTAssertEqual(result.map(\.id), ["futures-1", "futures-2"])
     }
 
+    func testFieldCoverageWithdrawalClearsHeldLeaderCopy() throws {
+        let held = try decode([
+            "type": "futures", "headline": "Brooklyn Nets lead",
+            "context_summary": "Brooklyn Nets lead at 5%",
+            "data": ["id": 1, "name": "NBA Cup finalists", "source": "polymarket",
+                     "llm_sport_category": "basketball",
+                     "status": "open", "price_observed_at": "2026-09-29T00:01:00Z",
+                     "top_outcomes": [["id": 10, "name": "Brooklyn Nets", "probability": 0.0525]]],
+        ], as: FeedItem.self)
+        // A cached body can carry the previous notice after the clients update.
+        let fresh = try decode([
+            "type": "futures", "reason": "Limited probability coverage",
+            "context_summary": "Limited probability coverage",
+            "data": ["id": 1, "name": "NBA Cup finalists", "source": "polymarket",
+                     "status": "open", "field_price_coverage_incomplete": true,
+                     "top_outcomes": [] as [[String: Any]]],
+        ], as: FeedItem.self)
+        var epochs: [String: Double] = [:]
+        let response = DiscoverPriceCards(items: [fresh], dispositions: [held.id: "withheld"], builtAt: 100)
+        let shown = DiscoverPriceRefresh.apply(response, to: [held], epochs: &epochs)[0]
+        XCTAssertEqual(shown.id, held.id)
+        XCTAssertEqual(shown.futures?.topOutcomes?.count, 0)
+        XCTAssertNil(shown.headline)
+        XCTAssertEqual(shown.contextSummary, "Limited probability coverage")
+
+        #if os(iOS)
+        let data = try XCTUnwrap(shown.futures)
+        let card = NativeFuturesDiscoverCard(
+            data: data,
+            feedContext: DiscoverCaption.feedCaption(
+                contextSummary: shown.contextSummary, headline: shown.headline,
+                reason: shown.reason, hookDescription: data.hookDescription
+            ),
+            expandedContext: DiscoverCaption.firstMeaningful(
+                [data.hookDescription, shown.reason, shown.headline]
+            ),
+            navigationPath: .constant(NavigationPath())
+        )
+        .environmentObject(PinManager())
+        .environment(\.colorScheme, .light)
+        .padding(16)
+        .frame(width: 390)
+        .background(Color(.systemGroupedBackground))
+        let renderer = rendererForMeasurement(card, at: .large)
+        renderer.scale = 3
+        let image = try XCTUnwrap(renderer.uiImage)
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "438B-discover-after-withdrawal-390.png"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        @discardableResult
+        func assertWithdrawalNotice(in image: UIImage) throws -> String {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
+            let text = (request.results ?? [])
+                .compactMap { $0.topCandidates(1).first?.string }
+                .joined(separator: " ")
+            XCTAssertTrue(text.contains("No recent probability"), text)
+            XCTAssertFalse(text.contains("Limited probability coverage"), text)
+            XCTAssertFalse(text.contains("Brooklyn Nets"), text)
+            XCTAssertFalse(text.contains("%"), text)
+            return text
+        }
+        let discoverText = try assertWithdrawalNotice(in: image)
+        XCTAssertTrue(discoverText.contains("NBA Cup finalists"), discoverText)
+
+        let listCard = FuturesCardView(futures: data)
+            .environmentObject(PinManager())
+            .environment(\.colorScheme, .light)
+            .padding(16)
+            .frame(width: 390)
+        let listRenderer = rendererForMeasurement(listCard, at: .large)
+        listRenderer.scale = 3
+        try assertWithdrawalNotice(in: XCTUnwrap(listRenderer.uiImage))
+        #endif
+    }
+
     func testNewerOrdinaryFeedAdoptionAdvancesTheRetainedFence() throws {
         let t1 = try market()
         let t2 = try market(p: 0.6, clocks: ["10": "2026-09-29T00:02:00Z", "20": "2026-09-29T00:02:00Z"])
@@ -108,6 +191,39 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         let result = DiscoverPriceRefresh.retainingPrices([t2], accepted: &accepted)
         XCTAssertEqual(result[0].futures?.topOutcomes?.first?.probability, 0.8)
     }
+
+    #if os(iOS)
+    func testFuturesBrowseAndListCardsOmitRowsWithoutAReading() throws {
+        func heights(for outcomes: [[String: Any]]) throws -> [CGFloat] {
+            let payload: [String: Any] = [
+                "id": 1, "name": "Season leader", "status": "open", "top_outcomes": outcomes,
+            ]
+            let browse = try decode(payload, as: FacetedFuturesMarket.self)
+            let futures = try decode(payload, as: FeedFuturesData.self)
+            let cards = [
+                AnyView(FuturesBrowseMarketRow(market: browse)),
+                AnyView(FuturesCardView(futures: futures)),
+            ]
+            return try cards.map { card in
+                let renderer = rendererForMeasurement(
+                    card.environmentObject(PinManager()).environment(\.colorScheme, .light)
+                        .padding(16).frame(width: 390),
+                    at: .large
+                )
+                return try XCTUnwrap(renderer.uiImage).size.height
+            }
+        }
+
+        let supported: [String: Any] = ["id": 20, "name": "First player", "probability": 0.32]
+        let missing: [String: Any] = ["id": 10, "name": "Second player", "probability": NSNull()]
+        let recovered: [String: Any] = ["id": 10, "name": "Second player", "probability": 0.16]
+        let single = try heights(for: [supported])
+        XCTAssertEqual(try heights(for: [missing, supported]), single)
+        for (two, one) in zip(try heights(for: [supported, recovered]), single) {
+            XCTAssertGreaterThan(two, one)
+        }
+    }
+    #endif
 
     func testExpiredPriceCanBeWithheldWithoutCachedFeedResurrectingIt() throws {
         let old = try event(rev: 3, clock: "2026-09-29T00:01:00Z")

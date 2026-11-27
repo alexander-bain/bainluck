@@ -181,44 +181,20 @@ class TestLoneAskOnEmptyBookSql:
 
 
 class TestBoundToTheLivePoller:
-    """The constant is not free-floating — it mirrors a shipped guard."""
+    """The legacy cutoff describes stored snapshots. New asks supply no price."""
 
-    def test_ceiling_matches_the_pollers_ask_only_cap(self):
-        """``_kalshi_yes_probability`` rule 3 is where this number came from.
-
-        If someone widens the poller's ask-only cap without widening this, the
-        promotion starts refusing rows the poller happily writes; narrow it the
-        other way and the promotion re-admits the shape this ship removed.
-        """
+    def test_the_poller_rejects_asks_at_and_above_the_legacy_cutoff(self):
         from app.tasks.kalshi import _kalshi_yes_probability
 
-        at_ceiling = _kalshi_yes_probability(0.0, ASK_ONLY_TRUSTED_MAX, 0.0)
-        above_ceiling = _kalshi_yes_probability(0.0, ASK_ONLY_TRUSTED_MAX + 0.01, 0.0)
+        assert _kalshi_yes_probability(0.0, ASK_ONLY_TRUSTED_MAX, 0.0) is None
+        assert _kalshi_yes_probability(0.0, ASK_ONLY_TRUSTED_MAX + 0.01, 0.0) is None
 
-        assert at_ceiling == pytest.approx(ASK_ONLY_TRUSTED_MAX), (
-            "the poller should still trust an ask-only book AT the ceiling"
-        )
-        assert above_ceiling is None, (
-            "the poller should store nothing above the ceiling; this module's "
-            "ceiling must be the same number"
-        )
-
-    def test_the_two_agree_on_every_book_the_poller_refuses_outright(self):
-        """Where the poller writes nothing, the promotion must promote nothing.
-
-        Anything the poller reduces to ``None`` never becomes a snapshot, so the
-        only rows this predicate can meet are ones the poller once accepted.
-        The overlap that matters is the ask-only band.
-        """
+    def test_every_one_sided_ask_is_refused_by_the_poller(self):
         from app.tasks.kalshi import _kalshi_yes_probability
 
         for ask_cents in range(1, 100):
             ask = ask_cents / 100.0
-            poller = _kalshi_yes_probability(0.0, ask, 0.0)
-            refused_here = is_lone_ask_on_empty_book(0.0, ask, 0.0)
-            assert (poller is None) is refused_here, (
-                f"ask={ask}: poller={poller!r} but predicate refused={refused_here}"
-            )
+            assert _kalshi_yes_probability(0.0, ask, 0.0) is None, ask
 
 
 class TestPhase0cRepairUsesTheGuard:

@@ -481,7 +481,7 @@ final class ScrubReadoutDatesCarriedState925Tests: XCTestCase {
 
         XCTAssertEqual(
             GamePlayPoint.asOfText(observed, pointDate: pointDate, calendar: utc),
-            observed.formatted(date: .omitted, time: .shortened))
+            GamePlayPoint.clockText(observed, timeZone: utc.timeZone))
     }
 
     /// A point whose own timestamp will not parse has no day to compare
@@ -491,6 +491,6 @@ final class ScrubReadoutDatesCarriedState925Tests: XCTestCase {
         let observed = date("2026-09-23T20:00:00+00:00")
         XCTAssertEqual(
             GamePlayPoint.asOfText(observed, pointDate: nil, calendar: utc),
-            GamePlayPoint.clockText(observed))
+            GamePlayPoint.clockText(observed, timeZone: utc.timeZone))
     }
 }

@@ -239,16 +239,26 @@ def test_the_two_madrids_still_never_fold():
 
 
 def test_the_exonym_sub_class_is_not_claimed_by_this_ship():
-    """Scope pin: `Ferencváros TC` / `Ferencvarosi` is still two cards.
+    """Scope pin: transliteration itself still refuses exonyms.
 
-    #5905 carries this pair as a clean control, and it is a DIFFERENT shape —
-    the stems differ, not the transliteration of one letter. If a later widening
-    folds it, that is a new licence with its own census, and this assertion is
-    the thing it has to come and change on purpose.
+    #5905's transliteration fold refuses stems that differ by exonym rather
+    than single-letter transliteration (`Ferencváros TC` / `Ferencvarosi` is
+    False under `_pair_matches_after_transliteration`, though #13594 now
+    explicitly folds that UEL fixture 15343265 / 15346908 via
+    `LEAGUE_CLUB_SPELLINGS`). Unmapped exonyms such as `Rapid Wien` /
+    `Rapid Vienna` also remain unfolded across `fold_twin_events`.
     """
+    assert (
+        _pair_matches_after_transliteration(
+            ("Celtic", "Ferencváros TC"),
+            ("Celtic", "Ferencvarosi"),
+        )
+        is False
+    )
+
     rows = [
-        _Row(5, "Celtic", "Ferencváros TC", external_id="a"),
-        _Row(6, "Celtic", "Ferencvarosi", sources={"kalshi": {}}),
+        _Row(5, "Celtic", "Rapid Wien", external_id="a"),
+        _Row(6, "Celtic", "Rapid Vienna", sources={"kalshi": {}}),
     ]
 
     result = fold_twin_events(rows)

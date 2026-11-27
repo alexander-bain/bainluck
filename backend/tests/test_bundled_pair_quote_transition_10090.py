@@ -17,7 +17,7 @@ def consumer(s=None,*,ticker_ids=None,event_ids=None,refresher=None):
     event_ids=event_ids or {11:1,12:1}
     clients=[NS(sock=s,tickers=set(ticker_ids),task=NS(done=lambda:False))]
     ns=dict(vars(K));ns['_kalshi_yes_probability']=_kalshi_yes_probability
-    ns.update(game_clients=clients,ticker_to_ids=ticker_ids,prices=NS(settled_market_ids=set()),primary_quote_custody=c,tail_receipts=NS(note_raw=lambda *a:None,note_input=lambda *a:None),ticker_owner={},open_contract_ids={},event_id_by_outcome=event_ids,buffer_lock=asyncio.Lock(),price_buffer={},input_marks={},blend_refresher=r,non_blend_outcome_ids=set(),flush_wake=asyncio.Event(),winner_quoted_at={},live_event_ids=set(event_ids.values()),admission_wake=asyncio.Event())
+    ns.update(game_clients=clients,ticker_to_ids=ticker_ids,prices=K._KalshiPriceOwner(),primary_quote_custody=c,tail_receipts=NS(note_raw=lambda *a:None,note_input=lambda *a:None),ticker_owner={},open_contract_ids={},event_id_by_outcome=event_ids,buffer_lock=asyncio.Lock(),price_buffer={},input_marks={},blend_refresher=r,non_blend_outcome_ids=set(),flush_wake=asyncio.Event(),winner_quoted_at={},live_event_ids=set(event_ids.values()),admission_wake=asyncio.Event())
     old.nested('_parse_dollar',ns)
     # Extract the real observation helpers with their shared closure state;
     # default DNPL exercises these on every accepted/refused ticker.

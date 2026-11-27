@@ -187,8 +187,9 @@ final class PregameChartAndProjOvernight2Tests: XCTestCase {
             model.pregameColumnHeaders,
             EventSportHeadlines12472.PregameColumnHeaders(projected: "Proj.", chance: "Chance")
         )
-        XCTAssertEqual(model.away.pregameProjectedNumberText, "20.0")
-        XCTAssertEqual(model.home.pregameProjectedNumberText, "24.5")
+        // 240: A (#13029) — football projections print as whole numbers (20.0 -> 20, 24.5 -> 25).
+        XCTAssertEqual(model.away.pregameProjectedNumberText, "20")
+        XCTAssertEqual(model.home.pregameProjectedNumberText, "25")
         XCTAssertEqual(model.away.winChanceText, "34%")
         XCTAssertEqual(model.home.winChanceText, "66%")
     }
@@ -226,7 +227,12 @@ final class PregameChartAndProjOvernight2Tests: XCTestCase {
                 now: fixedNow
             )
         )
-        XCTAssertNil(model.pregameColumnHeaders)
+        // Direction 199 (#12771): compat pregameColumnHeaders retains league shape while `columns` blanks unpopulated headers.
+        XCTAssertEqual(
+            model.pregameColumnHeaders,
+            EventSportHeadlines12472.PregameColumnHeaders(projected: "Proj.", chance: "Chance")
+        )
+        XCTAssertEqual(model.columns.first(where: { $0.role == .projected })?.header, "")
         XCTAssertNil(model.away.pregameProjectedNumberText)
         XCTAssertNil(model.home.pregameProjectedNumberText)
     }

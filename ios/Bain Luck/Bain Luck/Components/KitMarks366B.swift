@@ -710,7 +710,7 @@ struct KitRingMarkView366B: View {
 
     var body: some View {
         let clamped = min(1.0, max(0.0, mark.progress))
-        let pct = Int((clamped * 100.0).rounded())
+        let defaultLabel = DiscoverRoundupCardModel.probabilityText(probability: clamped, renderedPercent: nil)
         let strokeColor = mark.tone == .muted
             ? KitTones366B.textColor(for: .muted, scheme: colorScheme)
             : KitTones366B.brandAccent(for: colorScheme)
@@ -722,7 +722,7 @@ struct KitRingMarkView366B: View {
                 .trim(from: 0, to: clamped)
                 .stroke(strokeColor, style: StrokeStyle(lineWidth: dynamicTypeSize.isAccessibilitySize ? 4 : 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-            Text(mark.label ?? "\(pct)%")
+            Text(mark.label ?? defaultLabel)
                 .font(.caption2.weight(.bold).monospacedDigit())
                 .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
                 .lineLimit(1)
@@ -768,15 +768,15 @@ struct KitLineMarkView366B: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let strokeColor = KitTones366B.barColor(
-            hex: mark.color?.light,
-            darkHex: mark.colorDark ?? mark.color?.dark,
-            fallbackIndex: 0,
-            scheme: colorScheme
-        )
-        GeometryReader { geo in
-            let pts = mark.points
-            if pts.count >= 2 {
+        if DiscoverCardChartRules13773.hasMovingKitLine(mark.points) {
+            let strokeColor = KitTones366B.barColor(
+                hex: mark.color?.light,
+                darkHex: mark.colorDark ?? mark.color?.dark,
+                fallbackIndex: 0,
+                scheme: colorScheme
+            )
+            GeometryReader { geo in
+                let pts = mark.points
                 let minX = pts.map(\.x).min() ?? 0
                 let maxX = max(minX + 0.0001, pts.map(\.x).max() ?? 1)
                 let minY = pts.map(\.y).min() ?? 0
@@ -802,7 +802,7 @@ struct KitLineMarkView366B: View {
                     )
                 )
             }
+            .frame(height: 36)
         }
-        .frame(height: 36)
     }
 }

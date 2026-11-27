@@ -50,23 +50,27 @@ nonisolated enum MachineryFormId: String, Codable, CaseIterable, Equatable, Send
 }
 
 /// Verified subject art (`team_logo`, `tmdb_poster`, `tmdb_headshot`, `person`, etc.).
-/// When `verifiedURL` is `nil`, views draw NO avatar/placeholder letters ("real art or nothing").
+/// When `verifiedURL` is `nil`, rows with an illustrated sibling render deterministic
+/// initials inside the same circle (`387: A`), while all-text cards draw no icon.
 nonisolated struct MachinerySubjectArt: Decodable, Equatable, Sendable {
     let url: String?
     let kind: String
     let detail: String
     let accentColor: String
+    let initials: String?
 
     init(
         url: String? = nil,
         kind: String = "none",
         detail: String = "",
-        accentColor: String = ""
+        accentColor: String = "",
+        initials: String? = nil
     ) {
         self.url = url
         self.kind = kind
         self.detail = detail
         self.accentColor = accentColor
+        self.initials = initials
     }
 
     init(from decoder: Decoder) throws {
@@ -76,6 +80,8 @@ nonisolated struct MachinerySubjectArt: Decodable, Equatable, Sendable {
         self.kind = c.decodeFirst(String.self, keys: ["kind"]) ?? "none"
         self.detail = c.decodeFirst(String.self, keys: ["detail"]) ?? ""
         self.accentColor = c.decodeFirst(String.self, keys: ["accentColor", "accent_color"]) ?? ""
+        let rawInitials = c.decodeFirst(String.self, keys: ["initials"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.initials = (rawInitials?.isEmpty == false) ? rawInitials : nil
     }
 
     var verifiedURL: URL? {
@@ -97,26 +103,129 @@ nonisolated struct MachinerySubjectArt: Decodable, Equatable, Sendable {
     }
 }
 
+/// Display state resolved for division-race (`441: A` / `#13777`) and grouped
+/// machinery rows. Non-division cards omit `settledOut` (`nil`) and preserve
+/// existing probability formatting untouched.
+nonisolated enum MachineryOutcomeDisplayState441A: String, Equatable, Sendable {
+    case live
+    case subOnePercent = "sub_one_percent"
+    case noRecentProbability = "no_recent_probability"
+    case eliminated
+}
+
+nonisolated struct MachineryOutcomeDisplay441A: Equatable, Sendable {
+    let state: MachineryOutcomeDisplayState441A
+    let label: String
+    let barWidthPercent: Int
+    let muted: Bool
+
+    static func describe(
+        probability: Double?,
+        renderedPercent: Int?,
+        unflooredPercent: Int?,
+        settledOut: Bool?,
+        legacyProbability: Double = 0,
+        legacyRenderedPercent: Int = 0
+    ) -> MachineryOutcomeDisplay441A {
+        if settledOut == true {
+            return MachineryOutcomeDisplay441A(
+                state: .eliminated,
+                label: "Eliminated",
+                barWidthPercent: 0,
+                muted: true
+            )
+        }
+        if settledOut == false {
+            guard let prob = probability, prob.isFinite, prob > 0 else {
+                return MachineryOutcomeDisplay441A(
+                    state: .noRecentProbability,
+                    label: "No recent probability",
+                    barWidthPercent: 0,
+                    muted: true
+                )
+            }
+            if prob < 0.01 {
+                return MachineryOutcomeDisplay441A(
+                    state: .subOnePercent,
+                    label: "<1%",
+                    barWidthPercent: 2,
+                    muted: true
+                )
+            }
+            let pct = renderedPercent ?? Int((prob * 100.0).rounded())
+            return MachineryOutcomeDisplay441A(
+                state: .live,
+                label: DiscoverRoundupCardModel.probabilityText(
+                    probability: prob,
+                    renderedPercent: unflooredPercent ?? pct
+                ),
+                barWidthPercent: max(4, min(100, pct)),
+                muted: false
+            )
+        }
+        let legacyLabel: String
+        if legacyProbability == 0 && unflooredPercent == nil {
+            legacyLabel = "\(legacyRenderedPercent)%"
+        } else {
+            legacyLabel = DiscoverRoundupCardModel.probabilityText(
+                probability: legacyProbability,
+                renderedPercent: unflooredPercent ?? legacyRenderedPercent
+            )
+        }
+        return MachineryOutcomeDisplay441A(
+            state: .live,
+            label: legacyLabel,
+            barWidthPercent: max(4, min(100, legacyRenderedPercent)),
+            muted: false
+        )
+    }
+}
+
 /// One outcome row inside `duel_bar`, `contender_spotlight`, `sibling_fields_grid`,
-/// `benchmark_strip`, or `machinery_card.rows`.
+/// `benchmark_strip`, `machinery_card.rows`, or `unpriced_outcomes` (`#13777`).
 nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, Sendable {
     let outcomeId: Int
     let marketId: Int?
     let name: String
     let probability: Double
+    let servedProbability: Double?
     let renderedPercent: Int
     let unflooredPercent: Int?
+    let settledOut: Bool?
     let art: MachinerySubjectArt?
     let sourceMark: SourceMark?
 
     var id: String { "\(marketId ?? 0):\(outcomeId):\(name)" }
 
+    var display441A: MachineryOutcomeDisplay441A {
+        MachineryOutcomeDisplay441A.describe(
+            probability: servedProbability,
+            renderedPercent: renderedPercent,
+            unflooredPercent: unflooredPercent,
+            settledOut: settledOut,
+            legacyProbability: probability,
+            legacyRenderedPercent: renderedPercent
+        )
+    }
+
     var probabilityLabel: String {
-        if probability == 0 && unflooredPercent == nil {
-            return "\(renderedPercent)%"
-        }
-        return DiscoverRoundupCardModel.probabilityText(
-            probability: probability, renderedPercent: unflooredPercent ?? renderedPercent
+        display441A.label
+    }
+
+    /// Marks entries decoded from `unpriced_outcomes` so even a defensive
+    /// missing `settled_out` key never renders a synthetic `"0%"`.
+    func asUnpriced441A() -> MachineryOutcomeVisual {
+        MachineryOutcomeVisual(
+            outcomeId: outcomeId,
+            marketId: marketId,
+            name: name,
+            probability: 0,
+            servedProbability: nil,
+            renderedPercent: 0,
+            unflooredPercent: nil,
+            settledOut: settledOut ?? false,
+            art: art,
+            sourceMark: nil
         )
     }
 
@@ -128,14 +237,46 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
         renderedPercent: Int,
         unflooredPercent: Int? = nil,
         art: MachinerySubjectArt? = nil,
-        sourceMark: SourceMark? = nil
+        sourceMark: SourceMark? = nil,
+        settledOut: Bool? = nil,
+        servedProbability: Double? = nil
     ) {
         self.outcomeId = outcomeId
         self.marketId = marketId
         self.name = name
         self.probability = probability
+        if let settledOut {
+            self.servedProbability = servedProbability ?? (probability > 0 ? probability : nil)
+        } else {
+            self.servedProbability = servedProbability ?? probability
+        }
         self.renderedPercent = renderedPercent
         self.unflooredPercent = unflooredPercent
+        self.settledOut = settledOut
+        self.art = art
+        self.sourceMark = sourceMark
+    }
+
+    private init(
+        outcomeId: Int,
+        marketId: Int?,
+        name: String,
+        probability: Double,
+        servedProbability: Double?,
+        renderedPercent: Int,
+        unflooredPercent: Int?,
+        settledOut: Bool?,
+        art: MachinerySubjectArt?,
+        sourceMark: SourceMark?
+    ) {
+        self.outcomeId = outcomeId
+        self.marketId = marketId
+        self.name = name
+        self.probability = probability
+        self.servedProbability = servedProbability
+        self.renderedPercent = renderedPercent
+        self.unflooredPercent = unflooredPercent
+        self.settledOut = settledOut
         self.art = art
         self.sourceMark = sourceMark
     }
@@ -145,14 +286,16 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
         self.outcomeId = c.decodeFirst(Int.self, keys: ["outcomeId", "outcome_id", "id"]) ?? 0
         self.marketId = c.decodeFirst(Int.self, keys: ["marketId", "market_id"])
         self.name = c.decodeFirst(String.self, keys: ["name", "label"]) ?? ""
-        let prob = c.decodeFirst(Double.self, keys: ["probability"]) ?? 0
-        self.probability = prob
+        let rawProb = c.decodeFirst(Double.self, keys: ["probability"])
+        self.servedProbability = rawProb
+        self.probability = rawProb ?? 0
         if let pct = c.decodeFirst(Int.self, keys: ["renderedPercent", "rendered_percent"]) {
             self.renderedPercent = pct
         } else {
-            self.renderedPercent = Int((prob * 100.0).rounded())
+            self.renderedPercent = rawProb.map { Int(($0 * 100.0).rounded()) } ?? 0
         }
         self.unflooredPercent = c.decodeFirst(Int.self, keys: ["unflooredPercent", "unfloored_percent"])
+        self.settledOut = c.decodeFirst(Bool.self, keys: ["settledOut", "settled_out"])
         self.art = c.decodeFirst(MachinerySubjectArt.self, keys: ["art"])
         self.sourceMark = c.decodeFirst(SourceMark.self, keys: ["sourceMark", "source_mark"])
     }
@@ -232,8 +375,13 @@ nonisolated struct MachineryMarketVisualItem: Decodable, Equatable, Identifiable
     let scaleOrdered: Bool
     let leaderOutcomeId: Int?
     let outcomes: [MachineryOutcomeVisual]
+    let unpricedOutcomes: [MachineryOutcomeVisual]
 
     var id: Int { marketId }
+
+    var displayOutcomes: [MachineryOutcomeVisual] {
+        outcomes + unpricedOutcomes
+    }
 
     init(
         marketId: Int,
@@ -241,7 +389,8 @@ nonisolated struct MachineryMarketVisualItem: Decodable, Equatable, Identifiable
         href: String = "",
         scaleOrdered: Bool = false,
         leaderOutcomeId: Int? = nil,
-        outcomes: [MachineryOutcomeVisual]
+        outcomes: [MachineryOutcomeVisual],
+        unpricedOutcomes: [MachineryOutcomeVisual] = []
     ) {
         self.marketId = marketId
         self.title = title
@@ -249,6 +398,7 @@ nonisolated struct MachineryMarketVisualItem: Decodable, Equatable, Identifiable
         self.scaleOrdered = scaleOrdered
         self.leaderOutcomeId = leaderOutcomeId
         self.outcomes = outcomes
+        self.unpricedOutcomes = unpricedOutcomes.map { $0.asUnpriced441A() }
     }
 
     init(from decoder: Decoder) throws {
@@ -261,6 +411,8 @@ nonisolated struct MachineryMarketVisualItem: Decodable, Equatable, Identifiable
         self.leaderOutcomeId = c.decodeFirst(Int.self, keys: ["leaderOutcomeId", "leader_outcome_id"])
         let rawOutcomes = c.decodeFirst([MachineryOutcomeVisual].self, keys: ["outcomes", "sides"]) ?? []
         self.outcomes = Self.normalizedOutcomes(rawOutcomes, scaleOrdered: self.scaleOrdered)
+        let rawUnpriced = c.decodeFirst([MachineryOutcomeVisual].self, keys: ["unpricedOutcomes", "unpriced_outcomes"]) ?? []
+        self.unpricedOutcomes = rawUnpriced.map { $0.asUnpriced441A() }
     }
 
     /// Enforces Direction 228 ascending numerical order on ladder, range, rate, and count markets.
@@ -533,11 +685,22 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
     let destinationHref: String
     let eventRows: [MachineryEventVisualItem]
     let outcomeRows: [MachineryOutcomeVisual]
+    let unpricedOutcomes: [MachineryOutcomeVisual]
     let miniChart: MachineryHistoryChartItem?
     let imageUrl: String?
     let imageAlt: String?
 
     var id: String { slug }
+
+    var isDivisionRaceCard441A: Bool {
+        !unpricedOutcomes.isEmpty || outcomeRows.contains { $0.settledOut != nil }
+    }
+
+    var displayOutcomeRows: [MachineryOutcomeVisual] {
+        isDivisionRaceCard441A
+            ? Array((outcomeRows + unpricedOutcomes).prefix(4))
+            : Array(outcomeRows.prefix(3))
+    }
 
     var verifiedImageURL: URL? {
         guard let imageUrl, !imageUrl.isEmpty,
@@ -586,7 +749,8 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         outcomeRows: [MachineryOutcomeVisual] = [],
         miniChart: MachineryHistoryChartItem? = nil,
         imageUrl: String? = nil,
-        imageAlt: String? = nil
+        imageAlt: String? = nil,
+        unpricedOutcomes: [MachineryOutcomeVisual] = []
     ) {
         self.slug = slug
         self.formId = formId
@@ -600,7 +764,13 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         self.itemNoun = itemNoun
         self.destinationHref = destinationHref.isEmpty ? "/collections/\(slug)" : destinationHref
         self.eventRows = Array(eventRows.prefix(3))
-        self.outcomeRows = Array(MachineryMarketVisualItem.normalizedOutcomes(outcomeRows, scaleOrdered: scaleOrdered).prefix(3))
+        let normalized = MachineryMarketVisualItem.normalizedOutcomes(outcomeRows, scaleOrdered: scaleOrdered)
+        let decodedUnpriced = unpricedOutcomes.map { $0.asUnpriced441A() }
+        let hasDivisionState = !decodedUnpriced.isEmpty || normalized.contains { $0.settledOut != nil }
+        let pricedLimit = hasDivisionState ? 4 : 3
+        let cappedPriced = Array(normalized.prefix(pricedLimit))
+        self.outcomeRows = cappedPriced
+        self.unpricedOutcomes = Array(decodedUnpriced.prefix(max(0, 4 - cappedPriced.count)))
         self.miniChart = (miniChart?.hasMovingSeries == true) ? miniChart : nil
         let trimmedImageURL = imageUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.imageUrl = (trimmedImageURL?.isEmpty == false) ? trimmedImageURL : nil
@@ -638,12 +808,19 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
             let evs = c.decodeFirst([MachineryEventVisualItem].self, keys: ["rows"]) ?? []
             self.eventRows = Array(evs.prefix(3))
             self.outcomeRows = []
+            self.unpricedOutcomes = []
             self.scaleOrdered = false
         } else {
             let outs = c.decodeFirst([MachineryOutcomeVisual].self, keys: ["rows"]) ?? []
             let normalized = MachineryMarketVisualItem.normalizedOutcomes(outs, scaleOrdered: rawScaleOrdered)
+            let decodedUnpriced = (c.decodeFirst([MachineryOutcomeVisual].self, keys: ["unpricedOutcomes", "unpriced_outcomes"]) ?? [])
+                .map { $0.asUnpriced441A() }
+            let hasDivisionState = !decodedUnpriced.isEmpty || normalized.contains { $0.settledOut != nil }
+            let pricedLimit = hasDivisionState ? 4 : 3
+            let cappedPriced = Array(normalized.prefix(pricedLimit))
             self.eventRows = []
-            self.outcomeRows = Array(normalized.prefix(3))
+            self.outcomeRows = cappedPriced
+            self.unpricedOutcomes = Array(decodedUnpriced.prefix(max(0, 4 - cappedPriced.count)))
             self.scaleOrdered = rawScaleOrdered || NumericalMarketScaleOrder228.scaleKeys(for: outs.map(\.name)) != nil
         }
 

@@ -13,17 +13,14 @@
  * - Top 5 contenders shown by default on Discover & Collection surfaces with a full-width
  *   in-place `"Show all N most likely nominees (+M more)"` expander (`defaultExpanded` on
  *   the category's own `/futures/[id]` page).
- * - Traceable one-tap source links to both the Winner market and the Nominees market, plus
- *   official TMDB attribution (`/tmdb-blue-short.svg`).
+ * - Traceable one-tap source links to both the Winner market and the Nominees market
+ *   (TMDB notice + logo live on `/about` and `/picture-credits`, never on cards — #13644).
  */
 
 import Link from "next/link";
 import React, { useState } from "react";
 import { QuietFillPercentBox } from "@/components/discover/QuietFillPercentBox";
 import {
-  TMDB_ATTRIBUTION_LINE,
-  TMDB_ATTRIBUTION_URL,
-  TMDB_OFFICIAL_LOGO_PATH,
   formatStage1Display,
   formatStage2Display,
   resolveKidSafeVisualArt,
@@ -37,6 +34,7 @@ export function cleanPairedCardSubtitle(subtitle: string | null | undefined): st
     .replace(/\s*·\s*Nominee\s*%.*$/i, "")
     .replace(/\s*·\s*Paired by club.*$/i, "")
     .replace(/\s*·\s*Verified [A-Za-z0-9\s]+$/i, "")
+    .replace(/\s*·\s*[^·]*\bTMDB\b[^·]*$/i, "")
     .replace(/\s*\(ordered by [^)]*\)/gi, "")
     .replace(/\s*\([^)]*#\d+[^)]*\)/g, "")
     .trim();
@@ -285,9 +283,6 @@ export function AwardCategoryPairedCard({
   const stage2Id = set.stage_2_market?.id ?? null;
   const primaryHref = stage2Id ? `/futures/${stage2Id}` : "/collections/oscars-2027";
   const isOscars = set.set_id.startsWith("oscars-");
-  const usesTmdb = set.entries.some(
-    (e) => e.art?.kind === "tmdb_poster" || e.art?.kind === "tmdb_headshot",
-  );
 
   return (
     <article
@@ -415,32 +410,6 @@ export function AwardCategoryPairedCard({
             )}
           </div>
         </div>
-
-        {usesTmdb && (
-          <div
-            data-testid="tmdb-attribution-line"
-            className="flex flex-wrap items-center gap-2 text-[11px] text-text-muted"
-          >
-            <a
-              href={TMDB_ATTRIBUTION_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="tmdb-attribution-link"
-              aria-label="The Movie Database (TMDB)"
-              className="inline-flex shrink-0 items-center rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5"
-            >
-              <img
-                src={TMDB_OFFICIAL_LOGO_PATH}
-                alt="The Movie Database (TMDB)"
-                width={76}
-                height={10}
-                data-testid="tmdb-official-logo"
-                className="inline-block h-[10px] w-auto shrink-0"
-              />
-            </a>
-            <span>{TMDB_ATTRIBUTION_LINE}</span>
-          </div>
-        )}
       </div>
     </article>
   );

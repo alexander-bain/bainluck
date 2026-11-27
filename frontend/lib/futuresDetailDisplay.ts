@@ -378,21 +378,20 @@ export function chartHistoryForSelection<T extends { outcome_id: number }>(
 export function currentUnavailableNote(unpricedDrawnNames: readonly string[]): string | null {
   if (unpricedDrawnNames.length === 0) return null;
   if (unpricedDrawnNames.length === 1) {
-    return `No current price for ${unpricedDrawnNames[0]}. Its line shows past prices.`;
+    return `No recent probability for ${unpricedDrawnNames[0]}. Its line shows earlier readings.`;
   }
-  return `No current price for ${unpricedDrawnNames.length} of these lines. They show past prices.`;
+  return `No recent probability for ${unpricedDrawnNames.length} of these lines. They show earlier readings.`;
 }
 
 /** #10453 — what the trend card says when nothing on an open market is priced now. */
-export const NO_CURRENT_PRICES_CHART_NOTE =
-  "No current prices. Check an outcome below to see its past prices.";
+export const NO_CURRENT_PRICES_CHART_NOTE = "No recent probability.";
 
 /**
  * #10453 — the same empty card when some rows ARE priced but none of them has
  * history in this range (the reader cleared their selection). Saying "no
  * current prices" there would be false.
  */
-export const CHECK_AN_OUTCOME_CHART_NOTE = "Check an outcome below to see its past prices.";
+export const CHECK_AN_OUTCOME_CHART_NOTE = "Select an outcome below to see its history.";
 
 /* ───────────────────────────────────────────────────────────────────────────
  * #6079 — THE WORD "won" HAS ONE SOURCE, AND IT IS THE GRADE.
@@ -1642,7 +1641,7 @@ export function partitionOutcomesByPrice<T extends { probability: number | null 
  * The folded rows are NOT dropped (gotcha #43) — the caller keeps them behind
  * `More outcomes (N)`, which is D102's shape for present-but-priceless rows.
  */
-export const NO_PRICED_OUTCOMES_NOTE = "No current prices for this market.";
+export const NO_PRICED_OUTCOMES_NOTE = "No recent probability.";
 
 export function noPricedOutcomesNote(listedCount: number): string | null {
   return listedCount === 0 ? NO_PRICED_OUTCOMES_NOTE : null;

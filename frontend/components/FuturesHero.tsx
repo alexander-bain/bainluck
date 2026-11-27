@@ -59,6 +59,8 @@ interface FuturesHeroProps {
   resultUnknown?: boolean;
   /** #883 Step F1 — opt into the Nov 3 futures atlas headline (`?atlas=1`). */
   atlas?: boolean;
+  /** The outcomes disclosure may supply the missing-probability label. */
+  showMissingProbability?: boolean;
   /** Opening probability of the featured outcome (withheld when multi-venue per #12043). */
   openingProbability?: number | null;
   /** Decided integer for `openingProbability` from `renderedById`. */
@@ -90,6 +92,7 @@ export function FuturesHero({
   resolvedLost = false,
   resultUnknown = false,
   atlas = false,
+  showMissingProbability = true,
   openingProbability = null,
   renderedOpening = null,
   scheduledResolutionLabel = null,
@@ -213,7 +216,7 @@ export function FuturesHero({
                 </span>
                 <span className="text-[22px] sm:text-[26px]">%</span>
               </div>
-            ) : (
+            ) : showMissingProbability && (
               <span
                 data-testid="atlas-no-recent-price"
                 className="text-[20px] sm:text-[22px] font-semibold tracking-tight text-text-secondary"

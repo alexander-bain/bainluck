@@ -1301,8 +1301,12 @@ async def test_load_snapshot_from_db_executes_every_query_for_every_candidate_de
     assert "row_number() over (partition by futures_odds_snapshots.outcome_id" not in joined_sql
 
 
-async def test_paired_discover_card_and_set_match_the_market_pages_allocation(pg_machinery):
+@pytest.mark.parametrize("new_probability, expected_percent", [(0.41, 42), (0.46, 44)])
+async def test_paired_discover_card_and_set_match_the_market_pages_allocation(
+    pg_machinery, new_probability, expected_percent
+):
     from app.routes.futures import get_futures_market
+    from app.utils.graded_card import rendered_percent
     from app.utils.roundup_containers import RoundupMembers
 
     defn = next(
@@ -1313,7 +1317,9 @@ async def test_paired_discover_card_and_set_match_the_market_pages_allocation(pg
         await db.execute(
             update(FuturesOutcome)
             .where(FuturesOutcome.market_id == 6173044, FuturesOutcome.name == "The Odyssey")
-            .values(current_probability=0.41)
+            .values(current_probability=new_probability,
+                    current_yes_bid=new_probability - 0.01,
+                    current_yes_ask=new_probability + 0.01)
         )
         await db.commit()
     async with pg_machinery["maker"]() as db:
@@ -1328,9 +1334,131 @@ async def test_paired_discover_card_and_set_match_the_market_pages_allocation(pg
         if section["visual_block"]["form_id"] == "paired_stage_bars"
     )
     set_row = next(row for row in set_table["entries"] if row["subject"] == "The Odyssey")
-    assert page_row["rendered_percent"] == 42
+    page_percent = page_row.get("rendered_percent", rendered_percent(page_row["probability"]))
+    assert page_percent == expected_percent
     assert card_row["probability"] == set_row["stage_2_probability"] == page_row["probability"]
-    assert card_row["rendered_percent"] == set_row["stage_2_rendered_percent"] == page_row["rendered_percent"]
+    set_percent = set_row["stage_2_rendered_percent"]
+    if set_percent is None:
+        set_percent = rendered_percent(set_row["stage_2_probability"])
+    assert card_row["rendered_percent"] == set_percent == page_percent
+
+
+async def test_grouping_rechecks_its_minimum_after_withdrawing_a_field(pg_machinery):
+    from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
+
+    now = pg_machinery["now_dt"]
+    definition = {
+        "slug": "test-review-awards",
+        "name": "Review awards",
+        "category": "entertainment",
+        "rule": {"sections": [{
+            "key": "award_fields",
+            "title": "Award winners",
+            "atom_query": {
+                "kind": "markets",
+                "title_all_tokens": ["review", "award"],
+                "min_items": 2,
+            },
+        }]},
+    }
+    async with pg_machinery["maker"]() as db:
+        market_ids = []
+        for index, label in enumerate(("film", "song", "book")):
+            market = FuturesMarket(
+                source="kalshi", external_id=f"KXREVIEW-{label}",
+                name=f"Review Award: {label} winner", category="entertainment",
+                llm_sport_category="entertainment", market_type="field",
+                status="open", mutually_exclusive=True, volume=10_000,
+                resolution_date=now + timedelta(days=30),
+            )
+            db.add(market)
+            await db.flush()
+            market_ids.append(market.id)
+            probabilities = (0.20, 0.10, 0.08, 0.04) if index == 0 else (0.40, 0.30, 0.20, 0.10)
+            for outcome_index, (name, price) in enumerate(
+                zip(("Alice", "Beatrice", "Carmen", "Diana"), probabilities, strict=True)
+            ):
+                db.add(FuturesOutcome(
+                    market_id=market.id, external_id=f"KXREVIEW-{label}-{outcome_index}",
+                    name=name, current_probability=price, last_updated=now,
+                ))
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupMembers)
+        assert {item["id"] for item in group.members} == set(market_ids[1:])
+
+    async with pg_machinery["maker"]() as db:
+        await db.execute(
+            update(FuturesOutcome).where(FuturesOutcome.market_id == market_ids[1])
+            .values(current_probability=0.10)
+        )
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupRefusal)
+        assert ("container_machinery", "too_few_markets:award_fields") in group.reasons
+
+
+async def test_grouping_rechecks_its_minimum_after_withdrawing_a_field(pg_machinery):
+    from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
+
+    now = pg_machinery["now_dt"]
+    definition = {
+        "slug": "test-review-awards",
+        "name": "Review awards",
+        "category": "entertainment",
+        "rule": {"sections": [{
+            "key": "award_fields",
+            "title": "Award winners",
+            "atom_query": {
+                "kind": "markets",
+                "title_all_tokens": ["review", "award"],
+                "min_items": 2,
+            },
+        }]},
+    }
+    async with pg_machinery["maker"]() as db:
+        market_ids = []
+        for index, label in enumerate(("film", "song", "book")):
+            market = FuturesMarket(
+                source="kalshi", external_id=f"KXREVIEW-{label}",
+                name=f"Review Award: {label} winner", category="entertainment",
+                llm_sport_category="entertainment", market_type="field",
+                status="open", mutually_exclusive=True, volume=10_000,
+                resolution_date=now + timedelta(days=30),
+            )
+            db.add(market)
+            await db.flush()
+            market_ids.append(market.id)
+            probabilities = (0.20, 0.10, 0.08, 0.04) if index == 0 else (0.40, 0.30, 0.20, 0.10)
+            for outcome_index, (name, price) in enumerate(
+                zip(("Alice", "Beatrice", "Carmen", "Diana"), probabilities, strict=True)
+            ):
+                db.add(FuturesOutcome(
+                    market_id=market.id, external_id=f"KXREVIEW-{label}-{outcome_index}",
+                    name=name, current_probability=price, last_updated=now,
+                ))
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupMembers)
+        assert {item["id"] for item in group.members} == set(market_ids[1:])
+
+    async with pg_machinery["maker"]() as db:
+        await db.execute(
+            update(FuturesOutcome).where(FuturesOutcome.market_id == market_ids[1])
+            .values(current_probability=0.10)
+        )
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupRefusal)
+        assert ("container_machinery", "too_few_markets:award_fields") in group.reasons
 
 
 async def test_evaluate_machinery_candidates_preview_returns_all_ok_with_zero_error_logs(

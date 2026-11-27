@@ -248,7 +248,8 @@ describe("Ruling 230: A (#12470) — Desktop Event Page 2-Column Layout from 102
         ]}
       />,
     );
-    expect(browserHtml).toContain("overflow-x-auto pb-1 lg:basis-full lg:flex-wrap lg:gap-1.5 lg:overflow-visible lg:pb-0");
+    expect(browserHtml).toContain("basis-full flex flex-wrap gap-1.5");
+    expect(browserHtml).not.toContain("overflow-x-auto");
 
     const mapHtml = renderToStaticMarkup(
       <CompactMarketMap

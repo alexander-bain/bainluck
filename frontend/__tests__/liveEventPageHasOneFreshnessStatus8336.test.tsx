@@ -248,7 +248,7 @@ describe("#10200 the status never lets a healthy socket hide old evidence", () =
         },
       },
     });
-    expect(statusWords(html)).toBe("Price may be old");
+    expect(statusWords(html)).toBe("Probability may be old");
     const status = html.slice(html.indexOf(STATUS));
     expect(status.slice(0, status.indexOf("</button>"))).not.toContain("animate-");
   });

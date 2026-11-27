@@ -21,6 +21,7 @@ struct NativeConceptDiscoverCard: View {
     let feedContext: String?
     @Binding var navigationPath: NavigationPath
     var onOpen: (() -> Void)?
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     private var gradient: (Color, Color) {
         sportCategoryGradients[data.domain?.lowercased() ?? ""] ?? sportDefaultGradient
@@ -173,6 +174,10 @@ struct NativeConceptDiscoverCard: View {
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.systemBackground)
+            }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, surfaceColor: Color.systemBackground)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 16))

@@ -262,28 +262,34 @@ def test_kill_switch_disables_check_cleanly():
     assert called is False
 
 
-def test_ci_workflow_wires_dry_run_and_script_has_zero_heroku_mutations():
+def test_ci_workflow_wires_live_post_deploy_smoke_without_heroku_cli():
     wf = yaml.safe_load(CI_YML_PATH.read_text(encoding="utf-8"))
     fast_gate_runs = "\n".join(str(step.get("run", "")) for step in wf["jobs"]["fast-gate"]["steps"])
     assert "post_deploy_smoke_rollback.py --self-test-500" in fast_gate_runs
 
-    deploy_job = wf["jobs"]["deploy"]
-    assert deploy_job["outputs"]["deployed"] == "${{ steps.heroku_deploy.outputs.deployed }}"
-    assert deploy_job["steps"][-1].get("id") == "heroku_deploy"
+    for rel_job_name in ("deploy", "deploy-after-full"):
+        rel_job = wf["jobs"][rel_job_name]
+        assert rel_job["outputs"]["deployed"] == "${{ steps.heroku_deploy.outputs.deployed }}"
+        assert rel_job["steps"][-1].get("id") == "heroku_deploy"
 
-    smoke_job = wf["jobs"]["post-deploy-smoke-dry-run"]
-    assert smoke_job["needs"] == ["deploy"]
+    smoke_job = wf["jobs"]["post-deploy-smoke"]
+    assert smoke_job["needs"] == ["deploy", "deploy-after-full"]
     assert smoke_job["timeout-minutes"] >= 15
+    assert smoke_job["permissions"] == {"contents": "read", "issues": "write"}
     assert "needs.deploy.outputs.deployed == 'true'" in smoke_job["if"]
+    assert "needs.deploy-after-full.outputs.deployed == 'true'" in smoke_job["if"]
     smoke_step = smoke_job["steps"][-1]
     assert smoke_step["env"]["AUTO_ROLLBACK_ENABLED"] == "${{ vars.AUTO_ROLLBACK_ENABLED }}"
-    assert "--dry-run" in smoke_step["run"]
+    assert smoke_step["env"]["HEROKU_API_KEY"] == "${{ secrets.HEROKU_API_KEY }}"
+    assert smoke_step["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert smoke_step["env"]["NOW_LINES_ISSUE"] == "13580"
+    assert "--execute" in smoke_step["run"]
+    assert "--dry-run" not in smoke_step["run"]
     assert "https://api.bainluck.com" in smoke_step["run"]
 
     script_source = SCRIPT_PATH.read_text(encoding="utf-8")
     assert "releases:rollback" not in script_source.lower()
-    assert "api.heroku.com" not in script_source.lower()
-    # Ensure no subprocess invocation in code ever invokes a heroku CLI binary.
+    # Ensure no subprocess invocation in code ever invokes a heroku CLI binary (Platform API HTTP only).
     tree = ast.parse(script_source)
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -296,6 +302,166 @@ def test_ci_workflow_wires_dry_run_and_script_has_zero_heroku_mutations():
             if name in {"run", "Popen", "check_output", "check_call"}:
                 dumped = ast.dump(node).lower()
                 assert "'heroku'" not in dumped and '"heroku"' not in dumped
+
+
+def test_execute_mode_rolls_back_reprobes_and_posts_alert(monkeypatch, tmp_path: Path):
+    mod = _load_module()
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@example.com"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True, capture_output=True)
+    app_file = tmp_path / "backend" / "app" / "x.py"
+    app_file.parent.mkdir(parents=True)
+    app_file.write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "old"], check=True, capture_output=True)
+    prev_sha = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
+    app_file.write_text("x = 2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "new"], check=True, capture_output=True)
+    head_sha = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
+
+    state = {"phase": "broken", "rollback_calls": [], "alerts": []}
+
+    def fake_get(url: str, timeout: float):
+        if url.endswith("/api/health"):
+            sha = prev_sha[:8] if state["phase"] == "rolled_back" else head_sha[:8]
+            return 200, json.dumps({"status": "ok", "commit": sha})
+        if state["phase"] == "broken":
+            return 500, '{"detail":"boom"}'
+        if "/api/feed" in url:
+            return 200, '{"items":[{"id":1}]}'
+        return 200, '{"events":[{"id":2}]}'
+
+    def fake_list(app: str, key: str):
+        assert app == "bainluck" and key == "secret-key"
+        return [
+            {"id": "rel-new", "version": 6620, "status": "succeeded", "description": f"Deploy {head_sha[:8]}"},
+            {"id": "rel-old", "version": 6619, "status": "succeeded", "description": f"Deploy {prev_sha[:8]}"},
+        ]
+
+    def fake_rollback(app: str, key: str, release_id: str):
+        state["rollback_calls"].append((app, release_id))
+        state["phase"] = "rolled_back"
+        return {"id": "rel-rb", "version": 6621, "status": "succeeded", "description": "Rollback to v6619"}
+
+    def fake_post(repo: str, issue: int, title: str, body: str, now_line: str) -> bool:
+        state["alerts"].append((repo, issue, title, body, now_line))
+        return True
+
+    report = mod.run_smoke_check(
+        base_url="http://standin.local",
+        expected_sha=head_sha,
+        prev_sha=prev_sha,
+        initial_delay_seconds=0.0,
+        retry_delay_seconds=0.0,
+        health_wait_seconds=1.0,
+        health_poll_seconds=0.05,
+        reprobe_settle_seconds=0.0,
+        dry_run=False,
+        repo_root=tmp_path,
+        heroku_app="bainluck",
+        heroku_api_key="secret-key",
+        repo="alexander-bain/bainluck",
+        now_issue=13580,
+        run_url="https://github.com/o/r/actions/runs/555",
+        http_get=fake_get,
+        sleep_fn=lambda _: None,
+        heroku_list_fn=fake_list,
+        heroku_rollback_fn=fake_rollback,
+        gh_post_fn=fake_post,
+    )
+    assert report.verdict == "rolled_back"
+    assert report.rollback_version == 6619
+    assert report.reprobe_passed is True
+    assert report.alert_posted is True
+    assert state["rollback_calls"] == [("bainluck", "rel-old")]
+    assert len(state["alerts"]) == 1
+    repo, issue, title, body, now_line = state["alerts"][0]
+    assert repo == "alexander-bain/bainluck" and issue == 13580
+    assert title == f"URGENT: release `{head_sha[:8]}` rolled back"
+    assert "v6619" in now_line and "re-probe PASS" in now_line and "HOLD" in now_line
+
+    # CLI exits non-zero when --execute triggers a rollback so master alarms fire.
+    monkeypatch.setattr(mod, "run_smoke_check", lambda **kwargs: report)
+    assert mod.main(["--execute", "--expected-sha", head_sha]) == 1
+
+
+def test_execute_mode_refuses_double_rollback_failed_prior_and_superseded_release():
+    mod = _load_module()
+    bad_histories = [
+        [
+            {"id": "r2", "version": 102, "status": "succeeded", "description": "Rollback to v100"},
+            {"id": "r1", "version": 100, "status": "succeeded", "description": "Deploy old11111"},
+        ],
+        [
+            {"id": "r2", "version": 102, "status": "succeeded", "description": "Deploy new22222"},
+            {"id": "r1", "version": 101, "status": "failed", "description": "Deploy old11111"},
+        ],
+        [
+            {"id": "r2", "version": 102, "status": "succeeded", "description": "Deploy fff99999"},
+            {"id": "r1", "version": 101, "status": "succeeded", "description": "Deploy old11111"},
+        ],
+        [
+            {"id": "r2", "version": 102, "status": "succeeded", "description": "Set FOO config vars"},
+            {"id": "r1", "version": 101, "status": "succeeded", "description": "Deploy new22222"},
+        ],
+    ]
+    for releases in bad_histories:
+        rollback_called = False
+        alerts = []
+
+        def no_rollback(app: str, key: str, rid: str):
+            nonlocal rollback_called
+            rollback_called = True
+            return {}
+
+        report = mod.run_smoke_check(
+            base_url="http://standin.local",
+            expected_sha="new22222abcdef12",
+            initial_delay_seconds=0.0,
+            retry_delay_seconds=0.0,
+            skip_health_wait=True,
+            dry_run=False,
+            heroku_app="bainluck",
+            heroku_api_key="secret-key",
+            repo="alexander-bain/bainluck",
+            now_issue=13580,
+            http_get=lambda u, t: (500, '{"detail":"boom"}'),
+            sleep_fn=lambda _: None,
+            heroku_list_fn=lambda a, k: releases,
+            heroku_rollback_fn=no_rollback,
+            gh_post_fn=lambda r, i, title, body, line: alerts.append(line) or True,
+        )
+        assert report.verdict == "alert_only"
+        assert rollback_called is False
+        assert len(alerts) == 1 and "rollback refused" in alerts[0]
+
+
+def test_execute_mode_migration_refusal_posts_alert_without_rollback(tmp_path: Path):
+    mod = _load_module()
+    rollback_called = False
+    alerts = []
+    report = mod.run_smoke_check(
+        base_url="http://standin.local",
+        expected_sha="new22222abcdef12",
+        initial_delay_seconds=0.0,
+        retry_delay_seconds=0.0,
+        skip_health_wait=True,
+        migrations_changed=True,
+        dry_run=False,
+        heroku_app="bainluck",
+        heroku_api_key="secret-key",
+        repo="alexander-bain/bainluck",
+        now_issue=13580,
+        http_get=lambda u, t: (500, '{"detail":"boom"}'),
+        sleep_fn=lambda _: None,
+        heroku_list_fn=lambda a, k: [],
+        heroku_rollback_fn=lambda a, k, rid: (_ for _ in ()).throw(AssertionError("must not roll back")),
+        gh_post_fn=lambda r, i, title, body, line: alerts.append(line) or True,
+    )
+    assert report.verdict == "alert_only"
+    assert rollback_called is False
+    assert len(alerts) == 1 and "migration changed" in alerts[0]
 
 
 def test_default_health_wait_handles_preboot_cutover():
@@ -374,38 +540,144 @@ def test_health_commit_mismatch_after_full_wait_returns_failed_never_pass_or_inc
         assert "would roll back" not in report.summary.lower()
 
 
-def test_health_never_answers_returns_failed_with_read_none():
+def test_health_unanswered_or_5xx_after_full_wait_triggers_rollback_under_311a_guards(tmp_path: Path):
+    """Ruling 394 Change 2: health answering 5xx or unreachable past wait rolls back under 311: A."""
     mod = _load_module()
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@example.com"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True, capture_output=True)
+    app_file = tmp_path / "backend" / "app" / "x.py"
+    app_file.parent.mkdir(parents=True)
+    app_file.write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "old"], check=True, capture_output=True)
+    prev_sha = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
+    app_file.write_text("x = 2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "new"], check=True, capture_output=True)
+    head_sha = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
+
+    # Case 1 (dry-run): poll 1 sees 200 old commit, then timeouts -> clears stale old commit and triggers rollback.
     clock = 0.0
     sleeps: list[float] = []
+    polls = {"n": 0}
 
     def fake_sleep(seconds: float) -> None:
         nonlocal clock
         sleeps.append(seconds)
         clock += seconds
 
-    def fake_get(url: str, timeout: float):
+    def fake_get_stale_then_timeout(url: str, timeout: float):
         if url.endswith("/api/health"):
+            polls["n"] += 1
+            if polls["n"] == 1:
+                return 200, json.dumps({"status": "ok", "commit": prev_sha[:8]})
             raise TimeoutError("booting")
         raise AssertionError(f"endpoint should not be probed when health never answered: {url}")
 
-    report = mod.run_smoke_check(
+    dry_report = mod.run_smoke_check(
         base_url="http://standin.local",
-        expected_sha="new22222abcdef12",
+        expected_sha=head_sha,
+        prev_sha=prev_sha,
+        prior_release_state="ok",
+        repo_root=tmp_path,
         initial_delay_seconds=60.0,
-        http_get=fake_get,
+        http_get=fake_get_stale_then_timeout,
         sleep_fn=fake_sleep,
         monotonic_fn=lambda: clock,
     )
-    assert report.verdict == "failed"
-    assert report.health_commit is None
-    assert report.endpoints == ()
+    assert dry_report.verdict == "would_roll_back"
+    assert dry_report.health_commit is None
     assert sum(sleeps) >= 360.0
-    assert report.summary.startswith("FAIL:")
-    assert "INCONCLUSIVE" not in report.summary
-    assert "commit read=none, expected=new22222" in report.summary
-    assert "PASS" not in report.summary.upper()
-    assert "would roll back" not in report.summary.lower()
+    assert "would roll back" in dry_report.summary.lower()
+
+    mig_report = mod.run_smoke_check(
+        base_url="http://standin.local",
+        expected_sha=head_sha,
+        prev_sha=prev_sha,
+        prior_release_state="ok",
+        migrations_changed=True,
+        initial_delay_seconds=0.0,
+        health_wait_seconds=1.0,
+        health_poll_seconds=0.0,
+        http_get=lambda u, t: (503, '{"detail":"down"}'),
+        sleep_fn=lambda _: None,
+    )
+    assert mig_report.verdict == "alert_only"
+
+    # Case 2 (execute): health 503 past wait executes rollback and re-probes; migration refusal stays alert_only.
+    state = {"phase": "broken", "rollbacks": [], "alerts": []}
+
+    def fake_get_503(url: str, timeout: float):
+        if state["phase"] == "broken":
+            return 503, '{"detail":"down"}'
+        if url.endswith("/api/health"):
+            return 200, json.dumps({"status": "ok", "commit": prev_sha[:8]})
+        if "/api/feed" in url:
+            return 200, '{"items":[{"id":1}]}'
+        return 200, '{"events":[{"id":2}]}'
+
+    releases = [
+        {"id": "rel-new", "version": 6620, "status": "succeeded", "description": f"Deploy {head_sha[:8]}"},
+        {"id": "rel-old", "version": 6619, "status": "succeeded", "description": f"Deploy {prev_sha[:8]}"},
+    ]
+
+    def fake_rollback_503(app: str, key: str, rid: str):
+        state["rollbacks"].append(rid)
+        state["phase"] = "rolled_back"
+        return {"id": "rel-rb", "version": 6621}
+
+    exec_report = mod.run_smoke_check(
+        base_url="http://standin.local",
+        expected_sha=head_sha,
+        prev_sha=prev_sha,
+        initial_delay_seconds=0.0,
+        retry_delay_seconds=0.0,
+        health_wait_seconds=1.0,
+        health_poll_seconds=0.0,
+        reprobe_settle_seconds=0.0,
+        dry_run=False,
+        repo_root=tmp_path,
+        heroku_app="bainluck",
+        heroku_api_key="secret-key",
+        repo="alexander-bain/bainluck",
+        now_issue=13580,
+        http_get=fake_get_503,
+        sleep_fn=lambda _: None,
+        heroku_list_fn=lambda a, k: releases,
+        heroku_rollback_fn=fake_rollback_503,
+        gh_post_fn=lambda r, i, title, body, line: state["alerts"].append(line) or True,
+    )
+    assert exec_report.verdict == "rolled_back"
+    assert state["rollbacks"] == ["rel-old"]
+    assert len(state["alerts"]) == 1
+
+    # Case 3 (execute + old commit 200): release did not take -> alert, no rollback.
+    old_rollbacks: list[str] = []
+    old_alerts: list[str] = []
+    old_report = mod.run_smoke_check(
+        base_url="http://standin.local",
+        expected_sha=head_sha,
+        prev_sha=prev_sha,
+        initial_delay_seconds=0.0,
+        retry_delay_seconds=0.0,
+        health_wait_seconds=1.0,
+        health_poll_seconds=0.0,
+        dry_run=False,
+        heroku_app="bainluck",
+        heroku_api_key="secret-key",
+        repo="alexander-bain/bainluck",
+        now_issue=13580,
+        http_get=lambda u, t: (200, json.dumps({"status": "ok", "commit": prev_sha[:8]})),
+        sleep_fn=lambda _: None,
+        heroku_list_fn=lambda a, k: releases,
+        heroku_rollback_fn=lambda a, k, rid: old_rollbacks.append(rid) or {},
+        gh_post_fn=lambda r, i, title, body, line: old_alerts.append(line) or True,
+    )
+    assert old_report.verdict == "failed"
+    assert old_report.alert_posted is True
+    assert old_rollbacks == []
+    assert len(old_alerts) == 1 and "not auto-rolled back" in old_alerts[0]
 
 
 def test_cli_exits_nonzero_when_commit_never_matches_even_under_dry_run(monkeypatch):

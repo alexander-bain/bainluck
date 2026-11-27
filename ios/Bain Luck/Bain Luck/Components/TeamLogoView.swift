@@ -6,12 +6,11 @@ struct TeamLogoView: View {
     let teamName: String
     /// **This is drawn as TEXT, not only as a tint — #7036, fourth arm.**
     ///
-    /// Of this view's three states only one uses `color` as a background: the
-    /// `Circle().fill(color.opacity(0.15))` shown *while* a crest is loading.
-    /// The other two go to `initialsFallback`, which paints the badge's letters
-    /// with `Text(...).foregroundStyle(color)` over a 20%-opacity disc — and
-    /// those are the states a club reaches whenever the crest url is absent, the
-    /// fetch fails, or the ESPN fallback fails.
+    /// Whenever no cached crest or photograph is ready yet (`initialsFallback`),
+    /// including while an async fetch is still in flight, when a URL is absent,
+    /// or when the fetch + ESPN fallback fail, this view paints the badge's
+    /// letters with `Text(...).foregroundStyle(color)` over a 20%-opacity disc
+    /// — never an empty blank circle (#13823).
     ///
     /// **Which of those is reachable, measured 2026-09-20 rather than read off
     /// the `if`:** not the first. `teams` holds **0** rows carrying a stored
@@ -156,14 +155,8 @@ struct TeamLogoView: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: size, height: size)
                 }
-            } else if loadFailed && triedEspnFallback {
-                initialsFallback
-            } else if resolvedURL == nil {
-                initialsFallback
             } else {
-                Circle()
-                    .fill(color.opacity(0.15))
-                    .frame(width: size, height: size)
+                initialsFallback
             }
         }
         .task(id: resolvedURL) {

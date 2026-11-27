@@ -41,7 +41,7 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
         let copy = Chart.sparseCopy(
             windowInstants: 1, totalInstants: 9, windowWord: "in the last 7 days")
 
-        XCTAssertEqual(copy.note, "One price in the last 7 days — 8 earlier prices")
+        XCTAssertEqual(copy.note, "One reading in the last 7 days — 8 earlier readings")
         XCTAssertEqual(
             copy.hint, "Try a longer range",
             "the eight older observations are in the response already — say they are reachable")
@@ -55,7 +55,7 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
         guard case .sparse(let copy) = body else {
             return XCTFail("one point cannot be plotted as a line; the card must be sparse")
         }
-        XCTAssertEqual(copy.note, "One price in the last 7 days — 8 earlier prices")
+        XCTAssertEqual(copy.note, "One reading in the last 7 days — 8 earlier readings")
     }
 
     func testTheSentenceItReplacedCouldNotTellTheTwoCasesApart() {
@@ -76,7 +76,7 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
         let copy = Chart.sparseCopy(
             windowInstants: 0, totalInstants: 0, windowWord: "in the last 24 hours")
 
-        XCTAssertEqual(copy.note, "No price history yet")
+        XCTAssertEqual(copy.note, "No probability history yet")
         XCTAssertNil(copy.hint)
         XCTAssertFalse(
             copy.note.contains("24 hours"),
@@ -97,7 +97,7 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
         let copy = Chart.sparseCopy(
             windowInstants: 1, totalInstants: 1, windowWord: "in the last 7 days")
 
-        XCTAssertEqual(copy.note, "Only one price seen so far")
+        XCTAssertEqual(copy.note, "Only one reading seen so far")
         XCTAssertNil(copy.hint, "the one price is the one you are looking at")
     }
 
@@ -105,7 +105,7 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
         let copy = Chart.sparseCopy(
             windowInstants: 0, totalInstants: 1, windowWord: "in the last 24 hours")
 
-        XCTAssertEqual(copy.note, "No prices in the last 24 hours — one earlier price")
+        XCTAssertEqual(copy.note, "No readings in the last 24 hours — one earlier reading")
         XCTAssertEqual(copy.hint, "Try a longer range")
     }
 
@@ -113,7 +113,7 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
         let copy = Chart.sparseCopy(
             windowInstants: 0, totalInstants: 9, windowWord: "today")
 
-        XCTAssertEqual(copy.note, "No prices today — 9 earlier prices")
+        XCTAssertEqual(copy.note, "No readings today — 9 earlier readings")
         XCTAssertEqual(copy.hint, "Try a longer range")
     }
 
@@ -159,7 +159,7 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
         let copy = Chart.sparseCopy(
             windowInstants: 5, totalInstants: 1, windowWord: "in the last 7 days")
 
-        XCTAssertEqual(copy.note, "Only one price seen so far")
+        XCTAssertEqual(copy.note, "Only one reading seen so far")
         XCTAssertNil(copy.hint, "a negative 'earlier' count must never become an errand")
     }
 
@@ -167,17 +167,17 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
         let copy = Chart.sparseCopy(
             windowInstants: -3, totalInstants: -9, windowWord: "in the last 7 days")
 
-        XCTAssertEqual(copy.note, "No price history yet")
+        XCTAssertEqual(copy.note, "No probability history yet")
         XCTAssertNil(copy.hint)
     }
 
     func testTheCountIsNeverPrintedAsAWordItDoesNotHave() {
         XCTAssertEqual(
             Chart.sparseCopy(windowInstants: 0, totalInstants: 2, windowWord: "in the last 7 days").note,
-            "No prices in the last 7 days — 2 earlier prices")
+            "No readings in the last 7 days — 2 earlier readings")
         XCTAssertEqual(
             Chart.sparseCopy(windowInstants: 1, totalInstants: 2, windowWord: "in the last 7 days").note,
-            "One price in the last 7 days — one earlier price",
+            "One reading in the last 7 days — one earlier reading",
             "singular and plural are both written, so neither reads as a template")
     }
 
@@ -190,7 +190,7 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
         let copy = Chart.sparseCopy(
             windowInstants: 3, totalInstants: 9, windowWord: "in the last 7 days")
 
-        XCTAssertEqual(copy.note, "3 prices in the last 7 days — 6 earlier prices")
+        XCTAssertEqual(copy.note, "3 readings in the last 7 days — 6 earlier readings")
         XCTAssertEqual(copy.hint, "Try a longer range")
         XCTAssertFalse(
             copy.note.hasPrefix("One price"),
@@ -198,16 +198,16 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
     }
 
     /// The same divergence with nothing older: the old code fell past the `earlier`
-    /// guard and printed "No price history yet" over a response holding nine prices
+    /// guard and printed "No probability history yet" over a response holding nine prices
     /// — the exact sentence #7350 exists to stop (gotcha #53).
     func testAFullWindowWithNothingOlderStillCountsWhatItHas() {
         let copy = Chart.sparseCopy(
             windowInstants: 4, totalInstants: 4, windowWord: "in the last 7 days")
 
-        XCTAssertEqual(copy.note, "4 prices seen so far")
+        XCTAssertEqual(copy.note, "4 readings seen so far")
         XCTAssertNil(copy.hint, "there is nothing older to reach")
         XCTAssertNotEqual(
-            copy.note, "No price history yet",
+            copy.note, "No probability history yet",
             "four prices are not an absence")
     }
 
@@ -236,13 +236,13 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
     /// is sparse there are never "earlier prices" to name, and the word is unused.
     ///
     /// The note is asserted in full, not just probed for the absent word: this case
-    /// used to return "No price history yet" over NINE prices and still satisfy both
+    /// used to return "No probability history yet" over NINE prices and still satisfy both
     /// checks below, so a bare `XCTAssertFalse` is exactly the guard that let it sit.
     func testTheWidestRangeNeverNeedsItsWord() {
         let copy = Chart.sparseCopy(
             windowInstants: 9, totalInstants: 9, windowWord: Chart.windowWord(for: .season))
 
-        XCTAssertEqual(copy.note, "9 prices seen so far")
+        XCTAssertEqual(copy.note, "9 readings seen so far")
         XCTAssertFalse(copy.note.contains("in this range"))
         XCTAssertNil(copy.hint)
     }

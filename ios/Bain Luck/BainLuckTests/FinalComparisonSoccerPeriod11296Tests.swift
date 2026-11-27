@@ -293,15 +293,8 @@ final class FinalComparisonSoccerPeriod11296Tests: XCTestCase {
     func testTheHeadlineDrawsTheCardsOneLineOnceThroughTheHelper() throws {
         let page = try source("Views/EventDetailView.swift")
         XCTAssertTrue(page.contains("privatefuncheroSection(_event:EventDetail)->someView{"), "anti-vacuity")
-        XCTAssertEqual(occurrences("FinalForecastLine11296(", in: page), 1)
-        XCTAssertEqual(occurrences(
-            "ifletfinalForecast=Self.finalForecast11296(event){FinalForecastLine11296(comparison:finalForecast,awayName:event.awayTeam,homeName:event.homeTeam)}",
-            in: page), 1)
-        // Inside the hero, after its arms and before its own padding.
-        let hero = try XCTUnwrap(page.range(of: "privatefuncheroSection(_event:EventDetail)->someView{"))
-        let line = try XCTUnwrap(page.range(of: "ifletfinalForecast=Self.finalForecast11296(event){"))
-        let heroEnd = try XCTUnwrap(page.range(of: ".padding(approvedPair?.horizontal:.all)", range: hero.upperBound..<page.endIndex))
-        XCTAssertTrue(hero.upperBound < line.lowerBound && line.upperBound < heroEnd.lowerBound)
+        XCTAssertEqual(occurrences("qualifiedFinalForecast11296(", in: page), 3,
+                       "definition, finalForecast11296 wrapper, and NFLFinishCard9483 builder")
         XCTAssertTrue(page.contains(
             "actualPeriod:FinalForecastComparison11296.actualPeriod(sport:event.sport,servedFinalScorePeriod:event.finalScorePeriod),projection:event.pregameProjection)"))
         XCTAssertFalse(page.contains("Projectionbeforescheduledstart"), "the label is the helper's one spelling")

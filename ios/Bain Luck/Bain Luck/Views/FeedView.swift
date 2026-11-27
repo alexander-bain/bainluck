@@ -21,6 +21,7 @@ struct FeedView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     #endif
@@ -347,6 +348,7 @@ struct FeedView: View {
 
     // MARK: - Section Builders
 
+    @ViewBuilder
     private func bandedSections(
         band: SportsBandKind401B,
         title: String,
@@ -355,23 +357,103 @@ struct FeedView: View {
         items: [FeedItem]
     ) -> some View {
         let groups = SportsLeagueBands401B.grouped(items, band: band)
-        return ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
-            Section {
-                sectionItemsBody(group.items)
-            } header: {
-                VStack(alignment: .leading, spacing: 6) {
-                    if index == 0 {
-                        bandHeaderRow(
-                            title: title,
-                            systemImage: systemImage,
-                            imageColor: imageColor,
-                            count: items.count
-                        )
+        if sizeClass == .regular && !dynamicTypeSize.isAccessibilitySize {
+            let blocks = SportsRegularGridLayout13869.blocks(from: groups)
+            ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
+                switch block {
+                case .singletons(_, let singletonGroups):
+                    Section {
+                        regularSingletonsBody(singletonGroups)
+                    } header: {
+                        if index == 0 {
+                            bandHeaderRow(
+                                title: title,
+                                systemImage: systemImage,
+                                imageColor: imageColor,
+                                count: items.count
+                            )
+                        }
                     }
-                    leagueHeaderRow(group)
+                case .league(let group):
+                    Section {
+                        sectionItemsBody(group.items)
+                    } header: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if index == 0 {
+                                bandHeaderRow(
+                                    title: title,
+                                    systemImage: systemImage,
+                                    imageColor: imageColor,
+                                    count: items.count
+                                )
+                            }
+                            leagueHeaderRow(group)
+                        }
+                    }
+                }
+            }
+        } else {
+            ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                Section {
+                    sectionItemsBody(group.items)
+                } header: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if index == 0 {
+                            bandHeaderRow(
+                                title: title,
+                                systemImage: systemImage,
+                                imageColor: imageColor,
+                                count: items.count
+                            )
+                        }
+                        leagueHeaderRow(group)
+                    }
                 }
             }
         }
+    }
+
+    private func regularColumnCount(for itemCount: Int) -> Int {
+        let baseColumns = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+        guard !dynamicTypeSize.isAccessibilitySize else { return 1 }
+        return SportsRegularGridLayout13869.effectiveColumnCount(
+            baseColumns: baseColumns,
+            itemCount: itemCount
+        )
+    }
+
+    private func regularSingletonsBody(_ groups: [SportsLeagueGroup401B]) -> some View {
+        let columnCount = regularColumnCount(for: groups.count)
+        let masonryColumns = DiscoverMasonry.columns(
+            cardCount: groups.count,
+            columnCount: columnCount
+        )
+        return HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
+            ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
+                VStack(alignment: .leading, spacing: DiscoverMasonry.listCardSpacing) {
+                    ForEach(indices, id: \.self) { idx in
+                        let group = groups[idx]
+                        if let item = group.items.first {
+                            VStack(alignment: .leading, spacing: 6) {
+                                leagueHeaderRow(group)
+                                    .padding(.horizontal, 4)
+                                gridCard(item)
+                                    .onAppear { emitSportsFirstRenderIfNeeded() }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { newWidth in
+            if newWidth > 0 {
+                gridWidth = newWidth
+            }
+        }
+        .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 10, trailing: 4))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
@@ -392,7 +474,7 @@ struct FeedView: View {
             // the tall `EventCardView` with the short futures strip, so the
             // shorter card in a row carried the surplus as dead space
             // BELOW it.
-            let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+            let columnCount = regularColumnCount(for: items.count)
             let masonryColumns = DiscoverMasonry.columns(
                 cardCount: items.count,
                 columnCount: columnCount
@@ -408,15 +490,11 @@ struct FeedView: View {
                     .frame(maxWidth: .infinity)
                 }
             }
-            .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear { gridWidth = geo.size.width }
-                        .onChange(of: geo.size.width) { _, newValue in
-                            gridWidth = newValue
-                        }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { newWidth in
+                if newWidth > 0 {
+                    gridWidth = newWidth
                 }
-            )
+            }
             .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 10, trailing: 4))
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
@@ -511,7 +589,7 @@ struct FeedView: View {
         Section {
             if sizeClass == .regular {
                 // #3709 — DiscoverMasonry deal for regular iPad/Mac widths.
-                let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+                let columnCount = regularColumnCount(for: cards.count)
                 let masonryColumns = DiscoverMasonry.columns(
                     cardCount: cards.count,
                     columnCount: columnCount
@@ -534,15 +612,11 @@ struct FeedView: View {
                         .frame(maxWidth: .infinity)
                     }
                 }
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear { gridWidth = geo.size.width }
-                            .onChange(of: geo.size.width) { _, newValue in
-                                gridWidth = newValue
-                            }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { newWidth in
+                    if newWidth > 0 {
+                        gridWidth = newWidth
                     }
-                )
+                }
                 .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 10, trailing: 4))
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)

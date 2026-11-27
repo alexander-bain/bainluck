@@ -686,7 +686,15 @@ async def _fake_session_cm(session):
     yield session
 
 
-def _install_writer_fakes(monkeypatch, *, payload, market_name, resolved=None, resolve_raises=False):
+def _install_writer_fakes(
+    monkeypatch,
+    *,
+    payload,
+    market_name,
+    resolved=None,
+    resolve_raises=False,
+    outcome_names=("Yes",),
+):
     """Wire the writer to fake sessions + a fake LLM. Returns the write session."""
     read_rows = [{
         "id": 1234,
@@ -696,7 +704,7 @@ def _install_writer_fakes(monkeypatch, *, payload, market_name, resolved=None, r
         "category": "basketball",
         "resolution_date": None,
         "market_metadata": {},
-        "outcomes": [{"name": "Yes", "prob": 0.4, "move": 0.0}],
+        "outcomes": [{"name": name, "prob": 0.4, "move": 0.0} for name in outcome_names],
     }]
     read_session = _FakeSession([_FakeResult(read_rows)])
     write_session = _FakeSession()
@@ -749,6 +757,28 @@ def _written_profile(write_session):
 
 
 class TestWriterEndToEnd:
+    @pytest.mark.parametrize(
+        "names, expected",
+        [
+            (["Below 7,400", "Below 8,900"], ["social_count", "ladder"]),
+            (["June 13", "September 2"], ["social_count", "dated_bucket"]),
+            ([f"Above {i}" for i in range(10, 18)] + ["Other"], ["social_count"]),
+        ],
+    )
+    async def test_writer_adds_flags_using_the_full_set_of_labels(
+        self, monkeypatch, names, expected
+    ):
+        write_session = _install_writer_fakes(
+            monkeypatch,
+            payload=_llm_payload(junk_flags=["social_count"], stakes=4, breadth=3),
+            market_name="City transit usage",
+            outcome_names=names,
+        )
+        await enrich_cu_v2_profiles(limit=1)
+        profile = _written_profile(write_session)
+        assert profile["junk_flags"] == expected
+        assert (profile["stakes"], profile["breadth"]) == (4, 3)
+
     async def test_profile_carries_frame_and_grounded_subject(self, monkeypatch):
         write_session = _install_writer_fakes(
             monkeypatch,

@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select,update,func
 from app.models.models import Sport,Event,FuturesMarket,FuturesOutcome
 from app.tasks.live_blend_refresh import LiveBlendRefresher
-from app.tasks.kalshi import _kalshi_yes_probability
+from app.tasks.kalshi import _kalshi_yes_probability, record_kalshi_ask_ceilings
 from app.services.kalshi_ws import KalshiWebSocket
 from app.utils.kalshi_orderbook import KalshiOrderBook
 from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401 — the fixture
@@ -39,7 +39,7 @@ def snapshot(s,ticker,bid,ask,seq):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('kind',['zero_bid_ask','empty_bid_fresh_trade'])
-async def test_thin_book_change_must_reach_headline(rig,monkeypatch,kind):
+async def test_thin_book_changes_require_a_real_trade(rig,monkeypatch,kind):
  maker=rig.maker
  suffix='21' if kind=='zero_bid_ask' else '22';p='KXATPCHALLENGERMATCH-26OCT'+suffix+'BROKRU';h=p+'-BRO';a=p+'-KRU'
  receipt={'arm':ARM,'case':kind,'inputs':[],'stages':[],'claim':'backend regression gate; no measured visible delay'}
@@ -71,7 +71,7 @@ async def test_thin_book_change_must_reach_headline(rig,monkeypatch,kind):
    async with maker() as db:
     event=await db.get(Event,eid);row=await db.get(FuturesOutcome,hid);other=await db.get(FuturesOutcome,aid)
     source=event.win_probability_sources.get('kalshi')
-    item={'label':label,'stored_home':float(row.current_probability),'stored_home_time':row.last_updated.isoformat(),'stored_away':float(other.current_probability),'away_time_unchanged':other.last_updated==now-timedelta(hours=2),'stamped':None if source is None else source['value'],'observed_basis':None if source is None else source.get('observed_basis'),'frames':len(frames),'pending':eid in r.pending_event_ids(),'errors':r.stats['errors'],'no_reading':r.stats['no_reading']}
+    item={'label':label,'stored_home':None if row.current_probability is None else float(row.current_probability),'stored_home_time':row.last_updated.isoformat(),'stored_away':float(other.current_probability),'away_time_unchanged':other.last_updated==now-timedelta(hours=2),'stamped':None if source is None else source['value'],'observed_basis':None if source is None else source.get('observed_basis'),'frames':len(frames),'pending':eid in r.pending_event_ids(),'errors':r.stats['errors'],'no_reading':r.stats['no_reading']}
    receipt['stages'].append(item);assert item['errors']==0 and item['away_time_unchanged'];return item
   first=await step('initial_tight_book',100);assert first['stamped']==pytest.approx(.04)
   assert str(aid) not in first['observed_basis']
@@ -85,12 +85,22 @@ async def test_thin_book_change_must_reach_headline(rig,monkeypatch,kind):
    selected=price(delivered)
    no_trade=dict(delivered);no_trade.pop('price_dollars',None)
    receipt['inputs'].append({'raw_ticker':raw,'healthy_book_quote':quote,'delivered':delivered,'selected':selected,'selected_without_trade':price(no_trade),'midpoint_proof':None if not hasattr(s,'current_book_midpoint') else s.current_book_midpoint(h),'book_owner':s._book._owners[h],'book_sid':s._book_sid,'book_awaiting':h in s._book._awaiting,'subscription_healthy':s.is_subscribed})
-   assert selected==pytest.approx(float(ask))
    async with maker() as db:
-    await db.execute(update(FuturesOutcome).where(FuturesOutcome.id==hid).values(current_probability=selected,last_updated=func.clock_timestamp()));await db.commit()
+    if kind == 'zero_bid_ask':
+     assert selected is None
+     observed_at = await db.scalar(select(func.clock_timestamp()))
+     await record_kalshi_ask_ceilings(db, market.id, {h: float(ask)}, observed_at=observed_at)
+    else:
+     assert selected == pytest.approx(float(ask))
+     await db.execute(update(FuturesOutcome).where(FuturesOutcome.id==hid).values(current_probability=selected,last_updated=func.clock_timestamp()))
+    await db.commit()
    await step('thin_input_'+str(index+1),101+index)
   # Same persisted evidence retried without a new input: no new book capability appears.
   await step('same_input_retry_1',104);await step('same_input_retry_2',105)
+  thin_steps = [x for x in receipt['stages'] if x['label'].startswith('thin_input_')]
+  if kind == 'zero_bid_ask':
+   assert all(step['stored_home'] is None and step['frames'] == first['frames'] for step in thin_steps)
+   return
   if hasattr(s,'current_book_midpoint'):
    protected_value=receipt['stages'][-1]['stamped'];protected_frames=len(frames)
    # Existing fail-closed protections must not be weakened to manufacture progress.
@@ -109,7 +119,6 @@ async def test_thin_book_change_must_reach_headline(rig,monkeypatch,kind):
    receipt['safety_assertions']='reset, mismatched stored home, settled home all refuse; stale away never contributes'
   # Preserve all observations before the regression assertion fails in candidate.
   (ROOT/(ARM+'-'+kind+'.json')).write_text(json.dumps(receipt,indent=2,default=str)+'\n')
-  observed=[x['stamped'] for x in receipt['stages'] if x['label'].startswith('thin_input_')]
-  assert observed==pytest.approx([.08,.12,.10]), 'fresh normal-policy changes stored but refused by midpoint-only headline gate'
+  assert [step['stamped'] for step in thin_steps] == pytest.approx([.08,.12,.10])
  finally:
   (ROOT/(ARM+'-'+kind+'.json')).write_text(json.dumps(receipt,indent=2,default=str)+'\n')

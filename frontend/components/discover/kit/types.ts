@@ -5,6 +5,8 @@
 
 export type KitV1Layout = "stack" | "grid" | "calendar" | "axis";
 
+export type KitV1Tone = "primary" | "secondary" | "muted" | "accent" | "warn";
+
 export type KitV1MarkKind =
   | "picture"
   | "word"
@@ -46,7 +48,8 @@ export interface KitV1Route {
 
 export interface KitV1PictureMark {
   mark: "picture";
-  url: string;
+  url: string | null;
+  initials?: string | null;
   alt: string;
   subject_kind: string;
   size?: "xs" | "sm" | "md";
@@ -59,7 +62,7 @@ export interface KitV1WordMark {
   secondary_text?: string;
   deadline_iso?: string;
   style?: "row" | "sub" | "kicker" | "pill" | "meta" | "rank" | "hero_label";
-  tone?: "primary" | "secondary" | "muted" | "accent";
+  tone?: KitV1Tone;
   align?: "left" | "center" | "right";
   width?: "xs" | "sm" | "flex" | "auto";
   bold?: boolean;
@@ -71,7 +74,7 @@ export interface KitV1NumberMark {
   display: string;
   unit?: "%" | "days" | "one_in_n";
   deadline_iso?: string;
-  tone?: "primary" | "secondary" | "muted" | "accent";
+  tone?: KitV1Tone;
   prominence?: "hero" | "primary" | "cell" | "secondary";
   align?: "left" | "center" | "right";
   width?: "xs" | "sm" | "auto";
@@ -127,6 +130,7 @@ export interface KitV1DotMark {
   color?: KitV1AdaptiveColor | null;
   in_band?: boolean;
   picture?: KitV1PictureMark | null;
+  badge_text?: string | null;
 }
 
 export interface KitV1LineMark {
@@ -147,12 +151,18 @@ export type KitV1Mark =
   | KitV1DotMark
   | KitV1LineMark;
 
+export interface KitV1CellProvenance {
+  market_id: number;
+  outcome_id?: number | null;
+}
+
 export interface KitV1StackItem {
   id: string;
   sport_key?: string;
   marks: KitV1Mark[];
   sub_marks?: KitV1Mark[];
   route?: KitV1Route;
+  provenance?: KitV1CellProvenance;
   divider_after?: { style?: string; label?: string } | null;
 }
 
@@ -168,6 +178,7 @@ export interface KitV1GridCell {
   column_key: string;
   marks: KitV1Mark[];
   route?: KitV1Route;
+  provenance?: KitV1CellProvenance;
 }
 
 export interface KitV1GridRow {
@@ -201,6 +212,7 @@ export interface KitV1AxisSeries {
   id: string;
   leading?: KitV1Mark[];
   marks: KitV1Mark[];
+  provenance?: KitV1CellProvenance;
 }
 
 export interface KitV1AxisBody {

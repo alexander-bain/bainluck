@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import time as _real_time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -559,12 +560,45 @@ async def test_a_category_browse_never_shares_the_concept_artifact_with_discover
     )
 
 
+class _FixedTimeShim:
+    """Scoped clock proxy returning fixed wall/monotonic values."""
+
+    def __init__(self, *, wall: float, mono: float):
+        self._wall = wall
+        self._mono = mono
+
+    def time(self) -> float:
+        return self._wall
+
+    def monotonic(self) -> float:
+        return self._mono
+
+    def perf_counter(self) -> float:
+        return self._mono
+
+    def __getattr__(self, name: str):
+        return getattr(_real_time, name)
+
+
 @pytest.mark.asyncio
 async def test_two_identical_discover_requests_still_share_one_concept_build(
-    feed_client, adjacent_tier_probe
+    feed_client, adjacent_tier_probe, monkeypatch
 ):
     """The control for the test above: the key was made MORE precise, not
     unshareable. Re-keying is only free if identical requests still hit."""
+    import app.utils.principal_independent_cache as pic
+
+    fixed_clock = _FixedTimeShim(wall=NOW.timestamp(), mono=1_000_000.0)
+    real_time_bucket = pic.time_bucket
+    monkeypatch.setattr(
+        pic,
+        "time_bucket",
+        lambda _now, seconds: real_time_bucket(NOW, seconds),
+    )
+    monkeypatch.setattr(pic, "time", fixed_clock)
+    monkeypatch.setattr(feed_mod, "time", fixed_clock)
+    monkeypatch.setenv("FEED_SHARED_BUILD_CROSS_WORKER", "0")
+
     await _feed_names(feed_client)
     await _feed_names(feed_client, offset=1)
     assert adjacent_tier_probe["concepts"] == [None], (

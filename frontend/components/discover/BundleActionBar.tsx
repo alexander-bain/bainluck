@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { trackEvent } from "@/lib/analytics";
-import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
+import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction, type DiscoverItemAnalytics } from "@/lib/discoverInteractions";
 import { useDiscoverFeedbackAttempt } from "@/lib/discoverFeedbackGate";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
+import { SHAPE_UNSHAPED } from "@/lib/marketShape";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import { buildBundleShareText, buildDiscoverShareUrl, type BundleShareMember } from "@/lib/share";
@@ -19,10 +20,14 @@ interface BundleActionBarProps {
   sharedQuestion?: string | null;
   /** Stable id for the fold, when the backend served one. Theme bundles have it; client-side groups do not. */
   storyKey?: string | null;
+  /** Canonical set/bundle identifier recorded when the reader taps "Not for me" (#13644). */
+  setId?: string | null;
   positionIndex?: number;
   /** B7: Representative observation timestamp for stale price-age disclosure (`PriceAgeMark`). */
   priceObservedAt?: string | null;
   priceStatus?: string;
+  /** Called after the #9643 feedback gate permits dismissing this grouped card (#13644). */
+  onDismiss?: () => void;
 }
 
 /**
@@ -54,9 +59,9 @@ interface BundleActionBarProps {
  * quote a number the reader is unable to find on the row above it, and an
  * inverted binary is not shared as its No side (UX-P238).
  */
-export function BundleActionBar({ items, title, sharedQuestion, storyKey, positionIndex, priceObservedAt, priceStatus }: BundleActionBarProps) {
+export function BundleActionBar({ items, title, sharedQuestion, storyKey, setId, positionIndex, priceObservedAt, priceStatus, onDismiss }: BundleActionBarProps) {
   const [liked, setLiked] = useState(false);
-  // #9643 — a bundle like is preference feedback, same as a card's: a refused
+  // #9643 — a bundle like or dismiss is preference feedback, same as a card's: a refused
   // attempt leaves the button unliked and the page opens the sign-in invitation.
   const feedbackAttempt = useDiscoverFeedbackAttempt();
   const primary = items[0];
@@ -69,6 +74,10 @@ export function BundleActionBar({ items, title, sharedQuestion, storyKey, positi
   // No id of its own: the fold's story key when the backend served one, else the
   // primary member's, which is what every other rail already keys this fold on.
   const shareId = storyKey || analytics.item_id;
+  const resolvedSetId =
+    (typeof setId === "string" && setId.trim()) ||
+    (typeof storyKey === "string" && storyKey.trim()) ||
+    `bundle:${String(analytics.item_id)}`;
   const shareUrl = buildDiscoverShareUrl("/discover", "futures", shareId);
   const shareText = buildBundleShareText(question, items.map(bundleShareMember), items.length);
 
@@ -92,6 +101,30 @@ export function BundleActionBar({ items, title, sharedQuestion, storyKey, positi
     sendDiscoverInteraction(analytics, action, positionIndex, "bundle");
   };
 
+  // #13644 — Record "not for me" directly against the set (`item_type="bundle"`,
+  // `item_id=resolvedSetId`) so both feed suppression and the scout (385: A) can read it.
+  const handleDismissSet = () => {
+    if (feedbackAttempt && !feedbackAttempt()) return;
+    const setAnalytics: DiscoverItemAnalytics = {
+      ...analytics,
+      content_type: "bundle",
+      item_id: resolvedSetId,
+      item_name: question,
+      market_type: SHAPE_UNSHAPED,
+    };
+    trackEvent("feed_card_action", {
+      action: "dismiss",
+      ...setAnalytics,
+      story_key: storyKey ?? resolvedSetId,
+      member_count: items.length,
+      position: positionIndex,
+      surface: "discover",
+    });
+    recordDiscoverInteraction(analytics.category, "dismiss");
+    sendDiscoverInteraction(setAnalytics, "dismiss", positionIndex, "bundle");
+    onDismiss?.();
+  };
+
   return (
     <div className="px-4 pb-3" data-testid="bundle-action-bar">
       <ActionBar
@@ -101,6 +134,7 @@ export function BundleActionBar({ items, title, sharedQuestion, storyKey, positi
           setLiked(next);
           track(next ? "like" : "unlike");
         }}
+        onDismiss={handleDismissSet}
         shareUrl={shareUrl}
         shareTitle={question}
         shareText={shareText}

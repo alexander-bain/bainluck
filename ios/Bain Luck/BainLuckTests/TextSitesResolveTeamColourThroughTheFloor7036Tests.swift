@@ -179,8 +179,10 @@ final class TextSitesResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
     func testMyStuffsProbabilityColumnRoutesThroughTheFloor() throws {
         let body = try String(contentsOf: Self.myStuffViewURL, encoding: .utf8)
 
-        XCTAssertEqual(body.components(separatedBy: "MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)").count - 1, 2,
-                       "both the multi-source and single-source branches must route through the floor")
+        XCTAssertTrue(body.contains("let probHex = MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)"),
+                      "mergedFutureRow must resolve probHex through the #7036 floor")
+        XCTAssertEqual(body.components(separatedBy: ".foregroundStyle(Color(hex: probHex))").count - 1, 4,
+                       "both AX and compact multi-source/single-source branches must paint via probHex")
         XCTAssertFalse(body.contains(".foregroundStyle(Color(hex: item.matchedTeam?.primaryColor ?? \"#6b7280\"))"),
                        "a My Stuff probability is being painted from the raw primary_color again")
     }
