@@ -4155,18 +4155,16 @@ struct NativeGroupCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if let probability = summary.probability {
                 VStack(alignment: isAX ? .leading : .trailing, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(formatProbability(probability, renderedPercent: summary.renderedPercent))
-                            .font(.title2.weight(.bold).monospacedDigit())
-                            .foregroundStyle(primaryInk)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
+                    HStack(alignment: .center, spacing: 4) {
+                        DiscoverPlainRowPercentPill13551(
+                            label: formatProbability(probability, renderedPercent: summary.renderedPercent)
+                        )
                         if let mark = SourceMarkButton(
                             summary.sourceMark,
                             number: summary.sourceMark?.state == .settled ? nil : probability,
                             renderedPercent: summary.sourceMark?.state == .settled ? nil : summary.renderedPercent,
                             subject: summary.label,
-                            numberSize: 18,
+                            numberSize: 16,
                             compactRow: true
                         ) {
                             mark.buttonStyle(.borderless)
@@ -5321,6 +5319,33 @@ private struct ShareSheet: View {
     }
 }
 #endif
+
+// MARK: - Plain Row Percent Pill (#13551 Pile 1)
+
+struct DiscoverPlainRowPercentPill13551: View {
+    let label: String
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isDark: Bool {
+        colorScheme == .dark
+    }
+
+    var body: some View {
+        Text(label)
+            .font(Font.callout.weight(.bold).monospacedDigit())
+            .foregroundStyle(isDark ? Color.primary : DS.textPrimary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(
+                Capsule().fill(isDark ? Color.white.opacity(0.08) : DS.surface)
+            )
+            .overlay(
+                Capsule().stroke(isDark ? Color.white.opacity(0.18) : DS.border, lineWidth: 1)
+            )
+    }
+}
 
 // MARK: - Movement Badge
 
