@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.utils.cu_event_facts import cu_event_facts, cu_unlinked_event_date
+from app.utils.cu_event_facts import cu_event_facts, cu_model_geography, cu_unlinked_event_date
 
 from app.tasks.enrich_markets import (
     _compute_liveness,
@@ -180,18 +180,18 @@ class TestWriterV4Rubric:
 
 
 @pytest.mark.parametrize(
-    ("league", "geography"),
+    ("league", "day"),
     [
-        ("soccer_france_coupe_de_france", "country:FR"),
-        ("soccer_netherlands_knvb_cup", "country:NL"),
-        ("soccer_paraguay_primera_division", "country:PY"),
-        ("soccer_uefa_europa_league", "global"),
-        ("icehockey_nhl", "us"),
+        ("soccer_france_coupe_de_france", "2025-11-28"),
+        ("soccer_netherlands_knvb_cup", "2025-11-28"),
+        ("soccer_paraguay_primera_division", "2025-11-28"),
+        ("soccer_uefa_europa_league", "2025-11-28"),
+        ("icehockey_nhl", "2025-11-28"),
         ("soccer_other", None),
         (None, None),
     ],
 )
-def test_linked_match_facts_take_the_day_and_league(league, geography):
+def test_linked_match_facts_take_the_day_from_the_league_calendar(league, day):
     facts = cu_event_facts(
         "Spread: home team (-1.5)",
         linked_game_id=1,
@@ -199,38 +199,56 @@ def test_linked_match_facts_take_the_day_and_league(league, geography):
         start_source="odds_api",
         linked_league=league,
     )
-    assert facts == {
-        "event_date": "2025-11-28" if geography else None,
-        "geography": geography,
-    }
+    assert facts == {"event_date": day}
 
 
 @pytest.mark.parametrize(
-    ("title", "geography"),
+    ("model_geography", "league", "home_league", "away_league", "expected"),
     [
-        ("SAS Épinal vs. Amiens SC", "country:FR"),
-        ("Almere City FC vs. VV Sint Bavo - Exact Score", "country:NL"),
-        ("Lille OSC vs. FC Bayern München: Lille OSC 1st Half O/U 1.5", "global"),
-        ("Sportivo San Lorenzo vs. Sportivo Ameliano: Sportivo Ameliano O/U 2.5", "country:PY"),
-        ("Lille OSC vs. Unidentified Club", None),
-        ("Sportivo San Lorenzo vs. San Lorenzo", None),
+        ("us", "soccer_other", None, None, None),
+        ("us", "soccer_uefa_europa_league", "soccer_italy_serie_a", None, None),
+        ("us", "soccer_other", "soccer_usa_mls", None, "us"),
+        ("us", "soccer_other", None, "soccer_usa_mls", "us"),
+        ("us", "soccer_usa_mls", None, None, "us"),
+        ("us", "soccer_italy_serie_a", None, None, "us"),
+        ("us", "basketball_other", None, None, "us"),
+        ("us", None, None, None, "us"),
+        ("country:DE", "soccer_other", None, None, "country:DE"),
+        ("global", "soccer_other", None, None, "global"),
     ],
 )
-def test_unclassified_soccer_fixture_uses_only_verified_club_countries(title, geography):
-    assert cu_event_facts(title, linked_game_id=1, linked_league="soccer_other") == {
-        "event_date": None,
-        "geography": geography,
-    }
+def test_only_unsupported_us_is_cleared(model_geography, league, home_league, away_league, expected):
+    assert cu_model_geography(
+        model_geography,
+        linked_league=league,
+        home_team_league=home_league,
+        away_team_league=away_league,
+    ) == expected
 
 
-def test_linked_fixture_uses_both_team_leagues_for_a_prop_title():
-    assert cu_event_facts(
+@pytest.mark.parametrize(
+    ("league", "home_league", "away_league", "geography"),
+    [
+        ("soccer_other", "soccer_italy_serie_a", "soccer_germany_bundesliga", "global"),
+        ("soccer_italy_serie_a", "soccer_italy_serie_a", "soccer_germany_bundesliga", "global"),
+        ("soccer_uefa_europa_league", "soccer_italy_serie_a", "soccer_italy_serie_b", "country:IT"),
+        ("soccer_other", "soccer_italy_serie_a", None, None),
+    ],
+)
+def test_linked_fixture_derives_geography_when_both_club_countries_are_known(
+    league, home_league, away_league, geography
+):
+    facts = cu_event_facts(
         "Total Corners: Over 10.5",
         linked_game_id=1,
-        linked_league="soccer_other",
-        home_team=("Home Team", "soccer_italy_serie_a"),
-        away_team=("Away Team", "soccer_germany_bundesliga"),
-    ) == {"event_date": None, "geography": "global"}
+        linked_league=league,
+        home_team_league=home_league,
+        away_team_league=away_league,
+    )
+    expected = {"event_date": None}
+    if geography is not None:
+        expected["geography"] = geography
+    assert facts == expected
 
 
 @pytest.mark.parametrize(
@@ -311,7 +329,7 @@ def test_unscheduled_link_supplies_no_event_day(source):
         start_source=source,
         linked_league="basketball_ncaab",
     )
-    assert facts == {"event_date": None, "geography": "us"}
+    assert facts == {"event_date": None}
 
 
 @pytest.mark.parametrize(

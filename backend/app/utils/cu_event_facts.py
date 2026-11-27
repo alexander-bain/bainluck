@@ -8,10 +8,6 @@ from app.utils.feed_market_quality import (
     is_us_state_legislative_district,
     names_us_election_office,
 )
-from app.utils.prediction_market_matching import (
-    extract_matchup,
-    matchup_for_link_search,
-)
 from app.utils.scheduled_start import start_is_from_schedule
 
 # Canonical soccer keys name the country in their second component.
@@ -128,20 +124,6 @@ _INTERNATIONAL_SOCCER_PREFIXES = (
     "soccer_uefa_",
 )
 
-# Reviewed whole club names for fixtures whose team rows lack a domestic league.
-# These are club countries and apply to each club across competitions.
-_SOCCER_CLUB_COUNTRIES = {
-    "almere city fc": "NL",
-    "amiens sc": "FR",
-    "bayern munich": "DE",
-    "fc bayern münchen": "DE",
-    "lille osc": "FR",
-    "sas épinal": "FR",
-    "sportivo ameliano": "PY",
-    "sportivo san lorenzo": "PY",
-    "vv sint bavo": "NL",
-}
-
 _ELECTION_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _ELECTION_RACE_RE = re.compile(r"\b(?:election|winner|wins?|race)\b", re.IGNORECASE)
 _NON_GENERAL_ELECTION_RE = re.compile(
@@ -176,41 +158,31 @@ def _league_zone(league: str | None, geography: str | None) -> str | None:
     return _LEAGUE_ZONE_BY_GEOGRAPHY.get(geography or "")
 
 
-def _club_geography(
-    name: str | None, league: str | None, *, soccer: bool
-) -> str | None:
-    if soccer and name:
-        country = _SOCCER_CLUB_COUNTRIES.get(name.strip().casefold())
-        if country:
-            return f"country:{country}"
+def _league_country(league: str | None) -> str | None:
     geography = _league_geography(league)
     return geography if geography != "global" else None
 
 
-def _fixture_geography(
-    title: str,
-    league: str | None,
-    home_team: tuple[str | None, str | None],
-    away_team: tuple[str | None, str | None],
-) -> str | None:
-    geography = _league_geography(league)
-    if geography == "global":
-        return geography
-    soccer = bool(league and league.startswith("soccer_"))
-    if soccer and not home_team[0] and not away_team[0]:
-        # An older fixture or frozen replay can lack participant records.
-        # Accept only whole club names after removing the market's prop suffix.
-        matchup = matchup_for_link_search(extract_matchup(title), title)
-        if matchup:
-            home_team = (matchup.team_a, home_team[1])
-            away_team = (matchup.team_b, away_team[1])
-    home_geography = _club_geography(*home_team, soccer=soccer)
-    away_geography = _club_geography(*away_team, soccer=soccer)
-    if home_geography and away_geography:
-        if home_geography != away_geography:
-            return "global"
-        return geography or home_geography
-    return geography
+def cu_model_geography(
+    model_geography: object,
+    *,
+    linked_league: str | None,
+    home_team_league: str | None,
+    away_team_league: str | None,
+) -> object:
+    """Clear an unsupported U.S. answer for a linked soccer fixture."""
+    if (
+        model_geography == "us"
+        and linked_league
+        and linked_league.startswith("soccer_")
+        and _league_country(linked_league) is None
+        and "us" not in (
+            _league_country(home_team_league),
+            _league_country(away_team_league),
+        )
+    ):
+        return None
+    return model_geography
 
 
 def _election_date_facts(title: str) -> dict[str, str | None]:
@@ -240,8 +212,8 @@ def cu_event_facts(
     linked_start: datetime | None = None,
     start_source: str | None = None,
     linked_league: str | None = None,
-    home_team: tuple[str | None, str | None] = (None, None),
-    away_team: tuple[str | None, str | None] = (None, None),
+    home_team_league: str | None = None,
+    away_team_league: str | None = None,
 ) -> dict[str, str | int | None]:
     """Return fields supplied by a linked fixture or a U.S. election title."""
     fields: dict[str, str | int | None] = {}
@@ -249,10 +221,14 @@ def cu_event_facts(
         # Linked markets take the fixture's scheduling evidence. A prediction
         # market's close/listing stamp cannot supply a day for a linked game.
         fields["event_date"] = None
-        geography = _fixture_geography(title, linked_league, home_team, away_team)
-        fields["geography"] = geography
+        home_country = _league_country(home_team_league)
+        away_country = _league_country(away_team_league)
+        if home_country and away_country:
+            fields["geography"] = home_country if home_country == away_country else "global"
         zone = _league_zone(
-            linked_league, _league_geography(linked_league) or geography
+            linked_league,
+            _league_geography(linked_league)
+            or (home_country if home_country == away_country else None),
         )
         if zone and linked_start is not None and start_is_from_schedule(start_source):
             start = linked_start

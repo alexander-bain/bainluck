@@ -437,7 +437,17 @@ async def test_cu_v2_grounds_the_linked_day_and_screens_unlinked_payout_copies(
     assert unlinked["geography"] == "global"
 
 
-async def test_cu_v2_stores_club_and_election_facts_over_the_model(pg_engine, monkeypatch):
+@pytest.mark.parametrize(
+    ("home_key", "away_key", "model_geography", "expected"),
+    [
+        ("soccer_france_ligue_one", "soccer_germany_bundesliga", "country:FR", "global"),
+        ("soccer_other", "soccer_other", "us", None),
+        ("soccer_other", "soccer_other", "country:DE", "country:DE"),
+    ],
+)
+async def test_cu_v2_stores_club_and_election_facts_over_the_model(
+    pg_engine, monkeypatch, home_key, away_key, model_geography, expected
+):
     from app.tasks.enrich_markets import DISCOVER_LLM_METADATA_KEY, enrich_cu_v2_profiles
 
     async with pg_engine.begin() as conn:
@@ -455,7 +465,7 @@ async def test_cu_v2_stores_club_and_election_facts_over_the_model(pg_engine, mo
         )
         await conn.execute(
             text("UPDATE teams SET sport_id = (SELECT id FROM sports WHERE key = :key) WHERE id = :id"),
-            [{"key": key, "id": team_id} for key, team_id in zip(league_keys[1:], TEAM_IDS)],
+            [{"key": key, "id": team_id} for key, team_id in zip((home_key, away_key), TEAM_IDS)],
         )
         await conn.execute(
             text("UPDATE futures_markets SET name = :name WHERE id = :id"),
@@ -468,7 +478,7 @@ async def test_cu_v2_stores_club_and_election_facts_over_the_model(pg_engine, mo
             ),
             {"name": "Vermont House Orleans-3 winner? (2028)", "id": M2},
         )
-    payload = {**_cu_payload(), "geography": "country:FR", "event_date": "2028-11-08"}
+    payload = {**_cu_payload(), "geography": model_geography, "event_date": "2028-11-08"}
     _install(monkeypatch, _LLMStub(payload))
 
     stats = await enrich_cu_v2_profiles(limit=2)
@@ -477,7 +487,7 @@ async def test_cu_v2_stores_club_and_election_facts_over_the_model(pg_engine, mo
     rows = await _rows(pg_engine)
     linked = rows[M1]["market_metadata"][DISCOVER_LLM_METADATA_KEY]
     district = rows[M2]["market_metadata"][DISCOVER_LLM_METADATA_KEY]
-    assert linked["geography"] == "global"
+    assert linked["geography"] == expected
     assert linked["event_date"] is None
     assert district["geography"] == "local"
     assert district["event_date"] == "2028-11-07"
