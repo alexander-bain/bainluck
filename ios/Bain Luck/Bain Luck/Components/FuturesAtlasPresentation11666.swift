@@ -449,7 +449,7 @@ enum FuturesAtlasPresentation11666 {
 
         return orderedOutcomes.enumerated().map { index, outcome in
             let openingText = FuturesReadableOpening8313.of(outcome).map { opening in
-                "Opening chance \(formatWholePercent(opening * 100))%"
+                "Opening chance \(DiscoverRoundupCardModel.probabilityText(probability: opening, renderedPercent: nil))"
             }
             let threshold = parseThresholdValue(from: outcome.name)
                 ?? NumericalMarketScaleOrder228.parseLabelKey(outcome.name)?.primary
@@ -504,7 +504,10 @@ enum FuturesAtlasPresentation11666 {
             // read more than 30 minutes ago keeps its number and shows `"As of 1:29 PM"`
             // (never `"checked"`, never `"stale"`, and never hidden by an age cutoff).
             let pct = renderedPercent ?? Int((prob * 1000 / 10).rounded())
-            let formatted = "\(percentNumber(prob * 100, renderedPercent: renderedPercent))%"
+            let formatted = DiscoverRoundupCardModel.probabilityText(
+                probability: prob,
+                renderedPercent: renderedPercent
+            )
             let moveText = outcome.probabilityChange24h.flatMap { futuresHeroMoveText($0) }
             let isUp = outcome.probabilityChange24h.map { $0 > 0 }
             let asOfText = outcomeAsOfText(outcome, now: now, timeZone: timeZone)
@@ -716,7 +719,7 @@ enum FuturesAtlasPresentation11666 {
         let outcomeName = selectedOutcome?.name ?? market.name
         let openingValue: String
         if let selectedOutcome, let opening = FuturesReadableOpening8313.of(selectedOutcome) {
-            openingValue = "\(formatWholePercent(opening * 100))%"
+            openingValue = DiscoverRoundupCardModel.probabilityText(probability: opening, renderedPercent: nil)
         } else {
             openingValue = "Not supplied"
         }
@@ -959,10 +962,6 @@ enum FuturesAtlasPresentation11666 {
     }
 
     // MARK: - Formatting Helpers
-
-    nonisolated private static func formatWholePercent(_ pct: Double) -> Int {
-        Int(pct.rounded())
-    }
 
     nonisolated private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()

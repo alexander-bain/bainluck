@@ -710,7 +710,7 @@ struct KitRingMarkView366B: View {
 
     var body: some View {
         let clamped = min(1.0, max(0.0, mark.progress))
-        let pct = Int((clamped * 100.0).rounded())
+        let defaultLabel = DiscoverRoundupCardModel.probabilityText(probability: clamped, renderedPercent: nil)
         let strokeColor = mark.tone == .muted
             ? KitTones366B.textColor(for: .muted, scheme: colorScheme)
             : KitTones366B.brandAccent(for: colorScheme)
@@ -722,7 +722,7 @@ struct KitRingMarkView366B: View {
                 .trim(from: 0, to: clamped)
                 .stroke(strokeColor, style: StrokeStyle(lineWidth: dynamicTypeSize.isAccessibilitySize ? 4 : 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-            Text(mark.label ?? "\(pct)%")
+            Text(mark.label ?? defaultLabel)
                 .font(.caption2.weight(.bold).monospacedDigit())
                 .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
                 .lineLimit(1)
