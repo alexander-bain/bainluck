@@ -89,7 +89,7 @@ ruff==0.17.6
 # and `named_selects` returning something other than the outer projection would red
 # the whole backend job rather than one test. Pinned to the proven major; widen it
 # by testing it, not by deleting it.
-sqlglot==30.33.0
+sqlglot==30.34.0
 
 # Full transitive dependency lock (#13491): all remaining 73 packages installed by
 # the 41de6f5c (v6586) Heroku deploy build log, exact-pinned alongside the 33 direct
