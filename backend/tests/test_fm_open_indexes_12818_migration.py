@@ -28,7 +28,7 @@ def test_revision_metadata_and_safety_rules():
     text = MIGRATION.read_text(encoding="utf-8")
 
     assert len(mod.revision) <= 32
-    assert mod.down_revision == "retired_team_redirects_13229"
+    assert mod.down_revision == "anon_install_counts_434a"
     assert "MIGRATION-CLASS" in text
     assert f"alembic downgrade {mod.down_revision}" in text
 

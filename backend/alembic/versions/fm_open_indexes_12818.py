@@ -20,7 +20,7 @@ go. Prepared ahead of Step 1 open-catalog growth (55k -> 179.2k open markets):
 
 THE UNDO LINE (D51):
 
-    alembic downgrade retired_team_redirects_13229
+    alembic downgrade anon_install_counts_434a
 
 Deploy safety:
 Fully transactional single-unit migration (preserves ``env.py`` lock-timeout
@@ -41,7 +41,7 @@ application a metadata no-op:
         WHERE status = 'open' AND (market_metadata ->> 'polymarket_event_slug') IS NOT NULL;
 
 Revision ID: fm_open_indexes_12818
-Revises: retired_team_redirects_13229
+Revises: anon_install_counts_434a
 """
 
 from typing import Sequence, Union
@@ -50,7 +50,7 @@ from alembic import op
 from sqlalchemy import text
 
 revision: str = "fm_open_indexes_12818"
-down_revision: Union[str, None] = "retired_team_redirects_13229"
+down_revision: Union[str, None] = "anon_install_counts_434a"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
