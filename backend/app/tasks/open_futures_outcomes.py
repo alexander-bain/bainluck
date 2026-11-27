@@ -8,9 +8,11 @@ this task's state is current (``app.utils.open_futures_outcomes``).
 ONE PASS, every 5 minutes, each step its own short transaction:
 
 1. **Watermark.** ``max(futures_outcomes.id)`` before anything is read.
-2. **Reopened markets.** Open markets with zero rows in the copy (reopened since
-   the last closed sweep) get all their outcomes upserted before the delta so
-   newly added outcomes above ``reader_floor`` never hide older legs.
+2. **Reopened markets.** Pick open ``futures_markets`` IDs with zero rows in
+   the copy first (``REOPENED_MARKET_IDS_SQL``), then batch-upsert all their
+   outcomes from ``futures_outcomes`` by ``market_id = ANY(:market_ids)`` before
+   the delta so newly added outcomes above ``reader_floor`` never hide older legs
+   and empty/normal passes never plan a full join across ``futures_outcomes``.
 3. **Delta.** Outcomes of open markets with an id above the PREVIOUS pass's
    reader floor (one pass of slack for a row whose id was taken before it
    committed), upserted. Primary-key range; a few thousand rows.
@@ -42,7 +44,8 @@ import logging
 import time
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import BigInteger, bindparam, func, select, text
+from sqlalchemy.dialects.postgresql import ARRAY
 
 from app.utils.open_futures_outcomes import OUTCOME_COPY_VERSION, STALE_AFTER_SECONDS, STATE_KEY
 
@@ -74,19 +77,31 @@ ON CONFLICT (outcome_id) DO UPDATE
                          EXCLUDED.external_id, EXCLUDED.is_winner, EXCLUDED.resolution_source)
 """
 
-REOPENED_SQL = text(
+#: Batch size when restoring outcomes of reopened markets (`market_id = ANY(...)`).
+REOPENED_MARKET_BATCH_SIZE = 500
+
+REOPENED_MARKET_IDS_SQL = text(
     """
-INSERT INTO open_futures_outcomes (outcome_id, market_id, name, external_id, is_winner, resolution_source)
-SELECT o.id, o.market_id, o.name, o.external_id, o.is_winner, o.resolution_source
+SELECT m.id
   FROM futures_markets m
-  JOIN futures_outcomes o ON o.market_id = m.id
  WHERE m.status = 'open'
    AND NOT EXISTS (
        SELECT 1 FROM open_futures_outcomes t WHERE t.market_id = m.id
    )
 """
-    + _UPSERT_TAIL
 )
+
+REOPENED_OUTCOMES_SQL = text(
+    """
+INSERT INTO open_futures_outcomes (outcome_id, market_id, name, external_id, is_winner, resolution_source)
+SELECT o.id, o.market_id, o.name, o.external_id, o.is_winner, o.resolution_source
+  FROM futures_outcomes o
+  JOIN futures_markets m ON m.id = o.market_id
+ WHERE o.market_id = ANY(:market_ids)
+   AND m.status = 'open'
+"""
+    + _UPSERT_TAIL
+).bindparams(bindparam("market_ids", type_=ARRAY(BigInteger)))
 
 DELTA_SQL = text(
     """
@@ -144,6 +159,30 @@ async def _step(session, stmt, params: dict | None = None) -> int:
     return int(result.rowcount or 0) if result.rowcount is not None else 0
 
 
+async def _sync_reopened_markets(session) -> tuple[int, float]:
+    """Pick reopened market IDs first, then upsert their outcomes in batches.
+
+    Fable (#13865) noted that joining ``futures_markets`` directly to
+    ``futures_outcomes`` lets the planner risk scanning all open outcomes when
+    few markets are missing copy rows. Materializing the candidate ``market_id``
+    list first ensures zero reads of ``futures_outcomes`` when empty and bounded
+    index probes via ``ix_futures_outcomes_market_id`` otherwise.
+    """
+    t0 = time.monotonic()
+    market_ids = [int(mid) for mid in (await session.scalars(REOPENED_MARKET_IDS_SQL)).all()]
+    if not market_ids:
+        await session.commit()
+        return 0, round(time.monotonic() - t0, 3)
+
+    restored = 0
+    for start in range(0, len(market_ids), REOPENED_MARKET_BATCH_SIZE):
+        batch = market_ids[start : start + REOPENED_MARKET_BATCH_SIZE]
+        res = await session.execute(REOPENED_OUTCOMES_SQL, {"market_ids": batch})
+        restored += int(res.rowcount or 0) if res.rowcount is not None else 0
+    await session.commit()
+    return restored, round(time.monotonic() - t0, 3)
+
+
 async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECONDS) -> dict[str, Any]:
     """One maintenance pass. Returns a summary with a ``terminal`` (task_verdict)."""
     from app.models.models import FuturesOutcome
@@ -155,7 +194,13 @@ async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECON
         return {"terminal": "partial", "skipped": "another pass holds the lock"}
     started = time.monotonic()
     deadline = started + budget_seconds
-    summary: dict[str, Any] = {"slices": [], "reopened": 0, "delta": 0, "closed": 0}
+    summary: dict[str, Any] = {
+        "slices": [],
+        "reopened": 0,
+        "reopened_seconds": 0.0,
+        "delta": 0,
+        "closed": 0,
+    }
     try:
         state = _load_state(rc)
         same_version = state.get("version") == OUTCOME_COPY_VERSION
@@ -193,7 +238,9 @@ async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECON
             # that single row and cause NOT EXISTS to skip the market's older
             # legs. Only run on steady passes (when all slices are populated).
             if not filling and time.monotonic() < deadline:
-                summary["reopened"] = await _step(session, REOPENED_SQL)
+                reopened_count, reopened_secs = await _sync_reopened_markets(session)
+                summary["reopened"] = reopened_count
+                summary["reopened_seconds"] = reopened_secs
             previous_floor = state.get("reader_floor")
             if isinstance(previous_floor, int) and time.monotonic() < deadline:
                 summary["delta"] = await _step(session, DELTA_SQL, {"floor": previous_floor})

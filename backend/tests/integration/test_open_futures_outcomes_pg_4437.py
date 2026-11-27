@@ -532,6 +532,8 @@ async def test_a_reopened_market_returns_to_the_poll_population_on_the_next_pass
         await session.commit()
     close_out = await _pass(rig)
     assert close_out["closed"] == 2
+    assert close_out["reopened"] == 0
+    assert isinstance(close_out["reopened_seconds"], float) and close_out["reopened_seconds"] >= 0.0
     assert {m for m, _ in await _copy_rows(rig)} == {rig["ids"]["title"]}
 
     state = json.loads(rig["redis"].data[STATE_KEY])
@@ -542,7 +544,7 @@ async def test_a_reopened_market_returns_to_the_poll_population_on_the_next_pass
 
     # 2. Reopen the market while adding a new outcome above reader_floor so
     # both existing legs (<= floor) and the new leg (> floor) must return via
-    # REOPENED_SQL running before DELTA_SQL.
+    # _sync_reopened_markets running before DELTA_SQL.
     async with rig["maker"]() as session:
         await session.execute(
             update(FuturesMarket)
@@ -570,6 +572,7 @@ async def test_a_reopened_market_returns_to_the_poll_population_on_the_next_pass
     # 3. Run ONE steady pass (SLICE_SQL visits `next_slice != market_id % SLICES`).
     reopen_out = await _pass(rig)
     assert reopen_out["reopened"] == 3
+    assert isinstance(reopen_out["reopened_seconds"], float) and reopen_out["reopened_seconds"] >= 0.0
 
     async with rig["maker"]() as session:
         copied_ids = set(

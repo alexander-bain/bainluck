@@ -253,3 +253,79 @@ def test_the_state_expires_on_its_own_if_the_maintainer_stops():
 
     src = inspect.getsource(task._refresh_open_futures_outcomes)
     assert "rc.setex(STATE_KEY, STALE_AFTER_SECONDS," in src
+
+
+@pytest.mark.asyncio
+async def test_reopened_sync_skips_outcomes_query_when_no_market_is_missing():
+    from app.tasks.open_futures_outcomes import (
+        REOPENED_MARKET_IDS_SQL,
+        _sync_reopened_markets,
+    )
+
+    calls: list[str] = []
+
+    class _Scalars:
+        def all(self):
+            return []
+
+    class _Session:
+        async def scalars(self, stmt):
+            calls.append("scalars")
+            assert stmt is REOPENED_MARKET_IDS_SQL
+            return _Scalars()
+
+        async def execute(self, stmt, params=None):
+            calls.append("execute")
+            raise AssertionError("outcomes query must not run when no market id is reopened")
+
+        async def commit(self):
+            calls.append("commit")
+
+    restored, seconds = await _sync_reopened_markets(_Session())
+    assert restored == 0
+    assert isinstance(seconds, float) and seconds >= 0.0
+    assert calls == ["scalars", "commit"]
+
+
+@pytest.mark.asyncio
+async def test_reopened_sync_batches_market_ids_before_joining_outcomes():
+    from app.tasks.open_futures_outcomes import (
+        REOPENED_MARKET_BATCH_SIZE,
+        REOPENED_MARKET_IDS_SQL,
+        REOPENED_OUTCOMES_SQL,
+        _sync_reopened_markets,
+    )
+
+    batches: list[list[int]] = []
+    commits = 0
+    total_ids = REOPENED_MARKET_BATCH_SIZE + 1
+
+    class _Scalars:
+        def all(self):
+            return list(range(1, total_ids + 1))
+
+    class _Result:
+        def __init__(self, count: int):
+            self.rowcount = count
+
+    class _Session:
+        async def scalars(self, stmt):
+            assert stmt is REOPENED_MARKET_IDS_SQL
+            return _Scalars()
+
+        async def execute(self, stmt, params=None):
+            assert stmt is REOPENED_OUTCOMES_SQL
+            batch = list((params or {})["market_ids"])
+            batches.append(batch)
+            return _Result(len(batch) * 2)
+
+        async def commit(self):
+            nonlocal commits
+            commits += 1
+
+    restored, seconds = await _sync_reopened_markets(_Session())
+    assert restored == total_ids * 2
+    assert isinstance(seconds, float) and seconds >= 0.0
+    assert [len(b) for b in batches] == [REOPENED_MARKET_BATCH_SIZE, 1]
+    assert batches[0][0] == 1 and batches[1][-1] == total_ids
+    assert commits == 1
