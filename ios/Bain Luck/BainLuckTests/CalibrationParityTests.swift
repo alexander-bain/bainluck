@@ -39,9 +39,9 @@ import XCTest
 ///
 /// (They are still literals rather than a file read. An XCTest reading a
 /// `#filePath`-relative JSON is host-filesystem-dependent; trading a verifiable
-/// duplicate for an unverifiable load path is a bad trade. Same reasoning as
-/// `CalibrationProdFixture`'s embed, whose byte-equality with the shared payload
-/// that same contract test also checks.)
+/// duplicate for an unverifiable load path is a bad trade. The PAYLOAD is not
+/// in that position: `CalibrationProdFixture` reads the shared JSON as a
+/// resource built into this test bundle (#1778), so it has no Swift copy.)
 ///
 /// Their provenance: computed INDEPENDENTLY in Python, replicating
 /// `CalibrationMath`'s definitions from its source, and reconciling with the

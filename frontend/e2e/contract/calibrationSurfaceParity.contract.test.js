@@ -61,6 +61,9 @@ const NATIVE_VIEWMODEL = path.join(
 const NATIVE_FIXTURE = path.join(
   REPO_ROOT, "ios", "Bain Luck", "BainLuckTests", "CalibrationProdFixture.swift",
 );
+const NATIVE_PROJECT = path.join(
+  REPO_ROOT, "ios", "Bain Luck", "Bain Luck.xcodeproj", "project.pbxproj",
+);
 const NATIVE_PARITY_TESTS = path.join(
   REPO_ROOT, "ios", "Bain Luck", "BainLuckTests", "CalibrationParityTests.swift",
 );
@@ -158,28 +161,47 @@ function nativeHooks(source) {
 }
 
 describe("the shared fixture is shared — there is one payload, not two", () => {
-  it("the native embed is byte-equal to the shared payload", () => {
-    // Native still embeds the payload as a Swift string literal rather than
-    // reading the JSON: an XCTest reading a `#filePath`-relative file is
-    // host-filesystem-dependent, and trading a verifiable duplicate for an
-    // unverifiable load path is a bad trade. So the duplicate is CHECKED rather
-    // than hoped. If the iOS test target ever gains a resource bundle, delete
-    // the embed and this test with it.
+  it("native holds no second copy and builds the shared payload into its test bundle", () => {
+    // #1778: native used to embed the payload as a Swift string literal, and
+    // this slot held a byte-equality check on that duplicate. The test target
+    // now copies fixtures/calibration/prod-2026-08-02.json as a bundle
+    // resource and reads it, so the duplicate and its check are gone. What
+    // must stay true is that no copy comes back and the resource stays wired.
     const src = read(NATIVE_FIXTURE);
-    const m = src.match(/static let json = """([\s\S]*?)"""/);
-    assert.ok(m, "CalibrationProdFixture must embed its payload as `static let json`");
-
-    let embedded;
-    try {
-      embedded = JSON.parse(m[1]);
-    } catch (err) {
-      assert.fail(`the native fixture's embedded payload is not valid JSON: ${err.message}`);
-    }
-    assert.deepEqual(
-      embedded, PAYLOAD,
-      "the Swift embed has drifted from fixtures/calibration/prod-2026-08-02.json. " +
-        "The JSON is authoritative; regenerate the embed from it.",
+    assert.doesNotMatch(
+      src, /"""/,
+      "CalibrationProdFixture must not embed a payload literal — it reads " +
+        "fixtures/calibration/prod-2026-08-02.json from the test bundle",
     );
+    const inlined = [...src.matchAll(/"bucket_idx"\s*:/g)].length;
+    assert.equal(inlined, 0, `native's fixture declares ${inlined} inline bucket rows`);
+    assert.match(src, /Bundle\(for:/, "native's fixture must read its test bundle");
+    assert.match(src, /"prod-2026-08-02"/, "native's fixture must name the shared payload");
+
+    // The resource must be in the BainLuckTests target's Resources phase,
+    // pointing at the ONE tracked file — not a copy under ios/.
+    const pbx = read(NATIVE_PROJECT);
+    const ref = pbx.match(
+      /(\w{24}) \/\* prod-2026-08-02\.json \*\/ = \{isa = PBXFileReference;[^}]*path = "([^"]+)";[^}]*sourceTree = SOURCE_ROOT;/,
+    );
+    assert.ok(ref, "project.pbxproj must reference prod-2026-08-02.json");
+    assert.equal(
+      path.resolve(path.dirname(path.dirname(NATIVE_PROJECT)), ref[2]), SHARED_PAYLOAD,
+      "the native resource must be the shared payload itself",
+    );
+    const build = pbx.match(
+      new RegExp(`(\\w{24}) /\\* prod-2026-08-02\\.json in Resources \\*/ = \\{isa = PBXBuildFile; fileRef = ${ref[1]} `),
+    );
+    assert.ok(build, "prod-2026-08-02.json must be a resource build file");
+    const target = pbx.match(
+      /\/\* BainLuckTests \*\/ = \{\s*isa = PBXNativeTarget;[\s\S]*?buildPhases = \(([\s\S]*?)\);/,
+    );
+    assert.ok(target, "project.pbxproj must declare the BainLuckTests target");
+    const phaseId = (target[1].match(/(\w{24}) \/\* Resources \*\//) || [])[1];
+    assert.ok(phaseId, "BainLuckTests must have a Resources phase");
+    const phase = pbx.match(new RegExp(`${phaseId} /\\* Resources \\*/ = \\{[\\s\\S]*?files = \\(([\\s\\S]*?)\\);`));
+    assert.ok(phase && phase[1].includes(build[1]),
+      "prod-2026-08-02.json must be in the BainLuckTests Resources phase");
   });
 
   it("web holds no second copy of the rows", () => {
