@@ -744,10 +744,10 @@ def test_stale_withheld_out_of_slot_and_over100_leader_swap_to_spare_or_fail():
     details[1007]["outcomes"][0]["probability"] = None  # e5 (withheld by get_futures_market) -> se2
     details[1009]["outcomes"][0]["probability"] = 0.92  # m2 needs slot 1 (impossible with max=99, 92+20>99) -> sm1
     details[1008]["outcomes"] = [  # non-independent sum = 135 > 100 -> rejected -> swaps to sm2 (independent=True)
-        {"id": 1, "name": "North", "probability": 0.45, "is_winner": False, "is_out": False, "kalshi_no_bid": False, "source_mark": {"state": "verified"}},
-        {"id": 2, "name": "South", "probability": 0.35, "is_winner": False, "is_out": False, "kalshi_no_bid": False, "source_mark": {"state": "verified"}},
-        {"id": 3, "name": "West", "probability": 0.30, "is_winner": False, "is_out": False, "kalshi_no_bid": False, "source_mark": {"state": "verified"}},
-        {"id": 4, "name": "Coastal", "probability": 0.25, "is_winner": False, "is_out": False, "kalshi_no_bid": False, "source_mark": {"state": "verified"}},
+        {"id": 1, "name": "North", "probability": 0.45, "is_winner": False, "is_out": False, "kalshi_no_bid": False, "source_mark": {"state": "verified"}, "last_updated": "2026-11-27T15:00:00+00:00"},
+        {"id": 2, "name": "South", "probability": 0.35, "is_winner": False, "is_out": False, "kalshi_no_bid": False, "source_mark": {"state": "verified"}, "last_updated": "2026-11-27T15:00:00+00:00"},
+        {"id": 3, "name": "West", "probability": 0.30, "is_winner": False, "is_out": False, "kalshi_no_bid": False, "source_mark": {"state": "verified"}, "last_updated": "2026-11-27T15:00:00+00:00"},
+        {"id": 4, "name": "Coastal", "probability": 0.25, "is_winner": False, "is_out": False, "kalshi_no_bid": False, "source_mark": {"state": "verified"}, "last_updated": "2026-11-27T15:00:00+00:00"},
     ]
     details[1014]["name"] = "Eurovision winner"  # title-stale recurring calendar -> h2 -> sh1
 
@@ -1059,3 +1059,97 @@ async def test_daily_entry_ceiling_returns_429_and_logs_once_per_day(guess_test_
         headers={"X-Forwarded-For": "192.0.2.1"},
     )
     assert replay.status_code == 200
+
+
+def test_stale_48h_last_updated_guards_primaries_spares_multi_outcome_and_missing():
+    """Fable 12:02 PM PT (#12619) staleness guard: >48h or missing/unreadable last_updated is refused."""
+    from app.utils.guess_daily import GuessEditionUnavailableError, MAX_OUTCOME_AGE
+
+    assert MAX_OUTCOME_AGE == timedelta(hours=48)
+    sched = _fixture_schedule()
+    day_sched = sched["days"]["2026-11-27"]
+    freeze_at = datetime(2026, 11, 27, 16, 0, tzinfo=timezone.utc)
+    fresh_47h = (freeze_at - timedelta(hours=47)).isoformat()
+    boundary_48h = (freeze_at - timedelta(hours=48)).isoformat()
+    stale_48h1s = (freeze_at - timedelta(hours=48, seconds=1)).isoformat()
+    stale_49h = (freeze_at - timedelta(hours=49)).isoformat()
+
+    # 1. Primary 47h and exact 48h00m00s old are kept; 49h and 48h00m01s swap to spare with swapped_reason.
+    for kept_ts in (fresh_47h, boundary_48h):
+        details_kept = _baseline_details()
+        details_kept[1001]["outcomes"][0]["last_updated"] = kept_ts
+        pack_kept, prov_kept = build_daily_pack(date(2026, 11, 27), day_sched, details_kept, freeze_at)
+        assert pack_kept["cards"][0]["id"] == "e1"
+        assert prov_kept[0]["outcome_last_updated"] == kept_ts
+
+    for stale_ts in (stale_49h, stale_48h1s):
+        details_stale = _baseline_details()
+        details_stale[1001]["outcomes"][0]["last_updated"] = stale_ts
+        pack_swapped, prov_swapped = build_daily_pack(date(2026, 11, 27), day_sched, details_stale, freeze_at)
+        assert pack_swapped["cards"][0]["id"] == "se1"
+        se1_prov = [p for p in prov_swapped if p["card_id"] == "se1"]
+        assert len(se1_prov) == 1
+        assert se1_prov[0]["swapped_from_slot"] == "e1"
+        assert se1_prov[0]["swapped_reason"].startswith("stale_last_updated:1001:")
+
+    # 2. Stale spare (49h) is skipped for the next fresh spare; if no fresh spare remains, freeze fails cleanly.
+    details_spare_skip = _baseline_details()
+    details_spare_skip[1007]["outcomes"][0]["last_updated"] = stale_49h  # e5 (>50) stale -> se1 needed
+    details_spare_skip[1020]["outcomes"][0]["last_updated"] = stale_49h  # se1 also stale -> must skip to se2 (>50)
+    pack_skip, prov_skip = build_daily_pack(date(2026, 11, 27), day_sched, details_spare_skip, freeze_at)
+    assert pack_skip["cards"][4]["id"] == "se2"
+    se2_prov = next(p for p in prov_skip if p["card_id"] == "se2")
+    assert se2_prov["swapped_from_slot"] == "e5"
+    assert se2_prov["swapped_reason"].startswith("stale_last_updated:1007:")
+
+    details_spare_exhausted = _baseline_details()
+    details_spare_exhausted[1001]["outcomes"][0]["last_updated"] = stale_49h
+    details_spare_exhausted[1020]["outcomes"][0]["last_updated"] = stale_49h
+    details_spare_exhausted[1021]["outcomes"][0]["last_updated"] = stale_49h
+    with pytest.raises(GuessEditionUnavailableError):
+        build_daily_pack(date(2026, 11, 27), day_sched, details_spare_exhausted, freeze_at)
+
+    # 3. Multi-outcome & multi-market cards (versus, four, leader) are refused when ANY printed outcome is >48h old.
+    versus_tmpl = day_sched["step_cards"]["easy"][1]  # e2 uses 1002 & 1003
+    details_v_bad = _baseline_details()
+    details_v_bad[1003]["outcomes"][0]["last_updated"] = stale_49h  # 2nd leg stale, 1st leg fresh
+    reasons_v: list[str] = []
+    assert resolve_card_from_markets(versus_tmpl, details_v_bad, freeze_at, day_seed="2026-11-27", refusal_reasons_out=reasons_v) is None
+    assert any(r.startswith("stale_last_updated:1003:") for r in reasons_v), reasons_v
+
+    four_tmpl = day_sched["step_cards"]["medium"][1]  # m2 uses 1009
+    details_f_bad = _baseline_details()
+    details_f_bad[1009]["outcomes"][0]["last_updated"] = stale_49h
+    reasons_f: list[str] = []
+    assert resolve_card_from_markets(four_tmpl, details_f_bad, freeze_at, day_seed="2026-11-27", refusal_reasons_out=reasons_f) is None
+    assert any(r.startswith("stale_last_updated:1009:") for r in reasons_f), reasons_f
+
+    leader_tmpl = day_sched["step_cards"]["medium"][0]  # m1 uses 1008 with 4 outcomes
+    details_l_bad = _baseline_details()
+    details_l_bad[1008]["outcomes"][2]["last_updated"] = stale_49h  # 3rd of 4 outcomes stale
+    reasons_l: list[str] = []
+    assert resolve_card_from_markets(leader_tmpl, details_l_bad, freeze_at, day_seed="2026-11-27", refusal_reasons_out=reasons_l) is None
+    assert any(r.startswith("stale_last_updated:1008:") for r in reasons_l), reasons_l
+
+    # 4. Missing, empty, or unreadable last_updated is refused, never treated as fresh.
+    side_tmpl = day_sched["step_cards"]["easy"][0]
+    for bad_stamp in (None, "", "not-a-timestamp", "2026/13/45"):
+        details_missing = _baseline_details()
+        details_missing[1001]["outcomes"][0]["last_updated"] = bad_stamp
+        reasons_m: list[str] = []
+        assert (
+            resolve_card_from_markets(
+                side_tmpl, details_missing, freeze_at, day_seed="2026-11-27", refusal_reasons_out=reasons_m
+            )
+            is None
+        ), bad_stamp
+        assert any(r.startswith("missing_or_invalid_last_updated:1001:") for r in reasons_m), (bad_stamp, reasons_m)
+
+    # Full pack swap check when missing/unreadable last_updated hits primary h1 (chance card) -> swaps to sh1.
+    details_chance_missing = _baseline_details()
+    details_chance_missing[1013]["outcomes"][0]["last_updated"] = None
+    pack_cm, prov_cm = build_daily_pack(date(2026, 11, 27), day_sched, details_chance_missing, freeze_at)
+    sh1_prov = next(p for p in prov_cm if p["card_id"] == "sh1")
+    assert pack_cm["cards"][10]["id"] == "sh1"
+    assert sh1_prov["swapped_from_slot"] == "h1"
+    assert sh1_prov["swapped_reason"].startswith("missing_or_invalid_last_updated:1013:")
