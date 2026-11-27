@@ -84,7 +84,7 @@ export function loadGame(pack: GamePack): SavedGame | null {
     const groupCode = typeof raw.groupCode === "string" && raw.groupCode ? raw.groupCode : null;
     const joinedGroups = Array.isArray(raw.joinedGroups)
       ? raw.joinedGroups.filter((g): g is string => typeof g === "string" && g.length > 0)
-      : groupCode
+      : phase === "results" && groupCode
         ? [groupCode]
         : [];
     return { packId: pack.id, groupCode, joinedGroups, phase, index, turn, here, link };

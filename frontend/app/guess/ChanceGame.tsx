@@ -417,9 +417,7 @@ export default function ChanceGame({
     const fromLink = decoded.ok ? decoded.players : [];
     if (!decoded.ok && decoded.reason !== "none") setLinkNote(decoded.reason);
     const local = loadGame(pack);
-    const priorJoined = Array.from(
-      new Set([...(local?.joinedGroups ?? []), ...(local?.groupCode ? [local.groupCode] : [])]),
-    );
+    const priorJoined = Array.from(new Set(local?.joinedGroups ?? []));
     setJoinedGroups(priorJoined);
 
     if (local && local.phase !== "home") {
@@ -721,6 +719,7 @@ export default function ChanceGame({
 
   useEffect(() => {
     if (isLegacyPack || game.phase !== "results" || pendingJoinBoard) return;
+    if (groupCode && joinedGroups.includes(groupCode)) return;
     let code = groupCode;
     if (!code) {
       code = generateGroupCode();
@@ -737,7 +736,7 @@ export default function ChanceGame({
     if (autoSubmittedRef.current === key) return;
     autoSubmittedRef.current = key;
     void submitFinishedPlayers(code, game.here);
-  }, [isLegacyPack, game.phase, game.here, groupCode, pendingJoinBoard, pack.id, submitFinishedPlayers]);
+  }, [isLegacyPack, game.phase, game.here, groupCode, joinedGroups, pendingJoinBoard, pack.id, submitFinishedPlayers]);
 
   const renameConflictAndSave = useCallback(() => {
     const nextName = cleanName(conflictName);
