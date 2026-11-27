@@ -1870,6 +1870,20 @@ _US_STATE_ALT = (
     r"district of columbia|puerto rico"
 )
 
+_STATE_LEGISLATIVE_DISTRICT_RE = re.compile(
+    rf"\b(?:(?:{_US_STATE_ALT})(?:['’]s)?\s+(?:state\s+)?|state\s+)"
+    r"(?:house(?:\s+of\s+(?:delegates|representatives))?|senate|assembly)\s+"
+    r"(?:district\b|\d+(?:st|nd|rd|th)?(?:\s+[\w'’-]+){0,3}\s+district\b"
+    r"|[a-z][a-z'’.-]*(?:\s+[a-z][a-z'’.-]*){0,2}[-–]\d+\b)",
+    re.IGNORECASE,
+)
+
+
+def is_us_state_legislative_district(title: str) -> bool:
+    """Recognize state chamber districts from the office and district in the title."""
+    return bool(_STATE_LEGISLATIVE_DISTRICT_RE.search(title))
+
+
 # `AK-AL`, `TX-32` — a US congressional district, as ONE copy for the same
 # reason `_US_STATE_ALT` above is one copy. #6936: this file carried the shape
 # TWICE, and the second copy (the first alternative of
