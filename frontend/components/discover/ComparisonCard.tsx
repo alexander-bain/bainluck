@@ -114,7 +114,7 @@ export function ComparisonCard({
                 className="flex items-center gap-2.5 py-2 border-t border-surface-border"
               >
                 <span
-                  className={`flex-1 text-[13px] leading-tight truncate ${
+                  className={`flex-1 min-w-0 break-words text-[13px] leading-tight ${
                     isLeader ? "font-semibold text-text-primary" : "font-medium text-text-secondary"
                   }`}
                   title={o.name}

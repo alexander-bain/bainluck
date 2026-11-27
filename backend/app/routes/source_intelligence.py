@@ -1040,6 +1040,9 @@ async def cleanup_orphaned_snapshots(
                 WHERE event_id = :eid AND source = :src
             """), {"eid": event_id, "src": source})
             deleted_total += del_result.rowcount
+        if orphan_pairs:
+            from app.services.finished_event_history import invalidate_finished_event_history
+            await invalidate_finished_event_history(db, {eid for eid, _ in orphan_pairs})
         await db.commit()
 
         # Phase 2: Partially orphaned — events that still have a linked
@@ -1077,6 +1080,9 @@ async def cleanup_orphaned_snapshots(
                   )
             """), {"eid": event_id, "src": source})
             deleted_total += del_result.rowcount
+        if mixed_pairs:
+            from app.services.finished_event_history import invalidate_finished_event_history
+            await invalidate_finished_event_history(db, {eid for eid, _ in mixed_pairs})
         await db.commit()
 
         result["actually_deleted"] = deleted_total
@@ -1264,6 +1270,8 @@ async def cleanup_oscillation(
                 WHERE event_id = ANY(:ids)
                   AND source IN ('stat_model', 'espn')
             """), {"ids": osc_event_ids})
+            from app.services.finished_event_history import invalidate_finished_event_history
+            await invalidate_finished_event_history(db, osc_event_ids)
 
         # Step 3: Clean stat_model/espn from win_probability_sources JSONB
         wps_sql = text("""

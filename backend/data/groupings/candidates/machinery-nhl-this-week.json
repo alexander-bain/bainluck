@@ -27,7 +27,7 @@
         "key": "closest_games",
         "title": "Coin-Flip Matchups",
         "item_noun": "games",
-        "note": "NHL games on this slate priced closest to a 50–50 toss-up.",
+        "note": "Games on this slate closest to a 50–50 toss-up.",
         "atom_query": {
           "kind": "events",
           "sport_key": "icehockey_nhl",

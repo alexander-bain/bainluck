@@ -17,6 +17,16 @@ nonisolated enum FirstRunChecklistRowID364A: String, CaseIterable, Identifiable,
 
     var id: String { rawValue }
 
+    var stepNumber: Int {
+        switch self {
+        case .lookUp: return 1
+        case .follow: return 2
+        case .exploreSets: return 3
+        case .syncDevices: return 4
+        case .alerts: return 5
+        }
+    }
+
     var title: String {
         switch self {
         case .lookUp: return "Look anything up"
@@ -122,6 +132,7 @@ final class FirstRunChecklistStore364A: ObservableObject {
     func markCompleted(_ row: FirstRunChecklistRowID364A) {
         var next = state
         next.completedRows.insert(row)
+        guard next != state else { return }
         state = next
     }
 
@@ -131,6 +142,7 @@ final class FirstRunChecklistStore364A: ObservableObject {
         if markFollowCompleted && count > 0 {
             next.completedRows.insert(.follow)
         }
+        guard next != state else { return }
         state = next
     }
 
@@ -150,13 +162,16 @@ final class FirstRunChecklistStore364A: ObservableObject {
         if !slugs.isEmpty {
             next.completedRows.insert(.exploreSets)
         }
-        state = next
+        if next != state {
+            state = next
+        }
         persistPickedSetsToDiscoverPreferences(slugs: slugs, sets: sets)
     }
 
     func dismissFromMyStuff() {
         var next = state
         next.dismissedFromMyStuff = true
+        guard next != state else { return }
         state = next
     }
 
@@ -182,12 +197,85 @@ final class FirstRunChecklistStore364A: ObservableObject {
 
         prefs.boostedCategories = Array(categories).sorted()
         prefs.boostedTerms = Array(terms).sorted()
+        prefs.savedAtEpoch = Date().timeIntervalSince1970
         prefs.save(defaults: defaults)
     }
 
     private func save() {
         if let data = try? JSONEncoder().encode(state) {
             defaults.set(data, forKey: FirstRunStorageKeys364A.checklistStateKey)
+        }
+    }
+}
+
+/// Emits first-week setup funnel events (`onboarding_start`, `onboarding_step`,
+/// `follow_team`, `onboarding_complete` / `onboarding_skip`) from the active checklist
+/// sitting so each event fires at most once through `AnalyticsService` (`417: C` / `#13261`).
+@MainActor
+final class FirstRunChecklistTelemetryTracker364A: ObservableObject {
+    private(set) var didTrackStart = false
+    private(set) var didTrackOutcome = false
+    private(set) var trackedSteps: Set<FirstRunChecklistRowID364A> = []
+    private(set) var lastCompletedRow: FirstRunChecklistRowID364A?
+    private(set) var trackedFollowedTeamIds: Set<String> = []
+
+    func recordStartIfNeeded(
+        entryPoint: String,
+        initialCompletedRows: Set<FirstRunChecklistRowID364A>,
+        initialFollowedSubjects: [FollowedSubject295A]
+    ) {
+        guard !didTrackStart else { return }
+        didTrackStart = true
+        trackedSteps = initialCompletedRows
+        trackedFollowedTeamIds = Set(
+            initialFollowedSubjects.filter { $0.kind == .team }.map(\.id)
+        )
+        AnalyticsService.trackOnboardingStart(entryPoint: entryPoint)
+    }
+
+    func syncCompletedRows(_ completedRows: Set<FirstRunChecklistRowID364A>) {
+        guard didTrackStart, !didTrackOutcome else { return }
+        for row in FirstRunChecklistRowID364A.allCases where completedRows.contains(row) {
+            guard !trackedSteps.contains(row) else { continue }
+            trackedSteps.insert(row)
+            lastCompletedRow = row
+            AnalyticsService.trackOnboardingStep(step: row.stepNumber, stepName: row.rawValue)
+        }
+    }
+
+    func syncFollowedSubjects(_ subjects: [FollowedSubject295A]) {
+        guard didTrackStart, !didTrackOutcome else { return }
+        for subject in subjects where subject.kind == .team {
+            guard !trackedFollowedTeamIds.contains(subject.id) else { continue }
+            trackedFollowedTeamIds.insert(subject.id)
+            AnalyticsService.trackFollowTeam(
+                action: "follow",
+                sport: subject.sportKey,
+                relationType: "follow",
+                surface: "onboarding"
+            )
+        }
+    }
+
+    func recordFinishOrSkip(
+        completedRows: Set<FirstRunChecklistRowID364A>,
+        followedSubjects: [FollowedSubject295A]
+    ) {
+        guard didTrackStart, !didTrackOutcome else { return }
+        syncCompletedRows(completedRows)
+        syncFollowedSubjects(followedSubjects)
+        didTrackOutcome = true
+
+        if completedRows.count >= FirstRunChecklistRowID364A.allCases.count {
+            let teamsCount = followedSubjects.filter { $0.kind == .team }.count
+            AnalyticsService.trackOnboardingComplete(teamsCount: teamsCount)
+        } else {
+            let last = lastCompletedRow
+                ?? FirstRunChecklistRowID364A.allCases.last(where: { completedRows.contains($0) })
+            AnalyticsService.trackOnboardingSkip(
+                lastStep: last?.stepNumber ?? 0,
+                lastStepName: last?.rawValue ?? "none"
+            )
         }
     }
 }

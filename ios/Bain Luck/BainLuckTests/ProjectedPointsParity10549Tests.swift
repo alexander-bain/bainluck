@@ -70,7 +70,7 @@ final class ProjectedPointsParity10549Tests: XCTestCase {
         XCTAssertEqual(page.components(separatedBy: "ProjectedFinalPointsMount.input(").count - 1, 1,
                        "one admission, read by both cards")
         XCTAssertTrue(page.contains("letprojectionReplacesDifferential=ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)"))
-        XCTAssertTrue(page.contains("iflethistory=vm.history,(isLive||isFinished),!projectionReplacesDifferential{ScoreDifferentialChartView("),
+        XCTAssertTrue(page.contains("iflethistory=vm.history,(isLive||isFinished),event.scoreSourceUnavailable!=true,!projectionReplacesDifferential{ScoreDifferentialChartView("),
                       "the differential steps aside on the shared decision")
         XCTAssertTrue(page.contains("ifprojectionReplacesDifferential,letprojectedInput{ProjectedFinalPointsChartView("))
         XCTAssertTrue(page.contains("letabsenceStatedAbove=!projectionReplacesDifferential&&vm.history.map{"),

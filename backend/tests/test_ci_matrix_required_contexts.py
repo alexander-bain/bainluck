@@ -42,11 +42,17 @@ SCOPE_RUNS = (
 )
 REUSE = "needs.change-scope.outputs.reuse != 'true'"
 LIVE = "needs.change-scope.outputs.live != 'true'"
+# #412: D — heavy CI jobs skip draft PRs at job level; drafts cannot merge and
+# required per-leg matrix contexts do not exist until ready_for_review expands them
+# (fail-closed: a race to un-draft without ready_for_review stays BLOCKED).
+NOT_DRAFT = "!(github.event_name == 'pull_request' && github.event.pull_request.draft)"
 # 75-A: only explicitly labelled never-merge study inputs skip this runner.
 SEARCH_RECALL = (
     "${{ !cancelled() && "
     "!contains(github.event.pull_request.labels.*.name, 'eval-candidate') && "
-    f"{SCOPE_RUNS} && {LIVE} }}}}"
+    f"{SCOPE_RUNS} && {LIVE} && {NOT_DRAFT} && "
+    "!(github.event_name == 'push' && github.ref == 'refs/heads/master' && "
+    "(needs.backend-tests.result == 'cancelled' || needs.database-integration.result == 'cancelled')) }}"
 )
 RUNS = f"{SCOPE_RUNS} && {REUSE} && {LIVE}"
 REUSED = "needs.change-scope.outputs.reuse == 'true'"
@@ -59,7 +65,7 @@ LIVE_ONLY = "needs.change-scope.outputs.live == 'true'"
 MARKER = "needs.change-scope.outputs.scope == 'frontend' || needs.change-scope.outputs.live == 'true'"
 NATIVE = "needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'"
 NATIVE_STEP = "Native candidate — the full shard is replaced by native-backend-readers"
-JOB_IF = "${{ !cancelled() && needs.fast-gate.result == 'success' }}"
+JOB_IF = f"${{{{ !cancelled() && needs.fast-gate.result == 'success' && {NOT_DRAFT} }}}}"
 
 
 def _jobs() -> dict:
@@ -124,7 +130,8 @@ def _validate_backend_partition(jobs):
     )
     assert "--of ${{ strategy.job-total }}" in command
     assert "python -m pytest $FILES" in command
-    assert "backend-tests" in jobs["deploy"]["needs"]
+    assert "backend-tests" in jobs["deploy-after-full"]["needs"]
+    assert "backend-tests" not in jobs["deploy"]["needs"]
 
 
 def test_backend_tests_keeps_required_contexts_and_checks_the_actual_partition():
@@ -149,7 +156,7 @@ def test_backend_partition_guard_rejects_lost_work_or_failed_matrix_bypass(mutat
     elif mutation == "waived_failure":
         job["continue-on-error"] = True
     else:
-        jobs["deploy"]["needs"].remove("backend-tests")
+        jobs["deploy-after-full"]["needs"].remove("backend-tests")
     with pytest.raises(AssertionError):
         _validate_backend_partition(jobs)
 
@@ -201,21 +208,20 @@ def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything
 
 def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
     jobs = _jobs()
-    # Fable, Wed Nov 18: deploy reads every database integration group itself and
-    # requires `needs.database-integration.result == 'success'` (a skipped group is not
-    # success), instead of waiting for `search-recall`'s runner to re-check it.
-    # `search-recall` stays the required pull-request context, so its shape is still pinned.
+    # Fable, Wed Nov 18 (+ Ruling 394b): deploy-after-full waits on every database integration
+    # group itself and requires `needs.database-integration.result == 'success'` when full-wait
+    # applies; fast deploy on merge waits on quick gates while full suite runs beside it.
     assert {"backend-tests", "shard-completeness", "database-integration"} <= set(
-        jobs["deploy"]["needs"]
+        jobs["deploy-after-full"]["needs"]
     )
-    assert "needs.database-integration.result == 'success'" in jobs["deploy"]["if"]
+    assert "needs.database-integration.result == 'success'" in jobs["deploy-after-full"]["if"]
     for name in ("shard-completeness", "search-recall"):
         job = jobs[name]
         assert not (job.get("strategy") or {}).get(
             "matrix"
         ), f"{name} became a matrix job; a job-level skip would then drop its required contexts"
         expected = (
-            SEARCH_RECALL if name == "search-recall" else f"{SCOPE_RUNS} && {LIVE}"
+            SEARCH_RECALL if name == "search-recall" else f"{SCOPE_RUNS} && {LIVE} && {NOT_DRAFT}"
         )
         assert job.get("if") == expected, (name, job.get("if"))
 
@@ -237,7 +243,7 @@ def test_reuse_never_removes_matrix_contexts_and_missing_decision_runs_tests(reu
             reuse != "true"
         )
         assert bool(any(s.get("if") == REUSED for s in ran)) == (reuse == "true")
-    assert jobs["frontend-build"]["if"] == f"{LIVE} && needs.change-scope.outputs.scope != 'native'"
+    assert jobs["frontend-build"]["if"] == f"{LIVE} && needs.change-scope.outputs.scope != 'native' && {NOT_DRAFT}"
     assert jobs["frontend-build"]["needs"] == ["change-scope", "fast-gate"]
     assert len(jobs["database-integration"]["strategy"]["matrix"]["group"]) == 7  # + shared-middle-2 (332: A)
 

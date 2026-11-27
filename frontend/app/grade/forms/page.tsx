@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
 import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
-import formsDeckRaw from "@/data/forms_blind_deck_public_2026_11_23.json";
+import formsDeckRaw from "@/data/forms_blind_deck_public_2026_11_27.json";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 import { setDiscoverLearningGate } from "@/lib/discoverInteractions";
 import {
@@ -32,13 +32,17 @@ import {
 
 const FORMS_DECK = formsDeckRaw as BlindFormsPublicDeck;
 const LEGACY_DRAFT_STORAGE_KEY = "bainluck_363a_forms_pile_draft_v1";
-const DRAFT_STORAGE_KEY = "bainluck_363a_forms_pile_draft_v2";
-const RESET_AFTER_STORAGE_KEY = "bainluck_363a_forms_reset_after_v2";
+const DRAFT_STORAGE_KEY = `bainluck_363a_forms_pile_draft_v3_${FORMS_DECK.deck_id}`;
+const RESET_AFTER_STORAGE_KEY = `bainluck_363a_forms_reset_after_v3_${FORMS_DECK.deck_id}`;
 
 interface SavedJudgmentRow {
   surface?: string;
+  label?: string;
   label_metadata?: {
     ui_version?: number;
+    deck_id?: string;
+    void?: boolean;
+    sort_state?: string;
     piles?: PileBucket[];
     timestamp?: string;
     seed?: number;
@@ -172,7 +176,7 @@ function FormsPileSortSession() {
         );
         if (cancelled) return;
         const latest = (res.judgments || []).find((j) =>
-          isPostFixFormsJudgmentRow(j, activeResetAfter),
+          isPostFixFormsJudgmentRow(j, activeResetAfter, FORMS_DECK.deck_id),
         );
         if (latest?.label_metadata?.piles && latest.label_metadata.piles.length > 0) {
           setPiles(latest.label_metadata.piles);
@@ -331,6 +335,36 @@ function FormsPileSortSession() {
     }
   };
 
+  const handleExportJson = () => {
+    if (sortedCount === 0) return;
+    const finalPiles = pruneEmptyPilesForSave(piles);
+    const finalCardMap = buildCardToPileMap(finalPiles);
+    const payload = {
+      deck_id: FORMS_DECK.deck_id,
+      seed: FORMS_DECK.seed,
+      surface: "grade_forms_deck",
+      exported_at: new Date().toISOString(),
+      frozen_grades_sha256: pilesSha256,
+      label: allPlaced ? "complete" : "draft",
+      ui_version: 2,
+      pile_count: finalPiles.length,
+      total_cards: orderedForms.length,
+      piles: finalPiles,
+      card_to_pile: finalCardMap,
+    };
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${FORMS_DECK.deck_id}-piles.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const selectedCard = selectedCardId ? byId[selectedCardId] : null;
   const zoomCard = zoomCardId ? byId[zoomCardId] : null;
 
@@ -359,13 +393,10 @@ function FormsPileSortSession() {
           <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-start">
             <div className="space-y-2 lg:col-span-7">
               <h1 className="text-lg font-bold text-text-primary">
-                Forms deck · Sort card looks (363: A)
+                Forms deck · Sort card looks
               </h1>
               <p className="text-sm font-medium leading-relaxed text-text-primary">
-                Put cards that look like the same kind of card in the same pile. We are counting how many different looks a reader sees.
-              </p>
-              <p className="text-xs leading-relaxed text-text-secondary">
-                On a computer, drag any card onto a pile on the right (or start a new pile). On a phone, tap a card, then tap the pile where it belongs.
+                Put cards with the same visual layout in the same pile, ignoring the topic, then save once all {orderedForms.length} cards are placed.
               </p>
             </div>
             <div className="lg:col-span-5">
@@ -555,19 +586,30 @@ function FormsPileSortSession() {
                 </button>
               </div>
 
-              <button
-                type="button"
-                data-testid="save-piles-btn"
-                disabled={saving || sortedCount === 0}
-                onClick={() => void handleSave()}
-                className="w-full rounded-xl bg-accent-brand px-4 py-2.5 text-sm font-bold text-text-inverse disabled:opacity-45"
-              >
-                {saving
-                  ? "Saving piles…"
-                  : allPlaced
-                  ? "Save finished pile sort"
-                  : `Save progress (${sortedCount}/${orderedForms.length})`}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="save-piles-btn"
+                  disabled={saving || sortedCount === 0}
+                  onClick={() => void handleSave()}
+                  className="flex-1 rounded-xl bg-accent-brand px-4 py-2.5 text-sm font-bold text-text-inverse disabled:opacity-45"
+                >
+                  {saving
+                    ? "Saving piles…"
+                    : allPlaced
+                    ? "Save finished pile sort"
+                    : `Save progress (${sortedCount}/${orderedForms.length})`}
+                </button>
+                <button
+                  type="button"
+                  data-testid="export-piles-btn"
+                  disabled={sortedCount === 0}
+                  onClick={handleExportJson}
+                  className="rounded-xl border border-surface-border bg-surface-elevated px-3.5 py-2.5 text-xs font-semibold text-text-primary hover:border-accent-brand disabled:opacity-45"
+                >
+                  Export JSON
+                </button>
+              </div>
 
               {statusMsg && (
                 <p data-testid="save-status-msg" className="text-xs font-semibold text-accent-live">

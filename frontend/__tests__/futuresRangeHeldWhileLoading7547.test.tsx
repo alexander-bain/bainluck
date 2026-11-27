@@ -303,8 +303,8 @@ describe("#7547 a failed range says it failed, keeps the held chart, and can be 
     expect(litChip()).toBe("All"); // the reader's choice is kept
     expect(drawnFrom()).toBe(WEEK_FIRST); // the real week is still drawn
     expect(heldLine()).toBe(FAILED_ALL);
-    expect(text()).not.toContain("Limited price history available");
-    expect(text()).not.toContain("Not enough price history yet");
+    expect(text()).not.toContain("Limited probability history available");
+    expect(text()).not.toContain("Not enough probability history yet");
     expect(String(trendCard()!["aria-busy"])).toBe("false");
 
     // Try again asks for the picked range again and goes back to loading.
@@ -379,12 +379,12 @@ describe("#7547 rapid taps: only the picked range's answer reaches the chart", (
 });
 
 describe("#7547 an empty range stays on screen while a longer one loads", () => {
-  it("tapping a longer range from 'No prices in the last 7 days' keeps the card and its chips", async () => {
+  it("tapping a longer range from 'No readings in the last 7 days' keeps the card and its chips", async () => {
     await mountOnWeek(body(WEEK_FIRST, 168, true));
-    expect(text()).toContain("No prices in the last 7 days");
+    expect(text()).toContain("No readings in the last 7 days");
     await tap("All");
     // Before: the empty state unmounted for the whole request, chips and all.
-    expect(text()).toContain("No prices in the last 7 days");
+    expect(text()).toContain("No readings in the last 7 days");
     expect(litChip()).toBe("All");
     expect(heldLine()).toBe(LOADING_ALL);
 

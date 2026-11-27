@@ -11,6 +11,7 @@ export interface BlindFormsPublicDeck {
   ruling: string;
   blind: boolean;
   seed: number;
+  sealed_checksum_sha256?: string;
   image_width_px: number;
   css_width_px: number;
   color_scheme: string;
@@ -198,13 +199,25 @@ export function pruneEmptyPilesForSave(piles: PileBucket[]): PileBucket[] {
 
 export function isPostFixFormsJudgmentRow(
   row: {
+    label?: string | null;
     created_at?: string | null;
-    label_metadata?: { ui_version?: number; timestamp?: string; piles?: unknown } | null;
+    label_metadata?: {
+      ui_version?: number;
+      timestamp?: string;
+      piles?: unknown;
+      deck_id?: string;
+      void?: boolean;
+      sort_state?: string;
+    } | null;
   },
   resetAfterIso?: string | null,
+  expectedDeckId?: string | null,
 ): boolean {
+  if (row?.label === "void") return false;
   const meta = row?.label_metadata;
   if (!meta || !Array.isArray(meta.piles) || meta.piles.length === 0) return false;
+  if (meta.void === true || meta.sort_state === "void") return false;
+  if (expectedDeckId && meta.deck_id !== expectedDeckId) return false;
   if (typeof meta.ui_version !== "number" || meta.ui_version < 2) return false;
   const rawTs = row.created_at || meta.timestamp || "";
   const ms = Date.parse(rawTs);

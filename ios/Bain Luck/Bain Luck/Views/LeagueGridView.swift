@@ -38,9 +38,9 @@ struct LeagueGridView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle(viewModel.displayName)
+        .navigationTitle(dynamicTypeSize.isAccessibilitySize ? "" : viewModel.displayName)
         #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(dynamicTypeSize.isAccessibilitySize ? .inline : .large)
         #endif
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -99,6 +99,22 @@ struct LeagueGridView: View {
 
     private func gridContent(_ grid: ChampionshipGridResponse?, twoColumns: Bool = false) -> some View {
         List {
+            if dynamicTypeSize.isAccessibilitySize {
+                Section {
+                    Text(viewModel.displayName)
+                        .font(.largeTitle.weight(.bold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(nil)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityAddTraits(.isHeader)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 2, trailing: 4))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+            }
+
             Section {
                 GameAlertsInlinePageSlot295A(contextId: "league-grid:\(slug)")
                     .listRowInsets(EdgeInsets())

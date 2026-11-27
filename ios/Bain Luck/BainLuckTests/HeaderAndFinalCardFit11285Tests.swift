@@ -555,10 +555,14 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                                             awayColor: .blue, homeColor: .red, state: state, stream: page)
         let view = ScrollView { deck.padding(.horizontal, 16) }
             .coordinateSpace(name: "nba-11285")
+            .background(Color.white)
             .environment(\.colorScheme, .light)
         let host = hostForMeasurement(view, at: size)
+        host.overrideUserInterfaceStyle = .light
         host.view.frame = CGRect(x: 0, y: 0, width: width, height: 2400)
         let window = UIWindow(frame: host.view.frame)
+        window.overrideUserInterfaceStyle = .light
+        window.backgroundColor = .white
         window.rootViewController = host
         window.isHidden = false
         settle(host, 0.8)
@@ -613,9 +617,13 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         let deck = NFLEventCardDeckView9483(cards: cards, awayName: "Commanders", homeName: "49ers",
                                             awayColor: .indigo, homeColor: .red, state: NFLCardDeckState9483())
         let host = hostForMeasurement(ScrollView { deck.padding(.horizontal, 16) }
+            .background(Color.white)
             .environment(\.colorScheme, .light), at: size)
+        host.overrideUserInterfaceStyle = .light
         host.view.frame = CGRect(x: 0, y: 0, width: width, height: 2400)
         let window = UIWindow(frame: host.view.frame)
+        window.overrideUserInterfaceStyle = .light
+        window.backgroundColor = .white
         window.rootViewController = host
         window.isHidden = false
         settle(host, 0.8)
@@ -673,13 +681,29 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         let minX = max(0, xRange?.lowerBound ?? 0)
         let maxX = min(bounds.width, xRange?.upperBound ?? bounds.width)
         let cropWidth = max(1, maxX - minX)
-        let mid = min(900, bounds.height / 2), overlap: CGFloat = 200
-        let upper = try bandLines(image, bounds: bounds,
-                                  band: CGRect(x: minX, y: 0, width: cropWidth, height: mid + overlap / 2))
-        let lower = try bandLines(image, bounds: bounds,
-                                  band: CGRect(x: minX, y: mid - overlap / 2, width: cropWidth,
-                                               height: bounds.height - mid + overlap / 2))
-        return upper.filter { $0.box.midY < mid } + lower.filter { $0.box.midY >= mid }
+        let strideStep: CGFloat = 700
+        let overlap: CGFloat = 160
+        var collected: [Line] = []
+        var y: CGFloat = 0
+        while y < bounds.height {
+            let bandH = min(strideStep + overlap, bounds.height - y)
+            let lines = try bandLines(image, bounds: bounds,
+                                      band: CGRect(x: minX, y: y, width: cropWidth, height: bandH))
+            for line in lines {
+                let norm = line.text.trimmingCharacters(in: .whitespaces)
+                let duplicate = collected.contains { existing in
+                    existing.text.trimmingCharacters(in: .whitespaces) == norm
+                        && abs(existing.box.midY - line.box.midY) < 8
+                        && abs(existing.box.midX - line.box.midX) < 16
+                }
+                if !duplicate {
+                    collected.append(line)
+                }
+            }
+            if y + bandH >= bounds.height { break }
+            y += strideStep
+        }
+        return collected
     }
 
     /// The deck's heading at the top of the frame: the lines above its count

@@ -2047,14 +2047,20 @@ def _canonical_market_outcome_map(
 
     rows: list[dict[str, Any]] = []
     already_has_rendered = False
+    field_complete = True
+    book_backed = False
+    has_no_bid = False
     for idx, o in enumerate(raw_outcomes):
         if not isinstance(o, Mapping):
             continue
         name = str(o.get("name") or o.get("outcome_name") or "").strip()
         if not name or is_placeholder_outcome_name(name) or _PLACEHOLDER_OUTCOME_RE.match(name):
             continue
+        book_backed |= "kalshi_no_bid" in o
+        has_no_bid |= bool(o.get("kalshi_no_bid"))
         prob = o.get("probability")
         if not isinstance(prob, (int, float)) or not math.isfinite(float(prob)):
+            field_complete &= bool(o.get("kalshi_no_bid"))
             continue
         p = float(prob)
         if p <= 0.0 or p >= 1.0:
@@ -2073,17 +2079,20 @@ def _canonical_market_outcome_map(
             }
         )
 
-    raw_sum = sum(float(r["probability"]) for r in rows)
-    if rows and not already_has_rendered and mutually_exclusive and raw_sum > 1.005:
+    supported_sum = math.fsum(float(r["probability"]) for r in rows if not r.get("kalshi_no_bid"))
+    if (
+        rows and not already_has_rendered and mutually_exclusive
+        and (supported_sum > 1.005 or (book_backed and (supported_sum >= 1 or not has_no_bid)))
+    ):
         normalize_display_probs(
             rows,
             key="probability",
             mutually_exclusive=True,
-            field_complete=True,
+            field_complete=field_complete,
             question=question,
         )
 
-    card_pcts = rendered_card_percents([r.get("probability") for r in rows])
+    card_pcts = [] if book_backed else rendered_card_percents([r.get("probability") for r in rows])
     by_oid: dict[int, int] = {}
     by_key: dict[str, int] = {}
     for idx, r in enumerate(rows):
@@ -3637,6 +3646,7 @@ async def _load_snapshot_from_db(
 
         detail_by_mid: dict[int, dict[str, Any]] = {}
         mpn_by_mid: dict[int, dict[str, Any]] = {}
+        unsupported_field_ids: set[int] = set()
         selected_vt_rows = [
             vt_rows_by_id[mid] for mid in sorted(candidate_mids) if mid in vt_rows_by_id
         ]
@@ -3670,10 +3680,19 @@ async def _load_snapshot_from_db(
                     normalize_numbers=False,
                 )
                 _apply_verified_title_to_detail(
-                    detail, await _resolve_verified_title(db, fm), fm
+                    detail, await _resolve_verified_title(db, fm), fm,
+                    check_grouped_field_coverage=fm.id in title_matched_mids,
                 )
+                if detail.get("field_price_coverage_incomplete"):
+                    unsupported_field_ids.add(fm.id)
+                    if fm.id not in paired_stage_mids:
+                        continue
                 d_outs = list(detail.get("outcomes") or ())
-                card_pcts = rendered_card_percents([row.get("probability") for row in d_outs])
+                card_pcts = (
+                    []
+                    if any("kalshi_no_bid" in row for row in d_outs)
+                    else rendered_card_percents([row.get("probability") for row in d_outs])
+                )
                 by_oid: dict[int, int] = {}
                 by_key: dict[str, int] = {}
                 by_fold: dict[str, tuple[float, int, int]] = {}
@@ -3720,6 +3739,10 @@ async def _load_snapshot_from_db(
                             "opening_probability": row.get("opening_probability"),
                             "image_url": img_by_oid.get(oid),
                             "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,
+                            **(
+                                {"kalshi_no_bid": row["kalshi_no_bid"]}
+                                if "kalshi_no_bid" in row else {}
+                            ),
                         }
                     )
                 mpn = {
@@ -3742,7 +3765,7 @@ async def _load_snapshot_from_db(
 
         for pm in prelim_markets:
             mid = int(pm["id"])
-            if mid not in detail_by_mid:
+            if mid in unsupported_field_ids or mid not in detail_by_mid:
                 continue
             screened_outs = detail_by_mid[mid]["top_outcomes"]
             if not screened_outs:
@@ -5695,9 +5718,9 @@ async def produce_container_machinery(
     if hide_row_art and card_visual_rows:
         card_visual_rows = _strip_visual_row_art(card_visual_rows)
 
-    # All-or-nothing row art parity with iOS (`GroupingMachineryViews12288`):
-    # a Discover card or set-page section gets row pictures only when every row
-    # it renders has a real verified picture (never letters beside photos).
+    # Decision 387: A (#13605): show the verified pictures we have on each row
+    # and leave rows without one as monogram/initials circles (never hide
+    # held pictures because a sibling row is missing one).
     if (
         not hide_row_art
         and card_visual_rows
@@ -5718,12 +5741,10 @@ async def produce_container_machinery(
                 if isinstance(r, Mapping) and not has_art
             ]
             logger.warning(
-                "Public sports card %s dropped row pictures; missing art for subjects=%s",
+                "Public sports card %s missing art for subjects=%s (387:A keeps sibling pictures)",
                 slug,
                 missing_subjects,
             )
-        if any(row_has_url) and not all(row_has_url):
-            card_visual_rows = _strip_visual_row_art(card_visual_rows)
 
     has_card_art = any(_has_verified_art(r) for r in card_visual_rows if isinstance(r, Mapping))
     if vb_form == "paired_stage_bars" and lead_paired_set:
@@ -6030,12 +6051,15 @@ def _enforce_section_all_or_nothing_art(
     *,
     hide_row_art: bool,
 ) -> None:
-    """Enforce per-section all-or-nothing row art on set-page sections (#12288 Item 4).
+    """Apply explicit ``rule.hide_row_art`` stripping on set-page sections (#13605 / 387: A).
 
-    Called AFTER ``card_visual_rows`` is built so a set-page section with some
-    unpictured rows strips its section row art cleanly without disturbing a
-    3/3 pictured Discover card from the same section.
+    Under Decision 387: A, partial picture coverage no longer strips sibling
+    pictures — rows with verified art keep it, and rows without art keep their
+    initials fallback. Only explicit ``hide_row_art=True`` strips row art.
     """
+    if not hide_row_art:
+        return
+
     for sec in built_sections:
         sec_vb = sec.get("visual_block")
         if not isinstance(sec_vb, dict):
@@ -6045,37 +6069,13 @@ def _enforce_section_all_or_nothing_art(
         if not isinstance(items, list) or not items:
             continue
 
-        should_strip = False
-        if hide_row_art and s_form in {
+        if s_form not in {
             "benchmark_strip",
             "sibling_fields_grid",
             "leader_bars",
             "contender_spotlight",
             "duel_bar",
         }:
-            should_strip = True
-        elif s_form == "benchmark_strip":
-            has_urls = [
-                bool((it.get("outcomes") or ()) and _has_verified_art(it["outcomes"][0]))
-                for it in items
-                if isinstance(it, Mapping)
-            ]
-            should_strip = any(has_urls) and not all(has_urls)
-        elif s_form in {"sibling_fields_grid", "leader_bars", "contender_spotlight", "duel_bar"}:
-            has_urls = [
-                _has_verified_art(o)
-                for it in items
-                if isinstance(it, Mapping) and not it.get("scale_ordered")
-                for o in (it.get("outcomes") or ())
-                if isinstance(o, Mapping)
-                and not (
-                    s_form == "duel_bar"
-                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
-                )
-            ]
-            should_strip = any(has_urls) and not all(has_urls)
-
-        if not should_strip:
             continue
 
         stripped_items: list[dict[str, Any]] = []
@@ -6083,12 +6083,11 @@ def _enforce_section_all_or_nothing_art(
             if not isinstance(it, Mapping):
                 continue
             it_copy = dict(it)
-            if hide_row_art or not it_copy.get("scale_ordered"):
-                outs = it_copy.get("outcomes")
-                if isinstance(outs, Sequence) and not isinstance(outs, (str, bytes)):
-                    it_copy["outcomes"] = _strip_visual_row_art(
-                        [o for o in outs if isinstance(o, Mapping)]
-                    )
+            outs = it_copy.get("outcomes")
+            if isinstance(outs, Sequence) and not isinstance(outs, (str, bytes)):
+                it_copy["outcomes"] = _strip_visual_row_art(
+                    [o for o in outs if isinstance(o, Mapping)]
+                )
             stripped_items.append(it_copy)
         sec_vb["items"] = stripped_items
 

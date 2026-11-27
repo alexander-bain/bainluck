@@ -20,9 +20,10 @@ import time
 import unicodedata
 import weakref
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
+from math import isfinite
 from typing import Any, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -95,6 +96,10 @@ from app.models.models import (
 from app.services import get_db, get_db_rw
 from app.utils.discover_final_seating import seat_marquee_finals
 from app.utils.live_first_page import hoist_live_events_into_first_page
+from app.utils.surface_rank import (
+    resolve_surface_profile,
+    score_candidate_for_surface,
+)
 from app.utils.sports_first_page_rails import (
     CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS,
     FINISHED_STATUSES,
@@ -140,6 +145,7 @@ from app.utils.graded_card import (
     card_sum_reason,
     duel_percents_by_side,
     rendered_card_percents,
+    rendered_percent,
 )
 from app.utils.prematch_reading import (
     PREMATCH_PRIOR_SHARED_NAMESPACE,
@@ -269,6 +275,7 @@ from app.utils.feed_cache import (
     feed_page_base_built_at,
     feed_page_base_cache_key,
     feed_page_base_enabled,
+    feed_page_base_fallback_limits,
     feed_page_base_last_good_key,
     feed_page_base_last_good_max_age_s,
     feed_response_cache_key,
@@ -336,6 +343,13 @@ from app.utils.labeling_queue import (
     review_key_for_feed_item as _review_key_for_feed_item,
 )
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+from app.utils.futures_field_coverage import (
+    field_leader_is_unsupported,
+    field_winner_places,
+    greatest_trusted_ask_ceiling,
+    has_limited_field_price_coverage,
+)
+from app.utils.futures_unsupported_price import row_carries_a_verdict
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.sport_keys import SPORT_LEAGUE_MAP, sport_display_name
@@ -344,6 +358,8 @@ from app.utils.outcome_display import (
     drop_dominant_field_outcomes,
     drop_incoherent_ladder_outcomes,
     ladder_treatment_collapsed,
+    mark_kalshi_ask_ceilings,
+    open_kalshi_yes_bid,
 )
 from app.utils.not_trading import market_not_trading
 from app.utils.discover_game_reason import (
@@ -2561,13 +2577,29 @@ def apply_discover_display_chain(
     # the caller's ordering, and nothing else.
     items = list(items)
 
+    surface_profile = resolve_surface_profile(
+        sports_mode=sports_mode,
+        my_teams_only=my_teams_only,
+    )
+
     # #4818 — before anything ranks, caps or bundles: a golf winner market that
     # a tournament card in this pool already blends is the same question twice.
     items = _drop_futures_blended_into_tournaments(items)
 
     # === RANK ===
-    # Sort by score descending, then by recency as tiebreaker
-    items.sort(key=_rank_key, reverse=True)
+    # Sort by surface-shared score descending, then by recency as tiebreaker.
+    # Discover uses `_rank_key` unmodified so Stage 1 frozen weights cannot drift.
+    if surface_profile.surface == "discover":
+        items.sort(key=_rank_key, reverse=True)
+    else:
+        items.sort(
+            key=lambda item: (
+                score_candidate_for_surface(item, surface_profile, now=now)[0],
+                item.get("_sort_time", 0),
+                _AscendingTieBreak(_canonical_item_key(item)),
+            ),
+            reverse=True,
+        )
 
     # === DIVERSITY GUARANTEE ===
     # Ensure the feed has a mix of events and futures.
@@ -2938,7 +2970,7 @@ def apply_discover_display_chain(
     # spelled the same way everywhere else in this function, so it is spelled
     # that way here too rather than resting on the caller never combining them.
     finished_rail_cap_meta = None
-    if sports_mode and not my_teams_only:
+    if sports_mode and not my_teams_only and surface_profile.surface == "sports":
         items, finished_rail_cap_meta = cap_repeated_finished_rails(
             items, first_page_size=DISCOVER_COMPOSITION_WINDOW
         )
@@ -2984,7 +3016,7 @@ def apply_discover_display_chain(
     # TRUE for My Stuff, and My Stuff's contract is to show everything matching
     # and skip this work entirely.
     client_deletion_swap_meta = None
-    if sports_mode and not my_teams_only:
+    if sports_mode and not my_teams_only and surface_profile.surface == "sports":
         items, client_deletion_swap_meta = (
             swap_client_deleted_finished_off_first_page(
                 items, first_page_size=DISCOVER_COMPOSITION_WINDOW
@@ -3037,7 +3069,7 @@ def apply_discover_display_chain(
     # BEFORE the hoist, like everything else in this chain — that pass is Alex's
     # P1 criterion and keeps the last word on first-page membership.
     futures_cap_meta = None
-    if sports_mode and not my_teams_only:
+    if sports_mode and not my_teams_only and surface_profile.surface == "sports":
         items, futures_cap_meta = cap_futures_on_games_led_first_page(
             items, first_page_size=DISCOVER_COMPOSITION_WINDOW
         )
@@ -3065,7 +3097,7 @@ def apply_discover_display_chain(
     # no score changes and no other card moves. BEFORE #9489's pass, which keeps
     # served order inside its two groups, so a series it touches stays in order.
     series_order_meta = None
-    if sports_mode and not my_teams_only:
+    if sports_mode and not my_teams_only and surface_profile.surface == "sports":
         items, series_order_meta = order_series_games_by_kickoff(items)
     _tick("series_kickoff_order")
 
@@ -3085,7 +3117,7 @@ def apply_discover_display_chain(
     # which vacates the WORST window slots, i.e. the later-starting games this
     # pass has just moved behind tonight's.
     imminent_marquee_meta = None
-    if sports_mode and not my_teams_only:
+    if sports_mode and not my_teams_only and surface_profile.surface == "sports":
         items, imminent_marquee_meta = lead_upcoming_with_imminent_marquee_games(
             items, now=now
         )
@@ -3146,6 +3178,7 @@ def apply_discover_display_chain(
     )
 
     return items, {
+        "surface": surface_profile.surface,
         "reviewed_filtered_count": reviewed_filtered_count,
         "ladder_refused": ladder_refused_count,
         # None = the pass never ran (a non-Discover surface); a zero `seated`
@@ -3309,6 +3342,35 @@ def _drop_dismissed_keyed_items(
     return [item for item in items if _keeps(item)]
 
 
+def _filter_dismissed_bundle_items(
+    items: list[dict],
+    ctx: PersonalizationContext,
+    *,
+    my_teams_only: bool = False,
+) -> list[dict]:
+    """Drop bundled/grouped cards that this viewer dismissed (#13644)."""
+    if my_teams_only or not ctx.recent_dismissed_keys:
+        return items
+    from app.utils.roundup_containers import _roundup_card_candidate_keys
+
+    dismissed = {
+        str(k).strip()
+        for k in ctx.recent_dismissed_keys
+        if isinstance(k, str) and str(k).strip()
+    }
+    if not dismissed:
+        return items
+
+    kept: list[dict] = []
+    for item in items:
+        if item.get("type") == "bundle" and (
+            _roundup_card_candidate_keys(item) & dismissed
+        ):
+            continue
+        kept.append(item)
+    return kept
+
+
 def _keyed_item_sport_identity(item: dict) -> tuple[str | None, str | None]:
     """``(sport_key, sport_category)`` for a string-keyed card, from the
     mappings that ALREADY name its sport — never from its title. #1927.
@@ -3441,6 +3503,12 @@ def _dedupe_futures_by_group_id(
     "Who wins Best Picture?") should appear as one card, not 10.  Markets
     without a group_id pass through unchanged.
     """
+    # A withdrawn leader must not become the representative or a saved sibling.
+    # The bundle assemblers apply their minimum to the candidates that remain.
+    futures_items = [
+        item for item in futures_items
+        if not has_limited_field_price_coverage(item.get("data") or {})
+    ]
     if any(
         item.get("_q8_family_only_admission")
         or any(
@@ -3527,22 +3595,71 @@ def _dedupe_futures_by_group_id(
         key=_rank_key,
         reverse=True,
     )
-    survivor_by_group: dict[str, dict] = {}
+    survivor_idx_by_group: dict[str, int] = {}
+    seen_member_keys_by_group: dict[str, set[str]] = {}
     kept: list[dict] = []
+
+    def _member_dedupe_key(entry: dict) -> str:
+        entry_data = entry.get("data") if isinstance(entry.get("data"), dict) else {}
+        mid = entry_data.get("id")
+        return f"{entry.get('type')}:{mid}" if mid is not None else f"obj:{id(entry)}"
+
     for item in sorted_items:
         data = item.get("data") or {}
         group_id = data.get("group_id")
         if group_id is not None:
             gid_str = str(group_id)
-            survivor = survivor_by_group.get(gid_str)
-            if survivor is not None:
+            survivor_idx = survivor_idx_by_group.get(gid_str)
+            if survivor_idx is not None:
                 # Preserve the dropped same-group sibling on the surviving card
                 # under a private key so the Discover-mode awards theme bundler
                 # (assemble_awards_theme_bundles) can reconstruct the full race.
-                # Stripped from the default-feed response in the serving path.
-                survivor.setdefault("_grouped_members", []).append(item)
+                # Clone survivor + list before mutating so dual-pool scoring never
+                # mutates a shared item dict across passes or repeats a market (#13805).
+                survivor = kept[survivor_idx]
+                seen_keys = seen_member_keys_by_group[gid_str]
+                members_copy = list(survivor.get("_grouped_members") or [])
+                candidates = [item] + [
+                    sub
+                    for sub in (item.get("_grouped_members") or [])
+                    if isinstance(sub, dict)
+                ]
+                for cand in candidates:
+                    ckey = _member_dedupe_key(cand)
+                    if ckey in seen_keys:
+                        continue
+                    seen_keys.add(ckey)
+                    cand_copy = dict(cand)
+                    cand_copy.pop("_grouped_members", None)
+                    members_copy.append(cand_copy)
+                survivor["_grouped_members"] = members_copy
                 continue
-            survivor_by_group[gid_str] = item
+
+            survivor_copy = dict(item)
+            existing_subs = [
+                sub
+                for sub in (item.get("_grouped_members") or [])
+                if isinstance(sub, dict)
+            ]
+            skey = _member_dedupe_key(survivor_copy)
+            seen_keys = {skey}
+            deduped_subs: list[dict] = []
+            for sub in existing_subs:
+                sub_key = _member_dedupe_key(sub)
+                if sub_key in seen_keys:
+                    continue
+                seen_keys.add(sub_key)
+                sub_copy = dict(sub)
+                sub_copy.pop("_grouped_members", None)
+                deduped_subs.append(sub_copy)
+            if deduped_subs:
+                survivor_copy["_grouped_members"] = deduped_subs
+            else:
+                survivor_copy.pop("_grouped_members", None)
+            survivor_idx_by_group[gid_str] = len(kept)
+            seen_member_keys_by_group[gid_str] = seen_keys
+            kept.append(survivor_copy)
+            continue
         kept.append(item)
     return kept
 
@@ -5316,10 +5433,32 @@ async def get_feed(
             else:
                 _base_raw, _base_status, _base_body = None, None, None
                 _used_machinery_page_base = False
-                if _include_machinery_feed and not _include_machinery_preview:
-                    _mach_pb_key = feed_machinery_page_base_key(_page_base_key)
+                _candidate_pb_keys = [_page_base_key] + [
+                    feed_page_base_cache_key(
+                        **{**_page_base_shape, "limit": _fb_limit}
+                    )
+                    for _fb_limit in feed_page_base_fallback_limits(
+                        limit=limit,
+                        include_events=include_events,
+                        include_futures=include_futures,
+                    )
+                ]
+                for _cand_pb_key in _candidate_pb_keys:
+                    if _include_machinery_feed and not _include_machinery_preview:
+                        _mach_pb_key = feed_machinery_page_base_key(_cand_pb_key)
+                        _base_raw, _base_status = await _read_shared_feed_cache(
+                            _shared_redis, _mach_pb_key
+                        )
+                        _base_body = (
+                            _safe_cache_payload(_base_raw)
+                            if _base_raw is not None
+                            else None
+                        )
+                        if _base_body is not None:
+                            _used_machinery_page_base = True
+                            break
                     _base_raw, _base_status = await _read_shared_feed_cache(
-                        _shared_redis, _mach_pb_key
+                        _shared_redis, _cand_pb_key
                     )
                     _base_body = (
                         _safe_cache_payload(_base_raw)
@@ -5327,16 +5466,7 @@ async def get_feed(
                         else None
                     )
                     if _base_body is not None:
-                        _used_machinery_page_base = True
-                if _base_body is None:
-                    _base_raw, _base_status = await _read_shared_feed_cache(
-                        _shared_redis, _page_base_key
-                    )
-                    _base_body = (
-                        _safe_cache_payload(_base_raw)
-                        if _base_raw is not None
-                        else None
-                    )
+                        break
             if (
                 _base_body is not None
                 and _include_machinery_feed
@@ -6718,6 +6848,9 @@ async def get_feed(
             _previous_at = _record_feed_timing(
                 _timings, _started_at, _previous_at, "roundups"
             )
+        feed_items = _filter_dismissed_bundle_items(
+            feed_items, ctx, my_teams_only=my_teams_only
+        )
 
         # T4-B2 / #5102: the pin, on the BUILD path. Applied to ``feed_items``
         # before the slice below, which is the only placement that works —
@@ -9236,7 +9369,10 @@ def _field_has_withheld_legs(
     withheld = _resolve_withheld_ids(market, withheld_ids)
     if withheld:
         withheld_ids = set(withheld)
-        if any(getattr(o, "id", None) in withheld_ids for o in outcomes):
+        if any(
+            getattr(o, "id", None) in withheld_ids and open_kalshi_yes_bid(market, o) != 0
+            for o in outcomes
+        ):
             return True
     # The page's second union term. Reached even when the arms named nothing,
     # which is the whole of the residual: on all five specimens above the arms
@@ -9248,6 +9384,80 @@ def _field_has_withheld_legs(
 #: read above stays a `__dict__` read on every shape. Module-level and never
 #: written to, the same construction `futures_market_snapshot` uses.
 _NO_MARKET_DICT: dict = {}
+
+
+def _withhold_unsupported_field_leader(
+    item: dict, market, screened_outcomes: list, *, field_incomplete: bool,
+    stale_outcome_ids: Collection[int] = (),
+) -> None:
+    """Keep the market link when the full screened field cannot support a leader."""
+    data = item["data"]
+    card = data.get("discover_card") or {}
+    if (
+        data["status"] != "open"
+        or data["market_type"] not in ("field", "participation")
+        or card.get("suggested_format") != "outcome_distribution"
+        or card.get("ladder_treatment_refused")
+    ):
+        return
+
+    metadata = market.market_metadata
+    shape = metadata.get("shape") if isinstance(metadata, dict) else None
+    expected = shape.get("expected_winners") if isinstance(shape, dict) else None
+    places = field_winner_places(market.name, _market_exclusivity(market), expected)
+    field_outcomes = drop_duplicate_legs(market.outcomes, lambda outcome: outcome.external_id)
+    graded = {
+        outcome.id: getattr(outcome, "is_winner", None) is True
+        for outcome in field_outcomes
+        if row_carries_a_verdict(getattr(outcome, "resolution_source", None))
+    }
+    if places is not None:
+        places -= sum(graded.values())
+    open_prices = {
+        outcome.id: outcome.current_probability
+        for outcome in screened_outcomes if outcome.id not in graded
+    }
+    missing_price_ceiling = None
+    if places == 1 and getattr(market, "source", None) == "kalshi":
+        priced_ids = {
+            outcome_id for outcome_id, probability in open_prices.items()
+            if probability is not None and isfinite(probability) and 0 <= probability <= 1
+        }
+        missing = [
+            outcome for outcome in field_outcomes
+            if outcome.id not in graded and outcome.id not in priced_ids
+        ]
+        if any(open_kalshi_yes_bid(market, outcome) == 0 for outcome in missing):
+            field_incomplete = True
+            missing_price_ceiling = greatest_trusted_ask_ceiling(
+                getattr(outcome, "current_yes_ask", None)
+                if outcome.id not in stale_outcome_ids and open_kalshi_yes_bid(market, outcome) == 0
+                else None
+                for outcome in missing
+            )
+    incomplete = field_leader_is_unsupported(
+        open_prices.values(),
+        places,
+        open_outcome_count=len(field_outcomes) - len(graded),
+        omitted_contender=field_incomplete,
+        missing_price_ceiling=missing_price_ceiling,
+    )
+    data["field_price_coverage_incomplete"] = incomplete
+    if not incomplete:
+        return
+
+    notice = "No recent probability"
+    item.update(headline=None, reason=notice, context_summary=notice)
+    data.update(
+        top_outcomes=[],
+        hook_description=None,
+        price_observed_at=None,
+        card_sum_reason=None,
+    )
+    # Both card formats and their share text pick a leader from these rows.
+    data.pop("discover_card", None)
+    data.pop("full_field_rendered", None)
+    data.pop("matched_outcomes", None)
 
 
 def _card_price_observed_at(displayed_outcomes: list) -> str | None:
@@ -9448,9 +9658,21 @@ def _market_exclusivity(market) -> bool | None:
     return getattr(market, "mutually_exclusive", None)
 
 
+def _feed_display_rows(outcomes: list, market=None) -> list[dict]:
+    rows = [
+        {"id": getattr(o, "id", None), "name": getattr(o, "name", ""),
+         "probability": o.current_probability, "is_winner": getattr(o, "is_winner", None),
+         "resolution_source": getattr(o, "resolution_source", None)}
+        for o in outcomes
+    ]
+    if getattr(market, "source", None) == "kalshi":
+        mark_kalshi_ask_ceilings(market, rows, {o.id: o for o in outcomes})
+    return rows
+
+
 def _feed_display_scale(
     all_sorted_outcomes: list, question: str | None = None, *,
-    mutually_exclusive: bool | None = None, field_complete: bool = True,
+    mutually_exclusive: bool | None = None, field_complete: bool = True, market=None,
 ) -> float:
     """The detail page's full-field divisor, before the card preview (#11995)."""
     from app.utils.outcome_display import display_probability_divisor
@@ -9458,10 +9680,7 @@ def _feed_display_scale(
     if _outcomes_are_cumulative_ladder(all_sorted_outcomes, question):
         return 1.0
     return display_probability_divisor(
-        [{"name": getattr(o, "name", ""), "probability": o.current_probability,
-          "is_winner": getattr(o, "is_winner", None),
-          "resolution_source": getattr(o, "resolution_source", None)}
-         for o in all_sorted_outcomes],
+        _feed_display_rows(all_sorted_outcomes, market),
         mutually_exclusive=mutually_exclusive,
         field_complete=field_complete, question=question,
     ) or 1.0
@@ -9631,7 +9850,11 @@ def _printed_outcome_name(
         _negates_market_question,
         _weak_outcome_label,
         format_tied_leaders,
+        is_opposing_binary_pair,
     )
+
+    if len(tied_names) == 2 and is_opposing_binary_pair(tied_names):
+        return single
 
     if any(
         n.lower() in {"yes", "no"}
@@ -9643,26 +9866,44 @@ def _printed_outcome_name(
     return format_tied_leaders(tied_names) or single
 
 
+def _is_even_two_way_board(
+    outcomes_data: list[dict],
+    printed_leader: Optional[int],
+    printed_runner_up: Optional[int],
+    field_is_a_race: Optional[bool],
+) -> bool:
+    """True when a 2-outcome exclusive board ties evenly on opposing generic labels (e.g. Down 50% / Up 50%) (#13645)."""
+    if (
+        len(outcomes_data) != 2
+        or printed_leader is None
+        or printed_runner_up is None
+        or int(printed_leader) != int(printed_runner_up)
+        or field_is_a_race is False
+    ):
+        return False
+    from app.utils.feed_reasons import is_opposing_binary_pair
+
+    names = [str(o.get("name") or "").strip() for o in outcomes_data]
+    return is_opposing_binary_pair(names)
+
+
 def _normalize_feed_probabilities(
     top_outcomes: list[dict], all_sorted_outcomes: list,
     question: str | None = None, *, mutually_exclusive: bool | None = None,
-    field_complete: bool = True,
+    field_complete: bool = True, market=None,
 ) -> list[dict]:
     """Normalize and allocate over the whole field, then project the preview."""
     from app.utils.outcome_display import normalize_display_probs
 
-    full = [{"id": getattr(o, "id", None), "name": getattr(o, "name", ""),
-             "probability": o.current_probability,
-             "is_winner": getattr(o, "is_winner", None),
-             "resolution_source": getattr(o, "resolution_source", None)}
-            for o in all_sorted_outcomes]
+    full = _feed_display_rows(all_sorted_outcomes, market)
     normalize_display_probs(full, mutually_exclusive=mutually_exclusive,
                             field_complete=field_complete, question=question)
+    book_backed = mutually_exclusive is True and any("kalshi_no_bid" in row for row in full)
     by_id = {o["id"]: o for o in full if o["id"] is not None}
     by_name = {o["name"]: o for o in full}
     scale = _feed_display_scale(all_sorted_outcomes, question,
                                 mutually_exclusive=mutually_exclusive,
-                                field_complete=field_complete)
+                                field_complete=field_complete, market=market)
     for o in top_outcomes:
         row = by_id.get(o.get("id")) or by_name.get(o.get("name"))
         if row is not None:
@@ -9675,6 +9916,10 @@ def _normalize_feed_probabilities(
             )
             if "rendered_percent" in row:
                 o["rendered_percent"] = row["rendered_percent"]
+            elif book_backed:
+                # Round the supported field's unscaled rows before the card's
+                # two-row preview can treat them as complementary sides.
+                o["rendered_percent"] = rendered_percent(row["probability"])
         elif mutually_exclusive is None:
             o["probability"] = _scale_display_probability(o.get("probability"), scale)
     return top_outcomes
@@ -9682,13 +9927,13 @@ def _normalize_feed_probabilities(
 
 def _annotate_distribution_allocations(
     card: dict, outcomes: list, question: str | None, *,
-    mutually_exclusive: bool | None, field_complete: bool,
+    mutually_exclusive: bool | None, field_complete: bool, market=None,
 ) -> None:
     """Copy the full field's shared whole numbers after classification (#11995)."""
     rows = _normalize_feed_probabilities(
         [{"id": o.id, "name": o.name, "probability": o.current_probability} for o in outcomes],
         outcomes, question, mutually_exclusive=mutually_exclusive,
-        field_complete=field_complete,
+        field_complete=field_complete, market=market,
     )
     by_id = {row["id"]: row.get("rendered_percent") for row in rows}
     by_label = {_card_outcome_name(o): by_id.get(o.id) for o in outcomes}
@@ -11681,8 +11926,8 @@ async def _load_personalization_context(
                     continue
             last_seen_dt = _utc(last_seen)
             if action in _DISCOVER_NEGATIVE_ACTIONS:
-                if item_id is None:
-                    recent_dismissed_keys.add(item_id_raw)
+                if item_id is None or item_type == "bundle":
+                    recent_dismissed_keys.add(str(item_id_raw).strip())
                 elif item_type == "event":
                     recent_dismissed_event_ids.add(item_id)
                 elif item_type == "futures":
@@ -14620,6 +14865,7 @@ async def _score_sports_mode_futures(
             market.name,
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
+            market=market,
         )
         display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
         _display_comparisons = normalized_field_comparisons(
@@ -14781,6 +15027,7 @@ async def _score_sports_mode_futures(
             market.name,
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
+            market=market,
         )
         mark_futures_card_rows(market, top_outcomes_data)
         _full_field_rendered = bool(top_outcomes_data) and all(
@@ -14803,6 +15050,9 @@ async def _score_sports_mode_futures(
 
         # THE PRINT STEP (#6552). These three are the only completed copies;
         # every predicate above keeps the raw `*_name` it matched on.
+        _even_two_way = _is_even_two_way_board(
+            outcomes_data, _printed_leader, _printed_runner_up, _field_is_a_race
+        )
         _h_leader = _printed_outcome_name(leader_name, display_names, market.name, top_outcomes_data)
         _h_mover = _printed_outcome_name(top_mover_name, display_names, market.name)
         _h_surprise = _printed_outcome_name(
@@ -14833,6 +15083,7 @@ async def _score_sports_mode_futures(
                 rendered_affirmative_percent=_printed_affirmative,
                 top_surprise_opened_at=top_surprise_opened_at,
                 now=now,
+                even_two_way_tie=_even_two_way,
             )
             or highlight_result.primary_reason
         )
@@ -14856,6 +15107,7 @@ async def _score_sports_mode_futures(
             top_surprise_change=top_surprise_change,
             top_surprise_opened_at=top_surprise_opened_at,
             now=now,
+            even_two_way_tie=_even_two_way,
         )
 
         quality = classify_market_quality(
@@ -14931,6 +15183,7 @@ async def _score_sports_mode_futures(
             rendered_affirmative_percent=_printed_affirmative,
             top_surprise_opened_at=top_surprise_opened_at,
             now=now,
+            even_two_way_tie=_even_two_way,
         )
 
         source_names = (
@@ -15004,6 +15257,7 @@ async def _score_sports_mode_futures(
             discover_card, card_outcomes, market.name,
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
+            market=market,
         )
 
         futures_data = {
@@ -15160,6 +15414,10 @@ async def _score_sports_mode_futures(
             ),
             "outcome_names": [str(n) for n in outcome_names],
         }
+        _withhold_unsupported_field_leader(
+            item, market, card_outcomes, field_incomplete=_field_incomplete,
+            stale_outcome_ids=_stale_ids,
+        )
         scored_items.append(item)
 
     if not _from_shared_cache:
@@ -16494,6 +16752,7 @@ async def _score_futures(
                 market.name,
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
+                market=market,
             )
             display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
             _display_comparisons = normalized_field_comparisons(
@@ -16766,6 +17025,7 @@ async def _score_futures(
                 market.name,
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
+                market=market,
             )
             mark_futures_card_rows(market, top_outcomes_data)
             _full_field_rendered = bool(top_outcomes_data) and all(
@@ -16790,6 +17050,9 @@ async def _score_futures(
             # "Anthropic leads at 69%" instead of "Yes leads at 69%".
             # …and #6552's completed club label is applied in the same step,
             # so the raw `*_name` above stays the lookup key it has to be.
+            _even_two_way = _is_even_two_way_board(
+                outcomes_data, _printed_leader, _printed_runner_up, _field_is_a_race
+            )
             _h_leader = _printed_outcome_name(leader_name, display_names, market.name, top_outcomes_data)
             _h_mover = _printed_outcome_name(
                 top_mover_name, display_names, market.name
@@ -16822,6 +17085,7 @@ async def _score_futures(
                     rendered_affirmative_percent=_printed_affirmative,
                     top_surprise_opened_at=top_surprise_opened_at,
                     now=now,
+                    even_two_way_tie=_even_two_way,
                 )
                 or highlight_result.primary_reason
             )
@@ -16845,6 +17109,7 @@ async def _score_futures(
                 top_surprise_change=top_surprise_change,
                 top_surprise_opened_at=top_surprise_opened_at,
                 now=now,
+                even_two_way_tie=_even_two_way,
             )
 
             quality = classify_market_quality(
@@ -17248,6 +17513,7 @@ async def _score_futures(
                 rendered_affirmative_percent=_printed_affirmative,
                 top_surprise_opened_at=top_surprise_opened_at,
                 now=now,
+                even_two_way_tie=_even_two_way,
             )
 
             source_names = (
@@ -17325,6 +17591,7 @@ async def _score_futures(
                 discover_card, card_outcomes, market.name,
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
+                market=market,
             )
 
             futures_data = {
@@ -17529,6 +17796,10 @@ async def _score_futures(
             if is_recycled:
                 item["recycled"] = True
 
+            _withhold_unsupported_field_leader(
+                item, market, card_outcomes, field_incomplete=_field_incomplete,
+                stale_outcome_ids=_stale_ids,
+            )
             scored_items.append(item)
             # LAT-P105: on the fused path `scored_items` is the RELAXED pool, so
             # the strict pool is collected alongside it in the same candidate

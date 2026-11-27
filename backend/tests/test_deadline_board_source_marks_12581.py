@@ -79,7 +79,7 @@ def test_yes_only_market_explains_the_calculated_no_without_inventing_a_no_quote
     mark_quote(yes, "kalshi", 0.885)
     mark = mark_quote(no, "kalshi", 0.885)
     assert no["probability"] == pytest.approx(0.115)
-    assert mark["method"] == "The No number is 100% minus this source's Yes price"
+    assert mark["method"] == "The No number is 100% minus this source's Yes probability"
 
 
 def test_complementary_rounding_explains_a_one_point_difference():

@@ -232,7 +232,7 @@ export function presentConnectionStatus(
   // A healthy socket never hides old evidence: the warnings outrank every
   // connection word, in the neutral styling the header badge's stale branch uses.
   if (input.priceMayBeOld) {
-    return { label: 'Price may be old', tone: 'neutral', breathes: false, announcement: '' };
+    return { label: 'Probability may be old', tone: 'neutral', breathes: false, announcement: '' };
   }
   if (input.scoreMayBeOld) {
     return { label: 'Score may be old', tone: 'neutral', breathes: false, announcement: '' };

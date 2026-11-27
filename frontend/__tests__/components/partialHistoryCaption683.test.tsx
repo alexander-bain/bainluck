@@ -91,7 +91,7 @@ describe("#683 decoder: the caption fires only on the server's own word", () => 
 
 describe("#683 the caption itself", () => {
   it("is one short plain sentence with no counts, no machine keys and no venue", () => {
-    expect(PARTIAL_HISTORY_CAPTION).toBe("Some older prices aren't shown.");
+    expect(PARTIAL_HISTORY_CAPTION).toBe("Some older readings aren't shown.");
     expect(PARTIAL_HISTORY_CAPTION).not.toMatch(/\d/);
     expect(PARTIAL_HISTORY_CAPTION).not.toMatch(/_|overlap|budget|archive|kalshi|polymarket|book/i);
     expect(PARTIAL_HISTORY_CAPTION.split(/[.!?]\s/).length).toBe(1);

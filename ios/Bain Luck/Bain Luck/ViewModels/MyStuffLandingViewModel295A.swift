@@ -357,7 +357,9 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                     sourceMark: event!.sourceMark,
                     awaySourceMark: event!.awaySourceMark,
                     pregameSourceMark: event!.pregameSourceMark,
-                    awayPregameSourceMark: event!.awayPregameSourceMark
+                    awayPregameSourceMark: event!.awayPregameSourceMark,
+                    heroProbability: event!.heroProbability,
+                    heroProbabilityAway: event!.heroProbabilityAway
                 )
             }
             guard event != nil || futures != nil else { continue }
@@ -937,7 +939,9 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             sourceMark: ev.sourceMark,
             awaySourceMark: ev.awaySourceMark,
             pregameSourceMark: ev.pregameSourceMark,
-            awayPregameSourceMark: ev.awayPregameSourceMark
+            awayPregameSourceMark: ev.awayPregameSourceMark,
+            heroProbability: ev.heroProbability,
+            heroProbabilityAway: ev.heroProbabilityAway
         )
     }
 

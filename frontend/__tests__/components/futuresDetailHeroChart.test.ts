@@ -72,6 +72,6 @@ describe("futures-detail edge states (#883 L2-49)", () => {
     // — is unchanged, so the guard follows the behaviour to where it lives
     // rather than being deleted with the string it happened to be keyed on.
     expect(code).toContain("<FuturesTrendEmptyState");
-    expect(emptyStateCode).toContain("Not enough price history yet");
+    expect(emptyStateCode).toContain("Not enough probability history yet");
   });
 });

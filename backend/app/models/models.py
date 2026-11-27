@@ -2248,6 +2248,10 @@ class RankingGrade(Base):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "grade IN ('shareable', 'interesting', 'neither')",
+            name="ck_ranking_grades_grade",
+        ),
         Index("ix_ranking_grades_slate", "slate_id", "grader"),
         Index("ix_ranking_grades_graded_at", "graded_at"),
     )
@@ -3768,6 +3772,38 @@ class ClientTimingEvent(Base):
         Index("ix_client_timing_name_time", "event_name", "created_at"),
         # A retention sweep walks the window alone.
         Index("ix_client_timing_created_at", "created_at"),
+    )
+
+
+class AnonymousInstallCount(Base):
+    """434: A / 424: A — daily aggregate install lifecycle counts (#13261).
+
+    Stores ONLY summed daily counts keyed by ``(day, app_version, event)`` for
+    the three pre-consent lifecycle milestones (``first_open``,
+    ``first_run_finished``, ``previous_session_crashed``). Zero per-event rows,
+    zero IP addresses, and zero user/device/install identifiers by construction.
+    """
+
+    __tablename__ = "anonymous_install_counts"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True, nullable=False)
+    app_version: Mapped[str] = mapped_column(
+        String(16), primary_key=True, nullable=False
+    )
+    event: Mapped[str] = mapped_column(String(32), primary_key=True, nullable=False)
+    count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "event IN ('first_open', 'first_run_finished', 'previous_session_crashed')",
+            name="ck_anon_install_counts_event",
+        ),
+        CheckConstraint(
+            "count >= 0",
+            name="ck_anon_install_counts_count_nonneg",
+        ),
     )
 
 

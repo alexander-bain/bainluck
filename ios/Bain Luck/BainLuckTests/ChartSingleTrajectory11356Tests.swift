@@ -707,7 +707,7 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
                       "a tick label that does not reserve \"100%\" moves the plot's left edge with the window")
         XCTAssertEqual(count("letaxis=axisPlan9483(dataPoints:dataPoints,checkpoints:checkpoints,", in: chart), 2,
                        "inline and full size each plan one axis for gutter and plot")
-        XCTAssertEqual(count("checkpoints:checkpoints,axis:axis,", in: chart), 2)
+        XCTAssertEqual(count("checkpoints:checkpoints,axis:axis,plotWidth:", in: chart), 2)
     }
 
     func testTheLineKeepsOneIdentity() throws {
@@ -745,8 +745,8 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
 
     func testSourcesIsOneToggleThatAddsLinesUnderThePrimary() throws {
         let chart = try chartCode()
-        XCTAssertTrue(chart.contains("sourcesOpen:$inlineSourcesOpen,rail:false)"))
-        XCTAssertTrue(chart.contains("sourcesOpen:$fullscreenSourcesOpen,rail:true)"),
+        XCTAssertTrue(chart.contains("sourcesOpen:$inlineSourcesOpen,rail:false,soccerThreeLine:soccerThreeLine)"))
+        XCTAssertTrue(chart.contains("sourcesOpen:$fullscreenSourcesOpen,rail:true,soccerThreeLine:soccerThreeLine)"),
                       "the full-size key is the one-row rail")
         XCTAssertEqual(count("fullscreenSourcesOpen=inlineSourcesOpenisFullscreen=true", in: chart), 2,
                        "every way into full size starts on the inline choice")
@@ -771,13 +771,15 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         XCTAssertEqual(count(".frame(minWidth:44,minHeight:44,alignment:.leading).contentShape(Rectangle())", in: buttons), 2,
                        "each state's shape is laid on its 44pt frame, not on the caption")
         XCTAssertFalse(buttons.contains(".padding(.vertical,6).contentShape("), "the ~26pt target is back")
-        XCTAssertTrue(chart.contains("tennis:tennis)}.frame(height:chartHeight)"
+        XCTAssertTrue(chart.contains("tennis:tennis,soccerThreeLine:soccerThreeLine)}.frame(height:chartHeight)"
                                      + ".exploreChartTip10876(eventId:eventId,touchSurfaceInstalled:scrubSurfaces,dataPoints:dataPoints)"
                                      + "legendView(dataPoints:dataPoints,"
-                                     + "sources:history.winProbSources??[:],sourcesOpen:$inlineSourcesOpen,rail:false)"),
+                                     + "sources:history.winProbSources??[:],sourcesOpen:$inlineSourcesOpen,rail:false,"
+                                     + "soccerThreeLine:soccerThreeLine)"),
                       "inline: the key sits below the fixed-height plot")
         XCTAssertTrue(chart.contains(".frame(height:enlargedPlotFloor)legendView(dataPoints:dataPoints,"
-                                     + "sources:history.winProbSources??[:],sourcesOpen:$fullscreenSourcesOpen,rail:true)"),
+                                     + "sources:history.winProbSources??[:],sourcesOpen:$fullscreenSourcesOpen,rail:true,"
+                                     + "soccerThreeLine:soccerThreeLine)"),
                       "full size: the key is its own row under the plot row")
     }
 
@@ -787,7 +789,7 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         let chart = try chartCode()
         XCTAssertTrue(chart.contains("staticfuncprimarySource(in"), "(a) the drawn primary line's name")
         XCTAssertTrue(chart.contains("@Environment(\\.chartScrubSurfaces)privatevarscrubSurfaces"), "(a)")
-        XCTAssertTrue(chart.contains("tennis:tennis)}.frame(height:chartHeight)"),
+        XCTAssertTrue(chart.contains("tennis:tennis,soccerThreeLine:soccerThreeLine)}.frame(height:chartHeight)"),
                       "(a)/(b) the one inline chart container, framed at the inline height")
         XCTAssertEqual(count("selection.end()", in: chart), 1, "(c) one scrub end")
         XCTAssertTrue(chart.contains("iflettennis,letdate=selection.date{tennisPin.hold(tennis.inspect(at:date))}"
@@ -870,8 +872,8 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         let dot = try XCTUnwrap(label.range(of: "ifink.draws(date:end.date,probability:end.probability){Circle()"))
         XCTAssertLessThan(dot.lowerBound, decision.lowerBound, "the end dot stands outside the plate's decision")
 
-        XCTAssertTrue(chart.contains("letfinishedEnd=liveSplit==nil?Self.finishedEnd9483(dataPoints:dataPoints,"
-                                     + "checkpoints:checkpoints,finished:EventState.isFinished(status)):nil"),
+        XCTAssertTrue(chart.contains("letfinishedEnd=(liveSplit==nil&&soccerThreeLine==nil)?Self.finishedEnd9483(dataPoints:dataPoints,"
+                                     + "checkpoints:checkpoints,finished:EventState.isFinished(status),settledDraw:Self.isSettledDraw9483("),
                       "the plot's end and the key's are one function")
         XCTAssertTrue(chart.contains("letendReading=finishedEndKeyReading9483(dataPoints:dataPoints)ifhasBlend{"),
                       "the reading is taken once, before the Sources branch")

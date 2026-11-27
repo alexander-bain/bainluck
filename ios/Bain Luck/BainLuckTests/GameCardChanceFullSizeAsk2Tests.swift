@@ -151,13 +151,14 @@ final class GameCardChanceFullSizeAsk2Tests: XCTestCase {
             let joinedLive = liveObs.map { $0.text }.joined(separator: " | ")
             XCTAssertFalse(joinedLive.contains("\u{2026}"), "Unexpected ellipsis at \(cardWidth): \(joinedLive)")
 
-            let awayNowH = try XCTUnwrap(liveObs.first(where: { $0.text.contains("30.0%") })?.pixelHeight, "Missing 30.0% in \(joinedLive)")
-            let homeNowH = try XCTUnwrap(liveObs.first(where: { $0.text.contains("70.0%") })?.pixelHeight, "Missing 70.0% in \(joinedLive)")
+            // Direction 395 (#13634): cards render whole percents (`30%`, `70%`) when not live-streaming.
+            let awayNowH = try XCTUnwrap(liveObs.first(where: { $0.text.contains("30%") })?.pixelHeight, "Missing 30% in \(joinedLive)")
+            let homeNowH = try XCTUnwrap(liveObs.first(where: { $0.text.contains("70%") })?.pixelHeight, "Missing 70% in \(joinedLive)")
 
             // At 3x scale, unshrunken 20pt rounded heavy digits have OCR glyph height >= 40 px
             // (whereas the 0.45 minimumScaleFactor bug shrank them to ~22-28 px).
-            XCTAssertGreaterThanOrEqual(awayNowH, 40.0, "Now (30.0%) shrank at width \(cardWidth): \(awayNowH) px")
-            XCTAssertGreaterThanOrEqual(homeNowH, 40.0, "Now (70.0%) shrank at width \(cardWidth): \(homeNowH) px")
+            XCTAssertGreaterThanOrEqual(awayNowH, 40.0, "Now (30%) shrank at width \(cardWidth): \(awayNowH) px")
+            XCTAssertGreaterThanOrEqual(homeNowH, 40.0, "Now (70%) shrank at width \(cardWidth): \(homeNowH) px")
 
             let upImg = renderPNG(
                 EventCardView(event: upcomingNBA, reason: nil)

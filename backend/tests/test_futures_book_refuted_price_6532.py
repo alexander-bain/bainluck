@@ -139,12 +139,9 @@ def test_the_write_side_rule_is_imported_and_not_copied():
 
     assert kalshi_task.book_refutes_price is kalshi_empty_book.book_refutes_price
 
-    # And the writer's behaviour on #5121's own measured row is unchanged:
-    # KXNBAWINS-27MIA-60 traded at 0.5200 under a live ask of 0.0900, and rule 2
-    # must refuse that trade. It then falls to rule 3's longshot ask cap, so the
-    # tell is that the answer is NOT the trade — asserting `is None` would be
-    # asserting the wrong rule.
-    assert kalshi_task._kalshi_yes_probability(0.0, 0.09, 0.52) == 0.09
+    # The live 0.0900 ask refutes the specimen's 0.5200 trade. With no bid
+    # the ask is a ceiling, so there is no price to write.
+    assert kalshi_task._kalshi_yes_probability(0.0, 0.09, 0.52) is None
     # While the empty book still falls through to the trade, which
     # `kalshi_resolution_sweep` depends on.
     assert kalshi_task._kalshi_yes_probability(0.0, 1.0, 0.99) == 0.99

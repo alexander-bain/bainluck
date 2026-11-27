@@ -32,7 +32,7 @@ import copy
 import re
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from app.utils.discover_opening_seating import (
@@ -83,6 +83,120 @@ def card_visual_form_id(item: Mapping[str, Any]) -> Optional[str]:
         cleaned = form_id.strip()
         return cleaned or None
     return None
+
+
+# #13551 Ask 1 (2026-11-24 blind forms sort, row 166): Alex's 7 visual look piles across all 14 forms.
+ALEX_LOOK_PILE_LABELS: dict[str, str] = {
+    "pile_1": "Row list with pill %",
+    "pile_2": "Headline + art/chart + thin bars",
+    "pile_3": "Game slate",
+    "pile_4": "Three cells side by side",
+    "pile_5": "Big number with a bar",
+    "pile_6": "Paired bars per row",
+    "pile_7": "One split bar",
+}
+
+FORM_TO_LOOK_PILE: dict[str, str] = {
+    # Pile 1: list of rows, each with a percent in a pill
+    "theme_compact_rows": "pile_1",
+    "comparison_compact_rows": "pile_1",
+    "party_control_bars": "pile_1",
+    # Pile 2: headline sentence, one picture or chart, then thin bars
+    "benchmark_strip": "pile_2",
+    "sibling_fields_grid": "pile_2",
+    "probability_history_chart": "pile_2",
+    # Pile 3: game slate
+    "matchup_slate": "pile_3",
+    "coin_flip_matchups": "pile_3",
+    # Pile 4: three cells side by side
+    "contender_spotlight": "pile_4",
+    "matchup_strip": "pile_4",
+    # Pile 5: big number with a bar
+    "benchmark_strip_legacy": "pile_5",
+    "deadline_ladder": "pile_5",
+    # Pile 6: paired bars per row
+    "paired_stage_bars": "pile_6",
+    # Pile 7: one bar split between two sides
+    "duel_bar": "pile_7",
+}
+
+
+def card_visual_form_or_legacy(item: Mapping[str, Any]) -> Optional[str]:
+    """Return a Discover bundle's visual form, inferring legacy form names when absent."""
+    explicit = card_visual_form_id(item)
+    if explicit:
+        return explicit
+    if not isinstance(item, Mapping) or item.get("type") != "bundle":
+        return None
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    kind = str(data.get("kind") or "").strip().lower()
+    story_key = str(data.get("story_key") or "").strip().lower()
+    if kind == "theme":
+        if "congress_control" in story_key or "party_control" in story_key:
+            return "party_control_bars"
+        return "theme_compact_rows"
+    if kind == "comparison":
+        return "comparison_compact_rows"
+    if kind == "roundup" or isinstance(data.get("roundup"), Mapping):
+        return "benchmark_strip_legacy"
+    return None
+
+
+def card_look_pile(item_or_form: Mapping[str, Any] | str | None) -> Optional[str]:
+    """Map a Discover card (or form name) to Alex's 7 visual look piles (#13551 Ask 1)."""
+    if item_or_form is None:
+        return None
+    if isinstance(item_or_form, str):
+        form_name: Optional[str] = item_or_form.strip() or None
+    else:
+        form_name = card_visual_form_or_legacy(item_or_form)
+    if not form_name:
+        return None
+    return FORM_TO_LOOK_PILE.get(form_name)
+
+
+def _summarize_window_variety(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    form_counts: Counter[str] = Counter()
+    look_counts: Counter[str] = Counter()
+    grouped_count = 0
+    for item in items:
+        form_name = card_visual_form_or_legacy(item)
+        if not form_name:
+            continue
+        grouped_count += 1
+        form_counts[form_name] += 1
+        pile = FORM_TO_LOOK_PILE.get(form_name)
+        if pile:
+            look_counts[pile] += 1
+    return {
+        "grouped_count": grouped_count,
+        "distinct_forms": len(form_counts),
+        "distinct_looks": len(look_counts),
+        "forms": dict(sorted(form_counts.items())),
+        "looks": dict(sorted(look_counts.items())),
+    }
+
+
+def summarize_discover_form_and_look_variety(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Report distinct forms and Alex's 7 distinct looks across top 10, top 20, and all items."""
+    item_list = list(items)
+    top_10 = _summarize_window_variety(item_list[:10])
+    top_20 = _summarize_window_variety(item_list[:20])
+    all_window = _summarize_window_variety(item_list)
+    summary_line = (
+        f"top10: {top_10['distinct_forms']} forms -> {top_10['distinct_looks']} distinct looks "
+        f"({top_10['grouped_count']} grouped); "
+        f"top20: {top_20['distinct_forms']} forms -> {top_20['distinct_looks']} distinct looks "
+        f"({top_20['grouped_count']} grouped)"
+    )
+    return {
+        "top_10": top_10,
+        "top_20": top_20,
+        "all": all_window,
+        "summary_line": summary_line,
+    }
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PWM_SUBTOPIC_POLITICS_WORLD = "politics_or_world"

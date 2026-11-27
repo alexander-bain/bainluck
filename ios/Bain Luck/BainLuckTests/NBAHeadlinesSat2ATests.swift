@@ -228,12 +228,13 @@ final class NBAHeadlinesSat2ATests: XCTestCase {
             )
             XCTAssertEqual(model.away.shortName, "Celtics")
             XCTAssertEqual(model.away.record, "9-3")
-            XCTAssertEqual(model.away.pregameProjectedNumberText, "116.5")
+            // 240: A (#13029) — basketball projections print as whole numbers (116.5 -> 117, 112.5 -> 113).
+            XCTAssertEqual(model.away.pregameProjectedNumberText, "117")
             XCTAssertEqual(model.away.winChanceText, "61%", "NBA before a game must always use whole percent")
 
             XCTAssertEqual(model.home.shortName, "Bucks")
             XCTAssertEqual(model.home.record, "6-6")
-            XCTAssertEqual(model.home.pregameProjectedNumberText, "112.5")
+            XCTAssertEqual(model.home.pregameProjectedNumberText, "113")
             XCTAssertEqual(model.home.winChanceText, "39%", "NBA before a game must always use whole percent")
             XCTAssertTrue(model.showsEkg)
             XCTAssertTrue(model.showsBottomBar)
@@ -269,8 +270,9 @@ final class NBAHeadlinesSat2ATests: XCTestCase {
         )
         XCTAssertEqual(
             noProjModel.pregameColumnHeaders,
-            EventSportHeadlines12472.PregameColumnHeaders(projected: nil, chance: "Chance")
+            EventSportHeadlines12472.PregameColumnHeaders(projected: "Proj.", chance: "Chance")
         )
+        XCTAssertEqual(noProjModel.columns.first(where: { $0.role == .projected })?.header, "")
         XCTAssertNil(noProjModel.away.pregameProjectedNumberText)
         XCTAssertEqual(noProjModel.away.winChanceText, "61%")
     }
@@ -301,13 +303,14 @@ final class NBAHeadlinesSat2ATests: XCTestCase {
         XCTAssertEqual(model.away.won, true)
         XCTAssertEqual(model.away.pregameChanceText, "35%")
         XCTAssertEqual(model.away.finalResultText, "115")
-        XCTAssertEqual(model.away.secondarySublineText, "11-1 · Proj. 110")
+        // Direction 199 (#12771): after-game rows keep [Pregame, Final] clean without secondarySublineText.
+        XCTAssertNil(model.away.secondarySublineText)
 
         XCTAssertEqual(model.home.shortName, "Knicks")
         XCTAssertEqual(model.home.won, false)
         XCTAssertEqual(model.home.pregameChanceText, "65%")
         XCTAssertEqual(model.home.finalResultText, "107")
-        XCTAssertEqual(model.home.secondarySublineText, "7-5 · Proj. 114")
+        XCTAssertNil(model.home.secondarySublineText)
 
         XCTAssertFalse(model.away.secondarySublineText?.localizedCaseInsensitiveContains("pregame") ?? false)
         XCTAssertFalse(model.home.secondarySublineText?.localizedCaseInsensitiveContains("pregame") ?? false)

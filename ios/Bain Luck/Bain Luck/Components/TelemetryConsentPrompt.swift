@@ -18,62 +18,99 @@ struct TelemetryConsentPrompt: View {
     /// Called once a choice is recorded, with the resulting durability.
     var onChoice: (ConsentPersistence) -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var allowButtonForeground: Color {
+        colorScheme == .dark ? Color(hex: "#0F172A") : .white
+    }
+
     var body: some View {
-        VStack(spacing: 18) {
-            BainLuckMarkView(size: 44)
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
 
-            Text("Help us find what\u{2019}s broken?")
-                .font(.title3.weight(.bold))
-                .multilineTextAlignment(.center)
+                    VStack(spacing: 18) {
+                        BainLuckMarkView(size: 44)
 
-            Text(
-                "We can collect anonymous usage stats \u{2014} which screens are slow, "
-                + "what crashes. No names, no emails, and never what you search for."
-            )
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .fixedSize(horizontal: false, vertical: true)
+                        Text("Help us find what\u{2019}s broken?")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(DS.textPrimary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
 
-            VStack(spacing: 10) {
-                Button {
-                    choose(.analytics)
-                } label: {
-                    Text("Allow")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Color.accentColor)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                }
-
-                Button {
-                    choose(.none)
-                } label: {
-                    Text("No thanks")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Color.cardBackground)
-                        .foregroundStyle(.primary)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14)
-                                .stroke(Color.barTrack.opacity(0.5), lineWidth: 1)
+                        Text(
+                            "We can collect anonymous usage stats \u{2014} which screens are slow, "
+                            + "what crashes. No names, no emails, and never what you search for."
                         )
-                }
-            }
+                        .font(.subheadline)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
 
-            Text("You can change this any time in Preferences.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                        Text(AnonymousLifecycleCounts424A.privacyDisclosureSentence)
+                            .font(.footnote)
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        VStack(spacing: 10) {
+                            Button {
+                                choose(.analytics)
+                            } label: {
+                                Text("Allow")
+                                    .font(.body.weight(.semibold))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                                    .background(DS.blueReadable)
+                                    .foregroundStyle(allowButtonForeground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                choose(.none)
+                            } label: {
+                                Text("No thanks")
+                                    .font(.body.weight(.semibold))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                                    .background(DS.trackBg)
+                                    .foregroundStyle(DS.textPrimary)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .stroke(DS.border, lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        Text("You can change this any time in Preferences.")
+                            .font(.caption2)
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(24)
+                    .frame(maxWidth: 460)
+                    .background(DS.cardBg)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(DS.border, lineWidth: 1)
+                    )
+                    .padding(24)
+
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
         }
-        .padding(24)
-        .frame(maxWidth: 420)
-        .background(Color.groupedBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 20))
-        .padding(24)
+        .background(DS.surface.ignoresSafeArea())
         .interactiveDismissDisabled()
     }
 

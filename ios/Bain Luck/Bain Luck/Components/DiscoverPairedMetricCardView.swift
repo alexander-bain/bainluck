@@ -74,14 +74,29 @@ struct PairedArtThumbnailView: View {
         size.dimensions(for: kind)
     }
 
+    private var subjectKindForInitials: String? {
+        switch kind {
+        case .espnTeamLogo:
+            return "team"
+        case .tmdbHeadshot:
+            return "person"
+        case .tmdbPoster:
+            return nil
+        }
+    }
+
     @ViewBuilder
     var body: some View {
         let safeURL = PairedMetricPresentation.resolveKidSafeVisualArt(entry)
         if safeURL == nil && !showsPlaceholderMonogram {
             if reservesSlotWidthWhenMissing {
-                Color.clear
-                    .frame(width: spec.width, height: 1)
-                    .accessibilityHidden(true)
+                // Ruling 387: A — Where a sibling row has a picture, draw initials
+                // inside a matching circle instead of leaving an empty slot.
+                KitInitialsCircle366B(
+                    name: entry.subject,
+                    subjectKind: subjectKindForInitials,
+                    box: CGSize(width: spec.width, height: spec.height)
+                )
             } else {
                 EmptyView()
             }
@@ -98,7 +113,11 @@ struct PairedArtThumbnailView: View {
                             if showsPlaceholderMonogram {
                                 monogramTile
                             } else {
-                                emptyLoadingFrame
+                                KitInitialsCircle366B(
+                                    name: entry.subject,
+                                    subjectKind: subjectKindForInitials,
+                                    box: CGSize(width: spec.width, height: spec.height)
+                                )
                             }
                         }
                     }
@@ -291,6 +310,7 @@ struct DiscoverPairedMetricCardView: View {
     @State private var expanded: Bool
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     @ScaledMetric(relativeTo: .caption2) private var badgeSize: CGFloat = 10
     @ScaledMetric(relativeTo: .caption2) private var kickerSize: CGFloat = 11
@@ -412,6 +432,15 @@ struct DiscoverPairedMetricCardView: View {
             }
 
             footerBlock
+
+            if let likeAction {
+                DiscoverCardActionBar420D(
+                    actions: likeAction,
+                    topDivider: true,
+                    horizontalPadding: 0,
+                    verticalPadding: 8
+                )
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

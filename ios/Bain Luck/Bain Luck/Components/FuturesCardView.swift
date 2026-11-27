@@ -36,6 +36,8 @@ struct FuturesCardView: View {
     }
 
     var body: some View {
+        let outcomes = futures.topOutcomes ?? []
+        let listed = SettledQuote.isSettled(futures.status) ? outcomes : outcomes.filter { $0.probability != nil }
         VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
@@ -66,18 +68,18 @@ struct FuturesCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             // Top outcomes (Direction 228 #12885: numerical scales list ascending without #rank)
-            if let allOutcomes = futures.topOutcomes, !allOutcomes.isEmpty {
+            if !listed.isEmpty {
                 let numerical = NumericalMarketScaleOrder228.orderedSlice(
-                    allOutcomes,
+                    listed,
                     limit: 3,
                     label: \.name,
                     probability: \.probability,
                     explicitSortKey: \.sortKey,
                     marketType: futures.marketType,
-                    totalOutcomeCount: futures.outcomeCount ?? allOutcomes.count,
+                    totalOutcomeCount: futures.outcomeCount ?? outcomes.count,
                     isCumulative: futures.mutuallyExclusive == false
                 )
-                let shown = numerical?.map(\.element) ?? Array(allOutcomes.prefix(3))
+                let shown = numerical?.map(\.element) ?? Array(listed.prefix(3))
                 let showsRank = numerical == nil
                 VStack(spacing: 4) {
                     ForEach(shown) { outcome in
@@ -86,10 +88,13 @@ struct FuturesCardView: View {
                 }
             }
 
-            // Remaining count
-            if let total = futures.outcomeCount,
-               let shown = futures.topOutcomes?.count,
-               total > shown {
+            if let notice = futures.withdrawnProbabilityNotice {
+                Text(notice)
+                    .font(.caption2)
+                    .foregroundStyle(DS.textSecondaryReadable)
+            } else if let total = futures.outcomeCount,
+                      let shown = futures.topOutcomes?.count,
+                      total > shown {
                 Text("+\(total - shown) more")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)

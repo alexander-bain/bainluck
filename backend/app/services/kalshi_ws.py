@@ -318,9 +318,9 @@ class KalshiWebSocket:
     def current_book_primary_price(self, ticker):
         """Primary-only proof; an ask/trade fallback never proves a midpoint.
 
-        The healthy current ask independently supports the same longshot cap
-        already selected by normal price policy. A cached trade away from that
-        ask is not current-price evidence and remains refused. No new clock.
+        A small current ask corroborates a price only when the shared price
+        policy selects a trade at that ask. A cached trade away from the ask
+        remains refused. No new clock.
         """
         from decimal import Decimal, InvalidOperation
         from app.tasks.kalshi import _kalshi_yes_probability

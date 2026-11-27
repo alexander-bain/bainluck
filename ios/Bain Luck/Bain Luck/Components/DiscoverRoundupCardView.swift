@@ -22,6 +22,7 @@ struct DiscoverRoundupCardView: View {
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     private var isDark: Bool {
         colorScheme == .dark
@@ -48,7 +49,7 @@ struct DiscoverRoundupCardView: View {
     }
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 0) {
             if let ref = collectionRef, let onOpenCollection {
                 Button {
                     onOpenCollection(ref)
@@ -64,7 +65,18 @@ struct DiscoverRoundupCardView: View {
                     .accessibilityElement(children: model.hasAnySourceMark ? .contain : .combine)
                     .accessibilityLabel(model.accessibilitySummary)
             }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 18, verticalPadding: 8)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(cardSurfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(borderInk, lineWidth: 1)
+        )
     }
 
     private var cardSurface: some View {
@@ -90,12 +102,6 @@ struct DiscoverRoundupCardView: View {
         .padding(.top, 18)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardSurfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(borderInk, lineWidth: 1)
-        )
     }
 
     // MARK: - Header (Kicker + Tag + Headline + Optional Subtitle)

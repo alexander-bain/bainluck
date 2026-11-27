@@ -3531,7 +3531,12 @@ async def _delete_departing_market_snapshots(
             or_(stamped.in_(ids), stamped.is_(None)),
         )
     )
-    return result.rowcount or 0
+    deleted_count = result.rowcount or 0
+    if deleted_count > 0:
+        from app.services.finished_event_history import invalidate_finished_event_history
+
+        await invalidate_finished_event_history(session, [event_id])
+    return deleted_count
 
 
 async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit: int = 2000) -> int:
@@ -8019,6 +8024,8 @@ async def _phase2_persist_group_reading(
             home_win_probability=round(home_prob, 4),
             away_win_probability=round(away_prob, 4),
             draw_probability=None if draw_prob is None else round(draw_prob, 4),
+            is_completed=bool(getattr(anchor, "event_has_result", False)),
+            commence_time=getattr(anchor, "event_commence_time", None),
             game_state={
                 # `reading.market`, NOT the group's primary. The primary is only
                 # the row picked to iterate once per (event, source); since the
@@ -11508,44 +11515,49 @@ async def _write_live_polymarket_child(
     return True
 
 
-def _clear_outcome_price(outcome, now) -> bool:
+def _clear_outcome_price(outcome, now, *, ask_ceiling: float | None = None) -> bool:
     """Take the price off one leg, or decline to. The shared body of the two
     clears below; it owns the CONDITIONS and the writes, never the reason.
 
-    Split out for #5896's third-writer refusal. Two callers now clear a leg on
-    this poller for two different reasons — the venue withdrew the contract
-    (#4356) and the venue answered it before our row says kick-off (#5896) —
-    and those reasons must keep separate counters (see the stats block: a fact
-    about the listing and a fact about the settlement are not one number). The
-    conditions, though, are identical and must stay identical, so they live in
-    ONE function rather than being restated per reason. Returns whether the
-    price was actually taken off, so each caller increments only on a real
-    write and an already-clear leg is never double-counted.
+    The callers record a withdrawal (#4356), an early settlement (#5896) or
+    an explicit ask ceiling (#11995). Each keeps its own counter. This
+    function applies the shared grade and calibration guards and reports
+    whether the row changed.
 
     * ``is_winner is not True`` — never un-price a graded row (gotcha #21).
     * ``calibration_probability is None`` — never wipe a captured closing line,
       which is calibration's evidence.
-    * ``current_probability is not None`` — idempotent, so a leg cleared once is
-      not restamped every two minutes. ``last_updated`` is a freshness gate
-      other code reads (``routes/playoffs.py`` drops a stale outcome from the
-      grid), so a restamp is not free.
+    * Change the row only when a price is withdrawn or the ask ceiling changes.
+      ``last_updated`` is a freshness gate other readers use.
 
     Deliberately does NOT stamp ``price_changed_at``: no write in this file
     stamps it, and setting it on withdrawals alone would make the column mean
     one thing for a price that moved here and another for a price that went
     away here. That gap is pre-existing and is not this repair's to close.
     """
-    if outcome.current_probability is None:
-        return False
     if outcome.is_winner is True:
         return False
     if outcome.calibration_probability is not None:
         return False
+    if ask_ceiling is None:
+        if outcome.current_probability is None:
+            return False
+    else:
+        if outcome.resolution_source is not None:
+            return False
+        previous_ask = outcome.current_yes_ask
+        if (
+            outcome.current_probability is None
+            and outcome.current_yes_bid == 0
+            and previous_ask is not None
+            and float(previous_ask) == ask_ceiling
+        ):
+            return False
 
     outcome.current_probability = None
     outcome.current_american_odds = None
-    outcome.current_yes_bid = None
-    outcome.current_yes_ask = None
+    outcome.current_yes_bid = 0 if ask_ceiling is not None else None
+    outcome.current_yes_ask = ask_ceiling
     # A 24h delta describing a price that no longer exists is not a delta.
     # Same finding as the sibling clear's #2024 consumer audit.
     outcome.probability_change_24h = None
@@ -12539,6 +12551,7 @@ async def _poll_live_prediction_market_prices():
             # took this leg back": two writers that disagreed about which legs
             # are real is the whole defect CERT-2384 blocked on.
             from app.tasks.kalshi import _is_withdrawn_leg, _kalshi_yes_probability
+            from app.utils.kalshi_empty_book import ask_with_zero_bid
 
             # #5896, and the same rule one line up: ONE definition of "the
             # venue has answered this contract" and ONE of "our row says it has
@@ -12697,6 +12710,15 @@ async def _poll_live_prediction_market_prices():
                             if not withdrawn:
                                 if prob is None:
                                     stats["kalshi_books_unreadable"] += 1
+                                    ask_ceiling = ask_with_zero_bid(yes_bid, yes_ask)
+                                    if ask_ceiling is not None:
+                                        outcome = pop.outcome_lookup.get((market_id, km.ticker or ""))
+                                        if outcome is not None and _clear_outcome_price(
+                                            outcome, now, ask_ceiling=ask_ceiling
+                                        ):
+                                            stats["kalshi_ask_ceilings_recorded"] = (
+                                                stats.get("kalshi_ask_ceilings_recorded", 0) + 1
+                                            )
                                     continue
 
                                 if prob <= 0 or prob >= 1:
@@ -13269,6 +13291,8 @@ async def _poll_live_prediction_market_prices():
                         if (event.status or "").lower() == "live"
                         else None
                     ),
+                    is_completed=(getattr(event, "status", None) in ("completed", "closed")),
+                    commence_time=getattr(event, "commence_time", None),
                 )
 
                 if is_new:
@@ -13764,6 +13788,13 @@ async def _backfill_polymarket_win_prob_history(
                 )
                 session.add(snapshot)
                 stats["snapshots_created"] += 1
+
+            if stats["snapshots_created"] > 0:
+                from app.services.finished_event_history import (
+                    invalidate_finished_event_history,
+                )
+
+                await invalidate_finished_event_history(session, [event_id])
 
             await session.commit()
 

@@ -9,8 +9,9 @@ name: Bug report triage
 #    checkout keeps no credentials, and contents are read-only;
 #  - the issue's title and body are never interpolated into a shell or the
 #    prompt; the agent reads them with `gh issue view` as data;
-#  - labelling and the one #12779 line are done afterwards by a deterministic
-#    step that accepts only an owner from the fixed lane list below.
+#  - labelling and the one NOW-lines post (.github/now-lines-issue.txt) are done
+#    afterwards by a deterministic step that accepts only an owner from the fixed
+#    lane list below.
 # The backend opens shake reports with a user token (issues show the owner as
 # author), and issues opened that way DO start workflows; an issue opened with
 # an Actions GITHUB_TOKEN would not.
@@ -78,7 +79,7 @@ jobs:
             --model claude-sonnet-5-5
             --allowedTools "Read,Grep,Glob,Bash(gh issue view ${{ github.event.issue.number }}:*),Bash(gh issue comment ${{ github.event.issue.number }}:*)"
             --max-turns 30
-      - name: Label the owner and post one line on NOW lines 2 (#12779)
+      - name: Label the owner and post one line on the NOW-lines issue
         uses: actions/github-script@v8
         with:
           script: |
@@ -108,5 +109,11 @@ jobs:
             await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [label] });
             // The title is the reporter's text: quote it as a link label only, trimmed, without markup.
             const title = (context.payload.issue.title || '').replace(/[`*_\[\]<>]/g, '').slice(0, 90);
-            await github.rest.issues.createComment({ owner, repo, issue_number: 12779,
+            const fs = require('fs');
+            const rawNowIssue = fs.readFileSync('.github/now-lines-issue.txt', 'utf8').trim();
+            if (!/^\d+$/.test(rawNowIssue) || Number(rawNowIssue) <= 0) {
+              throw new Error(`Invalid .github/now-lines-issue.txt: ${JSON.stringify(rawNowIssue)}`);
+            }
+            const nowLinesIssue = Number(rawNowIssue);
+            await github.rest.issues.createComment({ owner, repo, issue_number: nowLinesIssue,
               body: `Bug report #${number} (${title}): triaged automatically → **${lanes[id]}**. Fable routes at the next check-in.` });

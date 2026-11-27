@@ -148,7 +148,8 @@ function legendNames(): string[] {
 }
 /** Click a row's chart checkbox, wherever the row sits (listed or folded). */
 function toggleRow(name: string) {
-  const row = byTestId("outcome-row").find((n) => n["data-outcome-name"] === name);
+  const row = [...byTestId("outcome-row"), ...byTestId("futures-folded-outcome-history")]
+    .find((n) => n["data-outcome-name"] === name);
   expect(row).toBeDefined();
   const box = descendants(row!).find((n) => n.tagName === "BUTTON")!;
   act(() => reactProps(box).onClick({ preventDefault: () => {} }));
@@ -182,8 +183,9 @@ describe("#10453 all prices withheld: the chart draws no automatic lines", () =>
     // The card keeps its heading and range controls, and every row keeps its checkbox.
     expect(text()).toContain("Probability Trend");
     for (const name of NAMES) {
-      const row = byTestId("outcome-row").find((n) => n["data-outcome-name"] === name)!;
-      expect(descendants(row).some((n) => n.tagName === "BUTTON")).toBe(true);
+      const button = byTestId("futures-folded-outcome-history").find((n) => n["data-outcome-name"] === name);
+      expect(button?.tagName).toBe("BUTTON");
+      expect(button?.textContent).toBe(name);
     }
     // No movement caption about a withheld row.
     expect(text()).not.toMatch(/pts (from opening|in the last 24h)/);
@@ -196,7 +198,7 @@ describe("#10453 all prices withheld: the chart draws no automatic lines", () =>
     expect(chartDrawn()).toBe(true);
     expect(legendNames()).toEqual(["Jakub Mensik"]);
     expect(byTestId("futures-trend-unpriced-line").map((n) => n.textContent)).toEqual([
-      "No current price for Jakub Mensik. Its line shows past prices.",
+      "No recent probability for Jakub Mensik. Its line shows earlier readings.",
     ]);
     expect(byTestId("futures-trend-no-current-prices")).toHaveLength(0);
     // The served history is never edited.

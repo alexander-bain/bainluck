@@ -38,7 +38,7 @@ def test_primary_proof_requires_same_live_session_and_healthy_book(damage):
 
 
 @pytest.mark.parametrize('bid,trade,ask,expected',[
-    (None,None,'.12',None),('0',None,'.12','.12'),
+    (None,None,'.12',None),('0',None,'.12',None),
     (None,'.12','.12','.12'),(None,'.08','.12',None),
     (None,'.12','.13',None),(None,'.60','.60',None),
     ('0','.12','.12','.12'),('0','.08','.12',None),

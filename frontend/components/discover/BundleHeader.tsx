@@ -90,19 +90,20 @@ export function BundleHeader({
         className={`w-full flex items-start justify-between gap-3 px-4 pt-3.5 pb-3 text-left transition-colors ${canExpand ? "hover:bg-surface-elevated/40" : "cursor-default"}`}
       >
         <div className="flex flex-col gap-1.5 min-w-0">
-          <span className="flex items-center gap-2 min-w-0">
-            {/* #6929 — `title` is not always a short category word (a 45-character
-                tournament name arrives here), so the eyebrow must be able to shrink
-                and ellipsise: `min-w-0` lets the flex item shrink, `truncate` makes
-                the shortfall legible, `max-w-full` caps it against the card. */}
+          <span className="flex items-start gap-2 min-w-0">
+            {/* #6929 / #13793 — `title` is not always a short category word (a 27+ or
+                45-character set/tournament name arrives here); in the 1280 4-column
+                layout `truncate` clipped `WORLD HAPPINESS REPORT …` to ellipsis. Let
+                the eyebrow wrap cleanly inside the card while keeping the fallback
+                count anchored on the first line. */}
             <span
               data-testid="bundle-eyebrow"
-              className="text-[10px] font-bold uppercase tracking-wider text-text-secondary min-w-0 max-w-full truncate"
+              className="text-[10px] font-bold uppercase tracking-wider text-text-secondary min-w-0 max-w-full break-words leading-snug"
             >
               {eyebrowEmoji} {title}
             </span>
             {!sharedQuestion && (
-              <span className="text-xs text-text-muted whitespace-nowrap">{fallbackCount}</span>
+              <span className="text-xs text-text-muted whitespace-nowrap shrink-0">{fallbackCount}</span>
             )}
           </span>
           {sharedQuestion && (
