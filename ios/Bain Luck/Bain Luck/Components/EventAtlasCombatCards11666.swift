@@ -1634,7 +1634,7 @@ enum EventAtlasCombatCards11666 {
     // MARK: - Shared Helpers
 
     nonisolated static func formatPercent(_ unit: Double) -> String {
-        "\(Int((unit * 100).rounded()))%"
+        DiscoverRoundupCardModel.probabilityText(probability: unit, renderedPercent: nil)
     }
 
     nonisolated static func formatMovement(before: Double?, current: Double?) -> String? {
@@ -2005,7 +2005,7 @@ struct EventAtlasCombatDetailsSheet11666: View {
                 Section(context.cardTitle) {
                     LabeledContent("Outcome", value: context.itemTitle)
                     if let before = context.beforeChance {
-                        LabeledContent("○ Before fight", value: "\(Int((before * 100).rounded()))%")
+                        LabeledContent("○ Before fight", value: EventAtlasCombatCards11666.formatPercent(before))
                     } else if context.phase == .before && context.isStaleLive {
                         LabeledContent("○ Before fight", value: "No recent probability")
                     } else {
@@ -2015,7 +2015,7 @@ struct EventAtlasCombatDetailsSheet11666: View {
                         if context.isStaleLive {
                             LabeledContent("● Live", value: "No recent probability")
                         } else if let current = context.currentChance {
-                            LabeledContent("● Live", value: "\(Int((current * 100).rounded()))%")
+                            LabeledContent("● Live", value: EventAtlasCombatCards11666.formatPercent(current))
                         } else {
                             LabeledContent("● Live", value: "No recent probability")
                         }

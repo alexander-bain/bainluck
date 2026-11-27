@@ -49,7 +49,8 @@ final class DivisionRaceFourTeams441A13777Tests: XCTestCase {
             XCTAssertEqual(noNumber, MachineryOutcomeDisplay441A(state: .noRecentProbability, label: "No recent probability", barWidthPercent: 0, muted: true))
         }
 
-        // Non-division cards omit `settled_out` (`nil`) and preserve today's exact `<0.5%` / `0.5%->1%` rules.
+        // Non-division cards (`settled_out: nil`) now share the `<1%` rule for probabilities under 1%,
+        // while keeping normal `.live` styling (non-muted).
         let legacySubHalf = MachineryOutcomeDisplay441A.describe(
             probability: 0.004, renderedPercent: 1, unflooredPercent: 0, settledOut: nil,
             legacyProbability: 0.004, legacyRenderedPercent: 1
@@ -60,7 +61,7 @@ final class DivisionRaceFourTeams441A13777Tests: XCTestCase {
             probability: 0.0099, renderedPercent: 1, unflooredPercent: 1, settledOut: nil,
             legacyProbability: 0.0099, legacyRenderedPercent: 1
         )
-        XCTAssertEqual(legacy099, MachineryOutcomeDisplay441A(state: .live, label: "1%", barWidthPercent: 4, muted: false))
+        XCTAssertEqual(legacy099, MachineryOutcomeDisplay441A(state: .live, label: "<1%", barWidthPercent: 4, muted: false))
     }
 
     func testDecodesUnpricedOutcomesAcrossAllThreeAtlasContractLocations() throws {
