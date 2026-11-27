@@ -139,9 +139,19 @@ async def test_zero_bid_has_no_current_number_on_the_page_or_card():
 @pytest.mark.asyncio
 async def test_wide_open_kalshi_book_has_no_recent_probability_on_page_or_card():
     wide = _leg(1, "Before Feb 1", 0.91, bid=0.24, ask=0.91)
+    wide.volume_24h, wide.volume_24h_at = 0, wide.last_updated
     tight = _leg(2, "Before Jan 1", 0.35, bid=0.33, ask=0.37)
     graded = _leg(3, "Settled", 1.0, bid=0.24, ask=0.91, resolution_source="api_settlement")
-    market = _market(60473031, "When will the coach leave?", [wide, tight, graded])
+    traded = _leg(4, "Before Apr 1", 0.75, bid=0.19, ask=0.78)
+    traded.volume_24h, traded.volume_24h_at = 0.04, traded.last_updated
+    older_read = _leg(5, "Before May 1", 0.81, bid=0.26, ask=0.83)
+    older_read.volume_24h = 200
+    older_read.volume_24h_at = older_read.last_updated - timedelta(minutes=1)
+    missing_read = _leg(6, "Before Jun 1", 0.86, bid=0.25, ask=0.89)
+    market = _market(
+        60473031, "When will the coach leave?",
+        [wide, tight, graded, traded, older_read, missing_read],
+    )
     market.description = None
     market.category_tags = []
     for outcome in market.outcomes:
@@ -152,15 +162,27 @@ async def test_wide_open_kalshi_book_has_no_recent_probability_on_page_or_card()
     page_withheld = await _withheld_price_outcome_ids(db, market)
     batched = await withheld_price_outcome_ids_for_markets(db, [market])
 
-    assert page_withheld == batched[market.id] == {wide.id}
-    assert [row.id for row in _drop_withheld_price_legs(market, market.outcomes, page_withheld)] == [2, 3]
+    assert page_withheld == batched[market.id] == {wide.id, older_read.id, missing_read.id}
+    card_outcomes = _drop_withheld_price_legs(market, market.outcomes, page_withheld)
+    assert [row.id for row in card_outcomes] == [tight.id, graded.id, traded.id]
     detail = _format_market_detail(market, None, page_withheld)
     by_id = {row["id"]: row for row in detail["outcomes"]}
     assert by_id[wide.id]["probability"] is None
     assert by_id[wide.id]["source_mark"]["reason"] == "no_probability"
     assert by_id[tight.id]["probability"] == 0.35
-    assert wide.id not in {row["id"] for row in _format_market_summary(market)["top_outcomes"]}
-    assert wide.current_probability == 0.91  # Reader filter does not rewrite the stored price.
+    assert by_id[traded.id]["probability"] == 0.75
+    assert {row["id"] for row in _format_market_summary(market)["top_outcomes"]} == {
+        tight.id, graded.id, traded.id,
+    }
+    assert wide.current_probability == 0.91
+
+
+@pytest.mark.asyncio
+async def test_the_wide_futures_guard_spares_a_game_market():
+    outcome = _leg(1, "Away wins", 0.83, bid=0.28, ask=0.86)
+    market = _market(53, "Winner", [outcome])
+    market.event_id = 18
+    assert await _withheld_price_outcome_ids(_CountingSession(), market) == set()
 
 
 # ── The ship ─────────────────────────────────────────────────────────────────

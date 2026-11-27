@@ -1634,6 +1634,7 @@ def snapshot_price_is_unsupported(
     *,
     is_winner: Optional[bool] = None,
     in_exclusive_field: bool = False,
+    withheld_wide_kalshi_quote: bool = False,
 ) -> bool:
     """All three arms above, asked of ONE historical ``futures_odds_snapshots`` row (#5898).
 
@@ -1732,12 +1733,11 @@ def snapshot_price_is_unsupported(
     first day a fossil gets re-snapshotted, which is how ``/multi-history`` came
     to lack the sparse-window widening its sibling has.
     """
-    # Older captures can repeat an undated trade alongside its wide book.
-    # Keep that number off the end of an open market's chart as well (#13873).
+    # For a Kalshi futures leg whose current wide book supplies no dated
+    # trade, omit captures that simply repeated a trade on a wide book.
     if (
-        (bookmaker or "").strip().lower() == KALSHI_BOOKMAKER
-        and not resolution_source
-        and is_winner is not True
+        withheld_wide_kalshi_quote
+        and (bookmaker or "").strip().lower() == KALSHI_BOOKMAKER
         and probability is not None
         and last_price is not None
         and abs(float(probability) - float(last_price)) <= _SAME_WRITE_GRAIN

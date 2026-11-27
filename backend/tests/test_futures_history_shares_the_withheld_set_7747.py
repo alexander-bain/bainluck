@@ -175,10 +175,15 @@ def test_kalshi_chart_omits_undated_trade_from_wide_book():
     wide.yes_bid, wide.yes_ask = 0.24, 0.91
     graded.outcome_id = settled.id
     graded.yes_bid, graded.yes_ask = 0.24, 0.91
+    market = _market([live, settled], source="kalshi")
 
     assert futures_route._drop_unsupported_snapshot_points(
-        [tight, wide, graded], [live, settled]
+        [tight, wide, graded], [live, settled], markets=(market,),
     ) == [tight, graded]
+    live.volume_24h, live.volume_24h_at = 0.04, observed
+    assert futures_route._drop_unsupported_snapshot_points(
+        [tight, wide, graded], [live, settled], markets=(market,),
+    ) == [tight, wide, graded]
 
 
 def _last_values(payload):

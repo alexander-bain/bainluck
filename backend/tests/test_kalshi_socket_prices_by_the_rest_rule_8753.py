@@ -216,6 +216,8 @@ async def test_the_tick_writes_its_own_book_beside_the_price(monkeypatch):
 @pytest.mark.parametrize(
     "bid, ask, last",
     [
+        # Wide book, a trade INSIDE it: trade evidence beats a wide book (rule 2).
+        ("0.1000", "0.7000", "0.4000"),
         # Tight book, no trade: midpoint (rule 1).
         ("0.4000", "0.4400", None),
     ],
@@ -238,14 +240,8 @@ async def test_the_socket_stores_exactly_what_the_rest_writer_would(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "bid, ask, last",
-    [
-        ("0.0200", "0.8000", "0.9600"),
-        ("0.2400", "0.9100", "0.9100"),
-    ],
-)
-async def test_a_wide_two_sided_book_writes_no_undated_trade(monkeypatch, bid, ask, last):
+async def test_a_refuted_trade_without_a_zero_bid_writes_no_price(monkeypatch):
+    bid, ask, last = "0.0200", "0.8000", "0.9600"
     assert _kalshi_yes_probability(float(bid), float(ask), float(last)) is None
     updates = await _price_updates(
         monkeypatch,

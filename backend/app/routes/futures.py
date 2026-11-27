@@ -4161,7 +4161,7 @@ async def get_multi_market_history(
     _multi_outcomes = [o for m in markets for o in m.outcomes]
     _multi_field_ids = _exclusive_field_outcome_ids(markets)
     snapshots = _drop_unsupported_snapshot_points(
-        _multi_rows, _multi_outcomes, _multi_field_ids
+        _multi_rows, _multi_outcomes, _multi_field_ids, markets=markets
     )
 
     # ── UX-1052 item 7 — THE SAME SPARSE-WINDOW WIDENING ITS SIBLING HAS ──
@@ -4196,7 +4196,8 @@ async def get_multi_market_history(
                 .order_by(FuturesOddsSnapshot.captured_at)
             )
             extended = _drop_unsupported_snapshot_points(
-                list(ext_result.scalars().all()), _multi_outcomes, _multi_field_ids
+                list(ext_result.scalars().all()), _multi_outcomes, _multi_field_ids,
+                markets=markets,
             )
             if len(extended) > len(snapshots):
                 snapshots = extended
@@ -4232,7 +4233,7 @@ async def get_multi_market_history(
     if older_live is not None:
         _multi_claims, _multi_unknown = await older_live.archive_claims(
             db, archive, snapshots, _kalshi_ids,
-            supported=_support_filter(_multi_outcomes, _multi_field_ids),
+            supported=_support_filter(_multi_outcomes, _multi_field_ids, markets=markets),
         )
     _archive_by_outcome = archive.served(
         ARCHIVE_LIFETIME_FLOOR if full_range else _live_window_start,
@@ -4278,7 +4279,7 @@ async def get_multi_market_history(
         }, key=lambda seat: (seat[0], seat[1], seat[2]))
         _held = await older_live.instant_claims(
             db, [(sibling, at, at) for _mk, at, sibling in _seats],
-            supported=_support_filter(_multi_outcomes, _multi_field_ids),
+            supported=_support_filter(_multi_outcomes, _multi_field_ids, markets=markets),
         )
         for (mk, at, _s), state in zip(_seats, _held):
             if state == SEAT_HELD or (state and (mk, at) not in _seat_state):
@@ -4395,7 +4396,7 @@ def _exclusive_field_outcome_ids(markets) -> set[int]:
     return ids
 
 
-def _support_filter(outcomes, exclusive_field_outcome_ids: set | None = None):
+def _support_filter(outcomes, exclusive_field_outcome_ids: set | None = None, *, markets=()):
     """``_drop_unsupported_snapshot_points`` bound to one chart's outcomes (#683).
 
     For capture rows a helper fetches on the route's behalf — a thinned Full
@@ -4404,12 +4405,12 @@ def _support_filter(outcomes, exclusive_field_outcome_ids: set | None = None):
     either. The same rule, never a second copy of it.
     """
     return lambda rows: _drop_unsupported_snapshot_points(
-        rows, outcomes, exclusive_field_outcome_ids
+        rows, outcomes, exclusive_field_outcome_ids, markets=markets
     )
 
 
 def _drop_unsupported_snapshot_points(
-    snapshots: list, outcomes, exclusive_field_outcome_ids: set | None = None
+    snapshots: list, outcomes, exclusive_field_outcome_ids: set | None = None, *, markets=()
 ) -> list:
     """Remove the chart points whose own row says nothing supported that price (#5898).
 
@@ -4452,6 +4453,9 @@ def _drop_unsupported_snapshot_points(
     # it keeps every point — absence is not evidence, here as everywhere else in
     # this function.
     in_field = exclusive_field_outcome_ids or set()
+    withheld_wide_kalshi_ids = set().union(
+        *(futures_price_screen.wide_kalshi_book_outcome_ids(market) for market in markets)
+    )
     kept = []
     for snapshot in snapshots:
         if snapshot.outcome_id in grades:
@@ -4498,6 +4502,7 @@ def _drop_unsupported_snapshot_points(
                 _as_float(getattr(snapshot, "last_price", None)),
                 is_winner=is_winner,
                 in_exclusive_field=snapshot.outcome_id in in_field,
+                withheld_wide_kalshi_quote=snapshot.outcome_id in withheld_wide_kalshi_ids,
             ):
                 continue
         kept.append(snapshot)
@@ -7330,7 +7335,7 @@ async def _load_generic_venue_history(
         for oid, points in accepted.items():
             rows = as_snapshot_rows(oid, market.source, points)
             supported = _drop_unsupported_snapshot_points(
-                rows, charted_outcomes, exclusive_field_ids
+                rows, charted_outcomes, exclusive_field_ids, markets=(market,)
             )
             venue.unsupported_dropped += len(rows) - len(supported)
             if supported:
@@ -7779,7 +7784,7 @@ async def get_probability_timeline(
     # sparse decision as `/history`.
     _field_ids = _exclusive_field_outcome_ids([market])
     snapshots = _drop_unsupported_snapshot_points(
-        _timeline_rows, charted_outcomes, _field_ids
+        _timeline_rows, charted_outcomes, _field_ids, markets=(market,)
     )
 
     # #7351 — the venue's own history for this market's own contracts, from the
@@ -7798,7 +7803,7 @@ async def get_probability_timeline(
     if older_live is not None:
         venue_rows, venue_unknown = await older_live.withhold_venue(
             db, venue_rows,
-            supported=_support_filter(charted_outcomes, _field_ids),
+            supported=_support_filter(charted_outcomes, _field_ids, markets=(market,)),
         )
     # #683 — the archive store, read once over the widest window the tiers below
     # may adopt and cut to the served one after. Kalshi markets only. `range=full`
@@ -7874,7 +7879,8 @@ async def get_probability_timeline(
             )
             ext_result = await db.execute(ext_query)
             extended_snapshots = _drop_unsupported_snapshot_points(
-                list(ext_result.scalars().all()), charted_outcomes, _field_ids
+                list(ext_result.scalars().all()), charted_outcomes, _field_ids,
+                markets=(market,),
             )
             extended_venue_rows = venue.in_window(
                 extended_cutoff, extended_snapshots, all_outcome_ids
@@ -7894,7 +7900,7 @@ async def get_probability_timeline(
     if older_live is not None:
         _timeline_claims, _timeline_unknown = await older_live.archive_claims(
             db, archive, _timeline_claims, all_outcome_ids,
-            supported=_support_filter(charted_outcomes, _field_ids),
+            supported=_support_filter(charted_outcomes, _field_ids, markets=(market,)),
         )
     archive_by_outcome = archive.served(
         ARCHIVE_LIFETIME_FLOOR if full_range else window_start,
@@ -8167,7 +8173,7 @@ async def get_probability_timeline(
             db,
             [(oid, at, at + timedelta(seconds=bucket_seconds, microseconds=-1))
              for oid, at in _cells],
-            supported=_support_filter(charted_outcomes, _field_ids),
+            supported=_support_filter(charted_outcomes, _field_ids, markets=(market,)),
         )
         _skipped_cells = {cell: state for cell, state in zip(_cells, _held) if state}
     for oid, rows in archive_by_outcome.items():
@@ -8426,6 +8432,7 @@ async def get_cross_source_timeline(
         list(result.scalars().all()),
         [o for m in markets for o in m.outcomes],
         _exclusive_field_outcome_ids(markets),
+        markets=markets,
     )
 
     if not snapshots:
@@ -8974,7 +8981,7 @@ async def get_futures_history(
     # survived — a second error to cover the first.
     _history_field_ids = _exclusive_field_outcome_ids([market])
     _supported_field = _drop_unsupported_snapshot_points(
-        field_rows, charted_outcomes, _history_field_ids
+        field_rows, charted_outcomes, _history_field_ids, markets=(market,)
     )
 
     # #7546 — SPEND THE TEN SLOTS ON LEGS THAT CAN ACTUALLY DRAW.
@@ -9086,7 +9093,7 @@ async def get_futures_history(
     if older_live is not None:
         field_venue_rows, field_venue_unknown = await older_live.withhold_venue(
             db, field_venue_rows,
-            supported=_support_filter(charted_outcomes, _history_field_ids),
+            supported=_support_filter(charted_outcomes, _history_field_ids, markets=(market,)),
         )
         _charted_unknown = [r for r in field_venue_unknown if r.outcome_id in charted_ids]
         if _charted_unknown:
@@ -9179,6 +9186,7 @@ async def get_futures_history(
                 extended_field,
                 charted_outcomes,
                 _history_field_ids,
+                markets=(market,),
             )
             # THE SELECTION IS RE-DERIVED ON THE WINDOW WE ACTUALLY READ. Filtering
             # the wider read through `charted_ids` asks "did the legs chosen from a
@@ -9446,7 +9454,7 @@ async def get_futures_history(
     if older_live is not None:
         _field_claims, _field_unknown = await older_live.archive_claims(
             db, archive, _field_claims, _field_outcome_ids,
-            supported=_support_filter(charted_outcomes, _history_field_ids),
+            supported=_support_filter(charted_outcomes, _history_field_ids, markets=(market,)),
         )
     field_archive_by_outcome = archive.served(
         ARCHIVE_LIFETIME_FLOOR if full_range else _archive_window,
