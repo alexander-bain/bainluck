@@ -284,3 +284,33 @@ def test_az_catchall_refuses_different_squad_or_different_minute():
     az_late.sport_id = 2
     az_late.commence_time = datetime(2026, 6, 15, 19, 45, tzinfo=timezone.utc)
     assert len(fold_twin_events([az_uel, az_late]).events) == 2
+
+
+def test_catchall_requires_both_sides_to_match_at_same_minute():
+    """Home-side-only or away-side-only matches on a catch-all game stay two separate games."""
+    az_uel = _event(
+        40,
+        "soccer_uefa_europa_league",
+        "AZ Alkmaar",
+        "Sparta Prague",
+        {"betting": {"home": 0.45, "away": 0.55}},
+    )
+    home_only = _event(
+        41,
+        "soccer_other",
+        "FC Utrecht",
+        "AC Sparta Praha",
+        {"kalshi": {"home": 0.44, "away": 0.56}},
+    )
+    home_only.sport_id = 2
+    assert len(fold_twin_events([az_uel, home_only]).events) == 2
+
+    away_only = _event(
+        42,
+        "soccer_other",
+        "AZ",
+        "SK Slavia Praha",
+        {"kalshi": {"home": 0.44, "away": 0.56}},
+    )
+    away_only.sport_id = 2
+    assert len(fold_twin_events([az_uel, away_only]).events) == 2
