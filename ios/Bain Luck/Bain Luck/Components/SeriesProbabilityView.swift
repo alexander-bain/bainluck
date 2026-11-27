@@ -195,7 +195,7 @@ struct SeriesProbabilityView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
 
             if !isSeriesOver {
-                Text("Based on \(Int((homeWinProb * 100).rounded()))% game win probability via negative binomial model")
+                Text("Based on \(formatProbability(homeWinProb)) game win probability via negative binomial model")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
