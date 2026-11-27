@@ -198,7 +198,8 @@ def normalize_market_record(row: Any) -> dict[str, Any]:
         try:
             data["sources_count"] = int(data["source_count"])
         except (TypeError, ValueError):
-            pass
+            # Ignore non-numeric source_count metadata when normalizing preview payloads.
+            data["sources_count"] = None
 
     if data.get("max_movement_24h") is None and isinstance(data.get("outcomes"), Sequence):
         moves = [

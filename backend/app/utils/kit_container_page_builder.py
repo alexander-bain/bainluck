@@ -1477,7 +1477,7 @@ def _build_scoreboard_grid_section(
     for m, outs, sig in candidates:
         by_sig[sig].append((m, outs))
 
-    best_group = max(by_sig.values(), key=lambda g: len(g), default=[])
+    best_group = max(by_sig.values(), key=len, default=[])
     col_names_raw: list[str] = []
     chosen_group: list[tuple[Mapping[str, Any], list[dict[str, Any]]]] = []
 
@@ -1540,7 +1540,6 @@ def _build_scoreboard_grid_section(
         {"key": f"col_{i}_{_slugify(c)[:16]}", "label": _short_label(c, 56)}
         for i, c in enumerate(col_names_raw)
     ]
-    all_titles = [str(m.get("name") or "") for m, _ in chosen_group]
     # Format rows: normalize dates when >= 2 rows are dated deadlines; keep uniform Deadline header (#13696 Point 3).
     all_titles = [str(m.get("name") or "") for m, _ in chosen_group]
     all_dated = len(dated_markers) == len(chosen_group) and len(dated_markers) >= 2
@@ -1702,12 +1701,6 @@ def _build_scoreboard_grid_section(
         return None
     _consume_templates([m for m, _ in chosen_group], markets, used_ids)
     return card
-
-
-_SINGLE_DAY_EVENT_RE = re.compile(
-    r"\b(?:on\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|military\s+action|airstrike|ground\s+operation|strike\s+on|visit\s+|meet\s+)\b",
-    re.IGNORECASE,
-)
 
 
 def _infer_binary_default_prep(title_str: str) -> str:

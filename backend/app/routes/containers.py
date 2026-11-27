@@ -744,7 +744,6 @@ async def get_kit_container_pages_preview(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Admin-only preview of Decision 386: A dynamic Kit container pages (read-only from Redis)."""
-    import json
     from app.routes.admin_utils import _check_admin_auth
     from app.tasks.container_proposer import (
         CONTAINER_PREVIEWS_DECK_KEY_PREFIX,
@@ -794,8 +793,8 @@ async def get_kit_container_pages_preview(
 
     try:
         cached_raw = rc.get(redis_key)
-    except Exception as exc:
-        logger.warning("kit-pages preview Redis read failed for %s: %s", redis_key, exc, exc_info=True)
+    except Exception:
+        logger.warning("kit-pages preview Redis read failed", exc_info=True)
         return {
             "kit_page_version": 1,
             "status": "error",
@@ -811,8 +810,8 @@ async def get_kit_container_pages_preview(
     if cached_raw:
         try:
             cached = json.loads(cached_raw)
-        except (TypeError, ValueError) as exc:
-            logger.warning("kit-pages preview Redis payload invalid JSON for %s: %s", redis_key, exc, exc_info=True)
+        except (TypeError, ValueError):
+            logger.warning("kit-pages preview Redis payload invalid JSON", exc_info=True)
             return {
                 "kit_page_version": 1,
                 "status": "error",
