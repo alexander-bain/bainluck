@@ -1,17 +1,18 @@
 "use client";
 
-// /guess — GUESS THE CHANCE (425: C, 426: A, 430: A, 443: A). An unlisted daily
-// challenge: the server hands out each Pacific Time day's fifteen cards from
+// /guess — GUESS THE CHANCE (425: C, 426: A, 430: A, 443: A, 445: A). An unlisted
+// daily challenge: the server hands out each Pacific Time day's fifteen cards from
 // open numbers frozen that morning, and finishers in a group link share one
-// board stored for 30 days. Pre-existing `#g=...` links keep working offline,
-// and an unreachable daily edition degrades to the built-in set instead of dead-ending.
+// board stored for 30 days. Pre-existing `#g=...` links still open the set they
+// were made on (`packs.ts`), and an unreachable daily edition degrades to the
+// latest built-in set instead of dead-ending.
 
 import { useCallback, useEffect, useState } from "react";
 
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
-import { extractLegacyHashCode, fetchTodayPack, formatDayLabel, GuessApiError, isValidGroupCode } from "@/lib/guess/api";
-import { GUESS_PACK, LEGACY_PACKS_BY_CODE } from "@/lib/guess/pack";
+import { fetchTodayPack, formatDayLabel, GuessApiError, isValidGroupCode } from "@/lib/guess/api";
+import { LATEST_PACK, packForHash } from "@/lib/guess/packs";
 import type { GamePack } from "@/lib/guess/types";
 
 import ChanceGame from "./ChanceGame";
@@ -37,11 +38,11 @@ export default function GuessPage() {
     const params = new URLSearchParams(window.location.search);
     const rawGroup = params.get("group");
     const rawDay = params.get("day");
-    const legacyCode = !rawGroup && !rawDay ? extractLegacyHashCode(window.location.hash, LEGACY_PACKS_BY_CODE) : null;
+    const legacyPack = !rawGroup && !rawDay ? packForHash(window.location.hash) : null;
 
-    if (legacyCode) {
+    if (legacyPack) {
       setEdition({
-        pack: LEGACY_PACKS_BY_CODE[legacyCode],
+        pack: legacyPack,
         initialGroupCode: null,
         isLegacyPack: true,
         initialGroupError: null,
@@ -84,7 +85,7 @@ export default function GuessPage() {
           return;
         } catch {
           setEdition({
-            pack: GUESS_PACK,
+            pack: LATEST_PACK,
             initialGroupCode: null,
             isLegacyPack: true,
             initialGroupError: null,
@@ -96,7 +97,7 @@ export default function GuessPage() {
         }
       }
       setEdition({
-        pack: GUESS_PACK,
+        pack: LATEST_PACK,
         initialGroupCode: null,
         isLegacyPack: true,
         initialGroupError: null,
@@ -109,6 +110,11 @@ export default function GuessPage() {
 
   useEffect(() => {
     void loadEdition();
+    const onHash = () => {
+      void loadEdition();
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, [loadEdition]);
 
   return (
@@ -119,29 +125,32 @@ export default function GuessPage() {
         </div>
       }
     >
-      {edition ? (
-        <ChanceGame
-          key={`${edition.pack.id}:${edition.initialGroupCode ?? ""}:${edition.isLegacyPack ? "legacy" : "daily"}`}
-          pack={edition.pack}
-          initialGroupCode={edition.initialGroupCode}
-          isLegacyPack={edition.isLegacyPack}
-          initialGroupError={edition.initialGroupError}
-          earlierDayNotice={edition.earlierDayNotice}
-          expiredDayNotice={edition.expiredDayNotice}
-          fallbackNotice={edition.fallbackNotice}
-          onRetryLive={edition.fallbackNotice ? () => void loadEdition() : null}
-        />
-      ) : (
-        <div className="px-4 py-8">
-          <div
-            className="mx-auto max-w-md space-y-2 rounded-3xl border-2 border-surface-border bg-surface-card p-5 text-center"
-            data-testid="edition-loading"
-          >
-            <h1 className="text-2xl font-black text-text-primary">Guess the Chance</h1>
-            <p className="text-sm text-text-secondary">Loading today&apos;s cards…</p>
+      {/* `touch-manipulation`: two quick taps on a button are two taps, never a zoom. */}
+      <div className="touch-manipulation" data-testid="guess-root">
+        {edition ? (
+          <ChanceGame
+            key={`${edition.pack.id}:${edition.initialGroupCode ?? ""}:${edition.isLegacyPack ? "legacy" : "daily"}`}
+            pack={edition.pack}
+            initialGroupCode={edition.initialGroupCode}
+            isLegacyPack={edition.isLegacyPack}
+            initialGroupError={edition.initialGroupError}
+            earlierDayNotice={edition.earlierDayNotice}
+            expiredDayNotice={edition.expiredDayNotice}
+            fallbackNotice={edition.fallbackNotice}
+            onRetryLive={edition.fallbackNotice ? () => void loadEdition() : null}
+          />
+        ) : (
+          <div className="px-4 py-8">
+            <div
+              className="mx-auto max-w-md space-y-2 rounded-3xl border-2 border-surface-border bg-surface-card p-5 text-center"
+              data-testid="edition-loading"
+            >
+              <h1 className="text-2xl font-black text-text-primary">Guess the Chance</h1>
+              <p className="text-sm text-text-secondary">Loading today&apos;s cards…</p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </ErrorBoundary>
   );
 }

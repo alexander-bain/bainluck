@@ -19,6 +19,7 @@ import {
 } from "@/lib/guess/api";
 import { emptyEntry, fullGuess } from "@/lib/guess/engine";
 import { GUESS_PACK, LEGACY_PACKS_BY_CODE } from "@/lib/guess/pack";
+import { GUESS_PACK_C1 } from "@/lib/guess/packC1";
 import { clearGame, loadGame, saveGame } from "@/lib/guess/storage";
 
 jest.mock("@/hooks", () => ({
@@ -121,6 +122,7 @@ describe("/guess daily challenge & group board (443: A, #12619)", () => {
     saveGame({ packId: dailyPack.id, groupCode: "grp27aaaa", joinedGroups: ["grp27aaaa"], phase: "results", index: 14, turn: 0, here: [entryA], link: [] });
     saveGame({ packId: earlierPack.id, groupCode: "grp26bbbb", joinedGroups: ["grp26bbbb"], phase: "play", index: 3, turn: 0, here: [entryB], link: [] });
 
+    expect(store[`bainluck_guess_v1:${dailyPack.id}`]).toBeTruthy();
     expect(loadGame(dailyPack)?.here[0].name).toBe("Alex");
     expect(loadGame(dailyPack)?.joinedGroups).toEqual(["grp27aaaa"]);
     expect(loadGame(earlierPack)?.here[0].name).toBe("Sam");
@@ -128,6 +130,9 @@ describe("/guess daily challenge & group board (443: A, #12619)", () => {
     clearGame(earlierPack.id);
     expect(loadGame(earlierPack)).toBeNull();
     expect(loadGame(dailyPack)?.here[0].name).toBe("Alex");
+
+    clearGame(dailyPack.id);
+    expect(loadGame(dailyPack)).toBeNull();
 
     // Legacy flat object on slot still loads cleanly.
     store["bainluck_guess_v1"] = JSON.stringify({
@@ -140,6 +145,22 @@ describe("/guess daily challenge & group board (443: A, #12619)", () => {
       link: [],
     });
     expect(loadGame(dailyPack)?.joinedGroups).toEqual(["legacygrp1"]);
+
+    // Legacy byPack map on slot also loads cleanly when no per-set slot exists.
+    store["bainluck_guess_v1"] = JSON.stringify({
+      byPack: {
+        [dailyPack.id]: {
+          packId: dailyPack.id,
+          groupCode: "legacyby1",
+          phase: "results",
+          index: 14,
+          turn: 0,
+          here: [entryA],
+          link: [],
+        },
+      },
+    });
+    expect(loadGame(dailyPack)?.joinedGroups).toEqual(["legacyby1"]);
   });
 
   it("generates valid random group codes, formats day labels cleanly, and preserves legacy pack map", () => {
@@ -149,6 +170,7 @@ describe("/guess daily challenge & group board (443: A, #12619)", () => {
     expect(isValidGroupCode("short")).toBe(false);
     expect(isValidGroupCode("BAD_UPPER")).toBe(false);
     expect(LEGACY_PACKS_BY_CODE[GUESS_PACK.code]).toBe(GUESS_PACK);
+    expect(LEGACY_PACKS_BY_CODE[GUESS_PACK_C1.code]).toBe(GUESS_PACK_C1);
     expect(formatDayLabel("2026-11-26")).toBe("Nov 26");
   });
 

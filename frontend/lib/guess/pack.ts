@@ -21,6 +21,7 @@
 //
 // `__tests__/guess/guessPack.test.ts` holds this file to its rules.
 
+import { GUESS_PACK_C1 } from "./packC1";
 import type { GamePack } from "./types";
 
 export const GUESS_PACK: GamePack = {
@@ -397,4 +398,5 @@ export const GUESS_PACK: GamePack = {
 
 export const LEGACY_PACKS_BY_CODE: Record<string, GamePack> = {
   [GUESS_PACK.code]: GUESS_PACK,
+  [GUESS_PACK_C1.code]: GUESS_PACK_C1,
 };

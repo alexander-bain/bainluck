@@ -69,6 +69,7 @@ import {
 } from "@/lib/guess/api";
 import { decodeGroup, encodeGroup, mergeFromLink, shareMessage, stepShareMessage, uniqueName } from "@/lib/guess/link";
 import { roastHistory } from "@/lib/guess/roast";
+import { LATEST_PACK } from "@/lib/guess/packs";
 import { clearGame, loadGame, saveGame, type Phase, type SavedGame } from "@/lib/guess/storage";
 import type { GamePack, PackCard, PlayerEntry, RoastLine } from "@/lib/guess/types";
 import { winChanceHistory, winChances } from "@/lib/guess/winChance";
@@ -164,9 +165,9 @@ function Board({ rows }: { rows: BoardRow[] }) {
           data-turn={row.turn ? "yes" : undefined}
         >
           <span className={`h-2.5 w-2.5 rounded-full ${row.dot}`} aria-hidden="true" />
-          <span className="max-w-[84px] truncate text-xs font-bold text-text-primary">{row.name}</span>
+          <span className="max-w-[84px] truncate text-sm font-bold text-text-primary">{row.name}</span>
           <span className="text-sm font-black tabular-nums text-text-primary">{row.points}</span>
-          {row.chance !== null && <span className="text-[11px] font-bold tabular-nums text-text-secondary">{percent(row.chance)}</span>}
+          {row.chance !== null && <span className="text-xs font-bold tabular-nums text-text-secondary">{percent(row.chance)}</span>}
         </li>
       ))}
     </ol>
@@ -178,9 +179,9 @@ function Header({ pack, right }: { pack: GamePack; right: string }) {
     <header className="mb-1 flex items-center justify-between">
       <div className="flex items-center gap-2">
         <BainLuckMark size={26} />
-        <span className="text-sm font-black text-text-primary">Guess the Chance</span>
+        <span className="whitespace-nowrap text-sm font-black text-text-primary">Guess the Chance</span>
       </div>
-      <span className="text-xs font-bold text-text-secondary" data-testid="progress">
+      <span className="min-w-0 text-right text-xs font-bold text-text-secondary" data-testid="progress">
         {right || `as of ${pack.asOf}`}
       </span>
     </header>
@@ -208,7 +209,7 @@ function StepTable({ pack, rows, shown }: { pack: GamePack; rows: StepRow[]; sho
     <div className={`${PANEL} overflow-x-auto`} data-testid="step-table">
       <table className="w-full text-left">
         <thead>
-          <tr className="text-[11px] font-black uppercase tracking-wide text-text-secondary">
+          <tr className="text-xs font-black uppercase tracking-wide text-text-secondary">
             <th className="pb-1 font-black">Step by step</th>
             {steps.map((step) => (
               <th key={step.name} className="pb-1 text-right font-black">
@@ -226,13 +227,13 @@ function StepTable({ pack, rows, shown }: { pack: GamePack; rows: StepRow[]; sho
                   <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${row.dot}`} aria-hidden="true" />
                   <span className="max-w-[96px] truncate text-sm font-bold text-text-primary">{row.name}</span>
                 </span>
-                {row.earlier && <span className="block pl-4 text-[11px] text-text-secondary">played earlier</span>}
-                {row.chance !== null && <span className="block pl-4 text-[11px] tabular-nums text-text-secondary">{percent(row.chance)} to win</span>}
+                {row.earlier && <span className="block pl-4 text-xs text-text-secondary">played earlier</span>}
+                {row.chance !== null && <span className="block pl-4 text-xs tabular-nums text-text-secondary">{percent(row.chance)} to win</span>}
               </td>
               {steps.map((step, s) => (
                 <td key={step.name} className="py-1.5 pl-1 text-right">
                   <span className="block whitespace-nowrap text-sm font-black tabular-nums text-text-primary">{row.labels[s]}</span>
-                  {row.times[s] > 0 && <span className="block text-[11px] tabular-nums text-text-secondary">{timeLabel(row.times[s])}</span>}
+                  {row.times[s] > 0 && <span className="block text-xs tabular-nums text-text-secondary">{timeLabel(row.times[s])}</span>}
                 </td>
               ))}
               {shown > 1 && <td className="py-1.5 pl-1 text-right text-sm font-black tabular-nums text-text-primary">{row.total}</td>}
@@ -240,7 +241,7 @@ function StepTable({ pack, rows, shown }: { pack: GamePack; rows: StepRow[]; sho
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-xs text-text-secondary">
+      <p className="mt-2 text-sm text-text-secondary">
         The time is how long you took to decide. It is not part of the score.
         {rows.some((row) => row.chance !== null) && " The chance to win is our estimate, from the cards so far."}
       </p>
@@ -275,7 +276,7 @@ function SharePanel({ message, canShare, testId }: { message: string; canShare: 
         onFocus={(e) => e.currentTarget.select()}
         data-testid={`${testId}-text`}
         aria-label="The message to send"
-        className="mt-2 w-full rounded-2xl border-2 border-surface-border bg-surface-elevated p-3 text-xs text-text-primary [overflow-wrap:anywhere]"
+        className="mt-2 w-full rounded-2xl border-2 border-surface-border bg-surface-elevated p-3 text-sm text-text-primary [overflow-wrap:anywhere]"
       />
       <div className="mt-2 flex gap-2">
         {canShare && (
@@ -287,7 +288,7 @@ function SharePanel({ message, canShare, testId }: { message: string; canShare: 
           {copied === "yes" ? "Copied" : "Copy"}
         </button>
       </div>
-      {copied === "select" && <p className="mt-2 text-xs text-text-secondary">Copying is blocked here. Tap the message, select all, and copy it.</p>}
+      {copied === "select" && <p className="mt-2 text-sm text-text-secondary">Copying is blocked here. Tap the message, select all, and copy it.</p>}
     </div>
   );
 }
@@ -824,6 +825,14 @@ export default function ChanceGame({
             </p>
           )}
 
+          {isLegacyPack && pack.id !== LATEST_PACK.id && (
+            <p className={`${PANEL} text-sm font-semibold text-text-primary`} data-testid="set-note">
+              You are playing the set this link was made on, so you can compare with everyone in it.{" "}
+              <a href="/guess" className="font-black text-accent-brand underline">
+                Play today&apos;s cards
+              </a>
+            </p>
+          )}
           {linkNote === "other-edition" && (
             <p className={`${PANEL} text-sm font-semibold text-text-primary`} data-testid="link-note">
               That link is from an earlier set of cards. This is the current set, so you start a new group.
@@ -899,7 +908,7 @@ export default function ChanceGame({
                 Add
               </button>
             </div>
-            <p className="mt-2 text-xs text-text-secondary">
+            <p className="mt-2 text-sm text-text-secondary">
               {isLegacyPack
                 ? "One name to play alone. Add more to pass one phone around. Names stay on this phone and in the link you send."
                 : "One name to play alone. Add more to pass one phone around. Finished games stay on this group's board for 30 days."}
@@ -944,7 +953,7 @@ export default function ChanceGame({
               <span>After any step you can send a link. Whoever opens it plays the same cards against you.</span>
             </li>
           </ul>
-          <p className="pb-6 text-center text-xs text-text-secondary">Numbers as of {pack.asOf}.</p>
+          <p className="pb-6 text-center text-sm text-text-secondary">Numbers as of {pack.asOf}.</p>
         </div>
       </div>
     );
@@ -958,11 +967,11 @@ export default function ChanceGame({
     <div>
       {!answered && (
         <div className="mb-2 flex items-center gap-1.5">
-          <span className="shrink-0 whitespace-nowrap rounded-full bg-text-primary px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-white">
+          <span className="shrink-0 whitespace-nowrap rounded-full bg-text-primary px-2.5 py-1 text-xs font-black uppercase tracking-wide text-white">
             {kindLabel(card)}
           </span>
-          <span className={`min-w-0 truncate rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${tint.chip}`}>{card.topic}</span>
-          <span className="ml-auto shrink-0 text-xs font-bold tabular-nums text-text-secondary" data-testid="progress">
+          <span className={`min-w-0 truncate rounded-full px-2.5 py-1 text-xs font-black uppercase tracking-wide ${tint.chip}`}>{card.topic}</span>
+          <span className="ml-auto shrink-0 text-sm font-bold tabular-nums text-text-secondary" data-testid="progress">
             {pack.steps[step].name} {inStep} of {pack.perRound}
           </span>
         </div>
@@ -1017,7 +1026,7 @@ export default function ChanceGame({
             <p className="mt-1 text-text-secondary">{card.context}</p>
           </details>
           {earlier.length > 0 && (
-            <p className="mt-3 text-center text-xs text-text-secondary">
+            <p className="mt-3 text-center text-sm text-text-secondary">
               {joinNames(earlier)} played this card earlier. You see {earlier.length === 1 ? "that guess" : "those guesses"} after you lock in.
             </p>
           )}
@@ -1070,7 +1079,7 @@ export default function ChanceGame({
             {/* A tap card's answer already shows who tapped what, so the chips are for sliders. */}
             <ul className={isTap(card) ? "hidden" : "flex flex-wrap gap-1.5"} data-testid="slots">
               {slots.map((slot) => (
-                <li key={slot.name} className="flex items-center gap-1.5 rounded-full bg-surface-elevated py-1 pl-2 pr-2.5 text-xs">
+                <li key={slot.name} className="flex items-center gap-1.5 rounded-full bg-surface-elevated py-1 pl-2 pr-2.5 text-sm">
                   <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${slot.dot}`} aria-hidden="true" />
                   <span className="font-black text-text-primary">{slot.name}</span>
                   <span className="text-text-secondary">{guessLabel(card, slot.guess)}</span>
@@ -1078,7 +1087,7 @@ export default function ChanceGame({
                 </li>
               ))}
             </ul>
-            <p className="text-xs leading-snug text-text-secondary" data-testid="context">
+            <p className="text-sm leading-snug text-text-secondary" data-testid="context">
               {card.context}
             </p>
             {line ? (
@@ -1087,7 +1096,7 @@ export default function ChanceGame({
                   {line.text}
                 </p>
                 <div>
-                  <div className="mb-1.5 text-center text-xs font-bold text-text-secondary">How was that line? Tap one to go on.</div>
+                  <div className="mb-1.5 text-center text-sm font-bold text-text-secondary">How was that line? Tap one to go on.</div>
                   <div className="grid grid-cols-5 gap-1.5">
                     {FACES.map((face, i) => (
                       <button
@@ -1100,7 +1109,7 @@ export default function ChanceGame({
                         <span className="text-2xl" aria-hidden="true">
                           {face.emoji}
                         </span>
-                        <span className="text-[11px] font-bold text-text-secondary">{face.label}</span>
+                        <span className="text-xs font-bold text-text-secondary">{face.label}</span>
                       </button>
                     ))}
                   </div>
@@ -1144,7 +1153,7 @@ export default function ChanceGame({
             />
           )}
           <div>
-            <div className="text-xs font-black uppercase tracking-wide text-text-secondary">{info.name}</div>
+            <div className="text-sm font-black uppercase tracking-wide text-text-secondary">{info.name}</div>
             <h2 className="text-2xl font-black text-text-primary" data-testid="step-headline">
               {headline}
             </h2>
@@ -1361,7 +1370,7 @@ export default function ChanceGame({
               );
             })}
           </div>
-          <p className="mt-2 text-xs text-text-secondary">Your pick travels with the link you send.</p>
+          <p className="mt-2 text-sm text-text-secondary">Your pick travels with the link you send.</p>
         </section>
 
         <section className={PANEL} data-testid="share">
@@ -1380,13 +1389,13 @@ export default function ChanceGame({
             <ul className="mt-2 space-y-1.5">
               {byStep.map((w) => (
                 <li key={w.step} className="flex items-start gap-2">
-                  <span className="rounded-full bg-text-primary px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-white">
+                  <span className="rounded-full bg-text-primary px-2.5 py-1 text-xs font-black uppercase tracking-wide text-white">
                     {pack.steps[w.step].name}
                   </span>
                   <span className="min-w-0 flex-1 text-sm font-bold leading-snug text-text-primary">
                     {w.names.length === 0 ? "Nobody scored" : joinNames(w.names)}
                   </span>
-                  {w.names.length > 0 && <span className="shrink-0 text-xs tabular-nums text-text-secondary">{w.points} points</span>}
+                  {w.names.length > 0 && <span className="shrink-0 text-sm tabular-nums text-text-secondary">{w.points} points</span>}
                 </li>
               ))}
             </ul>
@@ -1401,11 +1410,11 @@ export default function ChanceGame({
               .sort((a, b) => b.average - a.average)
               .map((w) => (
                 <li key={w.topic} className="flex items-start gap-2">
-                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${tintFor(w.topic).chip}`}>{w.topic}</span>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-black uppercase tracking-wide ${tintFor(w.topic).chip}`}>{w.topic}</span>
                   <span className="min-w-0 flex-1 text-sm font-bold leading-snug text-text-primary">
                     {solo ? `${Math.max(0, w.average).toFixed(1)} a card` : w.names.length === 0 ? "Nobody scored" : joinNames(w.names)}
                   </span>
-                  {!solo && w.names.length > 0 && <span className="shrink-0 text-xs tabular-nums text-text-secondary">{w.average.toFixed(1)} a card</span>}
+                  {!solo && w.names.length > 0 && <span className="shrink-0 text-sm tabular-nums text-text-secondary">{w.average.toFixed(1)} a card</span>}
                 </li>
               ))}
           </ul>
@@ -1421,7 +1430,7 @@ export default function ChanceGame({
                 {withoutLine}
               </p>
             )}
-            <p className="mt-2 text-xs text-text-secondary">
+            <p className="mt-2 text-sm text-text-secondary">
               &quot;Together&quot; is your most common tap and your average slider on every card, scored as one more player.
             </p>
           </section>
@@ -1442,7 +1451,7 @@ export default function ChanceGame({
         <button type="button" className={QUIET} onClick={playAgain} data-testid="again-button">
           Someone else&apos;s turn on this phone
         </button>
-        <p className="pb-6 text-center text-xs text-text-secondary">Numbers as of {pack.asOf}.</p>
+        <p className="pb-6 text-center text-sm text-text-secondary">Numbers as of {pack.asOf}.</p>
       </div>
     </div>
   );

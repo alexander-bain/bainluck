@@ -1,7 +1,7 @@
-// Where finished and unfinished games wait on this phone, keyed by packId
-// so multiple editions (`c1`, `d1`, daily PT packs) never overwrite each other.
-// Browser storage only: it never leaves the device on its own, and the game
-// works without it by simply not remembering.
+// Where finished and unfinished games wait on this phone, keyed per set
+// (`bainluck_guess_v1:<set id>`) so multiple editions (`c1`, `d1`, daily PT
+// packs) never overwrite each other. Browser storage only: it never leaves the
+// device on its own, and the game works without it by simply not remembering.
 
 import { isValidGuess, MAX_CARD_SECONDS } from "./engine";
 import type { GamePack, PlayerEntry } from "./types";
@@ -19,8 +19,11 @@ export interface SavedGame {
   link: PlayerEntry[];
 }
 
-// The name of the browser-storage slot this game uses. A name, not a secret.
+// One storage slot per set (`<name>:<set id>`), matching master (445: A).
+// `SLOT` alone was used by earlier single-slot or `byPack`-mapped builds; it
+// is still read as a fallback and cleared alongside its set.
 const SLOT = "bainluck_guess_v1";
+const slotFor = (packId: string) => `${SLOT}:${packId}`;
 
 function cleanEntry(pack: GamePack, raw: unknown, from: PlayerEntry["from"]): PlayerEntry | null {
   if (!raw || typeof raw !== "object") return null;
@@ -48,27 +51,26 @@ function cleanEntry(pack: GamePack, raw: unknown, from: PlayerEntry["from"]): Pl
   };
 }
 
-function readStoreMap(): Record<string, unknown> {
-  try {
-    const text = window.localStorage.getItem(SLOT);
-    if (!text) return {};
-    const parsed = JSON.parse(text) as Record<string, unknown>;
-    if (parsed && typeof parsed.byPack === "object" && parsed.byPack !== null && !Array.isArray(parsed.byPack)) {
-      return { ...(parsed.byPack as Record<string, unknown>) };
-    }
-    if (typeof parsed?.packId === "string" && parsed.packId) {
-      return { [parsed.packId]: parsed };
-    }
-    return {};
-  } catch {
-    return {};
+function readLegacyRaw(packId: string): Record<string, unknown> | null {
+  const text = window.localStorage.getItem(SLOT);
+  if (!text) return null;
+  const parsed = JSON.parse(text) as Record<string, unknown>;
+  if (parsed && typeof parsed.byPack === "object" && parsed.byPack !== null && !Array.isArray(parsed.byPack)) {
+    const entry = (parsed.byPack as Record<string, unknown>)[packId];
+    return entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
   }
+  if (parsed && typeof parsed === "object" && parsed.packId === packId) {
+    return parsed;
+  }
+  return null;
 }
 
 export function loadGame(pack: GamePack): SavedGame | null {
   try {
-    const map = readStoreMap();
-    const raw = map[pack.id] as Record<string, unknown> | undefined;
+    const perSetText = window.localStorage.getItem(slotFor(pack.id));
+    const raw = perSetText
+      ? (JSON.parse(perSetText) as Record<string, unknown>)
+      : readLegacyRaw(pack.id);
     if (!raw || typeof raw !== "object" || raw.packId !== pack.id) return null;
     const here = (Array.isArray(raw.here) ? raw.here : [])
       .map((e) => cleanEntry(pack, e, "here"))
@@ -95,9 +97,7 @@ export function loadGame(pack: GamePack): SavedGame | null {
 
 export function saveGame(game: SavedGame): void {
   try {
-    const map = readStoreMap();
-    map[game.packId] = game;
-    window.localStorage.setItem(SLOT, JSON.stringify({ byPack: map }));
+    window.localStorage.setItem(slotFor(game.packId), JSON.stringify(game));
   } catch {
     // Storage is a convenience. A phone that refuses it still plays.
   }
@@ -109,15 +109,25 @@ export function clearGame(packId?: string): void {
       window.localStorage.removeItem(SLOT);
       return;
     }
-    const map = readStoreMap();
-    if (!(packId in map)) return;
-    delete map[packId];
-    if (Object.keys(map).length === 0) {
+    window.localStorage.removeItem(slotFor(packId));
+    const legacyText = window.localStorage.getItem(SLOT);
+    if (!legacyText) return;
+    const parsed = JSON.parse(legacyText) as Record<string, unknown>;
+    if (parsed && typeof parsed.byPack === "object" && parsed.byPack !== null && !Array.isArray(parsed.byPack)) {
+      const map = { ...(parsed.byPack as Record<string, unknown>) };
+      if (!(packId in map)) return;
+      delete map[packId];
+      if (Object.keys(map).length === 0) {
+        window.localStorage.removeItem(SLOT);
+      } else {
+        window.localStorage.setItem(SLOT, JSON.stringify({ byPack: map }));
+      }
+      return;
+    }
+    if (parsed && parsed.packId === packId) {
       window.localStorage.removeItem(SLOT);
-    } else {
-      window.localStorage.setItem(SLOT, JSON.stringify({ byPack: map }));
     }
   } catch {
-    // Nothing to clear.
+    // Storage is blocked or the old slot is unreadable. Nothing to clear.
   }
 }
