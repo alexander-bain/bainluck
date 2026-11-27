@@ -63,7 +63,7 @@ python-json-logger==4.2.0
 # Utilities
 python-dateutil==4.0.0
 PyYAML==6.0.3  # Horizon Calendar (majors_calendar.yaml, Queue #223)
-Pillow==12.3.0  # TestFlight screenshot compression & vision resize (#12857, 249-A)
+Pillow==13.0.0  # TestFlight screenshot compression & vision resize (#12857, 249-A)
 
 # LLM (for smart categorization, etc.)
 openai==3.55.1
