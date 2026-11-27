@@ -831,3 +831,225 @@ def test_persistent_source_keys_mismatch_still_fails_after_reread():
     fields = {d["field"] for d in result["list_vs_page"]["disagreements"]}
     assert "source_keys" in fields
     assert "bookmaker_count" in fields
+
+
+def _list_transition_handler(
+    *,
+    eid: int,
+    initial_card: dict,
+    detail_card: dict,
+    reread_live_events: list[dict] | None = None,
+    reread_live_status: int = 200,
+    completed_events: list[dict] | None = None,
+    scheduled_reread_events: list[dict] | None = None,
+) -> httpx.MockTransport:
+    calls = {"live": 0, "scheduled": 0}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/health":
+            return httpx.Response(200, json={"status": "ok", "commit": "c991cfff"})
+        if path == "/api/events":
+            q = request.url.query.decode() if isinstance(request.url.query, bytes) else str(request.url.query)
+            qs = parse_qs(q)
+            req_status = (qs.get("status") or [None])[0]
+            if req_status == "live":
+                calls["live"] += 1
+                if calls["live"] == 1:
+                    return httpx.Response(
+                        200,
+                        json={"events": [initial_card] if str(initial_card.get("status") or "").lower() == "live" else []},
+                    )
+                if reread_live_status != 200:
+                    return httpx.Response(reread_live_status, json={"detail": "busy"})
+                return httpx.Response(200, json={"events": reread_live_events or []})
+            if req_status == "scheduled":
+                calls["scheduled"] += 1
+                if calls["scheduled"] == 1:
+                    return httpx.Response(
+                        200,
+                        json={
+                            "events": [initial_card]
+                            if str(initial_card.get("status") or "").lower() == "scheduled"
+                            else []
+                        },
+                    )
+                return httpx.Response(200, json={"events": scheduled_reread_events or []})
+            if req_status == "completed":
+                return httpx.Response(200, json={"events": completed_events or []})
+            return httpx.Response(404)
+        if path == "/api/feed":
+            return httpx.Response(200, json={"items": []})
+        if path.startswith("/api/leagues/"):
+            return httpx.Response(200, json={"upcoming_games": []})
+        if path == "/api/events/search":
+            return httpx.Response(200, json={"results": []})
+        if path == f"/api/events/{eid}":
+            return httpx.Response(200, json=detail_card)
+        return httpx.Response(404)
+
+    return httpx.MockTransport(_handler)
+
+
+def test_live_game_transitioned_to_suspended_off_live_list_is_drift_not_incomplete():
+    live_card = _event_payload(
+        960,
+        sport="tennis_atp",
+        home="Donald",
+        away="Rincon",
+        status="live",
+        hours_from_now=-1.5,
+        hero=0.96,
+        books=0,
+        betting_age_hours=None,
+        extra_sources=[
+            {"key": "kalshi", "name": "Kalshi", "probability": 0.96},
+            {"key": "polymarket", "name": "Polymarket", "probability": 0.96},
+        ],
+    )
+    suspended_detail = _event_payload(
+        960,
+        sport="tennis_atp",
+        home="Donald",
+        away="Rincon",
+        status="suspended",
+        hours_from_now=-1.5,
+        hero=1.0,
+        books=0,
+        betting_age_hours=None,
+        extra_sources=[
+            {"key": "polymarket", "name": "Polymarket", "probability": 1.0},
+        ],
+    )
+    suspended_detail["source_mark"]["sources"] = [
+        {"key": "polymarket", "name": "Polymarket", "probability": 1.0},
+    ]
+    transport = _list_transition_handler(
+        eid=960,
+        initial_card=live_card,
+        detail_card=suspended_detail,
+        reread_live_events=[],
+    )
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-27",
+        transport=transport,
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "PASS"
+    assert result["list_vs_page"]["disagreements_count"] == 0
+    assert result["list_vs_page"]["unconfirmed_disagreements_count"] == 0
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 1
+    drift = result["list_vs_page"]["live_tick_drifts"][0]
+    assert drift["reason"] == "status_transitioned_off_surface:live->suspended"
+    assert drift["detail_status"] == "suspended"
+
+
+def test_live_game_transitioned_to_completed_still_fails_when_completed_list_disagrees():
+    live_card = _event_payload(961, sport="tennis_atp", status="live", hours_from_now=-2.0, hero=0.90, books=0)
+    completed_detail = _event_payload(961, sport="tennis_atp", status="completed", hours_from_now=-2.0, hero=1.00, books=0)
+    completed_list_card = _event_payload(961, sport="tennis_atp", status="completed", hours_from_now=-2.0, hero=0.95, books=0)
+    transport = _list_transition_handler(
+        eid=961,
+        initial_card=live_card,
+        detail_card=completed_detail,
+        reread_live_events=[],
+        completed_events=[completed_list_card],
+    )
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-27",
+        transport=transport,
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "FAIL"
+    assert result["list_vs_page"]["unconfirmed_disagreements_count"] == 0
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 0
+    assert any(
+        d["surface"] == "GET /api/events?status=completed" and d["field"] == "headline_percent"
+        for d in result["list_vs_page"]["disagreements"]
+    )
+
+
+def test_live_game_transitioned_to_completed_and_agreed_on_completed_list_passes_as_drift():
+    live_card = _event_payload(962, sport="tennis_atp", status="live", hours_from_now=-2.0, hero=0.90, books=0)
+    completed_card = _event_payload(962, sport="tennis_atp", status="completed", hours_from_now=-2.0, hero=1.00, books=0)
+    transport = _list_transition_handler(
+        eid=962,
+        initial_card=live_card,
+        detail_card=completed_card,
+        reread_live_events=[],
+        completed_events=[completed_card],
+    )
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-27",
+        transport=transport,
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "PASS"
+    assert result["list_vs_page"]["disagreements_count"] == 0
+    assert result["list_vs_page"]["unconfirmed_disagreements_count"] == 0
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 1
+    assert (
+        result["list_vs_page"]["live_tick_drifts"][0]["reason"]
+        == "status_transitioned_off_surface:live->completed"
+    )
+
+
+@pytest.mark.parametrize("reread_status_code", [200, 503])
+def test_still_live_game_missing_from_live_reread_or_http_error_remains_unconfirmed(reread_status_code: int):
+    live_card = _event_payload(963, sport="tennis_atp", status="live", hours_from_now=-1.0, hero=0.60, books=0)
+    still_live_detail = _event_payload(963, sport="tennis_atp", status="live", hours_from_now=-1.0, hero=0.65, books=0)
+    transport = _list_transition_handler(
+        eid=963,
+        initial_card=live_card,
+        detail_card=still_live_detail,
+        reread_live_events=[],
+        reread_live_status=reread_status_code,
+    )
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-27",
+        transport=transport,
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "INCOMPLETE"
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 0
+    assert result["list_vs_page"]["unconfirmed_disagreements_count"] == 1
+    assert result["list_vs_page"]["unconfirmed_disagreements"][0]["reason"] == "list_reread_failed"
+
+
+def test_scheduled_game_transitioned_to_live_off_scheduled_list_is_drift():
+    sched_card = _event_payload(964, sport="basketball_nba", status="scheduled", hours_from_now=0.1, hero=0.55, books=8)
+    live_detail = _event_payload(964, sport="basketball_nba", status="live", hours_from_now=0.0, hero=0.58, books=8)
+    transport = _list_transition_handler(
+        eid=964,
+        initial_card=sched_card,
+        detail_card=live_detail,
+        scheduled_reread_events=[],
+    )
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-27",
+        transport=transport,
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "PASS"
+    assert result["list_vs_page"]["disagreements_count"] == 0
+    assert result["list_vs_page"]["unconfirmed_disagreements_count"] == 0
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 1
+    assert (
+        result["list_vs_page"]["live_tick_drifts"][0]["reason"]
+        == "status_transitioned_off_surface:scheduled->live"
+    )

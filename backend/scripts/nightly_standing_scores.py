@@ -41,6 +41,14 @@ MIN_LIVE_PACE_SECONDS = 3.5
 DEFAULT_USER_AGENT = "bainluck-nightly-standing-scores/1.0"
 DEFAULT_BL_AGENT = "ci-nightly-standing-scores"
 
+_LIVE_EVENT_STATUSES = frozenset({"live", "in_progress"})
+_SCHEDULED_EVENT_STATUSES = frozenset({"scheduled", "upcoming", "pregame"})
+_COMPLETED_EVENT_STATUSES = frozenset({"completed", "closed", "final"})
+_SURFACE_EXPECTED_STATUSES: dict[str, tuple[str, frozenset[str]]] = {
+    "GET /api/events?status=live": ("live", _LIVE_EVENT_STATUSES),
+    "GET /api/events?status=scheduled": ("scheduled", _SCHEDULED_EVENT_STATUSES),
+}
+
 
 def _parse_iso_utc(raw: Any) -> datetime | None:
     if not isinstance(raw, str) or not raw.strip():
@@ -871,70 +879,71 @@ def run_standing_scores(
                         surface_meta[(eid, "GET /api/events/search")] = sr_env_meta
                         search_query_by_id[eid] = q
 
+        def _fetch_events_list_card(
+            status_value: str,
+            eid: int,
+            sport_key: str,
+        ) -> tuple[dict[str, Any] | None, dict[str, Any], str | None]:
+            params: dict[str, Any] = (
+                {"status": "scheduled", "days": 3, "past_days": 0, "limit": 200}
+                if status_value == "scheduled"
+                else {"status": status_value, "limit": 50}
+            )
+            if sport_key:
+                params["sport"] = sport_key
+            _, b, e, m = paced.get_json_with_meta("/api/events", params=params)
+            if e or not isinstance(b, dict):
+                return None, {}, "fetch_error"
+            env_m = _extract_envelope_meta(b, m)
+            for row in b.get("events") or ():
+                if isinstance(row, dict) and row.get("id") == eid:
+                    return row, env_m, None
+            return None, env_m, "not_present"
+
         def _refetch_surface_card(
             eid: int,
             surface: str,
             sport_key: str,
-        ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        ) -> tuple[dict[str, Any] | None, dict[str, Any], str | None]:
             if surface == "GET /api/events?status=live":
-                params: dict[str, Any] = {"status": "live", "limit": 50}
-                if sport_key:
-                    params["sport"] = sport_key
-                _, b, e, m = paced.get_json_with_meta("/api/events", params=params)
-                if e or not isinstance(b, dict):
-                    return None
-                env_m = _extract_envelope_meta(b, m)
-                for row in b.get("events") or ():
-                    if isinstance(row, dict) and row.get("id") == eid:
-                        return row, env_m
-                return None
+                return _fetch_events_list_card("live", eid, sport_key)
             if surface == "GET /api/events?status=scheduled":
-                params = {"status": "scheduled", "days": 3, "past_days": 0, "limit": 200}
-                if sport_key:
-                    params["sport"] = sport_key
-                _, b, e, m = paced.get_json_with_meta("/api/events", params=params)
-                if e or not isinstance(b, dict):
-                    return None
-                env_m = _extract_envelope_meta(b, m)
-                for row in b.get("events") or ():
-                    if isinstance(row, dict) and row.get("id") == eid:
-                        return row, env_m
-                return None
+                return _fetch_events_list_card("scheduled", eid, sport_key)
             if surface == "GET /api/feed?mode=sports":
                 _, b, e, m = paced.get_json_with_meta("/api/feed", params={"mode": "sports", "limit": 200})
                 if e or not isinstance(b, dict):
-                    return None
+                    return None, {}, "fetch_error"
                 env_m = _extract_envelope_meta(b, m)
                 for item in b.get("items") or ():
                     if isinstance(item, dict) and item.get("type") == "event":
                         data = item.get("data")
                         if isinstance(data, dict) and data.get("id") == eid:
-                            return data, env_m
-                return None
+                            return data, env_m, None
+                return None, env_m, "not_present"
             if surface.startswith("GET /api/leagues/"):
                 path = surface[len("GET ") :]
                 _, b, e, m = paced.get_json_with_meta(path)
                 if e or not isinstance(b, dict):
-                    return None
+                    return None, {}, "fetch_error"
                 env_m = _extract_envelope_meta(b, m)
                 for k in ("upcoming_games", "recent_results", "unreported_games", "events", "live_events"):
                     for row in b.get(k) or ():
                         if isinstance(row, dict) and row.get("id") == eid:
-                            return row, env_m
-                return None
+                            return row, env_m, None
+                return None, env_m, "not_present"
             if surface == "GET /api/events/search":
                 q = search_query_by_id.get(eid)
                 if not q:
-                    return None
+                    return None, {}, "not_present"
                 _, b, e, m = paced.get_json_with_meta("/api/events/search", params={"q": q, "per_page": 15})
                 if e or not isinstance(b, dict):
-                    return None
+                    return None, {}, "fetch_error"
                 env_m = _extract_envelope_meta(b, m)
                 for row in b.get("results") or ():
                     if isinstance(row, dict) and row.get("id") == eid:
-                        return row, env_m
-                return None
-            return None
+                        return row, env_m, None
+                return None, env_m, "not_present"
+            return None, {}, "not_present"
 
         # 8. Game detail reads (/api/events/{id}) + comparisons
         disagreements: list[dict[str, Any]] = []
@@ -942,6 +951,121 @@ def run_standing_scores(
         unconfirmed_disagreements: list[dict[str, Any]] = []
         surface_comparisons = 0
         games_verified = 0
+
+        def _append_unconfirmed(
+            *,
+            eid: int,
+            sport_key: str,
+            detail_obj: dict[str, Any],
+            surface: str,
+            is_live_flag: bool,
+            reason: str,
+            surf_age: dict[str, Any],
+            det_age: dict[str, Any],
+            diffs: list[dict[str, Any]],
+        ) -> None:
+            unconfirmed_disagreements.append(
+                {
+                    "event_id": eid,
+                    "sport_key": sport_key,
+                    "matchup": _matchup_label(detail_obj),
+                    "surface": surface,
+                    "is_live": is_live_flag,
+                    "reason": reason,
+                    "surface_copy_age": surf_age,
+                    "detail_copy_age": det_age,
+                    "initial_diffs": diffs,
+                }
+            )
+
+        def _try_resolve_off_surface_transition(
+            *,
+            eid: int,
+            path: str,
+            surface: str,
+            detail: dict[str, Any],
+            detail_status: str,
+            detail_sport: str,
+            is_live_detail: bool,
+            card_sport: str,
+            card_age: dict[str, Any],
+            detail_age: dict[str, Any],
+            card_diffs: list[dict[str, Any]],
+        ) -> bool:
+            """Return True if a clean 200 status transition was verified (drift, fail, or detail err)."""
+            transition_spec = _SURFACE_EXPECTED_STATUSES.get(surface)
+            if transition_spec is None or detail_status in transition_spec[1]:
+                return False
+            _, re_detail, re_err, re_detail_meta = paced.get_json_with_meta(path)
+            if re_err or not isinstance(re_detail, dict):
+                _append_unconfirmed(
+                    eid=eid,
+                    sport_key=detail_sport,
+                    detail_obj=detail,
+                    surface=surface,
+                    is_live_flag=is_live_detail,
+                    reason=f"detail_reread_failed:{re_err or 'non-dict payload'}",
+                    surf_age=card_age,
+                    det_age=detail_age,
+                    diffs=card_diffs,
+                )
+                return True
+            re_detail_status = str(re_detail.get("status") or "").lower()
+            if re_detail_status in transition_spec[1]:
+                return False
+            re_detail_age = extract_copy_age(
+                re_detail, response_meta=re_detail_meta, fallback_now=clock_now
+            )
+            re_sport = str(re_detail.get("sport") or detail_sport or card_sport or "")
+            if re_detail_status in _COMPLETED_EVENT_STATUSES:
+                comp_card, comp_meta, comp_miss = _fetch_events_list_card("completed", eid, re_sport)
+                if comp_miss == "fetch_error":
+                    _append_unconfirmed(
+                        eid=eid,
+                        sport_key=re_sport,
+                        detail_obj=re_detail,
+                        surface=surface,
+                        is_live_flag=is_live_detail,
+                        reason="list_reread_failed",
+                        surf_age=card_age,
+                        det_age=re_detail_age,
+                        diffs=card_diffs,
+                    )
+                    return True
+                if comp_card is not None:
+                    comp_age = extract_copy_age(
+                        comp_card, response_meta=comp_meta, fallback_now=clock_now
+                    )
+                    comp_diffs = compare_card_against_detail(
+                        surface="GET /api/events?status=completed",
+                        card=comp_card,
+                        detail=re_detail,
+                        card_age=comp_age,
+                        detail_age=re_detail_age,
+                    )
+                    if comp_diffs:
+                        disagreements.extend(comp_diffs)
+                        return True
+            live_tick_drifts.append(
+                {
+                    "event_id": eid,
+                    "sport_key": re_sport,
+                    "matchup": _matchup_label(re_detail),
+                    "surface": surface,
+                    "is_live": is_live_detail,
+                    "reason": (
+                        f"status_transitioned_off_surface:"
+                        f"{transition_spec[0]}->{re_detail_status or 'unknown'}"
+                    ),
+                    "detail_status": re_detail_status or None,
+                    "surface_copy_age": card_age,
+                    "detail_copy_age": re_detail_age,
+                    "fetch_gap_seconds": _fetch_gap_seconds(card_age, re_detail_age),
+                    "initial_diffs": card_diffs,
+                }
+            )
+            return True
+
         for eid in [int(g["id"]) for g in selected_games if isinstance(g.get("id"), int)]:
             path = f"/api/events/{eid}"
             st, detail, err, detail_meta = paced.get_json_with_meta(path)
@@ -950,7 +1074,8 @@ def run_standing_scores(
                 continue
             games_verified += 1
             detail_age = extract_copy_age(detail, response_meta=detail_meta, fallback_now=clock_now)
-            is_live_detail = str(detail.get("status") or "").lower() in {"live", "in_progress"}
+            detail_status = str(detail.get("status") or "").lower()
+            is_live_detail = detail_status in _LIVE_EVENT_STATUSES
             detail_sport = str(detail.get("sport") or "")
             for (card_eid, surface), card in sorted(surface_cards.items(), key=lambda x: (x[0][0], x[0][1])):
                 if card_eid != eid:
@@ -974,39 +1099,52 @@ def run_standing_scores(
                 # bookmaker_count; scheduled and live) so ordinary state/line changes
                 # across the multi-minute Step-1-to-Step-8 fetch window are not filed
                 # as persistent disagreements. If either re-read fails, record it as
-                # unconfirmed (-> INCOMPLETE) rather than a confirmed diff.
-                refetched = _refetch_surface_card(eid, surface, detail_sport or str(card.get("sport") or ""))
-                if refetched is None:
-                    unconfirmed_disagreements.append(
-                        {
-                            "event_id": eid,
-                            "sport_key": detail_sport,
-                            "matchup": _matchup_label(detail),
-                            "surface": surface,
-                            "is_live": is_live_detail,
-                            "reason": "list_reread_failed",
-                            "surface_copy_age": card_age,
-                            "detail_copy_age": detail_age,
-                            "initial_diffs": card_diffs,
-                        }
+                # unconfirmed (-> INCOMPLETE) rather than a confirmed diff — except
+                # when a status-filtered list clean-200 omits an event whose detail
+                # status genuinely transitioned off that list (e.g. live -> suspended).
+                re_card, re_card_meta, miss_reason = _refetch_surface_card(
+                    eid, surface, detail_sport or str(card.get("sport") or "")
+                )
+                if re_card is None:
+                    handled = miss_reason == "not_present" and _try_resolve_off_surface_transition(
+                        eid=eid,
+                        path=path,
+                        surface=surface,
+                        detail=detail,
+                        detail_status=detail_status,
+                        detail_sport=detail_sport,
+                        is_live_detail=is_live_detail,
+                        card_sport=str(card.get("sport") or ""),
+                        card_age=card_age,
+                        detail_age=detail_age,
+                        card_diffs=card_diffs,
                     )
+                    if not handled:
+                        _append_unconfirmed(
+                            eid=eid,
+                            sport_key=detail_sport,
+                            detail_obj=detail,
+                            surface=surface,
+                            is_live_flag=is_live_detail,
+                            reason="list_reread_failed",
+                            surf_age=card_age,
+                            det_age=detail_age,
+                            diffs=card_diffs,
+                        )
                     continue
-                re_card, re_card_meta = refetched
                 re_card_age = extract_copy_age(re_card, response_meta=re_card_meta, fallback_now=clock_now)
                 _, re_detail, re_err, re_detail_meta = paced.get_json_with_meta(path)
                 if re_err or not isinstance(re_detail, dict):
-                    unconfirmed_disagreements.append(
-                        {
-                            "event_id": eid,
-                            "sport_key": detail_sport,
-                            "matchup": _matchup_label(detail),
-                            "surface": surface,
-                            "is_live": is_live_detail,
-                            "reason": f"detail_reread_failed:{re_err or 'non-dict payload'}",
-                            "surface_copy_age": re_card_age,
-                            "detail_copy_age": detail_age,
-                            "initial_diffs": card_diffs,
-                        }
+                    _append_unconfirmed(
+                        eid=eid,
+                        sport_key=detail_sport,
+                        detail_obj=detail,
+                        surface=surface,
+                        is_live_flag=is_live_detail,
+                        reason=f"detail_reread_failed:{re_err or 'non-dict payload'}",
+                        surf_age=re_card_age,
+                        det_age=detail_age,
+                        diffs=card_diffs,
                     )
                     continue
                 re_detail_age = extract_copy_age(
