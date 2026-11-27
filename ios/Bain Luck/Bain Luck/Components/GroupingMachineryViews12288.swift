@@ -1560,6 +1560,114 @@ private struct MachineryContenderSpotlightSectionView: View {
     }
 }
 
+/// Shared row layout used by both `MachinerySiblingFieldsSectionView` and
+/// `MachineryDiscoverCardView.outcomeRowsBody` so division-race (`441: A` / `#13777`)
+/// live, `<1%`, `No recent probability`, and `Eliminated` states render identically.
+private struct MachineryOutcomeBarRow441A: View {
+    let outcome: MachineryOutcomeVisual
+    let scaleOrdered: Bool
+    let isFav: Bool
+    let artWidth: CGFloat
+    let artHeight: CGFloat
+    let listHasArt: Bool
+    let listUsesPoster: Bool
+    let rowFontSize: CGFloat
+    let rowSpacing: CGFloat
+    let barColor: Color
+    let trackBgColor: Color
+    let primaryInk: Color
+    let secondaryInk: Color
+    let colorScheme: ColorScheme
+    let sourceMark: SourceMark?
+    let marketTitle: String
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        let display = outcome.display441A
+        let isMuted = display.muted
+        let isUnpricedOrOut = display.state == .eliminated || display.state == .noRecentProbability
+        let artOpacity: Double = isUnpricedOrOut ? 0.45 : (display.state == .subOnePercent ? 0.75 : 1.0)
+        let labelColor = isMuted ? secondaryInk : (isFav ? primaryInk : secondaryInk)
+        let titleWeight: Font.Weight = isMuted ? .medium : (isFav ? .semibold : .medium)
+        let valueWeight: Font.Weight = isMuted ? .medium : (isFav ? .bold : .semibold)
+        let fillColor: Color = display.state == .subOnePercent
+            ? (colorScheme == .dark ? Color.white.opacity(0.32) : DS.textMuted.opacity(0.65))
+            : barColor
+
+        HStack(alignment: .center, spacing: 10) {
+            if !scaleOrdered {
+                MachinerySubjectArtView(
+                    art: outcome.art,
+                    width: artWidth,
+                    height: artHeight,
+                    reservesWidthWhenEmpty: listHasArt,
+                    emptySlotIsPoster: listUsesPoster,
+                    subjectName: outcome.name
+                )
+                .saturation(isUnpricedOrOut ? 0 : 1)
+                .opacity(artOpacity)
+            }
+            VStack(alignment: .leading, spacing: rowSpacing) {
+                if dynamicTypeSize.isAccessibilitySize && isUnpricedOrOut {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(outcome.name)
+                            .font(.system(size: rowFontSize, weight: titleWeight))
+                            .foregroundStyle(labelColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(display.label)
+                            .font(.system(size: rowFontSize, weight: valueWeight))
+                            .foregroundStyle(labelColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(outcome.name)
+                            .font(.system(size: rowFontSize, weight: titleWeight))
+                            .foregroundStyle(labelColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 6)
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text(display.label)
+                                .font(.system(size: rowFontSize, weight: valueWeight).monospacedDigit())
+                                .foregroundStyle(labelColor)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                            if !isUnpricedOrOut,
+                               outcome.servedProbability != nil,
+                               let m = SourceMarkButton(
+                                   sourceMark,
+                                   number: outcome.servedProbability,
+                                   subject: outcome.name,
+                                   subtitle: marketTitle,
+                                   numberSize: min(rowFontSize, 18),
+                                   compactRow: true
+                               ) {
+                                m
+                            }
+                        }
+                    }
+                }
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(trackBgColor)
+                        if display.barWidthPercent > 0 {
+                            let frac = CGFloat(min(100, display.barWidthPercent)) / 100.0
+                            let width = display.state == .subOnePercent
+                                ? max(4, geo.size.width * 0.02)
+                                : max(4, geo.size.width * frac)
+                            Capsule()
+                                .fill(fillColor)
+                                .frame(width: min(geo.size.width, width))
+                        }
+                    }
+                }
+                .frame(height: 6)
+            }
+        }
+    }
+}
+
 private struct MachinerySiblingFieldsSectionView: View {
     let items: [MachineryMarketVisualItem]
     var members: [ContainerHubMember] = []
@@ -1595,7 +1703,7 @@ private struct MachinerySiblingFieldsSectionView: View {
         VStack(alignment: .leading, spacing: 10) {
             machineryCardColumns13417(shown, columnCount: columnCount) { market in
                 let scaleOrd = market.effectiveScaleOrdered
-                let shownOutcomes = Array(market.outcomes.prefix(4))
+                let shownOutcomes = Array(market.displayOutcomes.prefix(4))
                 let maxPct = shownOutcomes.map(\.renderedPercent).max() ?? 0
                 let listHasArt = !scaleOrd && shownOutcomes.contains { $0.art?.verifiedURL != nil }
                 let listUsesPoster = shownOutcomes.contains { $0.art?.verifiedURL != nil && $0.art?.isPoster == true }
@@ -1615,63 +1723,37 @@ private struct MachinerySiblingFieldsSectionView: View {
 
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(shownOutcomes) { o in
+                                let display = o.display441A
                                 let isFav = !scaleOrd
-                                    || (market.leaderOutcomeId != nil && o.outcomeId == market.leaderOutcomeId)
-                                    || (market.leaderOutcomeId == nil && o.renderedPercent == maxPct)
+                                    ? display.state == .live
+                                    : ((market.leaderOutcomeId != nil && o.outcomeId == market.leaderOutcomeId)
+                                        || (market.leaderOutcomeId == nil && o.renderedPercent == maxPct))
                                 let barColor: Color = {
                                     if scaleOrd {
                                         return isFav ? DS.emerald : Color.gray.opacity(0.6)
                                     }
                                     return MachineryColorContrast12288.singleAccent(o.art?.accentColor, scheme: colorScheme)
                                 }()
+                                let rowIsPoster = o.art?.isPoster ?? listUsesPoster
 
-                                HStack(alignment: .center, spacing: 10) {
-                                    if !scaleOrd {
-                                        let rowIsPoster = o.art?.isPoster ?? listUsesPoster
-                                        MachinerySubjectArtView(
-                                            art: o.art,
-                                            width: 28,
-                                            height: rowIsPoster ? 38 : 28,
-                                            reservesWidthWhenEmpty: listHasArt,
-                                            emptySlotIsPoster: true,
-                                            subjectName: o.name
-                                        )
-                                    }
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                            Text(o.name)
-                                                .font(.system(size: min(rowSize, 20), weight: isFav ? .semibold : .medium))
-                                                .foregroundStyle(isFav ? primaryInk : secondaryInk)
-                                                .fixedSize(horizontal: false, vertical: true)
-                                            Spacer(minLength: 6)
-                                            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                                Text(o.probabilityLabel)
-                                                    .font(.system(size: min(rowSize, 20), weight: isFav ? .bold : .semibold).monospacedDigit())
-                                                    .foregroundStyle(isFav ? primaryInk : secondaryInk)
-                                                if let m = SourceMarkButton(
-                                                    MachinerySourceMarkResolver11920.outcomeMark(for: o, marketId: market.marketId, members: members),
-                                                    number: o.probability,
-                                                    subject: o.name,
-                                                    subtitle: market.title,
-                                                    numberSize: min(rowSize, 18),
-                                                    compactRow: true
-                                                ) {
-                                                    m
-                                                }
-                                            }
-                                        }
-                                        GeometryReader { geo in
-                                            let frac = CGFloat(min(100, max(4, o.renderedPercent))) / 100.0
-                                            ZStack(alignment: .leading) {
-                                                Capsule().fill(trackBgColor)
-                                                Capsule()
-                                                    .fill(barColor)
-                                                    .frame(width: max(4, geo.size.width * frac))
-                                            }
-                                        }
-                                        .frame(height: 6)
-                                    }
-                                }
+                                MachineryOutcomeBarRow441A(
+                                    outcome: o,
+                                    scaleOrdered: scaleOrd,
+                                    isFav: isFav,
+                                    artWidth: 28,
+                                    artHeight: rowIsPoster ? 38 : 28,
+                                    listHasArt: listHasArt,
+                                    listUsesPoster: true,
+                                    rowFontSize: min(rowSize, 20),
+                                    rowSpacing: 4,
+                                    barColor: barColor,
+                                    trackBgColor: trackBgColor,
+                                    primaryInk: primaryInk,
+                                    secondaryInk: secondaryInk,
+                                    colorScheme: colorScheme,
+                                    sourceMark: MachinerySourceMarkResolver11920.outcomeMark(for: o, marketId: market.marketId, members: members),
+                                    marketTitle: market.title
+                                )
                             }
                         }
                     }
@@ -1921,7 +2003,7 @@ struct MachineryDiscoverCardView: View {
 
             if card.isEventCard {
                 eventRowsBody
-            } else if card.formId == .duelBar, card.outcomeRows.count >= 2 {
+            } else if !card.isDivisionRaceCard441A, card.formId == .duelBar, card.outcomeRows.count >= 2 {
                 duelBarBody
             } else {
                 outcomeRowsBody
@@ -2142,60 +2224,40 @@ struct MachineryDiscoverCardView: View {
     }
 
     private var outcomeRowsBody: some View {
-        let rows = Array(card.outcomeRows.prefix(3))
+        let rows = card.displayOutcomeRows
         let maxPct = rows.map(\.renderedPercent).max() ?? 0
         let listHasArt = !card.scaleOrdered && rows.contains { $0.art?.verifiedURL != nil }
         let listUsesPoster = rows.contains { $0.art?.verifiedURL != nil && $0.art?.isPoster == true }
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { idx, o in
-                let isFav = !card.scaleOrdered || o.renderedPercent == maxPct
+                let display = o.display441A
+                let isFav = !card.scaleOrdered ? display.state == .live : (o.renderedPercent == maxPct)
                 let barColor: Color = {
                     if card.scaleOrdered {
                         return isFav ? DS.emerald : Color.gray.opacity(0.6)
                     }
                     return MachineryColorContrast12288.singleAccent(o.art?.accentColor, scheme: colorScheme)
                 }()
+                let rowIsPoster = o.art?.isPoster ?? listUsesPoster
 
-                HStack(alignment: .center, spacing: 10) {
-                    if !card.scaleOrdered {
-                        let rowIsPoster = o.art?.isPoster ?? listUsesPoster
-                        MachinerySubjectArtView(
-                            art: o.art,
-                            width: listUsesPoster ? 28 : 32,
-                            height: rowIsPoster ? 40 : 32,
-                            reservesWidthWhenEmpty: listHasArt,
-                            emptySlotIsPoster: listUsesPoster,
-                            subjectName: o.name
-                        )
-                    }
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(o.name)
-                                .font(.system(size: min(rowSize, 22), weight: isFav ? .semibold : .medium))
-                                .foregroundStyle(isFav ? primaryInk : secondaryInk)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 6)
-                            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text(o.probabilityLabel)
-                                    .font(.system(size: min(rowSize, 22), weight: isFav ? .bold : .semibold).monospacedDigit())
-                                    .foregroundStyle(isFav ? primaryInk : secondaryInk)
-                                if let m = SourceMarkButton(o.sourceMark, number: o.probability, subject: o.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
-                                    m
-                                }
-                            }
-                        }
-                        GeometryReader { geo in
-                            let frac = CGFloat(min(100, max(4, o.renderedPercent))) / 100.0
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(trackBgColor)
-                                Capsule()
-                                    .fill(barColor)
-                                    .frame(width: max(4, geo.size.width * frac))
-                            }
-                        }
-                        .frame(height: 6)
-                    }
-                }
+                MachineryOutcomeBarRow441A(
+                    outcome: o,
+                    scaleOrdered: card.scaleOrdered,
+                    isFav: isFav,
+                    artWidth: listUsesPoster ? 28 : 32,
+                    artHeight: rowIsPoster ? 40 : 32,
+                    listHasArt: listHasArt,
+                    listUsesPoster: listUsesPoster,
+                    rowFontSize: min(rowSize, 22),
+                    rowSpacing: 5,
+                    barColor: barColor,
+                    trackBgColor: trackBgColor,
+                    primaryInk: primaryInk,
+                    secondaryInk: secondaryInk,
+                    colorScheme: colorScheme,
+                    sourceMark: o.sourceMark,
+                    marketTitle: card.title
+                )
                 .padding(.vertical, 8)
                 if idx < rows.count - 1 {
                     Rectangle().fill(borderColor).frame(height: 1)
