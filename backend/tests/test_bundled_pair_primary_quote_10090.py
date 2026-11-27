@@ -235,7 +235,7 @@ async def test_primary_original_proof_rechecked_after_stamp_budget_await(monkeyp
 
 
 @pytest.mark.parametrize('bid,ask,trade,expected',[
-    ('.10','.90','.30',.30), # wide book, interior trade
+    ('.10','.90','.30',None), # wide book, undated interior trade
     (None,None,'.30',.30), # healthy empty book, original trade
     ('.70',None,'.80',.80), # bid-only book
     (None,'.70','.60',.60), # ask above longshot-cap range, actual trade

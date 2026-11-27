@@ -4,12 +4,13 @@ The poll used to compute prob = (yes_bid + yes_ask) / 2 for ANY two-sided book,
 regardless of spread. On illiquid weather/tech threshold markets a wide book
 (e.g. bid=0.05 / ask=0.95) has no real price discovery at the midpoint — the
 average fabricates a ~0.50 quote that was captured as the closing line and
-inflated calibration MCE (#181). The fix mirrors gotcha #19's Polymarket rule:
-midpoint only for a TIGHT book; otherwise prefer a real trade (last_price);
-never fabricate a midpoint from a wide/one-sided book with no trade.
+inflated calibration MCE (#181). #13873 also declines an undated last trade
+when Kalshi reports a wide two-sided book.
 
 These tests pin _kalshi_yes_probability so the guard can't silently regress.
 """
+
+import pytest
 
 from app.tasks.kalshi import _KALSHI_TIGHT_SPREAD_MAX, _kalshi_yes_probability
 
@@ -28,9 +29,16 @@ def test_wide_book_no_trade_is_skipped_not_fabricated():
     assert _kalshi_yes_probability(0.30, 0.90, None) is None
 
 
-def test_wide_book_prefers_last_price_over_midpoint():
-    # Wide spread but a real trade exists -> use the trade, not the 0.50 midpoint.
-    assert _kalshi_yes_probability(0.05, 0.95, 0.18) == 0.18
+@pytest.mark.parametrize(
+    ("bid", "ask", "last"),
+    [(0.24, 0.91, 0.91), (0.20, 0.94, 0.94), (0.05, 0.95, 0.18), (0.20, 0.70, 0.50)],
+)
+def test_wide_two_sided_book_declines_undated_trade(bid, ask, last):
+    assert _kalshi_yes_probability(bid, ask, last) is None
+
+
+def test_tight_twin_uses_its_book():
+    assert _kalshi_yes_probability(0.33, 0.37, 0.91) == pytest.approx(0.35)
 
 
 def test_boundary_spread_is_wide():
@@ -94,10 +102,7 @@ def test_empty_book_still_falls_through_to_the_last_trade_5121():
     assert _kalshi_yes_probability(0.0, 1.0, 0.01) == 0.01
 
 
-def test_a_trade_inside_the_live_book_is_still_trusted_5121():
-    # The wide-book-prefers-the-trade rule (#182) is untouched whenever the book
-    # has NOT moved past the trade — this is the case the refutation must not eat.
-    assert _kalshi_yes_probability(0.05, 0.95, 0.18) == 0.18
+def test_the_legacy_ask_only_observation_path_5121():
     # Exactly AT the ask is not refuted: the venue quotes on a one-cent grid, so
     # a trade at the offer is a trade at a live price.
     assert _kalshi_yes_probability(0.0, 0.09, 0.09) == 0.09

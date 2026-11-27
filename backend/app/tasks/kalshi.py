@@ -31,7 +31,12 @@ from app.utils.sport_keys import (  # noqa: E402
 from app.utils.editorial_patterns import (
     matches_editorial_recall as _matches_editorial_recall,
 )  # noqa: E402
-from app.utils.kalshi_empty_book import ask_with_zero_bid, book_refutes_price  # noqa: E402
+from app.utils.kalshi_empty_book import (  # noqa: E402
+    KALSHI_WIDE_BOOK_SPREAD,
+    ask_with_zero_bid,
+    book_refutes_price,
+    kalshi_two_sided_book_is_wide,
+)
 from app.utils.kalshi_market_status import (  # noqa: E402
     all_terminal,
     graded_columns,
@@ -493,11 +498,8 @@ def kalshi_outcome_names(event_title, markets) -> dict[str, str]:
     return names
 
 
-# Spread threshold (decimal probability) below which a two-sided Kalshi book is
-# considered TIGHT enough for its midpoint to be real price discovery. Mirrors
-# the Polymarket has_real_trading rule (gotcha #19) and the has_real_trading
-# gate later in this module (both use 0.50).
-_KALSHI_TIGHT_SPREAD_MAX = 0.50
+# Shared with the reader so both use the same width for a Kalshi quote.
+_KALSHI_TIGHT_SPREAD_MAX = KALSHI_WIDE_BOOK_SPREAD
 
 # #6532 moved the book-refutation rule out to `app.utils.kalshi_empty_book`,
 # unchanged, because the serve layer must ask the identical question of a stored
@@ -521,13 +523,14 @@ def _kalshi_yes_probability(
     captured as closing lines and inflated calibration MCE (#181). Priority:
 
       1. tight two-sided book (both > 0 AND ask-bid < 0.50) -> midpoint
-      2. else a real trade the LIVE BOOK DOES NOT REFUTE -> last_price
-         (trade evidence beats a wide book, but never a book that moved past it
-         — see :func:`app.utils.kalshi_empty_book.book_refutes_price`, #5121)
-      3. else None. An ask alone supplies a ceiling.
+      2. recorded wide two-sided book -> no current quote (#13873)
+      3. a missing side uses the existing last-trade and refutation rule.
 
     All inputs are decimal probabilities (0-1), matching kalshi_api parsing.
     """
+    if kalshi_two_sided_book_is_wide(yes_bid, yes_ask):
+        # The market payload gives last_price without the time of that trade.
+        return None
     if (
         yes_bid is not None
         and yes_bid > 0

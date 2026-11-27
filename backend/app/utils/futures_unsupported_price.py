@@ -114,6 +114,7 @@ from app.utils.kalshi_empty_book import (
     book_refutes_price,
     is_lone_ask_in_exclusive_field,
     is_lone_ask_on_empty_book,
+    kalshi_two_sided_book_is_wide,
 )
 from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 
@@ -1731,6 +1732,18 @@ def snapshot_price_is_unsupported(
     first day a fossil gets re-snapshotted, which is how ``/multi-history`` came
     to lack the sparse-window widening its sibling has.
     """
+    # Older captures can repeat an undated trade alongside its wide book.
+    # Keep that number off the end of an open market's chart as well (#13873).
+    if (
+        (bookmaker or "").strip().lower() == KALSHI_BOOKMAKER
+        and not resolution_source
+        and is_winner is not True
+        and probability is not None
+        and last_price is not None
+        and abs(float(probability) - float(last_price)) <= _SAME_WRITE_GRAIN
+        and kalshi_two_sided_book_is_wide(yes_bid, yes_ask)
+    ):
+        return True
     has_trade_evidence = last_price is not None
     if price_is_unsupported(
         bookmaker,

@@ -4764,6 +4764,7 @@ async def _withheld_price_outcome_ids(
     ids |= _book_refuted_outcome_ids(market)
     ids |= _empty_book_outcome_ids(market)
     ids |= futures_price_screen.zero_bid_outcome_ids(market)
+    ids |= futures_price_screen.wide_kalshi_book_outcome_ids(market)
     # Read the remaining outcomes rather than the stored rows: the gate is a
     # fact about the column a reader is actually shown. See the arm's docstring.
     ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
@@ -9720,8 +9721,9 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
     ]
 
     # Sort outcomes by probability
+    wide_book_ids = futures_price_screen.wide_kalshi_book_outcome_ids(market)
     sorted_outcomes = sorted(
-        real_outcomes,
+        (outcome for outcome in real_outcomes if outcome.id not in wide_book_ids),
         key=lambda o: o.current_probability or 0,
         reverse=True
     )
