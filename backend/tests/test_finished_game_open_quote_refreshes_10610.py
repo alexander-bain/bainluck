@@ -273,9 +273,9 @@ class TestThePrimaryRead:
 
     def test_another_build_s_primary_is_still_refused_first(self):
         rc = _FakeRedis()
-        with patch.object(gmc, "current_build_id", return_value="v-old"):
+        with patch.object(gmc, "current_cache_version", return_value="v-old"):
             _write_both(rc, _stamped("completed", age_s=60))
-        with patch.object(gmc, "current_build_id", return_value="v-next"):
+        with patch.object(gmc, "current_cache_version", return_value="v-next"):
             assert gmc.read(7, rc=rc) == (None, "stale_build")
 
 
@@ -292,7 +292,7 @@ class TestTheMemo:
         events_route._game_markets_cache[7] = (
             time.time() - age_s,
             status,
-            events_route._current_build_id(),
+            gmc.current_cache_version(),
             body,
         )
         return body
