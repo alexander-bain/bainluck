@@ -105,6 +105,7 @@ LEAGUE_CLUB_SPELLINGS: dict[str, dict[str, str]] = {
         "Olympique de Marseille": "Marseille",
         "Ferencvarosi": "Ferencváros TC",
         "AS Monaco": "Monaco",
+        "AS Monaco FC": "Monaco",
     },
     "soccer_italy_serie_a": {
         "Internazionale": "Inter Milan",
@@ -116,18 +117,23 @@ LEAGUE_CLUB_SPELLINGS: dict[str, dict[str, str]] = {
         "Olympique de Marseille": "Marseille",
         "Ferencvarosi": "Ferencváros TC",
         "AS Monaco": "Monaco",
+        "AS Monaco FC": "Monaco",
     },
     "soccer_uefa_europa_conference_league": {
         "Heart of Midlothian": "Hearts",
+        "Heart of Midlothian FC": "Hearts",
         "AS Monaco": "Monaco",
+        "AS Monaco FC": "Monaco",
         "Ferencvarosi": "Ferencváros TC",
     },
     "soccer_france_ligue_one": {
         "Olympique de Marseille": "Marseille",
         "AS Monaco": "Monaco",
+        "AS Monaco FC": "Monaco",
     },
     "soccer_spl": {
         "Heart of Midlothian": "Hearts",
+        "Heart of Midlothian FC": "Hearts",
     },
     "soccer_netherlands_eredivisie": {
         "AZ": "AZ Alkmaar",
