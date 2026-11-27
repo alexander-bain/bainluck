@@ -5,7 +5,7 @@
 # went red on unrelated commits with no code change. This pair is the validated
 # known-good combo (full backend suite green locally). Re-evaluate before bumping.
 fastapi==0.136.3
-starlette==1.1.0
+starlette==1.10.0
 uvicorn[standard]==0.54.0
 python-dotenv==1.2.4
 
