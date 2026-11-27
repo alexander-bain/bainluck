@@ -151,12 +151,18 @@ export type KitV1Mark =
   | KitV1DotMark
   | KitV1LineMark;
 
+export interface KitV1CellProvenance {
+  market_id: number;
+  outcome_id?: number | null;
+}
+
 export interface KitV1StackItem {
   id: string;
   sport_key?: string;
   marks: KitV1Mark[];
   sub_marks?: KitV1Mark[];
   route?: KitV1Route;
+  provenance?: KitV1CellProvenance;
   divider_after?: { style?: string; label?: string } | null;
 }
 
@@ -172,6 +178,7 @@ export interface KitV1GridCell {
   column_key: string;
   marks: KitV1Mark[];
   route?: KitV1Route;
+  provenance?: KitV1CellProvenance;
 }
 
 export interface KitV1GridRow {
@@ -205,6 +212,7 @@ export interface KitV1AxisSeries {
   id: string;
   leading?: KitV1Mark[];
   marks: KitV1Mark[];
+  provenance?: KitV1CellProvenance;
 }
 
 export interface KitV1AxisBody {
