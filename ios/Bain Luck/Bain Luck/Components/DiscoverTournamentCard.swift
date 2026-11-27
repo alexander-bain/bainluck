@@ -45,6 +45,7 @@ struct NativeTournamentDiscoverCard: View {
     @Binding var navigationPath: NavigationPath
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     private var gradient: (Color, Color) {
         sportCategoryGradients["golf"] ?? sportDefaultGradient
@@ -258,6 +259,10 @@ struct NativeTournamentDiscoverCard: View {
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.systemBackground)
+            }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, surfaceColor: Color.systemBackground)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 16))

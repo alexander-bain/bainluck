@@ -45,12 +45,14 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+let ATLAS = false;
 jest.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(""),
+  useSearchParams: () => new URLSearchParams(ATLAS ? "atlas=1" : ""),
   useRouter: () => ({ replace: () => {}, push: () => {} }),
 }));
 
 let ACTIVE_MARKET: unknown = null;
+let ACTIVE_GROUP: unknown = null;
 
 jest.mock("swr", () => ({
   __esModule: true,
@@ -61,6 +63,7 @@ jest.mock("swr", () => ({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return { data: ACTIVE_MARKET as any, error: null, isLoading: false, mutate: () => {} };
     }
+    if (tag === "futures-group") return { data: ACTIVE_GROUP };
     return { data: undefined, error: null, isLoading: false, mutate: () => {} };
   },
 }));
@@ -81,8 +84,10 @@ import { partitionOutcomesByPrice } from "@/lib/futuresDetailDisplay";
 
 /* ────────────────────────────── the harness ────────────────────────────── */
 
-function render(market: unknown, id: string): string {
+function render(market: unknown, id: string, group: unknown = null, atlas = false): string {
   ACTIVE_MARKET = market;
+  ACTIVE_GROUP = group;
+  ATLAS = atlas;
   return renderToStaticMarkup(<FuturesDetailPage params={{ id }} />);
 }
 
@@ -219,7 +224,15 @@ describe("#4568 — the ALL OUTCOMES ladder on /futures/114175", () => {
   it("draws the disclosure, naming its own count", () => {
     const html = render(ufcHeavyweight(), "114175");
     expect(html).toContain(FOLD_MARKER);
-    expect(html).toContain("More outcomes (5)");
+    expect(html).toContain("5 others: no recent probability");
+  });
+
+  it("uses the singular when one name is folded below the supported list", () => {
+    const market = ufcHeavyweight();
+    market.outcomes = market.outcomes.filter((row) => row.probability != null || row.name === "Fighter E");
+    const { insideFold } = splitAtFold(render(market, "114175"));
+    expect(insideFold).toMatch(/<summary[^>]*>1 other: no recent probability<\/summary>/);
+    expect(insideFold).toContain("<li>Fighter E</li>");
   });
 
   it("puts every numberless row BEHIND the disclosure, not in the open list", () => {
@@ -251,13 +264,10 @@ describe("#4568 — the ALL OUTCOMES ladder on /futures/114175", () => {
     }
   });
 
-  it("keeps the served rank, so the numbering never restarts at 1", () => {
+  it("lists only the names in the disclosure", () => {
     const { insideFold } = splitAtFold(render(ufcHeavyweight(), "114175"));
-    // 15-19 as served. A fold that renumbered its own contents would print 1-5
-    // and tell the reader these are the top five of something.
-    for (const rank of ["15", "16", "17", "18", "19"]) {
-      expect(insideFold).toContain(rank);
-    }
+    expect(insideFold.match(/<li>/g)).toHaveLength(5);
+    expect(insideFold).not.toMatch(/%|\bprice\b|\bbids\b|\bask\b/i);
   });
 
   it("draws NO disclosure when every row carries a price", () => {
@@ -265,7 +275,7 @@ describe("#4568 — the ALL OUTCOMES ladder on /futures/114175", () => {
     market.outcomes = market.outcomes.filter((o) => o.probability != null);
     const html = render(market, "114175");
     expect(html).not.toContain(FOLD_MARKER);
-    expect(html).not.toContain("More outcomes");
+    expect(html).not.toContain("others: no recent probability");
   });
 
   /**
@@ -292,7 +302,7 @@ describe("#4568 — the ALL OUTCOMES ladder on /futures/114175", () => {
     expect(html).toContain("Show all 30");
     expect(html).not.toContain("Show all 35");
     expect(html).toContain("Show 5 more outcomes");
-    expect(html).toContain("More outcomes (5)");
+    expect(html).toContain("5 others: no recent probability");
   });
 });
 
@@ -400,7 +410,7 @@ describe("#4568 — the QUANTITY LADDER on /futures/108555", () => {
       expect(insideFold).toContain(label);
       expect(beforeFold).not.toContain(label);
     }
-    expect(insideFold).toContain("More outcomes (5)");
+    expect(insideFold).toContain("5 others: no recent probability");
   });
 
   it("keeps every priced rung in the open ladder", () => {
@@ -418,7 +428,7 @@ describe("#4568 — the QUANTITY LADDER on /futures/108555", () => {
     market.outcomes = market.outcomes.filter((o) => o.probability != null);
     const html = render(market, "108555");
     expect(html).not.toContain(LADDER_FOLD_MARKER);
-    expect(html).not.toContain("More outcomes");
+    expect(html).not.toContain("others: no recent probability");
   });
 });
 
@@ -439,11 +449,12 @@ describe("#11980 — missing prices on the real numeric detail branch", () => {
     };
   }
 
-  it("says No current price on both folded Alaska legs, with the live third leg intact", () => {
+  it("keeps both folded Alaska names and the live third leg", () => {
     const { beforeFold, insideFold } = splitAtLadderFold(render(alaskaRounds(), "34277584"));
-    expect(insideFold).toContain('aria-label="1: No current price"');
-    expect(insideFold).toContain('aria-label="2: No current price"');
-    expect(insideFold.match(/>No current price<\/span>/g)).toHaveLength(2);
+    expect(insideFold).toContain("2 others: no recent probability");
+    expect(insideFold).toContain("<li>1</li>");
+    expect(insideFold).toContain("<li>2</li>");
+    expect(insideFold).not.toMatch(/%|\bprice\b/i);
     expect(beforeFold).toContain('aria-label="3: 21%"');
     expect(beforeFold).not.toContain("No current price");
   });
@@ -451,7 +462,7 @@ describe("#11980 — missing prices on the real numeric detail branch", () => {
   it("keeps a genuine zero in the priced list", () => {
     const { beforeFold, insideFold } = splitAtLadderFold(render(alaskaRounds(0), "34277584"));
     expect(beforeFold).toContain('aria-label="3: 0%"');
-    expect(insideFold).toContain("More outcomes (2)");
+    expect(insideFold).toContain("2 others: no recent probability");
   });
 
   it("does not call a resolved date ladder's missing result a current price", () => {
@@ -468,5 +479,32 @@ describe("#11980 — missing prices on the real numeric detail branch", () => {
     const html = render(resolved, "108555");
     expect(html).toContain(LADDER_FOLD_MARKER);
     expect(html).not.toContain("No current price");
+    expect(html).not.toContain("others: no recent probability");
   });
+});
+
+it("omits a numberless related threshold while retaining the market's own disclosure", () => {
+  const market = { ...starlinkIpo(), group_id: "ipo-window" };
+  const html = render(market, "108555", {
+    markets: [],
+    threshold_groups: {
+      window: [
+        { outcome_id: 700, name: "First window", label: "Supported window", probability: 0.2, threshold_value: 1 },
+        { outcome_id: 701, name: "Second window", label: "Unsupported window", probability: null, threshold_value: 2 },
+      ],
+    },
+  });
+  expect(html).toContain("Supported window");
+  expect(html).not.toContain("Unsupported window");
+  expect(html).toContain("5 others: no recent probability");
+});
+
+it("shows only the disclosure in the Atlas outcomes section when the whole field has no reading", () => {
+  const market = ufcHeavyweight();
+  market.outcomes = market.outcomes.map((row) => ({ ...row, probability: null }));
+  const html = render(market, "114175", null, true);
+  expect(splitAtFold(html).insideFold).toMatch(/<summary[^>]*>No recent probability<\/summary>/);
+  expect(html).not.toContain('data-testid="atlas-no-recent-price"');
+  expect(html).not.toContain('data-testid="atlas-field-top-three"');
+  expect(splitAtFold(html).beforeFold).not.toContain("Ciryl Gane");
 });

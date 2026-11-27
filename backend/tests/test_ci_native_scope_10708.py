@@ -16,6 +16,7 @@ Pinned here, each one a way the saving silently becomes a hole:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -64,6 +65,7 @@ class Scratch:
         _git(root, "config", "user.name", "t")
         for rel in (
             "scripts/ci-change-scope.sh",
+            "scripts/ci-deploy-base.sh",
             "scripts/ci-native-tests.sh",
             "scripts/ci-native-backend-readers.sh",
             "ci-cross-tier-paths.txt",
@@ -91,7 +93,17 @@ class Scratch:
         _git(self.path, "commit", "-q", "-m", "x", "--allow-empty")
         return _git(self.path, "rev-parse", "HEAD")
 
-    def decide(self, event: str, base: str, head: str, tmp: Path) -> dict[str, str]:
+    def decide(
+        self,
+        event: str,
+        base: str,
+        head: str,
+        tmp: Path,
+        *,
+        ref: str | None = None,
+        health_commit: str | None = None,
+        health_body: str | None = None,
+    ) -> dict[str, str]:
         script = _decide_script()
         for expr, value in {
             "github.event_name": event,
@@ -104,6 +116,15 @@ class Scratch:
         assert "${{" not in script, "an unmodelled expression reached the decide step"
         output = tmp / f"out-{event}-{head[:7]}"
         output.write_text("")
+        health_file = tmp / f"health-{event}-{head[:7]}.json"
+        if health_body is not None:
+            health_file.write_text(health_body, encoding="utf-8")
+            health_url = health_file.as_uri()
+        elif health_commit is not None:
+            health_file.write_text(json.dumps({"commit": health_commit}), encoding="utf-8")
+            health_url = health_file.as_uri()
+        else:
+            health_url = (tmp / "missing-health.json").as_uri()
         subprocess.run(
             ["bash", "-c", script],
             cwd=self.path,
@@ -113,7 +134,9 @@ class Scratch:
             env={
                 "PATH": os.environ["PATH"],
                 "GITHUB_OUTPUT": str(output),
-                "GITHUB_REF": "refs/heads/master" if event == "push" else "refs/pull/1/merge",
+                "CI_DEPLOYED_SHA_URL": health_url,
+                "GITHUB_REF": ref
+                or ("refs/heads/master" if event == "push" else "refs/pull/1/merge"),
             },
         )
         return dict(
@@ -136,10 +159,57 @@ def test_a_pure_ios_pull_request_is_native_with_roster_and_text_readers(scratch,
     assert out["native_tests"].split() == ["tests/test_reads_swift.py", "tests/test_rostered.py"]
 
 
-def test_the_same_ios_change_on_a_push_is_always_full(scratch, tmp_path):
+def test_a_pure_ios_push_to_master_skips_server_shards_via_native_scope(scratch, tmp_path):
     base = scratch.commit({SWIFT: "a"})
     head = scratch.commit({SWIFT: "b"})
-    out = scratch.decide("push", base, head, tmp_path)
+    out = scratch.decide(
+        "push", base, head, tmp_path, ref="refs/heads/master", health_commit=base
+    )
+    assert out["scope"] == "native"
+    assert out["native_tests"].split() == ["tests/test_reads_swift.py", "tests/test_rostered.py"]
+
+
+def test_a_pure_ios_push_to_master_fails_closed_when_deploy_base_unresolvable(scratch, tmp_path):
+    base = scratch.commit({SWIFT: "a"})
+    head = scratch.commit({SWIFT: "b"})
+    unreachable = scratch.decide("push", base, head, tmp_path, ref="refs/heads/master")
+    assert unreachable["scope"] == "full" and unreachable["native_tests"] == ""
+    unusable = scratch.decide(
+        "push",
+        base,
+        head,
+        tmp_path,
+        ref="refs/heads/master",
+        health_body=json.dumps({"commit": "unknown"}),
+    )
+    assert unusable["scope"] == "full" and unusable["native_tests"] == ""
+
+
+def test_a_pure_ios_push_to_master_with_stranded_backend_commit_is_full(scratch, tmp_path):
+    deployed = scratch.commit({SWIFT: "a"})
+    before = scratch.commit({"backend/app/main.py": "b"})
+    head = scratch.commit({SWIFT: "c"})
+    out = scratch.decide(
+        "push", before, head, tmp_path, ref="refs/heads/master", health_commit=deployed
+    )
+    assert out["scope"] == "full" and out["native_tests"] == ""
+
+
+def test_a_pure_ios_compose_push_remains_full(scratch, tmp_path):
+    base = scratch.commit({SWIFT: "a"})
+    head = scratch.commit({SWIFT: "b"})
+    out = scratch.decide(
+        "push", base, head, tmp_path, ref="refs/heads/integrator/compose-example"
+    )
+    assert out["scope"] == "full" and out["native_tests"] == ""
+
+
+def test_a_mixed_ios_push_to_master_remains_full(scratch, tmp_path):
+    base = scratch.commit({SWIFT: "a", "backend/app/main.py": "a"})
+    head = scratch.commit({SWIFT: "b", "backend/app/main.py": "b"})
+    out = scratch.decide(
+        "push", base, head, tmp_path, ref="refs/heads/master", health_commit=base
+    )
     assert out["scope"] == "full" and out["native_tests"] == ""
 
 

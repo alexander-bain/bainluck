@@ -37,13 +37,16 @@ function patchVisualOutcomes(
   }
   let changed = false;
   const next = outcomes.map((o) => {
+    if (o.settled_out) return o;
     const hit = byId.get(o.outcome_id);
     if (!hit || (hit.probability === o.probability && hit.pct === o.rendered_percent)) return o;
     changed = true;
+    const nextUnfloored = renderedPercent(hit.probability) ?? hit.pct;
     return {
       ...o,
       probability: hit.probability,
       rendered_percent: hit.pct,
+      ...("unfloored_percent" in o ? { unfloored_percent: nextUnfloored } : {}),
     };
   });
   return changed ? next : outcomes;

@@ -98,9 +98,45 @@ interface FunnelEvent {
   totalUsers: number;
 }
 
+interface OnboardingStage {
+  stage: string;
+  eventName: string;
+  events: number;
+  users: number;
+  rateFromStart: number | null;
+}
+
+interface OnboardingFunnelData {
+  summary: {
+    startedUsers: number;
+    steppedUsers: number;
+    completedUsers: number;
+    skippedUsers: number;
+    leftWithoutFinishingOrSkipping?: number;
+    completionRate: number | null;
+    skipRate: number | null;
+  };
+  stages: OnboardingStage[];
+  byPlatform: Array<{
+    platform: string;
+    start: number;
+    step: number;
+    complete: number;
+    skip: number;
+  }>;
+  dailyTrend: Array<{
+    date: string;
+    start: number;
+    step: number;
+    complete: number;
+    skip: number;
+  }>;
+}
+
 interface FunnelData {
   period: string;
   funnel: FunnelStep[];
+  onboarding?: OnboardingFunnelData;
   eventBreakdown: FunnelEvent[];
   dailyTrend: Array<{
     date: string;
@@ -133,14 +169,89 @@ interface RetentionDay {
   returningSessions: number;
 }
 
+interface CohortRow {
+  cohortDate: string;
+  cohortSize: number;
+  day2Users: number;
+  day2Rate: number | null;
+  day2Eligible: boolean;
+  day7Users: number;
+  day7Rate: number | null;
+  day7Eligible: boolean;
+}
+
 interface RetentionData {
   period: string;
   summary: {
     totalNewUsers: number;
     totalReturningUsers: number;
     retentionRate: number;
+    day2RetentionRate?: number | null;
+    day7RetentionRate?: number | null;
+    day2Users?: number | null;
+    day2CohortBase?: number | null;
+    day7Users?: number | null;
+    day7CohortBase?: number | null;
+    returnVisitEvents?: number | null;
+    returnVisitUsers?: number | null;
+    cohortsUnavailable?: boolean;
+    returnVisitUnavailable?: boolean;
   };
+  cohortsUnavailable?: boolean;
+  returnVisitUnavailable?: boolean;
+  cohorts?: CohortRow[];
   daily: RetentionDay[];
+}
+
+interface AcquisitionData {
+  period: string;
+  summary: {
+    totalNewUsers: number;
+    totalSessions: number;
+    sourceCount: number;
+    sharedLinkOpens: number;
+    sharedLinkUsers: number;
+  };
+  sources: Array<{
+    sourceMedium: string;
+    source: string;
+    medium: string;
+    newUsers: number;
+    activeUsers: number;
+    sessions: number;
+    engagedSessions: number;
+  }>;
+  sharedLinks: {
+    totalEvents: number;
+    totalUsers: number;
+    bySourceMedium: Array<{
+      sourceMedium: string;
+      source: string;
+      medium: string;
+      events: number;
+      users: number;
+    }>;
+  };
+  firstVisitLandingPaths: Array<{
+    path: string;
+    section: string;
+    sessions: number;
+    users: number;
+    engagedSessions: number;
+  }>;
+  firstLandingBySection: Array<{
+    section: string;
+    sessions: number;
+    users: number;
+    engagedSessions: number;
+  }>;
+  firstVisitEvents: Array<{
+    eventName: string;
+    path: string;
+    section: string;
+    events: number;
+    users: number;
+  }>;
 }
 
 interface RealtimeData {
@@ -212,6 +323,20 @@ const STAGE_COLORS: Record<string, string> = {
   interact: "#f59e0b",
   guess: "#22c55e",
   signup: "#8b5cf6",
+};
+
+const ONBOARDING_STAGE_LABELS: Record<string, string> = {
+  start: "Start",
+  step: "Step",
+  complete: "Complete",
+  skip: "Skip",
+};
+
+const ONBOARDING_STAGE_COLORS: Record<string, string> = {
+  start: "#3b82f6",
+  step: "#0ea5e9",
+  complete: "#22c55e",
+  skip: "#f59e0b",
 };
 
 const SECTION_COLORS: Record<string, string> = {
@@ -694,6 +819,137 @@ function FunnelTab({ data }: { data: FunnelData }) {
         </p>
       </div>
 
+      {/* Onboarding funnel (#13261 Row 4) */}
+      {data.onboarding && (
+        <MetricSection
+          question="Where do new readers drop off in onboarding?"
+          status={
+            data.onboarding.summary.startedUsers === 0
+              ? "warning"
+              : (data.onboarding.summary.completionRate ?? 0) >= 50
+              ? "good"
+              : "warning"
+          }
+          summary={
+            data.onboarding.summary.startedUsers === 0
+              ? "No one started in this window."
+              : `${formatNum(data.onboarding.summary.startedUsers)} started · ` +
+                `${data.onboarding.summary.completionRate ?? 0}% completed · ` +
+                `${data.onboarding.summary.skipRate ?? 0}% skipped`
+          }
+          ideal="High onboarding_start -> onboarding_complete completion with low skip rate."
+          defaultExpanded
+        >
+          <div className="space-y-4">
+            <div className="space-y-2">
+              {data.onboarding.stages.map((st) => {
+                const maxUsers = data.onboarding?.summary.startedUsers || 1;
+                const widthPct =
+                  st.users > 0
+                    ? Math.max(8, Math.round((st.users / maxUsers) * 100))
+                    : 8;
+                return (
+                  <div key={st.stage} className="flex items-center gap-3">
+                    <span className="text-xs text-text-secondary w-20 text-right font-medium">
+                      {ONBOARDING_STAGE_LABELS[st.stage] || st.stage}
+                    </span>
+                    <div className="flex-1 relative">
+                      <div
+                        className="h-9 rounded-lg flex items-center px-3 transition-all"
+                        style={{
+                          width: widthPct + "%",
+                          backgroundColor:
+                            ONBOARDING_STAGE_COLORS[st.stage] || "#64748b",
+                          opacity: 0.85,
+                        }}
+                      >
+                        <span className="text-xs font-bold text-white">
+                          {formatNum(st.users)} users ({formatNum(st.events)})
+                        </span>
+                      </div>
+                    </div>
+                    <div className="w-20 text-right">
+                      <span className="text-xs font-medium text-text-secondary">
+                        {st.rateFromStart != null ? st.rateFromStart + "%" : "—"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {data.onboarding.summary.startedUsers > 0 && (() => {
+              const left =
+                data.onboarding.summary.leftWithoutFinishingOrSkipping ??
+                Math.max(
+                  0,
+                  data.onboarding.summary.startedUsers -
+                    data.onboarding.summary.completedUsers -
+                    data.onboarding.summary.skippedUsers
+                );
+              return (
+                <p className="text-[11px] text-text-muted">
+                  {formatNum(left)} left without finishing or skipping (the website sends a skip only when leaving inside the site; closing the tab sends nothing).
+                </p>
+              );
+            })()}
+
+            {data.onboarding.byPlatform.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-surface-border">
+                      <th className="text-left py-2 px-2 text-text-muted font-medium">
+                        Platform
+                      </th>
+                      <th className="text-right py-2 px-2 text-text-muted font-medium">
+                        Start
+                      </th>
+                      <th className="text-right py-2 px-2 text-text-muted font-medium">
+                        Step
+                      </th>
+                      <th className="text-right py-2 px-2 text-text-muted font-medium">
+                        Complete
+                      </th>
+                      <th className="text-right py-2 px-2 text-text-muted font-medium">
+                        Skip
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.onboarding.byPlatform.map((row) => (
+                      <tr
+                        key={row.platform}
+                        className="border-b border-surface-border/50"
+                      >
+                        <td className="py-1.5 px-2 font-mono text-text-secondary">
+                          {row.platform}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-text-primary font-medium">
+                          {formatNum(row.start)}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-text-primary">
+                          {formatNum(row.step)}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-text-primary">
+                          {formatNum(row.complete)}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-text-muted">
+                          {formatNum(row.skip)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-[11px] text-text-muted mt-2">
+                  Step is shown per platform only: iPhone sends onboarding_step when a step is shown (including step 1 at start); the website sends it when pressing Next.
+                </p>
+              </div>
+            )}
+          </div>
+        </MetricSection>
+      )}
+
       {/* Device breakdown */}
       {data.byDevice.length > 0 && (
         <MetricSection
@@ -921,9 +1177,17 @@ function RetentionTab({ data }: { data: RetentionData }) {
     [data.daily]
   );
 
+  const cohorts = data.cohorts ?? [];
+  const d2Rate = data.summary.day2RetentionRate;
+  const d7Rate = data.summary.day7RetentionRate;
+  const cohortsUnavailable = Boolean(data.cohortsUnavailable ?? data.summary.cohortsUnavailable);
+  const returnVisitUnavailable = Boolean(
+    data.returnVisitUnavailable ?? data.summary.returnVisitUnavailable
+  );
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <StatCard
           label="New Users"
           value={formatNum(data.summary.totalNewUsers)}
@@ -939,7 +1203,122 @@ function RetentionTab({ data }: { data: RetentionData }) {
           value={data.summary.retentionRate + "%"}
           sub="Returning / total users"
         />
+        <StatCard
+          label="Day 2 Cohort"
+          value={
+            cohortsUnavailable
+              ? "Unavailable"
+              : d2Rate != null
+                ? d2Rate + "%"
+                : "—"
+          }
+          sub={
+            cohortsUnavailable
+              ? "Could not read this from Google Analytics"
+              : data.summary.day2CohortBase
+                ? `Came back the next day · ${formatNum(data.summary.day2Users ?? 0)} / ${formatNum(data.summary.day2CohortBase)}`
+                : "Came back the next day · Awaiting mature cohorts"
+          }
+        />
+        <StatCard
+          label="Day 7 Cohort"
+          value={
+            cohortsUnavailable
+              ? "Unavailable"
+              : d7Rate != null
+                ? d7Rate + "%"
+                : "—"
+          }
+          sub={
+            cohortsUnavailable
+              ? "Could not read this from Google Analytics"
+              : data.summary.day7CohortBase
+                ? `Came back 6 days later · ${formatNum(data.summary.day7Users ?? 0)} / ${formatNum(data.summary.day7CohortBase)}`
+                : "Came back 6 days later · Awaiting mature cohorts"
+          }
+        />
       </div>
+
+      {/* Day-2 / Day-7 Cohort Retention (#13261 Row 3) */}
+      <MetricSection
+        question="Did new readers come back on Day 2 and Day 7?"
+        status={cohortsUnavailable ? "warning" : d2Rate != null && d2Rate >= 15 ? "good" : "warning"}
+        summary={
+          cohortsUnavailable
+            ? "Could not read this from Google Analytics" +
+              (returnVisitUnavailable
+                ? " · return_visit unavailable"
+                : data.summary.returnVisitEvents != null
+                  ? ` · ${formatNum(data.summary.returnVisitEvents)} return_visit events`
+                  : "")
+            : (d2Rate != null ? `Day 2: ${d2Rate}%` : "Day 2: —") +
+              " · " +
+              (d7Rate != null ? `Day 7: ${d7Rate}%` : "Day 7: —") +
+              (returnVisitUnavailable
+                ? " · Could not read return_visit from Google Analytics"
+                : data.summary.returnVisitEvents != null
+                  ? ` · ${formatNum(data.summary.returnVisitEvents)} return_visit events`
+                  : "")
+        }
+        ideal="Day 2 above 20% and Day 7 above 10% across mature daily cohorts."
+        defaultExpanded
+      >
+        {cohortsUnavailable ? (
+          <p className="text-xs text-red-600">
+            Could not read this from Google Analytics
+          </p>
+        ) : cohorts.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-border">
+                  <th className="text-left py-2 px-2 text-text-muted font-medium">
+                    First-Visit Day
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    Cohort Size
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    Day 2 (+1d)
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    Day 7 (+6d)
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {cohorts.map((c) => (
+                  <tr
+                    key={c.cohortDate}
+                    className="border-b border-surface-border/50"
+                  >
+                    <td className="py-1.5 px-2 font-mono text-text-secondary">
+                      {c.cohortDate}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-primary font-medium">
+                      {formatNum(c.cohortSize)}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-primary">
+                      {c.day2Eligible && c.day2Rate != null
+                        ? `${formatNum(c.day2Users)} (${c.day2Rate}%)`
+                        : "—"}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-primary">
+                      {c.day7Eligible && c.day7Rate != null
+                        ? `${formatNum(c.day7Users)} (${c.day7Rate}%)`
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-xs text-text-muted">
+            No daily cohort rows returned for this window yet.
+          </p>
+        )}
+      </MetricSection>
 
       <MetricSection
         question="Are users coming back?"
@@ -1276,9 +1655,226 @@ function PageEngagementTab({ data }: { data: PagesData }) {
   );
 }
 
+function AcquisitionTab({ data }: { data: AcquisitionData }) {
+  const topSource = data.sources[0]?.sourceMedium ?? "—";
+  const topSection = data.firstLandingBySection[0]?.section ?? "—";
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard
+          label="New Users"
+          value={formatNum(data.summary.totalNewUsers)}
+          sub={data.period + " period"}
+        />
+        <StatCard
+          label="Top Source / Medium"
+          value={topSource}
+          sub={data.summary.sourceCount + " channels"}
+        />
+        <StatCard
+          label="Shared Link Opens"
+          value={formatNum(data.summary.sharedLinkOpens)}
+          sub={formatNum(data.summary.sharedLinkUsers) + " users"}
+        />
+        <StatCard
+          label="Top First Landing"
+          value={topSection}
+          sub="New-visitor entry section"
+        />
+      </div>
+
+      {/* Source / medium breakdown */}
+      <MetricSection
+        question="Where did visitors come from?"
+        status="good"
+        summary={data.sources.length + " source / medium channels"}
+        ideal="Organic, direct, and shared-link channels clearly attributed."
+        defaultExpanded
+      >
+        {data.sources.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-border">
+                  <th className="text-left py-2 px-2 text-text-muted font-medium">
+                    Source / Medium
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    New Users
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    Active Users
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    Sessions
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    Engaged
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.sources.slice(0, 25).map((s) => (
+                  <tr
+                    key={s.sourceMedium}
+                    className="border-b border-surface-border/50"
+                  >
+                    <td className="py-1.5 px-2 font-mono text-text-secondary">
+                      {s.sourceMedium}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-primary font-medium">
+                      {formatNum(s.newUsers)}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-primary">
+                      {formatNum(s.activeUsers)}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-primary">
+                      {formatNum(s.sessions)}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-muted">
+                      {formatNum(s.engagedSessions)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-xs text-text-muted">
+            No acquisition rows returned for this window.
+          </p>
+        )}
+      </MetricSection>
+
+      {/* Shared link opens */}
+      <MetricSection
+        question="Which channels drive shared_link_open arrivals?"
+        status="good"
+        summary={formatNum(data.sharedLinks.totalEvents) + " shared link opens"}
+        ideal="Shared links bringing new visitors from messaging and social."
+        defaultExpanded
+      >
+        {data.sharedLinks.bySourceMedium.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-border">
+                  <th className="text-left py-2 px-2 text-text-muted font-medium">
+                    Source / Medium
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    Shared Link Opens
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    Users
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.sharedLinks.bySourceMedium.map((row) => (
+                  <tr
+                    key={row.sourceMedium}
+                    className="border-b border-surface-border/50"
+                  >
+                    <td className="py-1.5 px-2 font-mono text-text-secondary">
+                      {row.sourceMedium}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-primary font-medium">
+                      {formatNum(row.events)}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-muted">
+                      {formatNum(row.users)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-xs text-text-muted">
+            No shared_link_open events recorded in this window.
+          </p>
+        )}
+      </MetricSection>
+
+      {/* First-visit landing paths */}
+      <MetricSection
+        question="What did new visitors see first?"
+        status="good"
+        summary={data.firstVisitLandingPaths.length + " first-visit landing paths"}
+        ideal="New visitors landing cleanly on Discover, game pages, or sets."
+        defaultExpanded
+      >
+        {data.firstVisitLandingPaths.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-border">
+                  <th className="text-left py-2 px-2 text-text-muted font-medium">
+                    Landing Path
+                  </th>
+                  <th className="text-left py-2 px-2 text-text-muted font-medium">
+                    Section
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    New Sessions
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    Users
+                  </th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">
+                    Engaged
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.firstVisitLandingPaths.slice(0, 25).map((row) => (
+                  <tr
+                    key={row.path}
+                    className="border-b border-surface-border/50"
+                  >
+                    <td className="py-1.5 px-2 font-mono text-text-secondary">
+                      {row.path}
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <span
+                        className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium text-white"
+                        style={{
+                          backgroundColor:
+                            SECTION_COLORS[row.section] || "#6b7280",
+                        }}
+                      >
+                        {row.section}
+                      </span>
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-primary font-medium">
+                      {formatNum(row.sessions)}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-primary">
+                      {formatNum(row.users)}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-text-muted">
+                      {formatNum(row.engagedSessions)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-xs text-text-muted">
+            No first-visit landing paths returned for this window.
+          </p>
+        )}
+      </MetricSection>
+    </div>
+  );
+}
+
 // --- Main Page ---
 
-type Tab = "overview" | "discover" | "funnel" | "retention" | "pages" | "realtime";
+type Tab = "overview" | "discover" | "funnel" | "acquisition" | "retention" | "pages" | "realtime";
 
 export default function AnalyticsPage() {
   usePageTracking({
@@ -1325,6 +1921,13 @@ export default function AnalyticsPage() {
       { refreshInterval: 300000 }
     );
 
+  const { data: acquisitionData, error: acquisitionError, isLoading: acquisitionLoading } =
+    useSWR<AcquisitionData>(
+      activeTab === "acquisition" ? makeUrl("acquisition") : null,
+      fetcher,
+      { refreshInterval: 300000 }
+    );
+
   const retentionPeriod = period === "7d" || period === "14d" ? period : "30d";
   const { data: retentionData, error: retentionError, isLoading: retentionLoading } =
     useSWR<RetentionData>(
@@ -1360,6 +1963,8 @@ export default function AnalyticsPage() {
       ? discoverError
       : activeTab === "funnel"
       ? funnelError
+      : activeTab === "acquisition"
+      ? acquisitionError
       : activeTab === "retention"
       ? retentionError
       : activeTab === "realtime"
@@ -1373,6 +1978,8 @@ export default function AnalyticsPage() {
       ? discoverLoading
       : activeTab === "funnel"
       ? funnelLoading
+      : activeTab === "acquisition"
+      ? acquisitionLoading
       : activeTab === "retention"
       ? retentionLoading
       : activeTab === "realtime"
@@ -1383,6 +1990,7 @@ export default function AnalyticsPage() {
     { key: "overview", label: "Overview" },
     { key: "discover", label: "Discover" },
     { key: "funnel", label: "Funnel" },
+    { key: "acquisition", label: "Sources & Landing" },
     { key: "retention", label: "Retention" },
     { key: "pages", label: "Pages" },
     { key: "realtime", label: "Realtime" },
@@ -1460,6 +2068,9 @@ export default function AnalyticsPage() {
       )}
       {activeTab === "funnel" && funnelData && (
         <FunnelTab data={funnelData} />
+      )}
+      {activeTab === "acquisition" && acquisitionData && (
+        <AcquisitionTab data={acquisitionData} />
       )}
       {activeTab === "retention" && retentionData && (
         <RetentionTab data={retentionData} />

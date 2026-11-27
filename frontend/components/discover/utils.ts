@@ -10,6 +10,7 @@ import type {
 } from "@/lib/types";
 import { marketEventKey, tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
+import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import { isStoredOpeningChance } from "@/lib/probabilityEvidence";
 // UX-P053 (#1717) — the ONE formatter for "Resolves <date>", shared with the
 // tournament card rather than reimplemented here. See `resolvesLabel` below.
@@ -753,6 +754,10 @@ export function stripHeroProbabilityRestatement(
   return rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
+function futuresProbabilityWasWithdrawn(data: FeedFuturesData): boolean {
+  return data.status === "open" && data.field_price_coverage_incomplete === true;
+}
+
 /**
  * @param resolutionLabel the resolution eyebrow THIS CALLER RENDERS, verbatim
  *   (`resolvesLabel(data.resolution_date)`), or nothing if it renders none.
@@ -782,6 +787,7 @@ export function feedContextSnippet(
     // heading before it is considered, so a candidate that is NOTHING but the
     // heading no longer wins the chain over one that says something.
     const data = item.data as FeedFuturesData;
+    if (futuresProbabilityWasWithdrawn(data)) return ATLAS_STATE_COPY.noRecentPrice;
     // The heading is an ARGUMENT here, never a candidate: it is what the card
     // already prints, so it can only ever be subtracted. Hoisted to a local so
     // the four doors below stay the four doors — `test_silent_first_page_cards_
@@ -906,6 +912,7 @@ export function feedExpandedContext(item: FeedItem): string {
   let marketName: string | null = null;
   if (item.type === "futures") {
     const data = item.data as FeedFuturesData;
+    if (futuresProbabilityWasWithdrawn(data)) return "";
     marketName = data.name ?? null;
     if (data.hook_description) candidates.push(data.hook_description);
   }

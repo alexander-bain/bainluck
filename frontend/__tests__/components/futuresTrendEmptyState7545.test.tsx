@@ -41,8 +41,8 @@ describe("#7545 an empty NARROW window does not claim the market is empty", () =
     const t = text(
       <FuturesTrendEmptyState {...base} range={range} requestedHours={requestedHours} />
     );
-    expect(t).toContain(`No prices in ${words}`);
-    expect(t).not.toContain("Not enough price history yet");
+    expect(t).toContain(`No readings in ${words}`);
+    expect(t).not.toContain("Not enough probability history yet");
   });
 
   it("KEEPS THE CHIPS so the reader can widen out of the empty rung", () => {
@@ -64,13 +64,13 @@ describe("#7545 an empty NARROW window does not claim the market is empty", () =
 });
 
 describe("#7545 an empty WIDEST window is the market being empty", () => {
-  it("keeps the original sentence on 'all'", () => {
+  it("describes the missing probability history on 'all'", () => {
     const t = text(
       <FuturesTrendEmptyState {...base} range="all" requestedHours={8760} />
     );
-    expect(t).toContain("Not enough price history yet");
-    expect(t).toContain("The trend line appears once this market has a few price points.");
-    expect(t).not.toContain("No prices in");
+    expect(t).toContain("Not enough probability history yet");
+    expect(t).toContain("The trend line appears once this market has a few readings.");
+    expect(t).not.toContain("No readings in");
   });
 
   it("offers no rung to try, because there is no wider one", () => {

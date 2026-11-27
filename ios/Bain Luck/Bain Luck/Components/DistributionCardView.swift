@@ -14,6 +14,7 @@ struct DistributionCardView: View {
     /// #6343 — the price-age reveal, open or closed. See `PriceAgeMarkView`.
     @State private var revealedPriceAge: String?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     private var primaryInk: Color {
         colorScheme == .dark ? Color.primary : DS.textPrimary
@@ -180,6 +181,11 @@ struct DistributionCardView: View {
             // the affordance does not differ by card shape.
             if let revealedPriceAge {
                 LiquidityRevealCaption(sentence: revealedPriceAge)
+                    .padding(.top, 8)
+            }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 0, verticalPadding: 4)
                     .padding(.top, 8)
             }
         }

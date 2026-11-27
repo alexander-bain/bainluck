@@ -334,7 +334,7 @@ describe("G4 a synthesized-only winner beside real legs", () => {
       [LAST + 400 * DAY, "settled_at"],
     ] as const) {
       const html = draw([leg(99, "Other", [settlement(at, 1, basis)])]);
-      expect(html).toContain("Limited price history available");
+      expect(html).toContain("Limited probability history available");
       expect(html).not.toContain("<circle");
       expect(resultMarks(html)).toEqual([]);
     }
@@ -344,7 +344,7 @@ describe("G4 a synthesized-only winner beside real legs", () => {
     // The old count admitted the settlement point as the second point and drew
     // a one-trade chart ending in a timed move to 0%.
     const html = draw([leg(1, "Yes", [real(48, 0.4), settlement(LAST + HOUR, 0, "resolution_date")])]);
-    expect(html).toContain("Limited price history available");
+    expect(html).toContain("Limited probability history available");
     expect(html).not.toContain("<svg viewBox");
   });
 
@@ -358,7 +358,7 @@ describe("G4 a synthesized-only winner beside real legs", () => {
         settlement(LAST + HOUR, 0, "resolution_date"),
       ]),
     ]);
-    expect(html).toContain("Limited price history available");
+    expect(html).toContain("Limited probability history available");
     expect(html).not.toContain("<svg viewBox");
   });
 });

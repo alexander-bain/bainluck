@@ -310,7 +310,7 @@ enum EventAtlasLacrosseDartsSquashCards11666 {
     }
 
     nonisolated static func formatPercent(_ probability: Double) -> String {
-        "\(Int((probability * 100).rounded()))%"
+        DiscoverRoundupCardModel.probabilityText(probability: probability, renderedPercent: nil)
     }
 
     // MARK: - Deck Builder

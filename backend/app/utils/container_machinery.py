@@ -39,6 +39,9 @@ from app.utils.container_presentation import (
 from app.utils.draw_priced_winner import printable_away
 from app.utils.event_taxonomy import compute_event_tags
 from app.utils.graded_card import rendered_card_percents, rendered_duel_percents, rendered_percent
+from app.utils.graded_out_field_legs import TERMINAL_LOSER_CEILING
+from app.utils.nfl_division_register import NFL_DIVISION_REGISTER, DivisionClub, DivisionPair
+from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
 from app.utils.team_short_name import is_college_sport, school_label
 
 
@@ -1483,6 +1486,7 @@ def choose_section_form(
     selected_items: Sequence[Mapping[str, Any]],
     *,
     allow_three_way_duel: bool = False,
+    include_all_division_teams: bool = False,
 ) -> str:
     """Choose a section's visual form strictly from the shape of its atoms (zero topic checks)."""
     if atoms_kind == "paired_stage":
@@ -1505,6 +1509,8 @@ def choose_section_form(
         return "matchup_slate"
 
     if atoms_kind == "markets":
+        if include_all_division_teams:
+            return "sibling_fields_grid"
         if len(selected_items) == 1:
             outcomes = selected_items[0].get("outcomes") or ()
             if len(outcomes) == 2:
@@ -1978,7 +1984,8 @@ def _market_matches_query(
     shape = str(query.get("shape") or "any").lower()
     if shape == "two_way" and len(priced) != 2:
         return False
-    if shape == "field" and len(priced) < 3:
+    min_field_priced = 1 if query.get("include_all_division_teams") else 3
+    if shape == "field" and len(priced) < min_field_priced:
         return False
     if shape == "field" and not query.get("allow_cumulative"):
         cum_hits = sum(
@@ -2047,14 +2054,20 @@ def _canonical_market_outcome_map(
 
     rows: list[dict[str, Any]] = []
     already_has_rendered = False
+    field_complete = True
+    book_backed = False
+    has_no_bid = False
     for idx, o in enumerate(raw_outcomes):
         if not isinstance(o, Mapping):
             continue
         name = str(o.get("name") or o.get("outcome_name") or "").strip()
         if not name or is_placeholder_outcome_name(name) or _PLACEHOLDER_OUTCOME_RE.match(name):
             continue
+        book_backed |= "kalshi_no_bid" in o
+        has_no_bid |= bool(o.get("kalshi_no_bid"))
         prob = o.get("probability")
         if not isinstance(prob, (int, float)) or not math.isfinite(float(prob)):
+            field_complete &= bool(o.get("kalshi_no_bid"))
             continue
         p = float(prob)
         if p <= 0.0 or p >= 1.0:
@@ -2073,17 +2086,20 @@ def _canonical_market_outcome_map(
             }
         )
 
-    raw_sum = sum(float(r["probability"]) for r in rows)
-    if rows and not already_has_rendered and mutually_exclusive and raw_sum > 1.005:
+    supported_sum = math.fsum(float(r["probability"]) for r in rows if not r.get("kalshi_no_bid"))
+    if (
+        rows and not already_has_rendered and mutually_exclusive
+        and (supported_sum > 1.005 or (book_backed and (supported_sum >= 1 or not has_no_bid)))
+    ):
         normalize_display_probs(
             rows,
             key="probability",
             mutually_exclusive=True,
-            field_complete=True,
+            field_complete=field_complete,
             question=question,
         )
 
-    card_pcts = rendered_card_percents([r.get("probability") for r in rows])
+    card_pcts = [] if book_backed else rendered_card_percents([r.get("probability") for r in rows])
     by_oid: dict[int, int] = {}
     by_key: dict[str, int] = {}
     for idx, r in enumerate(rows):
@@ -2265,6 +2281,128 @@ def _pick_nearest_open_date_ladder_outcome(
     return future[0][2]
 
 
+_DIVISION_CLUB_ALIASES: dict[str, str] = {
+    "los angeles r": "los angeles rams",
+    "la rams": "los angeles rams",
+    "la r": "los angeles rams",
+    "los angeles c": "los angeles chargers",
+    "la chargers": "los angeles chargers",
+    "la c": "los angeles chargers",
+    "ny giants": "new york giants",
+    "ny jets": "new york jets",
+    "tampa": "tampa bay",
+    "kc": "kansas city",
+    "lv": "las vegas",
+}
+
+
+def _is_division_outcome_settled_out(outcome: Mapping[str, Any]) -> bool:
+    """True only when an authoritative source settled this contender as eliminated."""
+    if outcome.get("settled_out") is True or outcome.get("is_out") is True:
+        return True
+    if outcome.get("is_winner") is not False:
+        return False
+    if outcome.get("resolution_source") not in AUTHORITATIVE_SOURCES:
+        return False
+    prob = outcome.get("probability")
+    if prob is None or isinstance(prob, bool):
+        return True
+    try:
+        p = float(prob)
+    except (TypeError, ValueError):
+        return True
+    if not math.isfinite(p):
+        return True
+    return p < TERMINAL_LOSER_CEILING
+
+
+def _match_division_club(name: str, pair: DivisionPair) -> Optional[DivisionClub]:
+    cleaned = _norm_key(_clean_outcome_label(name))
+    raw = _norm_key(name)
+    targets = {t for t in (cleaned, raw, _DIVISION_CLUB_ALIASES.get(cleaned), _DIVISION_CLUB_ALIASES.get(raw)) if t}
+    for club in pair.clubs:
+        club_keys = {
+            _norm_key(club.club),
+            _norm_key(club.kalshi_outcome),
+            _norm_key(club.polymarket_outcome),
+        }
+        if targets & club_keys:
+            return club
+    if "los angeles" in targets:
+        la_clubs = [c for c in pair.clubs if c.polymarket_outcome.lower().startswith("los angeles ")]
+        if len(la_clubs) == 1:
+            return la_clubs[0]
+    return None
+
+
+def _resolve_nfl_division_pair(
+    market: Mapping[str, Any],
+    existing_names: Sequence[str] = (),
+) -> Optional[DivisionPair]:
+    title = str(market.get("name") or "").strip().lower()
+    for pair in NFL_DIVISION_REGISTER:
+        if re.search(rf"\b{re.escape(pair.division.lower())}\b", title):
+            return pair
+    if existing_names:
+        best_pair: Optional[DivisionPair] = None
+        best_hits = 0
+        for pair in NFL_DIVISION_REGISTER:
+            hits = len({c.club for n in existing_names if (c := _match_division_club(n, pair)) is not None})
+            if hits > best_hits:
+                best_hits = hits
+                best_pair = pair
+        if best_hits >= 2:
+            return best_pair
+    return None
+
+
+def _division_missing_team_rows(
+    market: Mapping[str, Any],
+    existing_rows: Sequence[Mapping[str, Any]],
+    *,
+    market_id: int,
+) -> list[dict[str, Any]]:
+    names = [str(o.get("name") or "").strip() for o in existing_rows if str(o.get("name") or "").strip()]
+    pair = _resolve_nfl_division_pair(market, existing_names=names)
+    if pair is None:
+        return []
+    matched_clubs: set[str] = set()
+    polymarket_votes = 0
+    kalshi_votes = 0
+    for n in names:
+        club = _match_division_club(n, pair)
+        if club is None:
+            continue
+        matched_clubs.add(club.club)
+        nk = _norm_key(_clean_outcome_label(n))
+        if club.polymarket_outcome != club.kalshi_outcome:
+            if nk == _norm_key(club.polymarket_outcome):
+                polymarket_votes += 1
+            elif nk == _norm_key(club.kalshi_outcome):
+                kalshi_votes += 1
+    use_polymarket = (
+        polymarket_votes > kalshi_votes
+        or (polymarket_votes == kalshi_votes and str(market.get("source") or "").strip().lower() == "polymarket")
+    )
+    missing: list[dict[str, Any]] = []
+    for idx, club in enumerate(pair.clubs):
+        if club.club in matched_clubs:
+            continue
+        missing.append(
+            {
+                "id": -(market_id * 10 + idx + 1),
+                "name": club.polymarket_outcome if use_polymarket else club.kalshi_outcome,
+                "probability": None,
+                "rendered_percent": None,
+                "unfloored_percent": None,
+                "opening_probability": None,
+                "settled_out": False,
+                "image_url": None,
+            }
+        )
+    return missing
+
+
 def _hydrate_market_visual_item(
     market: Mapping[str, Any],
     *,
@@ -2277,154 +2415,330 @@ def _hydrate_market_visual_item(
     allow_team_lookup: Optional[bool] = None,
     now_dt: Optional[datetime] = None,
     date_ladder_pick: Optional[str] = None,
+    include_all_division_teams: bool = False,
 ) -> dict[str, Any]:
+    from app.utils.outcome_display import is_placeholder_outcome_name
+
     mid = int(market["id"])
-    if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
+    if include_all_division_teams and "_division_all_outcomes" in market and isinstance(
+        market["_division_all_outcomes"], (list, tuple)
+    ):
+        raw_outcomes = market["_division_all_outcomes"]
+    elif include_all_division_teams and "outcomes" in market and isinstance(
+        market["outcomes"], (list, tuple)
+    ):
+        top_o = market.get("top_outcomes") if isinstance(market.get("top_outcomes"), (list, tuple)) else ()
+        raw_o = market["outcomes"]
+        raw_outcomes = raw_o if len(raw_o) >= len(top_o) else top_o
+    elif "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
         raw_outcomes = market["top_outcomes"]
     else:
         raw_outcomes = market.get("outcomes") or ()
     mut_excl = bool(market.get("mutually_exclusive", True))
-    canonical_rows, canon_by_oid, canon_by_key = _canonical_market_outcome_map(
-        raw_outcomes,
-        mutually_exclusive=mut_excl,
-        question=str(market.get("name") or ""),
-    )
-    # Drop sub-0.5% / >99.5% floor-tick noise when tradeable rows exist so web/iPhone
-    # integer % never disagrees with '<1%' / '>99%' boundary formatting on /futures/{id}.
-    non_floor = [
-        o for o in canonical_rows if 0.005 <= float(o["probability"]) <= 0.995
-    ]
-    min_needed = 2 if len(canonical_rows) == 2 else 1
-    valid = non_floor if len(non_floor) >= min_needed else list(canonical_rows)
-    valid.sort(key=lambda o: (-float(o["probability"]), str(o.get("name") or "").casefold()))
 
-    shape_is_yes = (
-        len(valid) <= 2
-        and any(str(o.get("name") or "").strip().lower() == "yes" for o in valid)
-    )
     scale_ordered = False
     leader_outcome_id: Optional[int] = None
     lead_prob = 0.0
+    unpriced_outcomes_out: list[dict[str, Any]] = []
 
-    if shape_is_yes:
-        yes_row = next(
-            (o for o in valid if str(o.get("name") or "").strip().lower() == "yes"),
-            valid[0],
+    if include_all_division_teams:
+        div_priced_raw: list[Mapping[str, Any]] = []
+        div_unpriced_rows: list[dict[str, Any]] = []
+        div_settled_out_rows: list[dict[str, Any]] = []
+        seen_div_names: set[str] = set()
+        for idx, o in enumerate(raw_outcomes):
+            if not isinstance(o, Mapping):
+                continue
+            o_name = _clean_outcome_label(str(o.get("name") or o.get("outcome_name") or "").strip())
+            if (
+                not o_name
+                or o_name.casefold() == "other"
+                or is_placeholder_outcome_name(o_name)
+                or _PLACEHOLDER_OUTCOME_RE.match(o_name)
+            ):
+                continue
+            nk_seen = _norm_key(o_name)
+            if nk_seen and nk_seen in seen_div_names:
+                continue
+            if nk_seen:
+                seen_div_names.add(nk_seen)
+            oid = int(o.get("id") or o.get("outcome_id") or (mid * 100 + idx + 1))
+            if _is_division_outcome_settled_out(o):
+                div_settled_out_rows.append(
+                    {
+                        "id": oid,
+                        "name": o_name,
+                        "probability": None,
+                        "rendered_percent": None,
+                        "unfloored_percent": None,
+                        "opening_probability": None,
+                        "settled_out": True,
+                        "image_url": o.get("image_url"),
+                    }
+                )
+                continue
+            prob = o.get("probability")
+            is_valid_prob = (
+                not o.get("price_withheld")
+                and not o.get("withheld_reason")
+                and isinstance(prob, (int, float))
+                and not isinstance(prob, bool)
+                and math.isfinite(float(prob))
+                and 0.0 < float(prob) < 1.0
+            )
+            if is_valid_prob:
+                div_priced_raw.append(o)
+            else:
+                div_unpriced_rows.append(
+                    {
+                        "id": oid,
+                        "name": o_name,
+                        "probability": None,
+                        "rendered_percent": None,
+                        "unfloored_percent": None,
+                        "opening_probability": None,
+                        "settled_out": False,
+                        "image_url": o.get("image_url"),
+                    }
+                )
+
+        canonical_rows, canon_by_oid, canon_by_key = _canonical_market_outcome_map(
+            div_priced_raw,
+            mutually_exclusive=mut_excl,
+            question=str(market.get("name") or ""),
         )
-        p = float(yes_row["probability"])
-        oid = int(yes_row.get("id") or (mid * 10 + 1))
-        yes_pct = int(yes_row.get("rendered_percent") or _half_up_pct(p))
-        leader_outcome_id = oid
-        lead_prob = p
-        outcomes_out = [
-            {
-                "outcome_id": oid,
-                "name": "Yes",
-                "probability": p,
-                "rendered_percent": yes_pct,
-                "unfloored_percent": yes_row.get("unfloored_percent"),
-                "art": {"url": None, "kind": "monogram", "detail": ""},
-            }
-        ]
-    else:
-        ordered_valid = list(valid)
-        # Fable Nov 20 preview look (Item 5i): on single-number fun strips, an
-        # "After <Date>" delay bucket (e.g. "GTA VI on PC: After March 2027 at 67%")
-        # reads as likely to arrive when it means the opposite. Prefer the leading
-        # non-"After" release-window outcome so the row ranks by actual arrival odds
-        # while keeping 100% member-page parity on its real outcome_id.
-        if (
-            use_fun_short_label
-            and max_outcomes == 1
-            and date_ladder_pick == "nearest_open"
-            and ordered_valid
-        ):
-            ref_d = (now_dt or datetime.now(timezone.utc)).date()
-            nearest = _pick_nearest_open_date_ladder_outcome(ordered_valid, ref_date=ref_d)
-            if nearest is not None:
-                ordered_valid = [nearest] + [o for o in ordered_valid if o is not nearest]
-        elif (
-            use_fun_short_label
-            and max_outcomes == 1
-            and ordered_valid
-            and _AFTER_DATE_OUTCOME_RE.match(str(ordered_valid[0].get("name") or "").strip())
-        ):
-            non_after = [
-                o
-                for o in ordered_valid
-                if not _AFTER_DATE_OUTCOME_RE.match(str(o.get("name") or "").strip())
-            ]
-            if non_after:
-                ordered_valid = non_after
-        kept = ordered_valid[:max_outcomes]
+        for cr in canonical_rows:
+            cr["settled_out"] = False
+        canonical_rows.sort(
+            key=lambda o: (-float(o["probability"]), str(o.get("name") or "").casefold())
+        )
+        missing_rows = _division_missing_team_rows(
+            market,
+            [*canonical_rows, *div_unpriced_rows, *div_settled_out_rows],
+            market_id=mid,
+        )
+        div_unpriced_rows.extend(missing_rows)
+        div_unpriced_rows.sort(key=lambda o: str(o.get("name") or "").casefold())
+        div_settled_out_rows.sort(key=lambda o: str(o.get("name") or "").casefold())
+
+        kept_priced = canonical_rows[:max_outcomes]
+        remaining_slots = max(0, max_outcomes - len(kept_priced))
+        kept_unpriced = [*div_unpriced_rows, *div_settled_out_rows][:remaining_slots]
+        shape_is_yes = False
         from app.utils.field_opening_coherence import field_openings_publishable
 
         openings_ok = field_openings_publishable(
-            [o.get("opening_probability") for o in valid],
-            mutually_exclusive=bool(market.get("mutually_exclusive", True)),
+            [o.get("opening_probability") for o in kept_priced],
+            mutually_exclusive=mut_excl,
         )
-        outcomes_out = []
         eff_sport_key = (
             sport_key
             if sport_key is not None
-            else _infer_sports_key_for_market(market)
+            else (_infer_sports_key_for_market(market) or "americanfootball_nfl")
         )
-        eff_allow_team_lookup = (
-            bool(allow_team_lookup)
-            if allow_team_lookup is not None
-            else _is_sports_context(market)
-        )
-        for idx, o in enumerate(kept):
+        eff_allow_team_lookup = True if allow_team_lookup is None else bool(allow_team_lookup)
+        outcomes_out = []
+        for idx, o in enumerate(kept_priced):
             o_name = _clean_outcome_label(str(o.get("name") or "").strip())
-            p = float(o["probability"])
             oid = int(o.get("id") or (mid * 100 + idx + 1))
-            if idx == 0:
-                leader_outcome_id = oid
-                lead_prob = p
+            raw_p = o.get("probability")
             art = resolver.resolve(
                 o_name,
                 explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
                 sport_key=eff_sport_key,
                 allow_team_lookup=eff_allow_team_lookup,
             )
-            if not art.get("url") and max_outcomes == 1 and fun_sub_tag:
-                from app.utils.discover_fun_tags import fun_market_art_subject
-
-                art_subj = fun_market_art_subject(mid, sub_tag=fun_sub_tag)
-                if art_subj:
-                    resolved_tag_art = resolver.resolve(
-                        art_subj,
-                        sport_key=eff_sport_key,
-                        allow_team_lookup=eff_allow_team_lookup,
-                    )
-                    if resolved_tag_art.get("url"):
-                        art = resolved_tag_art
             canon_subj = art.get("canonical_name")
             if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
                 o_name = str(canon_subj)
+            p = float(raw_p)
+            if leader_outcome_id is None:
+                leader_outcome_id = oid
+                lead_prob = p
             rendered = o.get("rendered_percent")
             pct_val = int(rendered) if rendered is not None else _half_up_pct(p)
+            unfloored_val = o.get("unfloored_percent")
             for fk_alias in (_norm_key(o_name), _ascii_fold_key(o_name)):
                 if fk_alias and fk_alias not in canon_by_key:
                     canon_by_key[fk_alias] = pct_val
+            open_p = o.get("opening_probability") if openings_ok else None
             outcomes_out.append(
                 {
                     "outcome_id": oid,
                     "name": o_name,
                     "probability": p,
                     "rendered_percent": pct_val,
-                    "unfloored_percent": o.get("unfloored_percent"),
-                    "opening_probability": (
-                        o.get("opening_probability") if openings_ok else None
-                    ),
+                    "unfloored_percent": unfloored_val,
+                    "opening_probability": open_p,
+                    "settled_out": False,
                     "art": art,
                 }
             )
-        # Direction 228 (#12885): numerical-scale markets run ascending by value, never by probability.
-        scale_idx = numerical_scale_order_indices(outcomes_out)
-        if scale_idx is not None:
-            outcomes_out = [outcomes_out[i] for i in scale_idx]
-            scale_ordered = True
+        for idx, o in enumerate(kept_unpriced):
+            o_name = _clean_outcome_label(str(o.get("name") or "").strip())
+            oid = int(o.get("id") or -(mid * 10 + idx + 1))
+            settled_out_flag = bool(o.get("settled_out"))
+            art = resolver.resolve(
+                o_name,
+                explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
+                sport_key=eff_sport_key,
+                allow_team_lookup=eff_allow_team_lookup,
+            )
+            canon_subj = art.get("canonical_name")
+            if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
+                o_name = str(canon_subj)
+            unpriced_outcomes_out.append(
+                {
+                    "market_id": mid,
+                    "outcome_id": oid,
+                    "name": o_name,
+                    "label": o_name,
+                    "probability": None,
+                    "rendered_percent": None,
+                    "unfloored_percent": None,
+                    "settled_out": settled_out_flag,
+                    "art": art,
+                }
+            )
+    else:
+        canonical_rows, canon_by_oid, canon_by_key = _canonical_market_outcome_map(
+            raw_outcomes,
+            mutually_exclusive=mut_excl,
+            question=str(market.get("name") or ""),
+        )
+        # Drop sub-0.5% / >99.5% floor-tick noise when tradeable rows exist so web/iPhone
+        # integer % never disagrees with '<1%' / '>99%' boundary formatting on /futures/{id}.
+        non_floor = [
+            o for o in canonical_rows if 0.005 <= float(o["probability"]) <= 0.995
+        ]
+        min_needed = 2 if len(canonical_rows) == 2 else 1
+        valid = non_floor if len(non_floor) >= min_needed else list(canonical_rows)
+        valid.sort(key=lambda o: (-float(o["probability"]), str(o.get("name") or "").casefold()))
+
+        shape_is_yes = (
+            len(valid) <= 2
+            and any(str(o.get("name") or "").strip().lower() == "yes" for o in valid)
+        )
+
+        if shape_is_yes:
+            yes_row = next(
+                (o for o in valid if str(o.get("name") or "").strip().lower() == "yes"),
+                valid[0],
+            )
+            p = float(yes_row["probability"])
+            oid = int(yes_row.get("id") or (mid * 10 + 1))
+            yes_pct = int(yes_row.get("rendered_percent") or _half_up_pct(p))
+            leader_outcome_id = oid
+            lead_prob = p
+            outcomes_out = [
+                {
+                    "outcome_id": oid,
+                    "name": "Yes",
+                    "probability": p,
+                    "rendered_percent": yes_pct,
+                    "unfloored_percent": yes_row.get("unfloored_percent"),
+                    "art": {"url": None, "kind": "monogram", "detail": ""},
+                }
+            ]
+        else:
+            ordered_valid = list(valid)
+            # Fable Nov 20 preview look (Item 5i): on single-number fun strips, an
+            # "After <Date>" delay bucket (e.g. "GTA VI on PC: After March 2027 at 67%")
+            # reads as likely to arrive when it means the opposite. Prefer the leading
+            # non-"After" release-window outcome so the row ranks by actual arrival odds
+            # while keeping 100% member-page parity on its real outcome_id.
+            if (
+                use_fun_short_label
+                and max_outcomes == 1
+                and date_ladder_pick == "nearest_open"
+                and ordered_valid
+            ):
+                ref_d = (now_dt or datetime.now(timezone.utc)).date()
+                nearest = _pick_nearest_open_date_ladder_outcome(ordered_valid, ref_date=ref_d)
+                if nearest is not None:
+                    ordered_valid = [nearest] + [o for o in ordered_valid if o is not nearest]
+            elif (
+                use_fun_short_label
+                and max_outcomes == 1
+                and ordered_valid
+                and _AFTER_DATE_OUTCOME_RE.match(str(ordered_valid[0].get("name") or "").strip())
+            ):
+                non_after = [
+                    o
+                    for o in ordered_valid
+                    if not _AFTER_DATE_OUTCOME_RE.match(str(o.get("name") or "").strip())
+                ]
+                if non_after:
+                    ordered_valid = non_after
+            kept = ordered_valid[:max_outcomes]
+            from app.utils.field_opening_coherence import field_openings_publishable
+
+            openings_ok = field_openings_publishable(
+                [o.get("opening_probability") for o in valid],
+                mutually_exclusive=bool(market.get("mutually_exclusive", True)),
+            )
+            outcomes_out = []
+            eff_sport_key = (
+                sport_key
+                if sport_key is not None
+                else _infer_sports_key_for_market(market)
+            )
+            eff_allow_team_lookup = (
+                bool(allow_team_lookup)
+                if allow_team_lookup is not None
+                else _is_sports_context(market)
+            )
+            for idx, o in enumerate(kept):
+                o_name = _clean_outcome_label(str(o.get("name") or "").strip())
+                p = float(o["probability"])
+                oid = int(o.get("id") or (mid * 100 + idx + 1))
+                if idx == 0:
+                    leader_outcome_id = oid
+                    lead_prob = p
+                art = resolver.resolve(
+                    o_name,
+                    explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
+                    sport_key=eff_sport_key,
+                    allow_team_lookup=eff_allow_team_lookup,
+                )
+                if not art.get("url") and max_outcomes == 1 and fun_sub_tag:
+                    from app.utils.discover_fun_tags import fun_market_art_subject
+
+                    art_subj = fun_market_art_subject(mid, sub_tag=fun_sub_tag)
+                    if art_subj:
+                        resolved_tag_art = resolver.resolve(
+                            art_subj,
+                            sport_key=eff_sport_key,
+                            allow_team_lookup=eff_allow_team_lookup,
+                        )
+                        if resolved_tag_art.get("url"):
+                            art = resolved_tag_art
+                canon_subj = art.get("canonical_name")
+                if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
+                    o_name = str(canon_subj)
+                rendered = o.get("rendered_percent")
+                pct_val = int(rendered) if rendered is not None else _half_up_pct(p)
+                for fk_alias in (_norm_key(o_name), _ascii_fold_key(o_name)):
+                    if fk_alias and fk_alias not in canon_by_key:
+                        canon_by_key[fk_alias] = pct_val
+                outcomes_out.append(
+                    {
+                        "outcome_id": oid,
+                        "name": o_name,
+                        "probability": p,
+                        "rendered_percent": pct_val,
+                        "unfloored_percent": o.get("unfloored_percent"),
+                        "opening_probability": (
+                            o.get("opening_probability") if openings_ok else None
+                        ),
+                        "art": art,
+                    }
+                )
+            # Direction 228 (#12885): numerical-scale markets run ascending by value, never by probability.
+            scale_idx = numerical_scale_order_indices(outcomes_out)
+            if scale_idx is not None:
+                outcomes_out = [outcomes_out[i] for i in scale_idx]
+                scale_ordered = True
 
     effective_kind = content_kind or (
         "props" if _PROP_MARKET_TITLE_RE.search(str(market.get("name") or "")) else "futures"
@@ -2452,7 +2766,9 @@ def _hydrate_market_visual_item(
         )
         or ""
     )
-    card_copy = {k: v for k, v in market.items() if k != "market_metadata"}
+    card_copy = {
+        k: v for k, v in market.items() if k not in ("market_metadata", "_division_all_outcomes")
+    }
     card_copy["name"] = clean_raw_name
     card_copy["content_kind"] = effective_kind
     card_copy["member_page_numbers"] = mpn
@@ -2536,9 +2852,9 @@ def _hydrate_market_visual_item(
         outcomes_out[0]["art"] = yes_art
 
     # Portrait/subject gate (#13587): never serve a person's face on another subject's row.
-    if outcomes_out:
+    if outcomes_out or unpriced_outcomes_out:
         art_context_texts = (display_title, clean_raw_name)
-        for oc in outcomes_out:
+        for oc in (*outcomes_out, *unpriced_outcomes_out):
             oc["art"] = _gate_outcome_art(
                 str(oc.get("name") or ""),
                 art_context_texts,
@@ -2633,7 +2949,7 @@ def _hydrate_market_visual_item(
         if raw_with_phrase:
             headline_with_phrase = _render_tpl(raw_with_phrase)
 
-    return {
+    hydrated: dict[str, Any] = {
         "market_id": mid,
         "title": display_title,
         "_short_label_base": base_title,
@@ -2660,6 +2976,9 @@ def _hydrate_market_visual_item(
         "member_page_numbers": mpn,
         "card": card_copy,
     }
+    if unpriced_outcomes_out:
+        hydrated["unpriced_outcomes"] = unpriced_outcomes_out
+    return hydrated
 
 
 def _event_has_sportsbook(event: Any, *, hero_source: Optional[str] = None) -> bool:
@@ -3449,6 +3768,7 @@ async def _load_snapshot_from_db(
         # resolved or game-linked rows and eliminates the double FuturesMarket fetch.
         title_matched_mids: set[int] = set()
         title_volume_by_mid: dict[int, float] = {}
+        division_race_mids: set[int] = set()
         if needs_markets and market_sections:
             fun_tag_sections: list[Mapping[str, Any]] = []
             non_fun_sections: list[Mapping[str, Any]] = []
@@ -3462,7 +3782,10 @@ async def _load_snapshot_from_db(
 
                 for aq in fun_tag_sections:
                     tag_ids = fun_market_ids_for_sub_tag(str(aq["fun_sub_tag"]).strip())
-                    title_matched_mids.update(int(mid_i) for mid_i in tag_ids)
+                    tag_ints = [int(mid_i) for mid_i in tag_ids]
+                    title_matched_mids.update(tag_ints)
+                    if aq.get("include_all_division_teams"):
+                        division_race_mids.update(tag_ints)
 
             cat_pool = (
                 _category_llm_pool_for_definition(definition)
@@ -3679,7 +4002,11 @@ async def _load_snapshot_from_db(
                     if fm.id not in paired_stage_mids:
                         continue
                 d_outs = list(detail.get("outcomes") or ())
-                card_pcts = rendered_card_percents([row.get("probability") for row in d_outs])
+                card_pcts = (
+                    []
+                    if any("kalshi_no_bid" in row for row in d_outs)
+                    else rendered_card_percents([row.get("probability") for row in d_outs])
+                )
                 by_oid: dict[int, int] = {}
                 by_key: dict[str, int] = {}
                 by_fold: dict[str, tuple[float, int, int]] = {}
@@ -3726,8 +4053,97 @@ async def _load_snapshot_from_db(
                             "opening_probability": row.get("opening_probability"),
                             "image_url": img_by_oid.get(oid),
                             "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,
+                            **(
+                                {"kalshi_no_bid": row["kalshi_no_bid"]}
+                                if "kalshi_no_bid" in row else {}
+                            ),
                         }
                     )
+                division_all_outs: Optional[list[dict[str, Any]]] = None
+                if fm.id in division_race_mids:
+                    fmt_by_oid = {int(fo["id"]): fo for fo in formatted_outs}
+                    win_by_oid = {o.id: getattr(o, "is_winner", None) for o in (fm.outcomes or ())}
+                    rsrc_by_oid = {o.id: getattr(o, "resolution_source", None) for o in (fm.outcomes or ())}
+                    seen_div_oids: set[int] = set()
+                    division_all_outs = []
+                    for row in d_outs:
+                        d_oid = int(row["id"])
+                        seen_div_oids.add(d_oid)
+                        d_prob = row.get("probability")
+                        d_p: Optional[float] = (
+                            float(d_prob)
+                            if d_prob is not None
+                            and isinstance(d_prob, (int, float))
+                            and not isinstance(d_prob, bool)
+                            and math.isfinite(float(d_prob))
+                            else None
+                        )
+                        fmt_hit = fmt_by_oid.get(d_oid)
+                        d_upd_dt = _parse_iso_dt_utc(upd_by_oid.get(d_oid))
+                        entry: dict[str, Any] = {
+                            "id": d_oid,
+                            "name": str(row.get("name") or ""),
+                            "probability": d_p,
+                            "rendered_percent": fmt_hit["rendered_percent"] if fmt_hit else None,
+                            "unfloored_percent": fmt_hit["unfloored_percent"] if fmt_hit else None,
+                            "opening_probability": row.get("opening_probability"),
+                            "image_url": img_by_oid.get(d_oid),
+                            "last_updated": d_upd_dt.isoformat() if d_upd_dt is not None else None,
+                            "is_winner": row.get("is_winner", win_by_oid.get(d_oid)),
+                            "resolution_source": row.get("resolution_source", rsrc_by_oid.get(d_oid)),
+                            "is_out": bool(row.get("is_out")),
+                        }
+                        if "price_withheld" in row:
+                            entry["price_withheld"] = row["price_withheld"]
+                        if "withheld_reason" in row:
+                            entry["withheld_reason"] = row["withheld_reason"]
+                        if "kalshi_no_bid" in row:
+                            entry["kalshi_no_bid"] = row["kalshi_no_bid"]
+                        division_all_outs.append(entry)
+                    for o in fm.outcomes or ():
+                        o_id = getattr(o, "id", None)
+                        if o_id is None or int(o_id) in seen_div_oids:
+                            continue
+                        o_id_int = int(o_id)
+                        seen_div_oids.add(o_id_int)
+                        o_name_raw = str(getattr(o, "outcome_name", None) or getattr(o, "name", None) or "").strip()
+                        if not o_name_raw:
+                            continue
+                        o_win = getattr(o, "is_winner", None)
+                        o_rsrc = getattr(o, "resolution_source", None)
+                        raw_p = getattr(o, "current_probability", getattr(o, "probability", None))
+                        p_valid = (
+                            float(raw_p)
+                            if raw_p is not None
+                            and isinstance(raw_p, (int, float))
+                            and not isinstance(raw_p, bool)
+                            and math.isfinite(float(raw_p))
+                            and 0.0 < float(raw_p) < 1.0
+                            else None
+                        )
+                        is_settled = _is_division_outcome_settled_out(
+                            {
+                                "probability": p_valid,
+                                "is_winner": o_win,
+                                "resolution_source": o_rsrc,
+                            }
+                        )
+                        o_upd_dt = _parse_iso_dt_utc(getattr(o, "last_updated", None))
+                        division_all_outs.append(
+                            {
+                                "id": o_id_int,
+                                "name": o_name_raw,
+                                "probability": None if is_settled else p_valid,
+                                "rendered_percent": None,
+                                "unfloored_percent": None,
+                                "opening_probability": None,
+                                "image_url": getattr(o, "image_url", None),
+                                "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,
+                                "is_winner": o_win,
+                                "resolution_source": o_rsrc,
+                                "is_out": False,
+                            }
+                        )
                 mpn = {
                     "by_outcome_id": by_oid,
                     "by_outcome_key": by_key,
@@ -3736,6 +4152,11 @@ async def _load_snapshot_from_db(
                 mpn_by_mid[fm.id] = mpn
                 detail_by_mid[fm.id] = {
                     "top_outcomes": formatted_outs,
+                    **(
+                        {"division_all_outcomes": division_all_outs}
+                        if division_all_outs is not None
+                        else {}
+                    ),
                     "newest_outcome_updated_at": newest_live_upd.isoformat() if newest_live_upd is not None else None,
                     "by_oid_prob_pct": {
                         int(o["id"]): (
@@ -3754,6 +4175,8 @@ async def _load_snapshot_from_db(
             if not screened_outs:
                 continue
             pm["top_outcomes"] = screened_outs
+            if "division_all_outcomes" in detail_by_mid[mid]:
+                pm["_division_all_outcomes"] = detail_by_mid[mid]["division_all_outcomes"]
             pm["newest_outcome_updated_at"] = detail_by_mid[mid]["newest_outcome_updated_at"]
             pm["member_page_numbers"] = mpn_by_mid[mid]
             markets_out.append(pm)
@@ -4513,10 +4936,16 @@ def _build_dynamic_title_from_set(
             history_items.extend(its)
 
     def _fav_outcome(m_item: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
-        outs = [o for o in (m_item.get("outcomes") or ()) if isinstance(o, Mapping)]
+        outs = [
+            o
+            for o in (m_item.get("outcomes") or ())
+            if isinstance(o, Mapping)
+            and isinstance(o.get("probability"), (int, float))
+            and not isinstance(o.get("probability"), bool)
+        ]
         if not outs:
             return None
-        return max(outs, key=lambda o: float(o.get("probability") or 0.0))
+        return max(outs, key=lambda o: float(o["probability"]))
 
     if spotlight_item is None and duel_item is not None and lead_sec_form == "duel_bar":
         d_outs_all = sorted(
@@ -5337,6 +5766,7 @@ async def produce_container_machinery(
         fun_sub_tag_val = str(aq.get("fun_sub_tag") or "").strip() or None
         use_fun_short = bool(fun_sub_tag_val)
         date_ladder_pick_val = str(aq.get("date_ladder_pick") or "").strip() or None
+        include_all_div = bool(aq.get("include_all_division_teams"))
         matched = [
             _hydrate_market_visual_item(
                 m,
@@ -5349,6 +5779,7 @@ async def produce_container_machinery(
                 allow_team_lookup=_is_sports_context(m, definition),
                 now_dt=now_dt,
                 date_ladder_pick=date_ladder_pick_val,
+                include_all_division_teams=include_all_div,
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
@@ -5394,6 +5825,7 @@ async def produce_container_machinery(
             "markets",
             matched,
             allow_three_way_duel=sec_allow_3way_duel,
+            include_all_division_teams=include_all_div,
         )
         if form_id == "duel_bar" and sec_allow_3way_duel:
             for it in matched:
@@ -5468,7 +5900,7 @@ async def produce_container_machinery(
         return RoundupRefusal((("container_machinery", "incomplete_sections_built"),))
 
     # Build the compact Discover card from the designated card section (or section 0), capped at <=3 rows
-    card_rows_limit = min(3, max(1, int(rule.get("card_rows", 3))))
+    # (4 for division-race cards carrying all four division teams under 441: A / #13777).
     preferred_card_key = str(rule.get("card_section_key") or "").strip()
     card_sec = next(
         (s for s in built_sections if s["class"] == preferred_card_key),
@@ -5482,6 +5914,13 @@ async def produce_container_machinery(
         ),
         {},
     )
+    card_include_all_div = bool(
+        isinstance(card_sec_cfg, Mapping)
+        and isinstance(card_sec_cfg.get("atom_query"), Mapping)
+        and card_sec_cfg["atom_query"].get("include_all_division_teams")
+    )
+    max_card_rows = 4 if card_include_all_div else 3
+    card_rows_limit = min(max_card_rows, max(1, int(rule.get("card_rows", 3))))
     card_allow_3way_duel = bool(card_sec_cfg.get("allow_three_way_duel"))
     vb = card_sec["visual_block"]
     vb_form = vb["form_id"]
@@ -5489,6 +5928,7 @@ async def produce_container_machinery(
 
     rows_out: list[dict[str, Any]] = []
     card_visual_rows: list[dict[str, Any]] = []
+    card_unpriced_rows: list[dict[str, Any]] = []
 
     if vb_form == "paired_stage_bars" and isinstance(vb.get("paired_metric_set"), Mapping):
         pset = vb["paired_metric_set"]
@@ -5563,9 +6003,15 @@ async def produce_container_machinery(
         for sib in (vb.get("items") or ())[:card_rows_limit]:
             mid = int(sib.get("market_id") or 1)
             outs = list(sib.get("outcomes") or ())
-            if not outs:
+            priced_outs = [
+                o
+                for o in outs
+                if isinstance(o.get("probability"), (int, float))
+                and not isinstance(o.get("probability"), bool)
+            ]
+            if not priced_outs:
                 continue
-            lead = max(outs, key=lambda o: float(o.get("probability") or 0.0))
+            lead = max(priced_outs, key=lambda o: float(o["probability"]))
             sib_label = f"{sib.get('title') or ''} · {lead.get('name') or ''}".strip(" ·")
             rows_out.append(
                 {
@@ -5658,21 +6104,38 @@ async def produce_container_machinery(
             chosen_outs = all_lead_outs[:card_rows_limit]
             card_scale_ordered = bool(lead_market.get("scale_ordered"))
         for o in chosen_outs:
-            rows_out.append(
-                {
-                    "market_id": mid,
-                    "outcome_id": int(o["outcome_id"]),
-                    "label": str(o["name"]),
-                    "probability": float(o["probability"]),
-                    "rendered_percent": int(o["rendered_percent"]),
-                    "unfloored_percent": o.get("unfloored_percent"),
-                }
-            )
+            row_entry: dict[str, Any] = {
+                "market_id": mid,
+                "outcome_id": int(o["outcome_id"]),
+                "label": str(o["name"]),
+                "probability": float(o["probability"]),
+                "rendered_percent": int(o["rendered_percent"]),
+                "unfloored_percent": o.get("unfloored_percent"),
+            }
+            if "settled_out" in o:
+                row_entry["settled_out"] = bool(o["settled_out"])
+            rows_out.append(row_entry)
             card_visual_rows.append(
                 {
                     "market_id": mid,
                     "href": lead_market.get("href") or f"/futures/{mid}",
                     **o,
+                }
+            )
+        remaining_card_slots = max(0, card_rows_limit - len(chosen_outs))
+        for u in list(lead_market.get("unpriced_outcomes") or ())[:remaining_card_slots]:
+            u_name = str(u.get("name") or "")
+            card_unpriced_rows.append(
+                {
+                    "market_id": mid,
+                    "outcome_id": int(u["outcome_id"]),
+                    "name": u_name,
+                    "label": str(u.get("label") or u_name),
+                    "probability": None,
+                    "rendered_percent": None,
+                    "unfloored_percent": None,
+                    "settled_out": bool(u.get("settled_out")),
+                    "art": copy.deepcopy(u.get("art") or {}),
                 }
             )
 
@@ -5700,6 +6163,8 @@ async def produce_container_machinery(
     hide_row_art = bool(rule.get("hide_row_art"))
     if hide_row_art and card_visual_rows:
         card_visual_rows = _strip_visual_row_art(card_visual_rows)
+    if hide_row_art and card_unpriced_rows:
+        card_unpriced_rows = _strip_visual_row_art(card_unpriced_rows)
 
     # Decision 387: A (#13605): show the verified pictures we have on each row
     # and leave rows without one as monogram/initials circles (never hide
@@ -5729,7 +6194,11 @@ async def produce_container_machinery(
                 missing_subjects,
             )
 
-    has_card_art = any(_has_verified_art(r) for r in card_visual_rows if isinstance(r, Mapping))
+    has_card_art = any(
+        _has_verified_art(r)
+        for r in (*card_visual_rows, *card_unpriced_rows)
+        if isinstance(r, Mapping)
+    )
     if vb_form == "paired_stage_bars" and lead_paired_set:
         has_card_art = any(
             _has_verified_art(r)
@@ -5809,6 +6278,8 @@ async def produce_container_machinery(
         "destination_href": dest_href,
         "rows": card_visual_rows,
     }
+    if card_unpriced_rows:
+        machinery_card["unpriced_outcomes"] = card_unpriced_rows
     if suppress_card_photo:
         machinery_card["suppress_card_photo"] = True
     if allow_card_header_image:
@@ -5846,6 +6317,7 @@ async def produce_container_machinery(
         parent_name=definition.get("parent_name"),
         paired_metric_set=card_paired_set,
         machinery_card=machinery_card,
+        unpriced_outcomes=card_unpriced_rows,
         covered_market_ids=covered_twin_market_ids,
     )
 
@@ -6070,6 +6542,11 @@ def _enforce_section_all_or_nothing_art(
             if isinstance(outs, Sequence) and not isinstance(outs, (str, bytes)):
                 it_copy["outcomes"] = _strip_visual_row_art(
                     [o for o in outs if isinstance(o, Mapping)]
+                )
+            unpriced = it_copy.get("unpriced_outcomes")
+            if isinstance(unpriced, Sequence) and not isinstance(unpriced, (str, bytes)):
+                it_copy["unpriced_outcomes"] = _strip_visual_row_art(
+                    [u for u in unpriced if isinstance(u, Mapping)]
                 )
             stripped_items.append(it_copy)
         sec_vb["items"] = stripped_items
@@ -6421,7 +6898,7 @@ def _compute_member_number_parity(
             mid = int(r.get("market_id") or 0)
             oid = int(r["outcome_id"]) if isinstance(r.get("outcome_id"), int) else None
             lbl = str(r.get("name") or r.get("label") or "")
-            shown_v = int(r.get("rendered_percent") or 0)
+            shown_v = int(r["rendered_percent"])
             exp_v = _lookup_market_member_pct(market_truth.get(mid), oid, lbl)
             card_checked += 1
             if exp_v is None or shown_v != exp_v:
@@ -6525,7 +7002,7 @@ def _compute_member_number_parity(
                         continue
                     oid = int(o["outcome_id"]) if isinstance(o.get("outcome_id"), int) else None
                     lbl = str(o.get("name") or "")
-                    shown_v = int(o.get("rendered_percent") or 0)
+                    shown_v = int(o["rendered_percent"])
                     exp_v = _lookup_market_member_pct(market_truth.get(mid), oid, lbl)
                     page_checked += 1
                     if exp_v is None or shown_v != exp_v:
@@ -6569,6 +7046,9 @@ def compute_visual_diversity_report(
     mc = rc.get("machinery_card") if isinstance(rc.get("machinery_card"), Mapping) else {}
     card_form = str(mc.get("form_id") or "roundup")
     card_rows = [r for r in (mc.get("rows") or ()) if isinstance(r, Mapping)]
+    card_unpriced = [
+        r for r in (mc.get("unpriced_outcomes") or ()) if isinstance(r, Mapping)
+    ]
     pms = rc.get("paired_metric_set") if isinstance(rc.get("paired_metric_set"), Mapping) else None
     if card_form == "paired_stage_bars" and pms:
         all_pms_entries = [r for r in (pms.get("entries") or pms.get("rows") or ()) if isinstance(r, Mapping)]
@@ -6577,7 +7057,7 @@ def compute_visual_diversity_report(
         card_pics = sum(1 for r in pms_rows if _has_verified_art(r))
         card_scale_checked, card_scale_violations = _check_scale_order_violations(pms_rows, "card:paired_stage")
     else:
-        card_row_count = len(card_rows)
+        card_row_count = len(card_rows) + len(card_unpriced)
         card_pics = 0
         for r in card_rows:
             if card_form in {"coin_flip_matchups", "matchup_slate"}:
@@ -6586,6 +7066,9 @@ def compute_visual_diversity_report(
                 if isinstance(r.get("home_art"), Mapping) and str(r["home_art"].get("url") or "").strip():
                     card_pics += 1
             elif _has_verified_art(r):
+                card_pics += 1
+        for r in card_unpriced:
+            if _has_verified_art(r):
                 card_pics += 1
         if (
             isinstance(mc.get("mini_chart"), Mapping)
@@ -6598,11 +7081,30 @@ def compute_visual_diversity_report(
         else:
             card_scale_checked, card_scale_violations = _check_scale_order_violations(card_rows, "card:rows")
 
+    rule_cfg = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+    card_sec_key = str(rule_cfg.get("card_section_key") or "").strip()
+    card_sec_cfg_rep = next(
+        (
+            s
+            for s in (rule_cfg.get("sections") or ())
+            if isinstance(s, Mapping)
+            and (not card_sec_key or str(s.get("key") or "").strip() == card_sec_key)
+        ),
+        {},
+    )
+    card_max_rows_allowed = (
+        4
+        if isinstance(card_sec_cfg_rep, Mapping)
+        and isinstance(card_sec_cfg_rep.get("atom_query"), Mapping)
+        and card_sec_cfg_rep["atom_query"].get("include_all_division_teams")
+        else 3
+    )
+
     card_kind = "games" if card_form in {"coin_flip_matchups", "matchup_slate"} else "futures"
     card_failing: list[str] = []
     if card_pics < 1:
         card_failing.append("point_1_picture_on_screen")
-    if card_row_count > 3:
+    if card_row_count > card_max_rows_allowed:
         card_failing.append("point_2_no_long_runs")
     if card_scale_violations:
         card_failing.append("direction_228_numerical_scale_order")
@@ -6619,8 +7121,8 @@ def compute_visual_diversity_report(
         },
         "point_2_longest_form_run": {
             "longest_row_run": card_row_count,
-            "max_allowed": 3,
-            "passes": card_row_count <= 3,
+            "max_allowed": card_max_rows_allowed,
+            "passes": card_row_count <= card_max_rows_allowed,
         },
         "point_3_forms": {
             "distinct_forms": [card_form],

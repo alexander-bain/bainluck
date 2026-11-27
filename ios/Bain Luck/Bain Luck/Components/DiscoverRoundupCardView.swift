@@ -22,6 +22,7 @@ struct DiscoverRoundupCardView: View {
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     private var isDark: Bool {
         colorScheme == .dark
@@ -48,7 +49,7 @@ struct DiscoverRoundupCardView: View {
     }
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 0) {
             if let ref = collectionRef, let onOpenCollection {
                 Button {
                     onOpenCollection(ref)
@@ -64,7 +65,18 @@ struct DiscoverRoundupCardView: View {
                     .accessibilityElement(children: model.hasAnySourceMark ? .contain : .combine)
                     .accessibilityLabel(model.accessibilitySummary)
             }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 18, verticalPadding: 8)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(cardSurfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(borderInk, lineWidth: 1)
+        )
     }
 
     private var cardSurface: some View {
@@ -90,12 +102,6 @@ struct DiscoverRoundupCardView: View {
         .padding(.top, 18)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardSurfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(borderInk, lineWidth: 1)
-        )
     }
 
     // MARK: - Header (Kicker + Tag + Headline + Optional Subtitle)
@@ -163,14 +169,51 @@ struct DiscoverRoundupCardView: View {
 
     @ViewBuilder
     private func standardRowView(_ row: DiscoverRoundupRowModel) -> some View {
+        let divDisplay = row.divisionDisplay
+        let isUnpricedOrOut = divDisplay?.state == .eliminated || divDisplay?.state == .noRecentProbability
+        let isSubOne = divDisplay?.state == .subOnePercent
         let isSettled = row.sourceMark?.state == .settled
         let numberForSheet: Double? = isSettled ? nil : row.rawProbability
         let renderedPercentForSheet: Int? = isSettled ? nil : row.renderedPercent
         let showsRowTenths = row.digits.contains(".")
-        if dynamicTypeSize.isAccessibilitySize {
+        let pctInk = isSubOne ? secondaryReadableInk : primaryInk
+        let barColor: Color = isSubOne
+            ? (isDark ? Color.white.opacity(0.32) : DS.textMuted.opacity(0.65))
+            : DS.blue
+
+        if let divDisplay, isUnpricedOrOut {
+            VStack(alignment: .leading, spacing: 6) {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.label)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(secondaryReadableInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(divDisplay.label)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(secondaryReadableInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(row.label)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(secondaryReadableInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 6)
+                        Text(divDisplay.label)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(secondaryReadableInk)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                proportionalBar(fill: 0, barHeight: 6, barColor: DS.blue)
+            }
+        } else if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    percentView(marker: row.marker, digits: row.digits, font: .title3)
+                    percentView(marker: row.marker, digits: row.digits, font: .title3, ink: pctInk)
                     if let srcMark = SourceMarkButton(row.sourceMark, number: numberForSheet, renderedPercent: renderedPercentForSheet, subject: row.label, numberSize: 16, compactRow: true, showsTenths: showsRowTenths) {
                         srcMark.buttonStyle(.borderless)
                     }
@@ -180,29 +223,34 @@ struct DiscoverRoundupCardView: View {
                         mark
                     }
                 }
-                rowRightColumn(row, includeAgeMarkInline: false)
+                rowRightColumn(row, includeAgeMarkInline: false, barColor: barColor, mutedLabel: isSubOne)
             }
         } else {
             HStack(alignment: .top, spacing: 12) {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    percentView(marker: row.marker, digits: row.digits, font: .title3)
+                    percentView(marker: row.marker, digits: row.digits, font: .title3, ink: pctInk)
                     if let srcMark = SourceMarkButton(row.sourceMark, number: numberForSheet, renderedPercent: renderedPercentForSheet, subject: row.label, numberSize: 16, compactRow: true, showsTenths: showsRowTenths) {
                         srcMark.buttonStyle(.borderless)
                     }
                 }
                 .frame(width: model.hasAnySourceMark ? 78 : 56, alignment: .trailing)
 
-                rowRightColumn(row, includeAgeMarkInline: true)
+                rowRightColumn(row, includeAgeMarkInline: true, barColor: barColor, mutedLabel: isSubOne)
             }
         }
     }
 
-    private func rowRightColumn(_ row: DiscoverRoundupRowModel, includeAgeMarkInline: Bool) -> some View {
+    private func rowRightColumn(
+        _ row: DiscoverRoundupRowModel,
+        includeAgeMarkInline: Bool,
+        barColor: Color = DS.blue,
+        mutedLabel: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(row.label)
                     .font(.subheadline)
-                    .foregroundStyle(primaryInk)
+                    .foregroundStyle(mutedLabel ? secondaryReadableInk : primaryInk)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -220,7 +268,7 @@ struct DiscoverRoundupCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            proportionalBar(fill: row.fill, barHeight: 6, barColor: DS.blue)
+            proportionalBar(fill: row.fill, barHeight: 6, barColor: barColor)
 
             if let secondary = row.secondary {
                 VStack(alignment: .leading, spacing: 4) {
@@ -345,11 +393,11 @@ struct DiscoverRoundupCardView: View {
 
     // MARK: - Shared Primitives
 
-    private func percentView(marker: String?, digits: String, font: Font) -> some View {
+    private func percentView(marker: String?, digits: String, font: Font, ink: Color? = nil) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 1) {
             Text("\(marker ?? "")\(digits)")
                 .font(font.monospacedDigit().weight(.bold))
-                .foregroundStyle(primaryInk)
+                .foregroundStyle(ink ?? primaryInk)
                 .fixedSize()
             Text("%")
                 .font(.caption.weight(.medium))
@@ -361,13 +409,15 @@ struct DiscoverRoundupCardView: View {
     private func proportionalBar(fill: Double, barHeight: CGFloat, barColor: Color) -> some View {
         GeometryReader { geo in
             let clamped = CGFloat(min(1.0, max(0.0, fill)))
-            let fillWidth = max(3, geo.size.width * clamped)
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(trackInk)
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(barColor)
-                    .frame(width: min(geo.size.width, fillWidth))
+                if clamped > 0 {
+                    let fillWidth = max(3, geo.size.width * clamped)
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(barColor)
+                        .frame(width: min(geo.size.width, fillWidth))
+                }
             }
         }
         .frame(height: barHeight)

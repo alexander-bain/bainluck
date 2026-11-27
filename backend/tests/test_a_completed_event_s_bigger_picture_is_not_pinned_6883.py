@@ -83,9 +83,8 @@ def _stamped(build: str | None, *, status: str = "completed") -> dict:
 
 
 def _both_tiers_running(monkeypatch, build: str) -> None:
-    """Pin the running build for the WRITER and the REFUSAL — see the trap above."""
-    monkeypatch.setattr(gmc, "current_build_id", lambda: build)
-    monkeypatch.setattr(rfc, "current_build_id", lambda: build)
+    """Pin the running `/related-futures` cache version (#13573)."""
+    monkeypatch.setattr(rfc, "current_cache_version", lambda: build)
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +98,7 @@ class TestTheFinalEntryNoLongerPins:
         events_route._related_futures_cache[15298552] = (
             time.time() - (rfc.FRESH_TTL_FINAL + 1),
             "completed",
-            events_route._current_build_id(),
+            rfc.current_cache_version(),
             {"away_team_futures": []},
         )
         assert events_route._read_related_futures_memo(15298552) is None
@@ -113,7 +112,7 @@ class TestTheFinalEntryNoLongerPins:
         events_route._related_futures_cache[15298552] = (
             time.time() - (events_route._RELATED_FUTURES_LIVE_TTL + 5),
             "completed",
-            events_route._current_build_id(),
+            rfc.current_cache_version(),
             {"away_team_futures": [1]},
         )
         assert events_route._read_related_futures_memo(15298552) == {
@@ -126,7 +125,7 @@ class TestTheFinalEntryNoLongerPins:
         events_route._related_futures_cache[1] = (
             time.time() - (rfc.FRESH_TTL_FINAL + 1),
             status,
-            events_route._current_build_id(),
+            rfc.current_cache_version(),
             {"away_team_futures": [1]},
         )
         assert events_route._read_related_futures_memo(1) is None
@@ -139,7 +138,7 @@ class TestTheFinalEntryNoLongerPins:
             events_route._related_futures_cache[1] = (
                 ts,
                 "completed",
-                events_route._current_build_id(),
+                rfc.current_cache_version(),
                 {"away_team_futures": [1]},
             )
             assert events_route._read_related_futures_memo(1) == expected
@@ -149,7 +148,7 @@ class TestTheFinalEntryNoLongerPins:
         events_route._related_futures_cache[1] = (
             time.time() - (events_route._RELATED_FUTURES_LIVE_TTL + 1),
             "live",
-            events_route._current_build_id(),
+            rfc.current_cache_version(),
             {"away_team_futures": [1]},
         )
         assert events_route._read_related_futures_memo(1) is None
@@ -183,7 +182,7 @@ class TestL1RefusesAnotherBuild:
         events_route._related_futures_cache[15298552] = (
             time.time(),
             "completed",
-            events_route._current_build_id(),
+            rfc.current_cache_version(),
             {"away_team_futures": [1]},
         )
         assert events_route._read_related_futures_memo(15298552) == {
@@ -267,7 +266,7 @@ class TestTheTwoLevelsShareOneDeadline:
 class TestTheStoredPayloadNamesItsBuild:
     def test_stamp_records_the_running_build(self):
         assert rfc.build_id_of(rfc.stamp({}, source_status="completed")) == (
-            rfc.current_build_id()
+            rfc.current_cache_version()
         )
 
     def test_build_id_of_is_empty_for_shapes_that_cannot_carry_one(self):
@@ -387,28 +386,21 @@ class TestItFailsOpenWhenTheBuildIsUnknown:
 
 
 class TestOneDefinitionOfWhichDeployAmI:
-    def test_the_two_tiers_and_the_l1_agree_on_the_running_build(self):
-        assert events_route._current_build_id() == rfc.current_build_id()
-        assert rfc.current_build_id() == gmc.current_build_id()
+    def test_game_markets_keeps_deploy_build_while_related_futures_uses_version(self):
+        assert events_route._current_build_id() == gmc.current_build_id()
+        assert rfc.current_cache_version() == f"rf-v{rfc.RELATED_FUTURES_CACHE_VERSION}"
 
-    def test_neither_tier_mints_its_own_identity(self):
-        """All three must resolve to `db_session_identity.current_build_id`."""
+    def test_game_markets_keeps_db_session_identity_and_related_futures_is_decoupled(self):
+        """Game-markets still uses `db_session_identity.current_build_id`; `/related-futures`
+        uses `RELATED_FUTURES_CACHE_VERSION` (#13573)."""
         from app.utils import db_session_identity
 
-        assert rfc.current_build_id is db_session_identity.current_build_id
         assert gmc.current_build_id is db_session_identity.current_build_id
         assert events_route._current_build_id() == (
             db_session_identity.current_build_id()
         )
 
-    def test_the_refusal_delegates_rather_than_keeping_a_second_opinion(self):
-        """🔴 THE TRAP IN THIS FILE'S HEADER.
-
-        `rfc.payload_is_current_build` asks the sibling, which reads
-        `current_build_id` from the `_gmc` namespace. If someone later gives
-        this tier its own copy, `_both_tiers_running` above silently stops
-        covering the refusal path and several tests here go vacuous.
-        """
+    def test_the_refusal_uses_the_local_version_check_and_shares_field_and_ttl(self):
         assert rfc.payload_is_current_build.__module__ == (
             "app.utils.related_futures_cache"
         )

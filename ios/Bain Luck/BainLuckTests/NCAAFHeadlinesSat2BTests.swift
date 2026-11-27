@@ -318,11 +318,12 @@ final class NCAAFHeadlinesSat2BTests: XCTestCase {
                 model.pregameColumnHeaders,
                 EventSportHeadlines12472.PregameColumnHeaders(projected: "Proj.", chance: "Chance")
             )
+            // 240: A (#13029) — football projections print as whole numbers (27.5 -> 28, 24.5 -> 25).
             XCTAssertEqual(model.away.shortName, "Tennessee")
-            XCTAssertEqual(model.away.pregameProjectedNumberText, "27.5")
+            XCTAssertEqual(model.away.pregameProjectedNumberText, "28")
             XCTAssertEqual(model.away.winChanceText, "55%")
             XCTAssertEqual(model.home.shortName, "Texas A&M")
-            XCTAssertEqual(model.home.pregameProjectedNumberText, "24.5")
+            XCTAssertEqual(model.home.pregameProjectedNumberText, "25")
             XCTAssertEqual(model.home.winChanceText, "45%")
         }
 
@@ -359,21 +360,24 @@ final class NCAAFHeadlinesSat2BTests: XCTestCase {
         XCTAssertEqual(liveModel.leagueLabel, "NCAAF")
         XCTAssertEqual(
             liveModel.liveColumnHeaders,
-            EventSportHeadlines12472.LiveColumnHeaders(score: "Score", pregame: "Pregame", now: "Now")
+            EventSportHeadlines12472.LiveColumnHeaders(score: "Score", projected: "Proj.", pregame: nil, now: "Now")
         )
         XCTAssertEqual(liveModel.away.shortName, "Ole Miss")
-        XCTAssertEqual(liveModel.away.projectedText, "Proj. 30.5")
+        XCTAssertNil(liveModel.away.projectedText)
+        XCTAssertEqual(liveModel.away.liveProjectedNumberText, "31")
         XCTAssertEqual(liveModel.away.liveScore, 21)
-        XCTAssertEqual(liveModel.away.pregameChanceText, "44%")
+        XCTAssertNil(liveModel.away.pregameChanceText)
         XCTAssertEqual(liveModel.away.winChanceText, "61.6%")
         XCTAssertEqual(liveModel.home.shortName, "Georgia")
-        XCTAssertEqual(liveModel.home.projectedText, "Proj. 27.5")
+        XCTAssertNil(liveModel.home.projectedText)
+        XCTAssertEqual(liveModel.home.liveProjectedNumberText, "28")
         XCTAssertEqual(liveModel.home.liveScore, 17)
-        XCTAssertEqual(liveModel.home.pregameChanceText, "56%")
+        XCTAssertNil(liveModel.home.pregameChanceText)
         XCTAssertEqual(liveModel.home.winChanceText, "38.4%")
+        XCTAssertEqual(liveModel.livePregameSummary?.leadWord, "Pregame")
+        XCTAssertEqual(liveModel.livePregameSummary?.bodyText, "Georgia 56%")
 
-        // When live projection is absent: NCAAF stacks team records under short names,
-        // while NBA live preserves `record == nil` (`stacksRecordUnderName == false`).
+        // Ruling 200-B: no team records during a live game (for both NCAAF and NBA).
         let duringNoProj = try ncaafDuringFixture(includeLiveProjection: false)
         let liveNoProjModel = try XCTUnwrap(
             EventSportHeadlines12472.resolve(
@@ -386,10 +390,10 @@ final class NCAAFHeadlinesSat2BTests: XCTestCase {
                 now: fixedNow
             )
         )
-        XCTAssertTrue(liveNoProjModel.stacksRecordUnderName)
+        XCTAssertFalse(liveNoProjModel.stacksRecordUnderName)
         XCTAssertNil(liveNoProjModel.away.projectedText)
-        XCTAssertEqual(liveNoProjModel.away.record, "8-2")
-        XCTAssertEqual(liveNoProjModel.home.record, "8-1")
+        XCTAssertNil(liveNoProjModel.away.record)
+        XCTAssertNil(liveNoProjModel.home.record)
 
         let nbaLiveNoProj = try ncaafDuringFixture(sport: "basketball_nba", includeLiveProjection: false)
         let nbaLiveNoProjModel = try XCTUnwrap(
@@ -429,12 +433,13 @@ final class NCAAFHeadlinesSat2BTests: XCTestCase {
         XCTAssertEqual(finalModel.away.won, true)
         XCTAssertEqual(finalModel.away.pregameChanceText, "56%")
         XCTAssertEqual(finalModel.away.finalResultText, "42")
-        XCTAssertEqual(finalModel.away.secondarySublineText, "8-2 · Proj. 31")
+        // Direction 199 (#12771): after-game rows keep [Pregame, Final] clean without secondarySublineText.
+        XCTAssertNil(finalModel.away.secondarySublineText)
         XCTAssertEqual(finalModel.home.shortName, "LSU")
         XCTAssertEqual(finalModel.home.won, false)
         XCTAssertEqual(finalModel.home.pregameChanceText, "44%")
         XCTAssertEqual(finalModel.home.finalResultText, "13")
-        XCTAssertEqual(finalModel.home.secondarySublineText, "6-3 · Proj. 28")
+        XCTAssertNil(finalModel.home.secondarySublineText)
     }
 
     func testNCAAFAllStatesFitAt390AndAccessibility2AndExport390pxRenders() async throws {

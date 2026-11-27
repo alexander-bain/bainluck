@@ -180,3 +180,149 @@ def test_cli_verify_api_missing_token_fails_closed(tmp_path):
             )
     assert rc == 1
     assert "missing" in stderr.getvalue()
+
+
+RECORDED_MISSING_RELEASE_DONE_LOG = """\
+remote:  !     Release command declared: this new release will not be available until the command succeeds.
+remote:        Released v6639
+remote: Running release command...
+remote: App import check OK
+To https://git.heroku.com/bainluck.git
+   2b470b8ad..41de6f5c4  41de6f5c486a0000000000000000000000000000 -> master
+"""
+
+
+def test_missing_release_done_with_verify_api_confirmed_live_exits_0(tmp_path):
+    mod = _load_module()
+    log_file = tmp_path / "push.log"
+    log_file.write_text(RECORDED_MISSING_RELEASE_DONE_LOG, encoding="utf-8")
+    expected = "41de6f5c486a0000000000000000000000000000"
+
+    assert mod.classify_heroku_push(RECORDED_MISSING_RELEASE_DONE_LOG, 0, require_release_done=True)[0] == 1
+    assert mod.is_missing_release_done_only(RECORDED_MISSING_RELEASE_DONE_LOG, 0) is True
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with patch.dict(
+        os.environ,
+        {"HEROKU_API_KEY": "tok", "HEROKU_SKIP_API_VERIFY": ""},
+    ):
+        with patch.object(
+            mod,
+            "verify_heroku_release_api",
+            return_value=(True, f"Heroku release v6639 on bainluck is current/succeeded at {expected}."),
+        ) as api_mock:
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                rc = mod.main(
+                    [
+                        "--log",
+                        str(log_file),
+                        "--push-exit",
+                        "0",
+                        "--require-release-done",
+                        "--verify-api",
+                        "--app",
+                        "bainluck",
+                        "--expected-sha",
+                        expected,
+                    ]
+                )
+    assert rc == 0
+    api_mock.assert_called_once_with("bainluck", "tok", expected, wait_seconds=15.0)
+    assert "Falling back to Heroku Releases API verification" in stderr.getvalue()
+    assert "HEROKU_PUSH_CHECK[0]:" in stdout.getvalue()
+
+
+def test_missing_release_done_with_verify_api_failed_release_fails_closed(tmp_path):
+    mod = _load_module()
+    log_file = tmp_path / "push.log"
+    log_file.write_text(RECORDED_MISSING_RELEASE_DONE_LOG, encoding="utf-8")
+
+    stderr = io.StringIO()
+    with patch.dict(
+        os.environ,
+        {"HEROKU_API_KEY": "tok", "HEROKU_SKIP_API_VERIFY": ""},
+    ):
+        with patch.object(
+            mod,
+            "verify_heroku_release_api",
+            return_value=(False, "Heroku latest release v6639 on bainluck failed (status=failed, current=False)."),
+        ):
+            with patch("sys.stderr", stderr):
+                rc = mod.main(
+                    [
+                        "--log",
+                        str(log_file),
+                        "--push-exit",
+                        "0",
+                        "--require-release-done",
+                        "--verify-api",
+                        "--app",
+                        "bainluck",
+                        "--expected-sha",
+                        "41de6f5c486a0000000000000000000000000000",
+                    ]
+                )
+    assert rc == 1
+    assert "HEROKU_PUSH_CHECK[1]:" in stderr.getvalue()
+
+
+def test_missing_release_done_skip_and_missing_token_cases_fail_closed(tmp_path):
+    mod = _load_module()
+    log_file = tmp_path / "push.log"
+    log_file.write_text(RECORDED_MISSING_RELEASE_DONE_LOG, encoding="utf-8")
+    argv = [
+        "--log",
+        str(log_file),
+        "--push-exit",
+        "0",
+        "--require-release-done",
+        "--verify-api",
+        "--app",
+        "bainluck",
+        "--expected-sha",
+        "41de6f5c486a0000000000000000000000000000",
+    ]
+    for env in (
+        {"HEROKU_API_KEY": "tok", "HEROKU_SKIP_API_VERIFY": "1"},
+        {"HEROKU_API_KEY": "", "HEROKU_OAUTH_TOKEN": "", "HEROKU_SKIP_API_VERIFY": ""},
+    ):
+        with patch.dict(os.environ, env):
+            assert mod.main(argv) == 1
+
+
+def test_explicit_release_failure_and_remote_rejected_never_fall_back_to_api(tmp_path):
+    mod = _load_module()
+    rejected_log = """\
+remote:  !     Push rejected, failed to compile Python app.
+To https://git.heroku.com/bainluck.git
+ ! [remote rejected] master -> master (pre-receive hook declined)
+"""
+    for content, push_exit in (
+        (RECORDED_RUN_45173313789_LOG, 0),
+        (rejected_log, 1),
+    ):
+        assert mod.is_missing_release_done_only(content, push_exit) is False
+        log_file = tmp_path / f"push_{push_exit}.log"
+        log_file.write_text(content, encoding="utf-8")
+        with patch.dict(
+            os.environ,
+            {"HEROKU_API_KEY": "tok", "HEROKU_SKIP_API_VERIFY": ""},
+        ):
+            with patch.object(mod, "verify_heroku_release_api") as api_mock:
+                rc = mod.main(
+                    [
+                        "--log",
+                        str(log_file),
+                        "--push-exit",
+                        str(push_exit),
+                        "--require-release-done",
+                        "--verify-api",
+                        "--app",
+                        "bainluck",
+                        "--expected-sha",
+                        "41de6f5c486a0000000000000000000000000000",
+                    ]
+                )
+        assert rc == 1
+        api_mock.assert_not_called()

@@ -1214,7 +1214,7 @@ enum EventAtlasCricketCards11666 {
     }
 
     nonisolated static func formatPercent(_ unit: Double) -> String {
-        "\(Int((unit * 100.0).rounded()))%"
+        DiscoverRoundupCardModel.probabilityText(probability: unit, renderedPercent: nil)
     }
 
     nonisolated static func formatOutlookMovement(

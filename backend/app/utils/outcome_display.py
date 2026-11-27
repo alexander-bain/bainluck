@@ -16,8 +16,9 @@ Rules:
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from math import nextafter
-from typing import Any, Callable, Mapping, Sequence, TypeVar
+from typing import Any, Callable, Collection, Mapping, Sequence, TypeVar
 
 from app.utils.graded_card import rendered_percent
 from app.utils.ladder_monotonicity import DEC, cumulative_outcome_ladder
@@ -81,6 +82,36 @@ def is_venue_floor_price(p) -> bool:
     return p is not None and abs(float(p) - _VENUE_FLOOR_PRICE) < 1e-9
 
 
+def open_kalshi_yes_bid(market: Any, outcome: Any) -> Decimal | float | None:
+    """Return the recorded bid for an ungraded outcome in an open Kalshi book."""
+    if (
+        getattr(market, "source", None) != "kalshi"
+        or getattr(market, "status", None) not in {"open", "active"}
+        or getattr(outcome, "resolution_source", None)
+        or getattr(outcome, "is_winner", None) is True
+    ):
+        return None
+    return getattr(outcome, "current_yes_bid", None)
+
+
+def mark_kalshi_ask_ceilings(
+    market: Any, rows: list[dict], source_outcomes: Mapping[int, Any], *,
+    stale_outcome_ids: Collection[int] = (),
+) -> None:
+    """Attach source-book evidence before allocating a complete field."""
+    if getattr(market, "source", None) != "kalshi":
+        return
+    for row in rows:
+        source = source_outcomes.get(row["id"])
+        bid = open_kalshi_yes_bid(market, source)
+        if bid is None or row["id"] in stale_outcome_ids:
+            continue
+        row["kalshi_no_bid"] = bid == 0
+        if row["kalshi_no_bid"]:
+            ask = getattr(source, "current_yes_ask", None)
+            row["ask_ceiling"] = float(ask) if ask is not None and 0 < ask <= 1 else None
+
+
 def encode_one_cent_kalshi_bounds(
     market: Any, outcomes: list[dict], source_outcomes: Mapping[int, Any]
 ) -> None:
@@ -96,13 +127,23 @@ def encode_one_cent_kalshi_bounds(
             continue
         mark = row.get("source_mark") or {}
         sources = mark.get("sources") or ()
-        if mark.get("state") != "single" or len(sources) != 1 or sources[0].get("key") != "kalshi":
-            continue
         source = source_outcomes.get(row["id"])
+        marked_legacy_ask = (
+            row.get("kalshi_no_bid")
+            and getattr(source, "current_probability", None) is None
+        )
+        if not marked_legacy_ask and (
+            mark.get("state") != "single" or len(sources) != 1
+            or sources[0].get("key") != "kalshi"
+        ):
+            continue
         if (
             getattr(source, "current_yes_bid", None) == 0
             and is_venue_floor_price(getattr(source, "current_yes_ask", None))
-            and is_venue_floor_price(getattr(source, "current_probability", None))
+            and (
+                getattr(source, "current_probability", None) is None
+                or is_venue_floor_price(getattr(source, "current_probability", None))
+            )
             and not getattr(source, "resolution_source", None)
         ):
             # Native reads the probability boundary. The web uses the whole
@@ -366,14 +407,12 @@ def display_probability_divisor(
 ) -> float | None:
     """One venue-blind served-number rule; never turn unknown mass into zero.
 
-    Alex's clarification: normalize healthy complete one-winner inputs; exclude
-    entries only on evidence, never just because the total is large. A raw sum
-    above 160% refuses conversion; it does not identify or delete a stale leg.
-    One-cent upper bounds retain their existing exclusion from the divisor.
-    Call with
-    the FULL eligible field before any preview/overflow slice. If a real outcome
-    lacks a supported price, pass field_complete=False rather than redistributing
-    its unknown probability among the survivors.
+    Alex's clarification: normalize a healthy, complete one-winner field to
+    100%, using the full field before slicing a preview. A recorded Kalshi
+    zero bid gives the ask no share. A field with a no-bid row can only scale
+    down, and an unpriced row without book evidence keeps the field incomplete.
+    A raw sum above 160% refuses conversion without identifying a stale leg.
+    Legacy one-cent upper bounds retain their existing exclusion.
     A cumulative ladder is refused even if its stored exclusivity flag is wrong.
     """
     import math
@@ -387,18 +426,28 @@ def display_probability_divisor(
         dates=True, question=question,
     ):
         return None
-    values = [o.get(key) for o in outcomes]
+    values = [o.get(key) for o in outcomes if not o.get("kalshi_no_bid")]
+    if len(values) < 2:
+        return None
     if any(
         p is None or not math.isfinite(float(p)) or not 0 <= float(p) <= 1
         for p in values
     ):
         return None
-    raw_mass = sum(float(p) for p in values)
+    raw_mass = math.fsum(float(p) for p in values)
+    book_backed = any("kalshi_no_bid" in row for row in outcomes)
+    if mutually_exclusive and book_backed:
+        has_no_bid = len(values) < len(outcomes)
+        if raw_mass > _FIELD_SUM_MAX or (has_no_bid and raw_mass < 1):
+            return None
+        return raw_mass or None
+    # Historical and other readers that do not carry the Kalshi book keep the
+    # existing scale. A legacy one-cent value is not evidence of a current bid.
     mass = raw_mass if mutually_exclusive is None else display_divisor_mass(values)
     if mutually_exclusive and raw_mass > _FIELD_SUM_MAX:
         return None
     if mutually_exclusive and mass < 1 and any(is_venue_floor_price(p) for p in values):
-        return None  # upper bounds do not certify a complete under-round field
+        return None
     # Compatibility for callers that have not supplied semantics. Explicit
     # non-exclusive sets always refused above; unknown semantics keep their band.
     threshold = 1.01 if sum(bool(p) for p in values[:3]) == 2 else 1.05
@@ -444,22 +493,18 @@ def normalize_display_probs(
     )
     if divisor is None:
         return False
-    before = [o[key] for o in outcomes]
-    # A one-cent no-bid quote is an upper bound, not another point of mass.
-    # Allocate it zero whole points rather than seventeen extra percentage
-    # points beside Israel's priced field that already totals 100 (#11995).
-    floors = [is_venue_floor_price(p) for p in before]
-    exact = [
-        0.0 if floor else float(p) / divisor * 100
-        for p, floor in zip(before, floors)
-    ]
+    priced_rows = [o for o in outcomes if not o.get("kalshi_no_bid")]
+    before = [o[key] for o in priced_rows]
+    book_backed = any("kalshi_no_bid" in row for row in outcomes)
+    floors = [not book_backed and is_venue_floor_price(p) for p in before]
+    exact = [0.0 if floor else float(p) / divisor * 100 for p, floor in zip(before, floors)]
     whole = [math.floor(p + 1e-10) for p in exact]
     order = sorted(
-        (i for i in range(len(outcomes)) if not floors[i]),
+        (i for i in range(len(priced_rows)) if not floors[i]),
         key=lambda i: (
             -round(exact[i] - whole[i], 10),
-            str(outcomes[i].get("name", outcomes[i].get("outcome_name", outcomes[i].get("label", "")))).casefold(),
-            str(outcomes[i].get("id", "")),
+            str(priced_rows[i].get("name", priced_rows[i].get("outcome_name", priced_rows[i].get("label", "")))).casefold(),
+            str(priced_rows[i].get("id", "")),
         ),
     )
     for i in order[: 100 - sum(whole)]:
@@ -469,12 +514,7 @@ def normalize_display_probs(
         (_VENUE_FLOOR_PRICE if floor else p) != value
         for p, floor, value in zip(before, floors, normalized)
     )
-    for o, value, floor, percent in zip(outcomes, normalized, floors, whole):
-        # Installed 1.0.6 checks probability < 0.01 before rendered_percent;
-        # exactly 0.01 plus a zero allocation would print "0%". Encode this
-        # open upper bound one Double step below 0.01, after decimal rounding.
-        # Stored prices, source evidence, grades and the scaling verdict stay
-        # unchanged; repeated formatting must not create a new history basis.
+    for o, value, floor, percent in zip(priced_rows, normalized, floors, whole):
         o[key] = min(value, math.nextafter(_VENUE_FLOOR_PRICE, 0.0)) if floor else value
         o["rendered_percent"] = percent
     return scaled

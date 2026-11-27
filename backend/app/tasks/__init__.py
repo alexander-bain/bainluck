@@ -798,6 +798,7 @@ celery_app.conf.task_routes = {
     # heavy task (main app, not `bainluck-heavy`).
     "app.tasks.assemble_theme_collections": {"queue": "background"},
     "app.tasks.rebuild_theme_snapshot": {"queue": "background"},
+    "app.tasks.refresh_kit_v1_real_sets_preview": {"queue": "background"},
     "app.tasks.refresh_awards_occasions": {"queue": "background"},
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
@@ -848,6 +849,8 @@ celery_app.conf.task_routes = {
     # of one slot, and this lane has 4. If live scores fall behind by >60 s the
     # move is reverted the same hour — see the LAT-P179 receipt.
     "app.tasks.prewarm_live_feed_shapes": {"queue": "realtime"},
+    # #13606 Part 1: durable finished-game `/history` chart materialization.
+    "app.tasks.materialize_finished_event_charts": {"queue": "background"},
     # --- Everything else routes to background (default queue) ---
     # --- 600s-class grinders route to `heavy` (applied below) ---
 }
@@ -912,6 +915,11 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     # decision and the next reader of the routing block needs to see an
     # objection, not a silence.
     "app.tasks.run_settlement_sweep",
+    # #13606 Part 1: bounded 5-event/run materializer; keep off the 2-slot
+    # `heavy` calibration lane.
+    "app.tasks.materialize_finished_event_charts",
+    # #12619 / 443: A: daily /guess 30-day retention sweep + PT pack freeze.
+    "app.tasks.guess_daily_maintenance",
 }
 
 # The heavy lane = the calibration/precompute cache-warmer family PLUS the
@@ -1850,6 +1858,25 @@ def backfill_thin_event_charts(self, limit: int = 90):
     from app.tasks.event_chart_backfill import run_event_chart_backfill
     return _tracked_run(
         "thin_event_charts", run_event_chart_backfill(None, limit=limit)
+    )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=300,
+    time_limit=360,
+    name="app.tasks.materialize_finished_event_charts",
+)
+def materialize_finished_event_charts(self, event_ids=None, limit=None):
+    """#13606 Part 1: persist complete finished `"all"` `/history` payloads in durable storage."""
+    from app.services.database import get_task_session
+    from app.services.finished_event_history import materialize_finished_event_charts_async
+
+    return _tracked_run(
+        "materialize_finished_event_charts",
+        materialize_finished_event_charts_async(
+            get_task_session, event_ids=event_ids, limit=limit
+        ),
     )
 
 
@@ -6019,6 +6046,57 @@ def discover_fun_scout(self, force=False):
     )
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=300,
+    time_limit=360,
+    name="app.tasks.propose_uncovered_containers",
+)
+def propose_uncovered_containers(self, max_proposals: int = 5):
+    """Build nightly preview-only Kit container pages in Redis (#12221, Decision 386: A)."""
+    from app.tasks.container_proposer import (
+        propose_uncovered_containers as _run_propose_uncovered_containers,
+    )
+
+    return _run_propose_uncovered_containers(max_proposals=max_proposals)
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=180,
+    time_limit=240,
+    name="app.tasks.refresh_kit_v1_real_sets_preview",
+)
+def refresh_kit_v1_real_sets_preview(self):
+    """Build the #13551 Kit v1 real-sets audit off-web and save to Redis."""
+
+    async def _build() -> dict:
+        import time as _time
+        from app.routes.containers import _build_live_real_sets_audit_report
+        from app.tasks.base import get_task_session
+
+        t0 = _time.monotonic()
+        async with get_task_session() as db:
+            report = await _build_live_real_sets_audit_report(db, request=None)
+        payload = dict(report)
+        payload["build_elapsed_s"] = round(_time.monotonic() - t0, 3)
+        payload["status"] = "ready"
+        payload["served_from"] = "worker_redis"
+        return payload
+
+    from app.routes.containers import write_saved_kit_v1_real_sets_preview_sync
+
+    report = _tracked_run("refresh_kit_v1_real_sets_preview", _build())
+    saved = write_saved_kit_v1_real_sets_preview_sync(report)
+    return {
+        "status": "ready" if saved else "redis_write_failed",
+        "saved": saved,
+        "total_sets": report.get("total_sets", 0),
+        "fitting_count": report.get("fitting_count", 0),
+        "build_elapsed_s": report.get("build_elapsed_s"),
+    }
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900,
                  name="app.tasks.anchor_schedule_sentinel")
 def anchor_schedule_sentinel(self, file_issues=True):
@@ -7944,6 +8022,13 @@ def precompute_admin_link_rate(self):
     return _tracked_run("precompute_admin_link_rate", _precompute_admin_link_rate())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.guess_daily_maintenance")
+def guess_daily_maintenance(self):
+    """Sweep >30d /guess editions & group entries and pre-freeze today's PT pack (#12619, 443: A)."""
+    from app.tasks.guess_daily import run_guess_daily_maintenance
+    return _tracked_run("guess_daily_maintenance", run_guess_daily_maintenance())
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=180, name="app.tasks.precompute_admin_matured_linkage")
 def precompute_admin_matured_linkage(self):
     """Precompute the matured-linkage metric into Redis (Queue #220/221 Item 2)."""
@@ -8081,6 +8166,32 @@ def deliver_activitykit_starts():
     return result
 
 
+@celery_app.task(name="app.tasks.deliver_game_alerts", soft_time_limit=60,
+                 time_limit=90, max_retries=0)
+def deliver_game_alerts():
+    """One default-off sweep of 1.0.8 plain APNs game alerts (#13081 / 258-261: A)."""
+    from app.tasks.game_alerts import run_game_alerts_dispatch
+
+    result = run_async(run_game_alerts_dispatch())
+    if result["terminal"] in {"failed", "partial"}:
+        logger.warning("Game alerts dispatch incomplete: %s", result)
+        raise RuntimeError("Game alerts dispatch incomplete")
+    return result
+
+
+@celery_app.task(name="app.tasks.purge_expired_appclip_devices", soft_time_limit=30,
+                 time_limit=45, max_retries=0)
+def purge_expired_appclip_devices():
+    """Hourly clean-up of expired 8-hour App Clip device rows (#13081, #13079)."""
+    from app.tasks.game_alerts import run_purge_expired_appclip_devices
+
+    result = run_async(run_purge_expired_appclip_devices())
+    if result["terminal"] in {"failed", "partial"}:
+        logger.warning("App Clip device purge incomplete: %s", result)
+        raise RuntimeError("App Clip device purge incomplete")
+    return result
+
+
 @celery_app.task(name="app.tasks.probe_live_tennis_scores", soft_time_limit=45,
                  time_limit=60, max_retries=0)
 def probe_live_tennis_scores():
@@ -8107,6 +8218,19 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.deliver_activitykit_starts",
         "schedule": 30.0,
         "options": {"queue": "realtime", "expires": 25},
+    },
+    "game-alerts-push": {
+        # #13081 (Rulings 258-261: A): default-off plain APNs game alerts
+        # (Starts, Close Late, Final). Zero DB/HTTP I/O while GAME_ALERTS_PUSH_ENABLED != true.
+        "task": "app.tasks.deliver_game_alerts",
+        "schedule": 30.0,
+        "options": {"queue": "realtime", "expires": 25},
+    },
+    "purge-expired-appclip-devices": {
+        # #13081 / #13079: delete App Clip push_devices rows older than Apple's 8h ephemeral window.
+        "task": "app.tasks.purge_expired_appclip_devices",
+        "schedule": crontab(minute=17),
+        "options": {"queue": "realtime", "expires": 3000},
     },
     "probe-live-tennis-scores": {
         # #13000 (Ruling 257: B): read-only coverage probe of livetennisapi.com,
@@ -9575,6 +9699,13 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=9),  # Daily 09:00 UTC (1:00 AM PT)
         "options": {"queue": "background"},
     },
+    "propose-uncovered-containers-nightly": {
+        # #12221 / Decision 386: A: nightly uncovered-family Kit container page
+        # preview builder (stores frozen deck in Redis only, never auto-published).
+        "task": "app.tasks.propose_uncovered_containers",
+        "schedule": crontab(minute=35, hour=9),  # Daily 09:35 UTC (1:35 AM PT)
+        "options": {"queue": "background"},
+    },
     "grid-register-sentinel-daily": {
         # Queue #295: diff every committed grid register against live source
         # inventory. Runs at 07:32 UTC — after the grid sentinel (07:25) so the
@@ -9999,6 +10130,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_thin_event_charts",
         "schedule": crontab(minute=40, hour=8),
         "kwargs": {"limit": 90},
+        "options": {"queue": "background"},
+    },
+    # #13606 Part 1 (Condition 3): bounded 5-event/run materializer for complete
+    # finished-game charts; reads `FINISHED_EVENT_HISTORY_BATCH_SIZE` (default 5).
+    "materialize-finished-event-charts": {
+        "task": "app.tasks.materialize_finished_event_charts",
+        "schedule": crontab(minute="*/10"),
         "options": {"queue": "background"},
     },
     # --- live/059: the outright chart's venue history --------------------------
@@ -10672,6 +10810,12 @@ celery_app.conf.beat_schedule = {
         # Matured-linkage headline (Item 2).
         # C-1 / B-15 (2026-11-06): hourly at :11, TTL 2 h — as audit-all above.
         "schedule": crontab(minute=11),
+        "options": {"queue": "background"},
+    },
+    # #12619 / 443: A — sweep >30d /guess rows and freeze today's PT challenge at 08:05 UTC.
+    "guess-daily-maintenance": {
+        "task": "app.tasks.guess_daily_maintenance",
+        "schedule": crontab(minute=5, hour=8),
         "options": {"queue": "background"},
     },
 }

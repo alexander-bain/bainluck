@@ -332,8 +332,8 @@ def membership(text):
     expected = {}
     for job, block in blocks.items():
         # #12252: flaky-canary is non-required and continue-on-error; it never pays for a commit.
-        # #13283: post-deploy-smoke-dry-run runs only after deploy on master pushes; it never pays for a commit.
-        if job in ("release-required", "deploy", "flaky-canary", "post-deploy-smoke-dry-run"):
+        # Ruling 394: deploy, deploy-after-full, and post-deploy-smoke run only on master pushes; they never pay for a commit.
+        if job in ("release-required", "deploy", "deploy-after-full", "flaky-canary", "post-deploy-smoke"):
             continue
         name = re.search(r"^    name: (.+)$", block, re.M)
         label = name.group(1).strip() if name else job
@@ -471,7 +471,7 @@ def validate_jobs(jobs, expected):
     require(
         set(actual)
         == set(expected)
-        | {"release-required", "deploy", "flaky-canary", "post-deploy-smoke-dry-run"},
+        | {"release-required", "deploy", "deploy-after-full", "flaky-canary", "post-deploy-smoke"},
         "incomplete or unexpected job membership",
     )
     for name, (kind, value, count, block) in expected.items():

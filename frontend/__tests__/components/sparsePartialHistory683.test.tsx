@@ -5,7 +5,7 @@
  * `FuturesChart` returns early before the plot in two places:
  *
  *   - no displayed outcomes          → "Select outcomes below…"
- *   - empty / one value / equal time → "Limited price history available"
+ *   - empty / one value / equal time → "Limited probability history available"
  *
  * so a `range=full` read that said `served_history: "partial"` and left too
  * few prices to draw printed "limited history" and nothing about the history
@@ -79,7 +79,7 @@ import { PARTIAL_HISTORY_CAPTION } from "@/lib/historyRange";
 import type { FuturesHistoryPoint, FuturesOutcomeHistory } from "@/lib/types";
 
 const CAPTION_ID = 'data-testid="futures-chart-history-partial"';
-const SPARSE = "Limited price history available";
+const SPARSE = "Limited probability history available";
 const PROMPT = "Select outcomes below to see their probability trends";
 const NOW = Date.UTC(2026, 9, 15, 20, 0, 0);
 
@@ -300,7 +300,7 @@ describe("#683 the old absences are kept where the read was complete", () => {
 
   it("the futures page keeps its empty-market card, uncaptioned, on a complete empty read", () => {
     const html = renderCaller(CALLERS[0][1], [], "complete");
-    expect(html).toContain("Not enough price history yet");
+    expect(html).toContain("Not enough probability history yet");
     expect(html).not.toContain(CAPTION_ID);
   });
 

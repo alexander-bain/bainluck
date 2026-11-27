@@ -509,7 +509,7 @@ enum ChampionshipPathPresentation {
         case .won: return .won
         case nil:
             guard let p = entry.probability else { return .none }
-            return .percent("\(Int(round(p * 100)))%")
+            return .percent(formatProbability(p))
         }
     }
 }

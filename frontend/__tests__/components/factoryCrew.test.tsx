@@ -14,6 +14,7 @@ import {
   workshopLight,
 } from "@/app/factory/activity";
 import { crewAction, crewPose, placeCrew } from "@/app/factory/crewMotion";
+import { validateSnapshot } from "@/app/factory/data";
 import type { Change, FactoryData, FloorEvent } from "@/app/factory/types";
 import { replayDuration, useEventPlayer } from "@/app/factory/playback";
 import { useDayReplay } from "@/app/factory/useDayReplay";
@@ -265,6 +266,35 @@ it("puts the figure’s station and matching crate before the lane check-in", as
     expect(checkIn?.textContent).toBe("Posted on NOW at 10:00 AM PT");
     expect(station?.compareDocumentPosition(checkIn!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(container.querySelector('[data-crew="W"] [data-card-station="rest"]')?.textContent).toBe("At the rest bench");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it.each([
+  { issue: 13580, comment: 7195128914, destination: 13580 },
+  { issue: undefined, comment: 6994962892, destination: 12779 },
+  { issue: 0, comment: 7195128914, destination: null },
+])("uses the snapshot's NOW issue ($issue) for the check-in link", async ({ issue, comment, destination }) => {
+  watchMotion();
+  const data = validateSnapshot({
+    ...snapshot,
+    signals: { ...snapshot.signals, now_lines_issue: issue },
+    crew_posts: { Factory: { at: now, comment_id: comment } },
+  });
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(
+      <FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />,
+    ));
+    const checkIn = container.querySelector('[data-crew="Factory"] [data-source="check-in"]');
+    expect(checkIn?.textContent).toBe("Posted on NOW at 10:00 AM PT");
+    expect(checkIn?.querySelector("a")?.getAttribute("href") ?? null).toBe(
+      destination === null
+        ? null
+        : `https://github.com/alexander-bain/bainluck/issues/${destination}#issuecomment-${comment}`,
+    );
   } finally {
     await act(async () => root.unmount());
   }

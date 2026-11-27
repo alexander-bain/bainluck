@@ -32,6 +32,7 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
     let secondaryBarLabel: String?
     let observedAt: String?
     let sourceMark: SourceMark?
+    let settledOut: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case marketId
@@ -75,6 +76,8 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         case observedAtSnake = "observed_at"
         case sourceMark
         case sourceMarkSnake = "source_mark"
+        case settledOut
+        case settledOutSnake = "settled_out"
     }
 
     init(
@@ -99,7 +102,8 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         primaryBarLabel: String? = nil,
         secondaryBarLabel: String? = nil,
         observedAt: String? = nil,
-        sourceMark: SourceMark? = nil
+        sourceMark: SourceMark? = nil,
+        settledOut: Bool? = nil
     ) {
         self.marketId = marketId
         self.eventId = eventId
@@ -123,6 +127,7 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         self.secondaryBarLabel = secondaryBarLabel
         self.observedAt = observedAt
         self.sourceMark = sourceMark
+        self.settledOut = settledOut
     }
 
     init(from decoder: Decoder) throws {
@@ -168,6 +173,8 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
             ?? (try? c.decodeIfPresent(String.self, forKey: .observedAtSnake))
         sourceMark = (try? c.decodeIfPresent(SourceMark.self, forKey: .sourceMark))
             ?? (try? c.decodeIfPresent(SourceMark.self, forKey: .sourceMarkSnake))
+        settledOut = (try? c.decodeIfPresent(Bool.self, forKey: .settledOut))
+            ?? (try? c.decodeIfPresent(Bool.self, forKey: .settledOutSnake))
     }
 }
 
@@ -181,6 +188,7 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
     let order: String?
     let presentation: String?
     let rows: [FeedRoundupRow]
+    let unpricedOutcomes: [MachineryOutcomeVisual]
     let machineryCard: MachineryCardContract?
     let kitCard: KitCardEnvelope366B?
     let kitCardSpec: KitV1CardSpec?
@@ -189,6 +197,8 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case kicker, tag, subtitle, footer, order, presentation, rows
+        case unpricedOutcomes
+        case unpricedOutcomesSnake = "unpriced_outcomes"
         case contextLine
         case contextLineSnake = "context_line"
         case completeGroup
@@ -219,7 +229,8 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         kitCard: KitCardEnvelope366B? = nil,
         kitCardSpec: KitV1CardSpec? = nil,
         hasUnknownLookFallback: Bool = false,
-        pairedMetricSet: PairedMetricSet? = nil
+        pairedMetricSet: PairedMetricSet? = nil,
+        unpricedOutcomes: [MachineryOutcomeVisual] = []
     ) {
         self.kicker = kicker
         self.tag = tag
@@ -230,6 +241,7 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         self.order = order
         self.presentation = presentation
         self.rows = rows
+        self.unpricedOutcomes = unpricedOutcomes.map { $0.asUnpriced441A() }
         self.machineryCard = machineryCard
         self.kitCard = kitCard
         self.kitCardSpec = kitCardSpec
@@ -253,6 +265,10 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         order = try? c.decodeIfPresent(String.self, forKey: .order)
         presentation = try? c.decodeIfPresent(String.self, forKey: .presentation)
         rows = (try? c.decodeIfPresent([FeedRoundupRow].self, forKey: .rows)) ?? []
+        let decodedUnpriced = (try? c.decodeIfPresent([MachineryOutcomeVisual].self, forKey: .unpricedOutcomes))
+            ?? (try? c.decodeIfPresent([MachineryOutcomeVisual].self, forKey: .unpricedOutcomesSnake))
+            ?? []
+        unpricedOutcomes = decodedUnpriced.map { $0.asUnpriced441A() }
         let hasMachineryPayload = (c.contains(.machineryCard) && ((try? c.decodeNil(forKey: .machineryCard)) == false))
             || (c.contains(.machineryCardSnake) && ((try? c.decodeNil(forKey: .machineryCardSnake)) == false))
         let hasKitPayload = (c.contains(.kitCard) && ((try? c.decodeNil(forKey: .kitCard)) == false))
@@ -326,12 +342,24 @@ nonisolated struct DiscoverRoundupRowModel: Equatable, Identifiable, Sendable {
     let showsRowAgeMark: Bool
     let sourceMark: SourceMark?
     var renderedPercent: Int? = nil
+    var divisionDisplay: MachineryOutcomeDisplay441A? = nil
 
     var formattedPercentText: String {
-        "\(marker ?? "")\(digits)%"
+        if let divisionDisplay {
+            return divisionDisplay.label
+        }
+        return "\(marker ?? "")\(digits)%"
     }
 
     var spokenPercentText: String {
+        if let divisionDisplay {
+            if divisionDisplay.state == .subOnePercent {
+                return "under 1%"
+            }
+            if divisionDisplay.state == .eliminated || divisionDisplay.state == .noRecentProbability {
+                return divisionDisplay.label
+            }
+        }
         switch marker {
         case "<": return "under \(digits)%"
         case ">": return "over \(digits)%"
@@ -396,10 +424,15 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
         let isCompleteGroup = contract.completeGroup == true
         let isStrip = trimmed(contract.presentation).lowercased() == "strip"
 
+        let hasDivisionState = !contract.unpricedOutcomes.isEmpty || contract.rows.contains { $0.settledOut != nil }
         let minRows = allowFlexibleRowCount ? 1 : ((isTwoRowPair || isWeekEvents) ? 2 : 3)
-        let maxRows = allowFlexibleRowCount ? 8 : (isTwoRowPair ? 2 : isWeekEvents ? 4 : isCompleteGroup ? 8 : 5)
+        let baseMaxRows = allowFlexibleRowCount ? 8 : (isTwoRowPair ? 2 : isWeekEvents ? 4 : isCompleteGroup ? 8 : 5)
+        let maxRows = hasDivisionState ? max(baseMaxRows, 4) : baseMaxRows
         let served = allowFlexibleRowCount ? Array(contract.rows.prefix(maxRows)) : contract.rows
-        guard served.count >= minRows, served.count <= maxRows else { return nil }
+        let unpricedSlots = max(0, maxRows - served.count)
+        let appendedUnpriced = hasDivisionState ? Array(contract.unpricedOutcomes.prefix(unpricedSlots)) : []
+        let combinedCount = served.count + appendedUnpriced.count
+        guard combinedCount >= minRows, combinedCount <= maxRows else { return nil }
 
         struct ValidatedRow {
             let row: FeedRoundupRow
@@ -507,11 +540,35 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
         let allOld = !staleFlags.isEmpty && staleFlags.allSatisfy { $0 }
         let cardCadence: SourceAge.Cadence = validated.contains(where: { $0.cadence == .live }) ? .live : .futures
 
-        let builtRows: [DiscoverRoundupRowModel] = zip(validated.indices, validated).map { idx, item in
-            let parts = probabilityParts(
+        let builtPricedRows: [DiscoverRoundupRowModel] = zip(validated.indices, validated).map { idx, item in
+            let divisionDisplay: MachineryOutcomeDisplay441A? = item.row.settledOut.map {
+                MachineryOutcomeDisplay441A.describe(
+                    probability: item.row.probability,
+                    renderedPercent: item.row.renderedPercent,
+                    unflooredPercent: item.row.unflooredPercent,
+                    settledOut: $0
+                )
+            }
+            let baseParts = probabilityParts(
                 probability: item.row.probability,
                 renderedPercent: item.row.unflooredPercent ?? item.row.renderedPercent
             )
+            let parts: (marker: String?, digits: String) = (divisionDisplay?.state == .subOnePercent)
+                ? ("<", "1")
+                : baseParts
+            let resolvedFill: Double = {
+                if let divisionDisplay {
+                    switch divisionDisplay.state {
+                    case .eliminated, .noRecentProbability:
+                        return 0.0
+                    case .subOnePercent:
+                        return 0.02
+                    case .live:
+                        return min(1.0, max(0.0, item.row.probability))
+                    }
+                }
+                return min(1.0, max(0.0, item.row.probability))
+            }()
             let secondary: DiscoverRoundupSecondaryBarModel? = {
                 guard let secProb = item.row.secondaryProbability else { return nil }
                 let secParts = probabilityParts(
@@ -546,14 +603,40 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
                 rawProbability: item.row.probability,
                 marker: parts.marker,
                 digits: parts.digits,
-                fill: min(1.0, max(0.0, item.row.probability)),
+                fill: resolvedFill,
                 secondary: secondary,
                 observedAt: stamps[idx],
                 showsRowAgeMark: !allOld && staleFlags[idx],
                 sourceMark: item.row.sourceMark,
-                renderedPercent: item.row.renderedPercent
+                renderedPercent: item.row.renderedPercent,
+                divisionDisplay: divisionDisplay
             )
         }
+
+        let builtUnpricedRows: [DiscoverRoundupRowModel] = appendedUnpriced.enumerated().map { idx, item in
+            let rowLabel = trimmed(item.name).isEmpty ? "Contender" : trimmed(item.name)
+            return DiscoverRoundupRowModel(
+                id: "unpriced:\(item.marketId ?? 0):\(item.outcomeId):\(idx):\(rowLabel.lowercased())",
+                targetId: max(1, item.marketId ?? (idx + 1)),
+                kind: .market,
+                cadence: .futures,
+                label: rowLabel,
+                opponentLabel: nil,
+                dateLabel: nil,
+                detailCallout: nil,
+                rawProbability: 0.0,
+                marker: nil,
+                digits: "",
+                fill: 0.0,
+                secondary: nil,
+                observedAt: nil,
+                showsRowAgeMark: false,
+                sourceMark: nil,
+                renderedPercent: nil,
+                divisionDisplay: item.display441A
+            )
+        }
+        let builtRows = builtPricedRows + builtUnpricedRows
 
         return DiscoverRoundupCardModel(
             kicker: kicker,
@@ -577,7 +660,7 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
 
     static func probabilityParts(probability: Double, renderedPercent: Int?) -> (marker: String?, digits: String) {
         let clamped = min(1.0, max(0.0, probability))
-        if clamped > 0.0 && clamped < 0.005 {
+        if clamped > 0.0 && clamped < 0.01 {
             return ("<", "1")
         }
         if clamped > 0.995 && clamped < 1.0 {

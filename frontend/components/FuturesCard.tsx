@@ -121,6 +121,7 @@ export default function FuturesCard({
   readsOpenFieldOuts = false,
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
+  const isResolved = market.status === "resolved";
   // #6018: the footer pip's subject. Derived off the same row pick as `outcomes`
   // above, so the age covers exactly what is drawn beneath it.
   const pricesAsOf = renderedPricesAsOf(market);
@@ -146,6 +147,9 @@ export default function FuturesCard({
     displayName: outcomeLabels[index],
     probability: outcome.probability,
   }));
+  const listed = labelled.filter(({ outcome, probability }) =>
+    isResolved || probability != null || (readsOpenFieldOuts && openFieldLegIsOut(market, outcome)),
+  );
   // #2831: a market with exactly two outcomes prints BOTH sides of one question,
   // and rounding them independently makes `0.925/0.075` read "93% / 8%". Decide
   // the pair once. Keyed over the WHOLE shipped set rather than the sliced five,
@@ -167,7 +171,7 @@ export default function FuturesCard({
   // signed bps market lists its kept rows in ascending numerical order (keeping
   // the leader via `leaderFirstSlice`, #1526), never by probability.
   const servedLadder = inThresholdOrder(outcomes.map((o) => o.name));
-  const leaderCut = leaderFirstSlice(labelled, 5);
+  const leaderCut = leaderFirstSlice(listed, 5);
   const scaleIdx = scaleLadder
     ? numericalScaleOrderIndices(
         leaderCut.map((r) => ({ name: r.outcome.name })),
@@ -177,10 +181,9 @@ export default function FuturesCard({
   const topOutcomes = scaleIdx
     ? scaleIdx.map((i) => leaderCut[i])
     : servedLadder
-      ? ladderSlice(labelled, 5)
+      ? ladderSlice(listed, 5)
       : leaderCut;
   const highlighted = scaleLadder || servedLadder ? answerRung(topOutcomes) : topOutcomes[0];
-  const isResolved = market.status === "resolved";
   // UX-P276 (#2710). Resolved once here rather than in the chip so the chip's
   // truthiness gate and the text it renders are the same value — a chip that
   // tests `market.category` and prints a derived label can render an empty pill.

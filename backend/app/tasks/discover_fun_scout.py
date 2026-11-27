@@ -40,6 +40,7 @@ from app.utils.discover_fun_scout import (
     SCOUT_PUBLIC_PROMOTION_GATE,
     SCOUT_RETIRED_SETS_PATH,
     SCOUT_STAGED_SETS_DIR,
+    ScoutKnownSet,
     ScoutLicenceState,
     ScoutMarketRow,
     ScoutUncoveredFamily,
@@ -47,8 +48,13 @@ from app.utils.discover_fun_scout import (
     build_scout_openai_client,
     build_scout_rule_file_definition,
     is_fun_scout_enabled,
+    load_db_graded_scout_sets,
+    load_graded_scout_sets,
+    load_known_sets_for_scout,
+    load_public_scout_sets,
     load_reader_dismissed_sets,
     load_retired_scout_sets,
+    normalize_retired_scout_sets,
     run_nightly_fun_scout,
 )
 
@@ -200,29 +206,42 @@ def save_licence_state_durable(state: ScoutLicenceState) -> tuple[bool, Optional
 
 def _load_retired_sets_durable(
     path: Path = SCOUT_RETIRED_SETS_PATH,
-) -> set[str]:
-    """Load retired set slugs from checked-in file UNION durable Redis.
+) -> list[dict[str, Any]]:
+    """Load retired sets from checked-in file UNION durable Redis as normalized dicts.
 
     Fails closed (raises) if Redis is unreadable so a retired set can never be
     silently re-proposed after a dyno restart.
     """
-    retired = set(load_retired_scout_sets(path))
+    file_entries: list[dict[str, Any]] = load_retired_scout_sets(path)
     from app.tasks.redis_state import get_redis_client
 
     raw = get_redis_client().get(_RETIRED_SETS_REDIS_KEY)
+    redis_entries: list[Any] = []
     if raw is not None:
         parsed = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
         if isinstance(parsed, list):
-            for slug in parsed:
-                cleaned = str(slug or "").strip().lower()
-                if cleaned:
-                    retired.add(cleaned)
+            for item in parsed:
+                if isinstance(item, dict):
+                    redis_entries.append(item)
+                else:
+                    cleaned = str(item or "").strip().lower()
+                    if cleaned:
+                        redis_entries.append(
+                            {"slug": cleaned, "name": cleaned, "reason": "retired"}
+                        )
         elif isinstance(parsed, dict):
+            for item in parsed.get("retired_sets") or []:
+                if isinstance(item, dict):
+                    redis_entries.append(item)
             for slug in parsed.get("retired_slugs") or []:
                 cleaned = str(slug or "").strip().lower()
                 if cleaned:
-                    retired.add(cleaned)
-    return retired
+                    redis_entries.append(
+                        {"slug": cleaned, "name": cleaned, "reason": "retired"}
+                    )
+    normalized = normalize_retired_scout_sets([*file_entries, *redis_entries])
+    normalized.sort(key=lambda r: (str(r.get("slug") or ""), str(r.get("name") or "")))
+    return normalized
 
 
 def retire_scout_set_durable(slug: str) -> tuple[bool, Optional[str]]:
@@ -278,32 +297,42 @@ def build_scout_nightly_artifact(
             licence_state=licence_status,
         )
         scout_meta = rule_def.get("scout") or {}
-        staged_sets.append(
-            {
-                "slug": vset.slug,
-                "name": vset.name,
-                "kicker": vset.kicker,
-                "category": vset.category,
-                "why_better_together": vset.why_better_together,
-                "look": vset.look,
-                "members": [
-                    {
-                        "market_id": m.market_id,
-                        "source": m.source,
-                        "title": m.title,
-                        "volume": m.volume,
-                        "category": m.category,
-                    }
-                    for m in vset.members
-                ],
-                "trimmed_members": list(scout_meta.get("trimmed_members") or []),
-                "added_members": list(scout_meta.get("added_members") or []),
-                "rule_definition": rule_def,
+        row_answers_map = dict(vset.row_answers)
+        staged_entry: dict[str, Any] = {
+            "slug": vset.slug,
+            "name": vset.name,
+            "kicker": vset.kicker,
+            "category": vset.category,
+            "why_better_together": vset.why_better_together,
+            "look": vset.look,
+            "members": [
+                {
+                    "market_id": m.market_id,
+                    "source": m.source,
+                    "title": m.title,
+                    "volume": m.volume,
+                    "category": m.category,
+                    **(
+                        {"row_answer": row_answers_map[m.market_id]}
+                        if m.market_id in row_answers_map
+                        else {}
+                    ),
+                }
+                for m in vset.members
+            ],
+            "trimmed_members": list(scout_meta.get("trimmed_members") or []),
+            "added_members": list(scout_meta.get("added_members") or []),
+            "rule_definition": rule_def,
+        }
+        if row_answers_map:
+            staged_entry["row_answers"] = {
+                str(mid): ans for mid, ans in sorted(row_answers_map.items())
             }
-        )
+        staged_sets.append(staged_entry)
 
     verified_singles = list(result.get("verified_singles") or [])
     rejected_sets = list(result.get("rejected_sets") or [])
+    carried_grades = list(result.get("carried_grades") or [])
     return {
         "run_date": run_now.strftime("%Y-%m-%d"),
         "run_at": run_now.isoformat(),
@@ -320,6 +349,7 @@ def build_scout_nightly_artifact(
         "staged_sets": staged_sets,
         "verified_singles": verified_singles,
         "rejected_sets": rejected_sets,
+        "carried_grades": carried_grades,
     }
 
 
@@ -414,17 +444,24 @@ def format_scout_nightly_comment_markdown(
             f"({_md_code_span(s.get('slug'))} · {_md_code_span(s.get('category'))} "
             f"· look={_md_code_span(s.get('look'))})"
         )
-        sets_lines.append(f"- **Kicker:** {_md_code_span(s.get('kicker'))}")
+        kicker_raw = s.get("kicker")
+        kicker_display = "`(omitted)`" if kicker_raw == "" else _md_code_span(kicker_raw)
+        sets_lines.append(f"- **Kicker:** {kicker_display}")
         sets_lines.append(
             f"- **Why better together:** {_md_code_span(s.get('why_better_together'))}"
         )
         sets_lines.append("- **Members:**")
         for m in s.get("members") or []:
             vol = f"{int(m['volume']):,}" if m.get("volume") is not None else "n/a"
+            ans_suffix = (
+                f" · answer: {_md_code_span(m.get('row_answer'))}"
+                if m.get("row_answer")
+                else ""
+            )
             sets_lines.append(
                 f"  - {_md_code_span(m.get('market_id'))} "
                 f"({_md_code_span(m.get('source'))}, vol `{vol}`): "
-                f"{_md_code_span(m.get('title'))}"
+                f"{_md_code_span(m.get('title'))}{ans_suffix}"
             )
         trimmed_rows = (
             s.get("trimmed_members")
@@ -512,6 +549,32 @@ def format_scout_nightly_comment_markdown(
 
     rejected_text = ("\n" + "\n".join(rejected_lines)) if rejected_lines else ""
 
+    carried_raw = artifact.get("carried_grades") or []
+    carried_lines: list[str] = []
+    if carried_raw:
+        carried_lines.append("")
+        carried_lines.append(f"### Carried Grades ({len(carried_raw)})")
+        for cg in carried_raw[:20]:
+            if not isinstance(cg, dict):
+                continue
+            prop_span = _md_code_span(cg.get("proposed_name") or cg.get("proposed_slug"))
+            known_span = _md_code_span(
+                cg.get("matched_set") or cg.get("matched_slug") or cg.get("known_name")
+            )
+            grade_span = _md_code_span(cg.get("grade"))
+            shared_n = cg.get("shared_members")
+            cand_n = cg.get("candidate_count")
+            overlap_txt = (
+                f"{shared_n}/{cand_n} shared"
+                if shared_n is not None and cand_n
+                else "name/slug"
+            )
+            carried_lines.append(
+                f"- {prop_span} → carried {grade_span} from {known_span} "
+                f"({overlap_txt}; not asked again)"
+            )
+    carried_text = ("\n" + "\n".join(carried_lines)) if carried_lines else ""
+
     # Fit as many verified singles rows as possible inside the remaining budget.
     singles_section_lines: list[str] = list(singles_header)
     if singles_rows:
@@ -520,7 +583,14 @@ def format_scout_nightly_comment_markdown(
             f"\n_Showing first {len(singles_rows)} of {len(singles_rows)} verified singles "
             f"(capped under GitHub's 65,536-char limit; full list in Redis {_md_code_span(day_key)})._"
         )
-        prefix_len = len(base_text) + 1 + len("\n".join(singles_section_lines)) + len(rejected_text) + 2
+        prefix_len = (
+            len(base_text)
+            + 1
+            + len("\n".join(singles_section_lines))
+            + len(carried_text)
+            + len(rejected_text)
+            + 2
+        )
         available_for_rows = max_chars - prefix_len
         all_rows_len = sum(len(r) + 1 for r in singles_rows)
         if all_rows_len <= available_for_rows:
@@ -540,12 +610,58 @@ def format_scout_nightly_comment_markdown(
                 f"(capped under GitHub's 65,536-char limit; full list in Redis {_md_code_span(day_key)})._"
             )
 
-    body = "\n".join(base_lines + singles_section_lines + rejected_lines).strip() + "\n"
+    body = (
+        "\n".join(base_lines + singles_section_lines + carried_lines + rejected_lines).strip()
+        + "\n"
+    )
     if len(body) > max_chars:
         suffix = f"\n\n_Report truncated to fit GitHub's comment limit; full artifact in Redis {_md_code_span(day_key)}._\n"
         keep = max(0, max_chars - len(suffix))
         body = body[:keep].rstrip() + suffix
     return body
+
+
+async def _load_known_sets_durable(
+    catalog_by_id: dict[int, ScoutMarketRow],
+) -> list[ScoutKnownSet]:
+    """Load graded sets (DB + committed) and public sets (live machinery + Redis + seed)."""
+    from app.tasks.redis_state import get_redis_client
+
+    try:
+        redis_client = get_redis_client()
+    except Exception:
+        redis_client = None
+
+    try:
+        async with async_session_maker() as db:
+            graded_sets = await load_db_graded_scout_sets(db, redis_client=redis_client)
+    except Exception as exc:
+        logger.warning(
+            "Fun scout continuing with committed graded sets (%s: %s)",
+            type(exc).__name__,
+            exc,
+        )
+        graded_sets = load_graded_scout_sets()
+
+    try:
+        public_sets = load_public_scout_sets(
+            catalog_by_id=catalog_by_id,
+            redis_client=redis_client,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Fun scout continuing with file public sets (%s: %s)",
+            type(exc).__name__,
+            exc,
+        )
+        public_sets = load_public_scout_sets(catalog_by_id=catalog_by_id)
+
+    return load_known_sets_for_scout(
+        catalog_by_id=catalog_by_id,
+        graded_sets=graded_sets,
+        public_sets=public_sets,
+        redis_client=redis_client,
+    )
 
 
 def _post_scout_report_to_github(
@@ -667,6 +783,16 @@ async def _run_discover_fun_scout(
         }
 
     markets = await fetch_open_non_sports_markets_for_scout()
+    catalog_by_id = {m.market_id: m for m in markets}
+    try:
+        known_sets: Optional[list[ScoutKnownSet]] = await _load_known_sets_durable(catalog_by_id)
+    except Exception as exc:
+        logger.warning(
+            "Fun scout continuing with committed/file known sets (%s: %s)",
+            type(exc).__name__,
+            exc,
+        )
+        known_sets = None
     try:
         reader_dismissed = await fetch_reader_dismissed_sets_for_scout(now=run_now)
     except Exception as exc:
@@ -689,6 +815,7 @@ async def _run_discover_fun_scout(
         output_dir=output_dir,
         retired_sets=retired,
         reader_dismissed_sets=reader_dismissed,
+        known_sets=known_sets,
         licence_state=licence,
         prior_monthly_spend_usd=prior_spend,
         max_new_per_day=SCOUT_MAX_NEW_SETS_PER_DAY,

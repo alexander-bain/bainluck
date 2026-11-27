@@ -7,7 +7,7 @@ import { buildDiscoverShareUrl, buildLadderShareText, formatShareProbability } f
 import type { LadderKind } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { printsAPercent } from "@/lib/discover/leaderOrder";
-import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
+import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard, futuresDistributionDatesByLabel } from "@/lib/discover/futuresBoard";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import type { HeroCandidate } from "@/lib/discover/heroOutcome";
 import { answerIsBareQuantity, answerIsNegative, captionIsAboutAnotherLeg, captionRepeatsAnswer, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
@@ -243,7 +243,8 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const shareText = leader && leaderProbability
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
-  const heatmapCells = heatmapShownCells(data);
+  const now = new Date();
+  const heatmapCells = heatmapShownCells(data, now);
   // UX-P248 / CERT-678 repair — computed ONCE, above the variant fork, because
   // the fork is the defect. The first version of this ship read `forYouCue(item)`
   // inline at the single place it remembered to render, and this component has
@@ -260,7 +261,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
 
   if (heatmapCells) {
     const shownCells = heatmapCells;
-    const { betterThanEvenRung, leaderCell } = ladderMarks(shownCells);
+    const { betterThanEvenRung, leaderCell } = ladderMarks(shownCells, now);
     const lastAbove50Label = betterThanEvenRung?.label ?? null;
     // #7457 — whether the confidence glyph will actually DRAW, not whether the
     // payload carried a string. `SignalBars` returns null for a tier it doesn't
@@ -1046,6 +1047,8 @@ type HeatmapRow = {
    * is why "N windows" reached a share-price ladder.
    */
   source: string | null;
+  /** Resolved calendar deadline (`YYYY-MM-DD`) when the rung carries a date (#13722). */
+  dateIso: string | null;
 };
 
 /**
@@ -1120,11 +1123,59 @@ function atLeastLadder(rows: HeatmapRow[]): boolean {
   );
 }
 
+function resolveRungDateIso(
+  point: { label: string; value: number; unit?: string | null; source?: string | null },
+  distDateIso: string | null | undefined,
+  now: Date = new Date(),
+): string | null {
+  if (distDateIso && /^\d{4}-\d{2}-\d{2}$/.test(distDateIso)) {
+    return distDateIso;
+  }
+  if (point.source !== "date_bucket" && point.unit !== "date") return null;
+  const v = point.value;
+  if (!Number.isInteger(v)) return null;
+  const year = Math.floor(v / 10000);
+  const month = Math.floor(v / 100) % 100;
+  const day = v % 100;
+  if (year >= 2001 && year <= 2999) {
+    if (month === 0) {
+      return /^before\b/i.test(point.label.trim()) ? `${year}-01-01` : `${year}-12-31`;
+    }
+    if (month < 1 || month > 12) return null;
+    const resolvedDay =
+      day === 0
+        ? new Date(Date.UTC(year, month, 0)).getUTCDate()
+        : day >= 1 && day <= 31
+          ? day
+          : null;
+    if (resolvedDay == null) return null;
+    return `${year}-${String(month).padStart(2, "0")}-${String(resolvedDay).padStart(2, "0")}`;
+  }
+  // Yearless `2000MMDD` sentinel used when date-bucket rungs carry month/day without a year.
+  if (year === 2000 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+    const nowYear = now.getUTCFullYear();
+    const nowMs = now.getTime();
+    let bestYear = nowYear;
+    let bestDiff = Infinity;
+    for (const y of [nowYear - 1, nowYear, nowYear + 1]) {
+      const diff = Math.abs(Date.UTC(y, month - 1, day) - nowMs);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestYear = y;
+      }
+    }
+    return `${bestYear}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  return null;
+}
+
 function buildHeatmapRows(data: FeedFuturesData): HeatmapRow[] {
   const byLabel = new Map<string, HeatmapRow>();
   const outcomesByName = new Map(
     data.top_outcomes.map((outcome) => [outcome.name.toLowerCase(), outcome])
   );
+  const distDateByLabel = futuresDistributionDatesByLabel(data);
+  const now = new Date();
 
   for (const point of data.discover_card?.threshold_points ?? []) {
     const label = point.label.trim();
@@ -1139,6 +1190,13 @@ function buildHeatmapRows(data: FeedFuturesData): HeatmapRow[] {
     const sortValue = existing
       ? Math.min(existing.sortValue, point.value)
       : point.value;
+    const dateIso =
+      existing?.dateIso ??
+      resolveRungDateIso(
+        point as { label: string; value: number; unit?: string | null; source?: string | null },
+        distDateByLabel.get(key),
+        now,
+      );
 
     byLabel.set(key, {
       key,
@@ -1149,6 +1207,7 @@ function buildHeatmapRows(data: FeedFuturesData): HeatmapRow[] {
       // First writer wins, matching every other field's merge above, so a
       // duplicate label cannot quietly change the ladder's kind.
       source: existing?.source ?? point.source ?? null,
+      dateIso,
     });
   }
 
@@ -1161,7 +1220,7 @@ function buildHeatmapRows(data: FeedFuturesData): HeatmapRow[] {
  * reads the SAME ladder: a group row and the card it expands into must not
  * disagree about which rungs exist.
  */
-function heatmapShownCells(data: FeedFuturesData): HeatmapRow[] | null {
+function heatmapPricedCells(data: FeedFuturesData): HeatmapRow[] | null {
   // #6505 — A ROW THE CARD CANNOT PUT A NUMBER ON IS NOT A ROW.
   //
   // Measured on production `/api/feed?limit=200`, 2026-09-16 07:2xZ, over the 123
@@ -1205,7 +1264,36 @@ function heatmapShownCells(data: FeedFuturesData): HeatmapRow[] | null {
   if (data.discover_card?.suggested_format !== "threshold_heatmap" || heatmapRows.length < heatmapMinRows) {
     return null;
   }
-  return heatmapRows.slice(0, 8);
+  return heatmapRows;
+}
+
+const HEATMAP_MAX_RUNGS = 8;
+
+/**
+ * Rungs drawn on the full card (#8713): date ladders longer than 8 rungs
+ * window around `betterThanEvenRung` (centered, clamped to bounds) so the
+ * named rung always appears on the card. Non-date ladders keep the first 8.
+ */
+export function heatmapShownCells(
+  data: FeedFuturesData,
+  now: Date = new Date(),
+): HeatmapRow[] | null {
+  const priced = heatmapPricedCells(data);
+  if (!priced) return null;
+  if (priced.length <= HEATMAP_MAX_RUNGS || ladderKind(priced) !== "date") {
+    return priced.slice(0, HEATMAP_MAX_RUNGS);
+  }
+  const { betterThanEvenRung } = ladderMarks(priced, now);
+  if (!betterThanEvenRung) {
+    return priced.slice(0, HEATMAP_MAX_RUNGS);
+  }
+  const anchor = priced.indexOf(betterThanEvenRung);
+  if (anchor < 0) {
+    return priced.slice(0, HEATMAP_MAX_RUNGS);
+  }
+  const halfWindow = Math.floor(HEATMAP_MAX_RUNGS / 2);
+  const start = Math.min(Math.max(0, anchor - halfWindow), priced.length - HEATMAP_MAX_RUNGS);
+  return priced.slice(start, start + HEATMAP_MAX_RUNGS);
 }
 
 /**
@@ -1222,12 +1310,25 @@ function heatmapShownCells(data: FeedFuturesData): HeatmapRow[] | null {
  * cumulative ladder is the loosest question — the defect #8647 removed from the
  * card and never from its compact twin.
  */
-function ladderMarks(shownCells: HeatmapRow[]): {
+function ladderMarks(
+  shownCells: HeatmapRow[],
+  now: Date = new Date(),
+): {
   betterThanEvenRung: HeatmapRow | null;
   ruleRung: HeatmapRow | null;
   leaderCell: HeatmapRow | null;
 } {
-  const above50 = shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
+  const isDate = ladderKind(shownCells) === "date";
+  let candidateCells = shownCells;
+  if (isDate) {
+    // Never highlight or caption a passed date rung while a today/future rung exists (#13422).
+    const todayIso = now.toISOString().slice(0, 10);
+    const upcoming = shownCells.filter((r) => !r.dateIso || r.dateIso >= todayIso);
+    if (upcoming.length > 0) {
+      candidateCells = upcoming;
+    }
+  }
+  const above50 = candidateCells.filter((r) => (r.probability ?? 0) >= 0.5);
   // #8647 — the caption names the MOST SPECIFIC rung the market still calls
   // better than even, and which end of `above50` that is depends on the axis.
   // On a comparator ladder ("Above 52 / Above 58 / Above 64") chances fall as
@@ -1240,7 +1341,7 @@ function ladderMarks(shownCells: HeatmapRow[]): {
   // 2027 / 2029 or later") has at most one rung over even, so it reads the same.
   const betterThanEvenRung =
     above50.length === 0 ? null
-    : ladderKind(shownCells) === "date" ? above50[0]
+    : isDate ? above50[0]
     : above50[above50.length - 1];
   // UX-1052 item 4 — the leader is the highest-probability rung, marked in
   // place. On a date ladder the rows are chronological, so "the answer" is
@@ -1256,12 +1357,12 @@ function ladderMarks(shownCells: HeatmapRow[]): {
   // rung stays the mark on every ladder: that is Alex's UX-1052 design
   // ("the leader marked"), not this fix's call to reverse.
   const ruleRung =
-    (ladderKind(shownCells) === "date" || atLeastLadder(shownCells)) && betterThanEvenRung
+    (isDate || atLeastLadder(shownCells)) && betterThanEvenRung
       ? betterThanEvenRung
       : null;
   const leaderCell =
     ruleRung ??
-    shownCells.reduce<HeatmapRow | null>(
+    candidateCells.reduce<HeatmapRow | null>(
       (best, r) =>
         r.probability == null ? best
         : best == null || r.probability > (best.probability ?? -1) ? r
@@ -1269,6 +1370,49 @@ function ladderMarks(shownCells: HeatmapRow[]): {
       null,
     );
   return { betterThanEvenRung, ruleRung, leaderCell };
+}
+
+/**
+ * Compact group-row rung pick (#13722): never headline a date rung whose date
+ * has already passed when a later rung is priced; keep the passed rung only
+ * when no rung dated today or later has a price (matching `EXPIRED_RUNG_MAX_PROBABILITY`).
+ */
+function compactLadderHeadlineRung(
+  shownCells: HeatmapRow[],
+  heroName: string | null | undefined,
+  now: Date = new Date(),
+): HeatmapRow | null {
+  if (ladderKind(shownCells) !== "date") {
+    return ladderMarks(shownCells).ruleRung;
+  }
+  const todayIso = now.toISOString().slice(0, 10);
+  const upcoming = shownCells.filter((r) => !r.dateIso || r.dateIso >= todayIso);
+  if (upcoming.length === 0) {
+    return ladderMarks(shownCells).ruleRung;
+  }
+  const upcomingAbove50 = upcoming.filter((r) => (r.probability ?? 0) >= 0.5);
+  if (upcomingAbove50.length > 0) {
+    return upcomingAbove50[0];
+  }
+  const heroKey = (heroName ?? "").trim().toLowerCase();
+  const pastControlsHeadline = shownCells.some(
+    (r) =>
+      r.dateIso != null &&
+      r.dateIso < todayIso &&
+      ((r.probability ?? 0) >= 0.5 || (heroKey !== "" && r.key === heroKey)),
+  );
+  if (pastControlsHeadline) {
+    return upcoming.reduce<HeatmapRow | null>(
+      (best, r) =>
+        r.probability == null
+          ? best
+          : best == null || r.probability > (best.probability ?? -1)
+            ? r
+            : best,
+      null,
+    );
+  }
+  return null;
 }
 
 function formatComparisonTheme(theme: string | null | undefined): string {
@@ -1331,9 +1475,16 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // purpose — the leg the title names (#9401), the negated pair (UX-P238) — is
   // an answer to the question as asked and still wins; only its default, the
   // served first outcome, gives way.
+  const now = new Date();
   const hero = heroOutcome(data.top_outcomes, data.name);
-  const heatmapCells = heatmapShownCells(data);
-  const ladderRung = heatmapCells ? ladderMarks(heatmapCells).ruleRung : null;
+  const allHeatmapCells = heatmapPricedCells(data);
+  const compactLadderCells =
+    allHeatmapCells && ladderKind(allHeatmapCells) === "date"
+      ? allHeatmapCells
+      : heatmapShownCells(data, now);
+  const ladderRung = compactLadderCells
+    ? compactLadderHeadlineRung(compactLadderCells, hero?.name, now)
+    : null;
   const leader = ladderRung && hero === data.top_outcomes[0]
     ? data.top_outcomes.find((o) => o.name.trim().toLowerCase() === ladderRung.key) ?? {
         name: ladderRung.label,

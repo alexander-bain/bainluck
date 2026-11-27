@@ -210,8 +210,14 @@ final class SourceMark12581Tests: XCTestCase {
         // The ring has no branch on what it stands for: no letter, no count, no venue.
         let source = try Self.source("Bain Luck/Components/SourceMarkView12581.swift")
         let body = try XCTUnwrap(source.range(of: "Button { open = true } label: {"))
-        let label = String(source[body.upperBound...].prefix(400))
-        for varying in ["mark.sources", "mark.state", "Text(", "count"] {
+        let end = try XCTUnwrap(source.range(of: ".frame(minWidth:", range: body.upperBound..<source.endIndex))
+        let label = String(source[body.upperBound..<end.lowerBound])
+        XCTAssertTrue(label.contains("Image(systemName: \"info.circle\")"))
+        XCTAssertTrue(label.contains("if !devBadge.isEmpty {"))
+        XCTAssertEqual(label.components(separatedBy: "Text(").count - 1, 1,
+                       "the ring label may render only the developer-only devBadge Text")
+        XCTAssertTrue(label.contains("Text(devBadge)"))
+        for varying in ["mark.sources", "mark.state", "count"] {
             XCTAssertFalse(label.contains(varying), "the ring does not vary with \(varying)")
         }
     }

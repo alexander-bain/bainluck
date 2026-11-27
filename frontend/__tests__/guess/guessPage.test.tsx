@@ -1,4 +1,4 @@
-// /guess — THE PAGE KEEPS ITS PROMISES (425: C, 426: A).
+// /guess — THE PAGE KEEPS ITS PROMISES (425: C, 426: A, 429: A).
 //
 //   1. It is unlisted: kept out of search indexes, with its own canonical
 //      address and an explicit share card.
@@ -16,6 +16,7 @@ import path from "path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import ChanceGame from "@/app/guess/ChanceGame";
 import { ALL_COPY_BANS, findBannedCopy, visibleTextFromHtml } from "@/lib/copyBans";
 import { GUESS_PACK } from "@/lib/guess/pack";
 import { defaultShareCard } from "@/lib/shareCard";
@@ -76,10 +77,15 @@ describe("/guess — the page", () => {
     }
   });
 
-  it("is frontend-only: no file of the game reaches the network", () => {
+  it("reaches only /api/guess endpoints and touches no accounts, websockets, or external URLs", () => {
     for (const file of [...PAGE_FILES, ...LIB_FILES]) {
       const code = stripComments(read(file));
-      expect({ file, hit: /\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|\/api\//.test(code) }).toEqual({ file, hit: false });
+      expect({ file, badProto: /XMLHttpRequest|sendBeacon|WebSocket/.test(code) }).toEqual({ file, badProto: false });
+      const apiMatches = Array.from(code.matchAll(/\/api\/[a-zA-Z0-9_/-]*/g), (m) => m[0]);
+      for (const route of apiMatches) {
+        expect(route.startsWith("/api/guess/")).toBe(true);
+      }
+      expect({ file, externalUrl: /https?:\/\/(?!localhost)/.test(code) }).toEqual({ file, externalUrl: false });
     }
   });
 
@@ -106,7 +112,13 @@ describe("/guess — the page", () => {
 
   it("opens on a screen that asks for a name, says when the numbers were read, and passes the copy bans", async () => {
     const Page = (await import("@/app/guess/page")).default;
-    const html = renderToStaticMarkup(<Page />);
+    const shellHtml = renderToStaticMarkup(<Page />);
+    const shellText = visibleTextFromHtml(shellHtml);
+    expect(shellText).toContain("Guess the Chance");
+    expect(findBannedCopy(shellText, ALL_COPY_BANS).map((h) => h.ban.id)).toEqual([]);
+    expect(shellText).not.toMatch(/\bquestions?\b/i);
+
+    const html = renderToStaticMarkup(<ChanceGame pack={GUESS_PACK} />);
     const text = visibleTextFromHtml(html);
     expect(text).toContain("Guess the Chance");
     expect(text).toContain("Who is playing on this phone?");

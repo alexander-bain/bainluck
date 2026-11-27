@@ -7,7 +7,9 @@ import io
 import json
 import sys
 import urllib.error
+import urllib.request
 import zipfile
+from email import message_from_string
 from pathlib import Path
 
 import pytest
@@ -234,3 +236,95 @@ def test_adopt_refuses_a_missing_or_malformed_file_and_keeps_the_hints(tmp_path,
     target.write_text(COMMITTED)
     assert f.adopt(src, target=target) == 1
     assert target.read_text() == COMMITTED
+
+
+def test_cross_host_redirect_strips_auth_while_same_origin_preserves_it():
+    handler = f._CrossHostAuthStripRedirectHandler()
+    req = urllib.request.Request(
+        f"{f.API}/repos/o/r/actions/jobs/123/logs",
+        headers={
+            "Authorization": "Bearer secret",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Accept": "*/*",
+        },
+    )
+
+    cross = handler.redirect_request(
+        req,
+        io.BytesIO(),
+        302,
+        "Found",
+        {},
+        "https://productionresultssa12.blob.core.windows.net/actions-results/abc?sig=sas",
+    )
+    assert cross is not None
+    cross_keys = {k.lower() for k, _ in cross.header_items()}
+    assert "authorization" not in cross_keys
+    assert "x-github-api-version" not in cross_keys
+
+    downgrade = handler.redirect_request(
+        req,
+        io.BytesIO(),
+        302,
+        "Found",
+        {},
+        "http://api.github.com/repos/o/r/actions/jobs/123/logs",
+    )
+    assert downgrade is not None
+    assert "authorization" not in {k.lower() for k, _ in downgrade.header_items()}
+
+    same = handler.redirect_request(
+        req,
+        io.BytesIO(),
+        302,
+        "Found",
+        {},
+        f"{f.API}/repos/o/r/actions/jobs/456/logs",
+    )
+    assert same is not None
+    same_headers = {k.lower(): v for k, v in same.header_items()}
+    assert same_headers["authorization"] == "Bearer secret"
+    assert same_headers["x-github-api-version"] == "2022-11-28"
+
+
+def test_default_open_strips_auth_across_github_to_azure_sas_redirect(monkeypatch):
+    seen_requests = []
+
+    class FakeHTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            seen_requests.append((req.full_url, {k.lower(): v for k, v in req.header_items()}))
+            if "api.github.com" in req.full_url:
+                hdrs = message_from_string(
+                    "Location: https://productionresultssa12.blob.core.windows.net/logs/1?sig=sas\r\n"
+                )
+                resp = urllib.request.addinfourl(io.BytesIO(), hdrs, req.full_url, 302)
+                resp.msg = "Found"
+                return resp
+            if "authorization" in {k.lower() for k, _ in req.header_items()}:
+                hdrs = message_from_string("Content-Type: text/plain\r\n")
+                resp = urllib.request.addinfourl(io.BytesIO(b"AuthenticationFailed"), hdrs, req.full_url, 401)
+                resp.msg = "Server failed to authenticate the request"
+                return resp
+            hdrs = message_from_string("Content-Type: text/plain\r\n")
+            resp = urllib.request.addinfourl(
+                io.BytesIO(b"2026-11-26T00:00:00Z 0.25s call tests/test_ok.py::t\n"),
+                hdrs,
+                req.full_url,
+                200,
+            )
+            resp.msg = "OK"
+            return resp
+
+    opener = urllib.request.build_opener(FakeHTTPSHandler, f._CrossHostAuthStripRedirectHandler)
+    monkeypatch.setattr(f, "_URL_OPENER", opener)
+
+    req = urllib.request.Request(
+        f"{f.API}/repos/o/r/actions/jobs/123/logs",
+        headers={"Authorization": "Bearer secret", "X-GitHub-Api-Version": "2022-11-28"},
+    )
+    body = f._default_open(req)
+    assert b"tests/test_ok.py::t" in body
+    assert len(seen_requests) == 2
+    assert seen_requests[0][1]["authorization"] == "Bearer secret"
+    assert "authorization" not in seen_requests[1][1]
+    assert "x-github-api-version" not in seen_requests[1][1]

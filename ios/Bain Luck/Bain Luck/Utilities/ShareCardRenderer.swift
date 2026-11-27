@@ -156,7 +156,7 @@ struct ShareableFuturesCardView: View {
 
                     Spacer(minLength: 16)
 
-                    Text(discoverFuturesCardPercentLabel(heroPercent))
+                    Text(discoverFuturesCardPercentLabel(heroPercent, probability: outcomes.first?.probability))
                         .font(.system(size: 64, weight: .black).monospacedDigit())
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.30), radius: 10, x: 0, y: 4)
@@ -250,10 +250,10 @@ struct ShareableFuturesCardView: View {
             }
             .frame(height: 7)
 
-            Text(discoverFuturesCardPercentLabel(percent))
+            Text(discoverFuturesCardPercentLabel(percent, probability: probability))
                 .font(.system(size: 13, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color(red: 0.15, green: 0.15, blue: 0.18))
-                .frame(width: 36, alignment: .trailing)
+                .frame(minWidth: 36, alignment: .trailing)
         }
     }
 }

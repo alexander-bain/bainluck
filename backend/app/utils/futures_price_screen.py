@@ -32,10 +32,20 @@ from app.utils.futures_unsupported_price import (
     unsupported_legs_above_the_supported_head,
 )
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
+from app.utils.outcome_display import open_kalshi_yes_bid
 
 logger = logging.getLogger(__name__)
 
 
+def zero_bid_outcome_ids(market: FuturesMarket) -> set[int]:
+    """Ruling 418-A: an open Kalshi outcome with zero bid has no current number."""
+    if getattr(market, "source", None) != KALSHI_BOOKMAKER:
+        return set()
+    return {
+        outcome.id
+        for outcome in getattr(market, "outcomes", None) or ()
+        if open_kalshi_yes_bid(market, outcome) == 0
+    }
 
 
 def _leg_prices_an_empty_book(outcome) -> bool:
@@ -1005,9 +1015,8 @@ async def withheld_price_outcome_ids_for_markets(
                 )
             ids |= _book_refuted_outcome_ids(market)
             ids |= _empty_book_outcome_ids(market)
-            # Last, and reading the four above — the same composition order as
-            # the per-market helper, because this arm's gate is a fact about
-            # what the OTHER four already took away.
+            ids |= zero_bid_outcome_ids(market)
+            # Match the per-market order so the field rules see the same survivors.
             ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
             ids |= _unsupported_head_outcome_ids(market, ids)
         except Exception:

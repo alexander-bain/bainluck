@@ -59,6 +59,9 @@ import { teamShortNames } from "@/lib/teamShortName";
 import type { EventDetailResponse } from "@/lib/types";
 import {
   HEADLINE_STYLE_199,
+  NO_PROBABILITY_YET_250A,
+  NO_RECENT_PROBABILITY_250A,
+  isUnavailableProbabilityCellText250A,
   type HeadlineBottomBar199,
   type HeadlineColumnRole199,
   type HeadlineColumnSpec199,
@@ -71,6 +74,9 @@ import {
 
 export {
   HEADLINE_STYLE_199,
+  NO_PROBABILITY_YET_250A,
+  NO_RECENT_PROBABILITY_250A,
+  isUnavailableProbabilityCellText250A,
   type HeadlineBottomBar199,
   type HeadlineColumnRole199,
   type HeadlineColumnSpec199,
@@ -80,6 +86,70 @@ export {
   type HeadlinePhase199,
   type HeadlineRowRole199,
 };
+
+function pairHasNonComplementAway250A(
+  away: unknown,
+  home: unknown,
+  draw: unknown,
+  sport: string | null | undefined,
+): boolean {
+  if (isUsableProb(draw)) return true;
+  if (!isUsableProb(away) || !isUsableProb(home)) return false;
+  return !awayIsTheComplement(away, home, sport);
+}
+
+function hasPriorAwayProbability250A(event: EventDetailResponse): boolean {
+  const pre = event.prematch_odds as
+    | { away_probability?: number | null; home_probability?: number | null; draw_probability?: number | null }
+    | null
+    | undefined;
+  if (pre && pairHasNonComplementAway250A(pre.away_probability, pre.home_probability, pre.draw_probability, event.sport)) {
+    return true;
+  }
+  const open = event.opening_odds as
+    | { away_probability?: number | null; home_probability?: number | null; draw_probability?: number | null }
+    | null
+    | undefined;
+  if (open && pairHasNonComplementAway250A(open.away_probability, open.home_probability, open.draw_probability, event.sport)) {
+    return true;
+  }
+  const hist = (event as {
+    history?: Array<{
+      away_probability?: number | null;
+      home_probability?: number | null;
+      draw_probability?: number | null;
+    }>;
+  }).history;
+  if (Array.isArray(hist)) {
+    for (const pt of hist) {
+      if (pt && pairHasNonComplementAway250A(pt.away_probability, pt.home_probability, pt.draw_probability, event.sport)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Ruling 250: A — when a draw-priced game prints a real home probability without
+ * a draw probability, the away cell may not stay blank: print "No probability yet"
+ * before the match has started or held an away reading, and "No recent probability"
+ * after.
+ */
+export function resolveWithheldAwayCellLabel250A(
+  event: EventDetailResponse,
+  phase: HeadlinePhase199,
+  nowMs: number,
+): string {
+  const commenceMs = event.commence_time ? Date.parse(event.commence_time) : Number.NaN;
+  const started =
+    phase === "during" ||
+    event.status === "live" ||
+    (Number.isFinite(commenceMs) && commenceMs <= nowMs);
+  return started || hasPriorAwayProbability250A(event)
+    ? NO_RECENT_PROBABILITY_250A
+    : NO_PROBABILITY_YET_250A;
+}
 
 export const NO_LIVE_SCORE_TOURNAMENT_LINE_250A = "No live score for this tournament.";
 export const NO_LIVE_SCORE_GAME_LINE_250A = "No live score for this game.";
@@ -1096,6 +1166,8 @@ export function resolveEventPageHeadline199(
           homeShare: input.homeProb,
           pregameAwayMarker: null,
         };
+      } else if (sportPricesADraw(event.sport) && homeChance !== "") {
+        awayChance = resolveWithheldAwayCellLabel250A(event, "before", nowMs);
       }
     }
 
@@ -1504,6 +1576,9 @@ export function resolveEventPageHeadline199(
         };
       } else if (awayWithheld && homeNow === "" && input.tenthsOptIn) {
         homeNow = formatSingleLiveTenths(input.homeProb) ?? "";
+      }
+      if (awayWithheld && homeNow !== "" && awayNow === "") {
+        awayNow = resolveWithheldAwayCellLabel250A(event, "during", nowMs);
       }
     }
 

@@ -108,6 +108,11 @@ enum FuturesAtlasPresentation11666 {
             return false
         }
 
+        var hasNoRecentProbability: Bool {
+            if case .noRecentProbability = self { return true }
+            return false
+        }
+
         var rawProbabilityValue: Double? {
             if case .chance(_, _, let prob, _, _, _) = self { return prob }
             return nil
@@ -167,6 +172,14 @@ enum FuturesAtlasPresentation11666 {
         let primaryRows: [ContenderRow]
         let allRows: [ContenderRow]
         let remainingCount: Int
+
+        var listedRows: [ContenderRow] {
+            allRows.filter { !$0.displayValue.hasNoRecentProbability }
+        }
+
+        var foldedNames: [String] {
+            allRows.filter { $0.displayValue.hasNoRecentProbability }.map(\.name)
+        }
     }
 
     struct AttributionModel: Equatable {
@@ -255,7 +268,7 @@ enum FuturesAtlasPresentation11666 {
         )
         let selectedRow = selectedOutcome.flatMap { outcome in
             allRows.first(where: { $0.id == outcome.id })
-        } ?? allRows.first
+        }
 
         let header = buildHeader(
             market: market,
@@ -436,7 +449,7 @@ enum FuturesAtlasPresentation11666 {
 
         return orderedOutcomes.enumerated().map { index, outcome in
             let openingText = FuturesReadableOpening8313.of(outcome).map { opening in
-                "Opening chance \(formatWholePercent(opening * 100))%"
+                "Opening chance \(DiscoverRoundupCardModel.probabilityText(probability: opening, renderedPercent: nil))"
             }
             let threshold = parseThresholdValue(from: outcome.name)
                 ?? NumericalMarketScaleOrder228.parseLabelKey(outcome.name)?.primary
@@ -491,7 +504,10 @@ enum FuturesAtlasPresentation11666 {
             // read more than 30 minutes ago keeps its number and shows `"As of 1:29 PM"`
             // (never `"checked"`, never `"stale"`, and never hidden by an age cutoff).
             let pct = renderedPercent ?? Int((prob * 1000 / 10).rounded())
-            let formatted = "\(percentNumber(prob * 100, renderedPercent: renderedPercent))%"
+            let formatted = DiscoverRoundupCardModel.probabilityText(
+                probability: prob,
+                renderedPercent: renderedPercent
+            )
             let moveText = outcome.probabilityChange24h.flatMap { futuresHeroMoveText($0) }
             let isUp = outcome.probabilityChange24h.map { $0 > 0 }
             let asOfText = outcomeAsOfText(outcome, now: now, timeZone: timeZone)
@@ -528,7 +544,7 @@ enum FuturesAtlasPresentation11666 {
            let winner = market.outcomes.first(where: { $0.id == winnerRow.id }) {
             return winner
         }
-        return futuresDetailHeroOutcome(market) ?? market.outcomes.first
+        return futuresDetailHeroOutcome(market)
     }
 
     nonisolated private static func buildHeader(
@@ -660,7 +676,7 @@ enum FuturesAtlasPresentation11666 {
                 domainContext: domainContext,
                 sectionTitle: "Threshold profile",
                 sliceCaption: nil,
-                subtitleBadge: "Each threshold is priced on its own · do not add to 100%",
+                subtitleBadge: "Each threshold has its own probability · do not add to 100%",
                 primaryRows: allRows,
                 allRows: allRows,
                 remainingCount: 0
@@ -703,7 +719,7 @@ enum FuturesAtlasPresentation11666 {
         let outcomeName = selectedOutcome?.name ?? market.name
         let openingValue: String
         if let selectedOutcome, let opening = FuturesReadableOpening8313.of(selectedOutcome) {
-            openingValue = "\(formatWholePercent(opening * 100))%"
+            openingValue = DiscoverRoundupCardModel.probabilityText(probability: opening, renderedPercent: nil)
         } else {
             openingValue = "Not supplied"
         }
@@ -840,17 +856,18 @@ enum FuturesAtlasPresentation11666 {
     }
 
     nonisolated static func firstScreenHeadlineRows192A(for body: BodyModel) -> [ContenderRow] {
+        let listedRows = body.listedRows
         switch body.shape {
         case .twoWayDuel:
-            return Array(body.allRows.prefix(2))
+            return Array(listedRows.prefix(2))
         case .singleLegPredicate:
-            return Array(body.allRows.prefix(1))
+            return Array(listedRows.prefix(1))
         case .mutuallyExclusiveField, .participationField:
-            return Array(body.allRows.prefix(firstScreenHeadlineLimit192A))
+            return Array(listedRows.prefix(firstScreenHeadlineLimit192A))
         case .quantityLadder:
-            guard body.allRows.count > firstScreenHeadlineLimit192A else { return body.allRows }
+            guard listedRows.count > firstScreenHeadlineLimit192A else { return listedRows }
             let pickedIds = Set(
-                body.allRows.enumerated().sorted { lhs, rhs in
+                listedRows.enumerated().sorted { lhs, rhs in
                     let lp = lhs.element.displayValue.rawProbabilityValue
                     let rp = rhs.element.displayValue.rawProbabilityValue
                     switch (lp, rp) {
@@ -868,11 +885,11 @@ enum FuturesAtlasPresentation11666 {
                 .prefix(firstScreenHeadlineLimit192A)
                 .map(\.element.id)
             )
-            return body.allRows.filter { pickedIds.contains($0.id) }
+            return listedRows.filter { pickedIds.contains($0.id) }
         case .numericalScale:
-            guard body.allRows.count > firstScreenHeadlineLimit192A else { return body.allRows }
+            guard listedRows.count > firstScreenHeadlineLimit192A else { return listedRows }
             let pickedIds = Set(
-                body.allRows.enumerated().sorted { lhs, rhs in
+                listedRows.enumerated().sorted { lhs, rhs in
                     let lp = lhs.element.displayValue.rawProbabilityValue ?? -1
                     let rp = rhs.element.displayValue.rawProbabilityValue ?? -1
                     if abs(lp - rp) > 1e-9 { return lp > rp }
@@ -881,7 +898,7 @@ enum FuturesAtlasPresentation11666 {
                 .prefix(firstScreenHeadlineLimit192A)
                 .map(\.element.id)
             )
-            return body.allRows.filter { pickedIds.contains($0.id) }
+            return listedRows.filter { pickedIds.contains($0.id) }
         }
     }
 
@@ -890,7 +907,8 @@ enum FuturesAtlasPresentation11666 {
         body: BodyModel
     ) -> String? {
         let headlineRows = firstScreenHeadlineRows192A(for: body)
-        guard body.allRows.count > headlineRows.count else { return nil }
+        let listedCount = body.listedRows.count
+        guard listedCount > headlineRows.count else { return nil }
         let noun: String
         if isPropMarket192A(market) {
             noun = "props"
@@ -907,7 +925,7 @@ enum FuturesAtlasPresentation11666 {
                 noun = "outcomes"
             }
         }
-        return "All \(body.allRows.count) \(noun) ›"
+        return "All \(listedCount) \(noun) ›"
     }
 
     nonisolated static func chartCardTitle192A(
@@ -937,17 +955,13 @@ enum FuturesAtlasPresentation11666 {
         case .participationField:
             return "Independent chances · time range in full chart"
         case .quantityLadder:
-            return "Each threshold priced on its own"
+            return "Each threshold has its own probability"
         case .twoWayDuel, .mutuallyExclusiveField, .numericalScale, .singleLegPredicate:
             return "Past 7 days · time range in full chart"
         }
     }
 
     // MARK: - Formatting Helpers
-
-    nonisolated private static func formatWholePercent(_ pct: Double) -> Int {
-        Int(pct.rounded())
-    }
 
     nonisolated private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -1001,7 +1015,8 @@ struct FuturesAtlasPageView11666: View {
                 isNumericallyOrdered: presentation.body.shape.isNumericallyOrdered,
                 timelineOutcomes: effectiveTimelineOutcomes,
                 onOpenDetails: { showDetailsSheet = true },
-                onOpenFullField: { showFullFieldSheet = true }
+                onOpenFullField: { showFullFieldSheet = true },
+                foldedNames: presentation.body.foldedNames
             )
             .contextualTipHero10876(type: "future", id: marketId, scrollSpace: FuturesDetailView.scrollSpace)
 
@@ -1111,6 +1126,7 @@ struct FuturesAtlasHeadlineCard192A: View {
     var timelineOutcomes: [TimelineOutcomeMeta]? = nil
     let onOpenDetails: () -> Void
     let onOpenFullField: () -> Void
+    var foldedNames: [String] = []
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -1255,6 +1271,8 @@ struct FuturesAtlasHeadlineCard192A: View {
                 }
             }
             .padding(.top, 2)
+
+            NoRecentProbabilityOutcomes(names: foldedNames, hasListedOutcomes: !headlineRows.isEmpty)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -2155,6 +2173,9 @@ struct FuturesAtlasFullFieldSheetView11666: View {
     }
 
     var body: some View {
+        let matches = filteredRows
+        let listed = matches.filter { !$0.displayValue.hasNoRecentProbability }
+        let foldedNames = matches.filter { $0.displayValue.hasNoRecentProbability }.map(\.name)
         NavigationStack {
             List {
                 Section {
@@ -2175,8 +2196,8 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
                 }
-                Section("All outcomes · \(filteredRows.count)") {
-                    ForEach(filteredRows) { row in
+                Section("Outcomes · \(listed.count)") {
+                    ForEach(listed) { row in
                         Button {
                             onSelectOutcome(row.id)
                         } label: {
@@ -2214,6 +2235,7 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    NoRecentProbabilityOutcomes(names: foldedNames, hasListedOutcomes: !listed.isEmpty)
                 }
             }
             .searchable(text: $searchText, prompt: "Search outcomes")
@@ -2226,6 +2248,39 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+struct NoRecentProbabilityOutcomes: View {
+    let names: [String]
+    let hasListedOutcomes: Bool
+    @State private var isExpanded = false
+
+    var summary: String {
+        guard hasListedOutcomes else { return EventAtlasStates11666.noRecentPrice }
+        let others = names.count == 1 ? "1 other" : "\(names.count) others"
+        return "\(others): no recent probability"
+    }
+
+    var body: some View {
+        if !names.isEmpty {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(names.enumerated()), id: \.offset) { _, name in
+                        Text(name)
+                            .font(.subheadline)
+                            .foregroundStyle(DS.textPrimary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+            } label: {
+                Text(summary)
+                    .font(.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+            }
+            .accessibilityIdentifier("futures-no-recent-probability")
         }
     }
 }

@@ -21,7 +21,7 @@ interface LineChartProps {
   yMax: number;
   /** Turns a y value into its axis label. */
   yLabel: (value: number) => string;
-  /** Where one round ends and the next begins, as a card number. */
+  /** How many cards are in a step. A thin line is drawn where each step ends. */
   roundAt: number;
 }
 
@@ -53,11 +53,14 @@ export function LineChart({ title, note, series, yMax, yLabel, roundAt }: LineCh
   const labelAt = new Map(ends.map((e) => [e.index, e.at]));
 
   const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => f * yMax);
+  // Where each step ends, short of the last card.
+  const stepEnds: number[] = [];
+  for (let v = roundAt; roundAt > 0 && v < steps; v += roundAt) stepEnds.push(v);
 
   return (
     <figure className="rounded-3xl border-2 border-surface-border bg-surface-card p-3">
       <figcaption className="px-1 text-sm font-black text-text-primary">{title}</figcaption>
-      {note && <p className="px-1 text-xs text-text-secondary">{note}</p>}
+      {note && <p className="px-1 text-sm text-text-secondary">{note}</p>}
       <svg viewBox={`0 0 ${W} ${H}`} className="mt-1 h-auto w-full" role="img" aria-label={title}>
         {grid.map((v) => (
           <g key={v} className="text-text-muted">
@@ -68,14 +71,16 @@ export function LineChart({ title, note, series, yMax, yLabel, roundAt }: LineCh
           </g>
         ))}
         <g className="text-text-secondary">
-          {[0, roundAt, steps]
+          {[0, ...stepEnds, steps]
             .filter((v, i, all) => v <= steps && all.indexOf(v) === i)
             .map((card) => (
               <text key={card} x={x(card)} y={H - 8} textAnchor="middle" fontSize={9} fill="currentColor">
                 {card === 0 ? "start" : `card ${card}`}
               </text>
             ))}
-          {roundAt < steps && <line x1={x(roundAt)} x2={x(roundAt)} y1={TOP} y2={BOTTOM} stroke="currentColor" strokeWidth={0.5} />}
+          {stepEnds.map((v) => (
+            <line key={v} x1={x(v)} x2={x(v)} y1={TOP} y2={BOTTOM} stroke="currentColor" strokeWidth={0.5} />
+          ))}
         </g>
         {series.map((s, index) => (
           <g key={s.name} className={s.color}>

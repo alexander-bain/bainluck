@@ -56,7 +56,8 @@ final class AHubGameOpensItsQuestionsThroughTheGamePage10146Tests: XCTestCase {
         XCTAssertFalse(source.contains("More on this game ("), "no count on the row")
         XCTAssertTrue(source.contains("presentation.moreOnGameRoute(for: member)"))
         let row = try XCTUnwrap(source.range(of: "presentation.moreOnGameRoute(for: member)"))
-        let tail = String(source[row.upperBound...].prefix(900))
+        let end = try XCTUnwrap(source.range(of: "hub.moreOnGame", range: row.upperBound..<source.endIndex))
+        let tail = String(source[row.upperBound..<end.lowerBound])
         XCTAssertTrue(tail.contains("vm.opened(member)"), "the row records the game anchor for Back")
     }
 

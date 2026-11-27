@@ -83,10 +83,11 @@ final class TheHeadlineLeadsWithTheProbabilities9483Tests: XCTestCase {
 
     func testBothHeroCrestsReadTheCompactSize() throws {
         let page = try code("Views", "EventDetailView.swift")
-        XCTAssertTrue(page.contains("letheroLogo=Self.heroLogoSize(stacked:stacked,regular:logoSize)"))
-        XCTAssertEqual(page.components(separatedBy: "size:heroLogo,").count - 1,
-                       2, "a hero crest stopped compacting when the hero restacks")
-        XCTAssertFalse(page.contains("size:logoSize,"), "a crest bypasses the compact size")
+        XCTAssertTrue(page.contains("staticfuncheroLogoSize(stacked:Bool,regular:CGFloat)->CGFloat{"))
+        let headlineCard = try code("Components", "EventSportHeadlineCard12472.swift")
+        XCTAssertTrue(headlineCard.contains("privatevarcrestSize:CGFloat{ifstacksRowsVertically{return28}returnbaseCrestSize}"))
+        XCTAssertTrue(headlineCard.contains("size:crestSize,"), "a hero crest stopped reading the compact crestSize")
+        XCTAssertTrue(headlineCard.contains(".frame(width:crestSize,height:crestSize)"), "draw badge stopped reading crestSize")
     }
 
     /// The move caption is a two-second line on the pair's short names; its

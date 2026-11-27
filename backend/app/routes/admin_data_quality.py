@@ -497,6 +497,7 @@ async def merge_duplicate_events(
     merges = []
     no_match = []
     refused = []  # R6: pairs the ruling-048 invariant will not let us delete
+    merged_ids: set[int] = set()
 
     for pm_event in pm_events:
         # Search for a real event with the same teams on the same day
@@ -578,6 +579,7 @@ async def merge_duplicate_events(
             assert_mergeable(pm_event, best_match, context="cleanup/merge-duplicate-events")
             eid = pm_event.id
             target = best_match.id
+            merged_ids.update((eid, target))
             # #1947: both arms, on the rows as the DB holds them, locked, in this
             # transaction. The line above is arm A on ORM objects loaded earlier.
             from app.utils.event_absorption_guard import assert_absorbable_now
@@ -598,6 +600,12 @@ async def merge_duplicate_events(
             ).bindparams(eid=eid))
 
     if not dry_run:
+        if merged_ids:
+            from app.services.finished_event_history import (
+                invalidate_finished_event_history,
+            )
+
+            await invalidate_finished_event_history(db, merged_ids)
         await db.commit()
 
     return {
@@ -712,6 +720,14 @@ async def purge_orphan_pm_events(
             })
 
     if not dry_run:
+        if to_delete:
+            from app.services.finished_event_history import (
+                invalidate_finished_event_history,
+            )
+
+            await invalidate_finished_event_history(
+                db, [d["event_id"] for d in to_delete]
+            )
         await db.commit()
 
     return {

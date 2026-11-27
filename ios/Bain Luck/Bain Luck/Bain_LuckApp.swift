@@ -89,8 +89,11 @@ struct Bain_LuckApp: App {
         // previous grant. Everything after this line is gated; nothing before
         // it may touch Firebase.
         TelemetryConsent.shared.initialize()
+        AnonymousLifecycleCounts424A.shared.handleAppLaunch()
         #if os(iOS)
         WatchTelemetryReceiver.shared.start()
+        // #12309 — Apple's diagnostics, forwarded only under the grant above.
+        MetricKitSubscriber12309.shared.start()
         #endif
         // Subscribe to FCM registration tokens. After `configure()`, by
         // requirement — the delegate is ignored before it (#1159).
@@ -343,11 +346,29 @@ struct Bain_LuckApp: App {
             .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
                 authManager.checkCredentialState()
                 authManager.retrySessionIfNeeded()
+                AnonymousLifecycleCounts424A.shared.markSessionBecameActive()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                SessionOpenTracker13261.shared.persistPendingToHeldQueueIfUnanswered()
+                AnonymousLifecycleCounts424A.shared.markSessionCleanBackgroundOrExit()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
+                SessionOpenTracker13261.shared.persistPendingToHeldQueueIfUnanswered()
+                AnonymousLifecycleCounts424A.shared.markSessionCleanBackgroundOrExit()
             }
             #elseif os(macOS)
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 authManager.checkCredentialState()
                 authManager.retrySessionIfNeeded()
+                AnonymousLifecycleCounts424A.shared.markSessionBecameActive()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
+                SessionOpenTracker13261.shared.persistPendingToHeldQueueIfUnanswered()
+                AnonymousLifecycleCounts424A.shared.markSessionCleanBackgroundOrExit()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                SessionOpenTracker13261.shared.persistPendingToHeldQueueIfUnanswered()
+                AnonymousLifecycleCounts424A.shared.markSessionCleanBackgroundOrExit()
             }
             #endif
             .onOpenURL { url in

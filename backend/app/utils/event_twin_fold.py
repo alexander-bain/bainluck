@@ -2487,6 +2487,24 @@ def _catchall_name_variant_merges(
             getattr(rep, "away_team_name", None),
         )
 
+    def _catchall_matches_target_league(
+        catchall_names: tuple, target_names: tuple, target_key: str
+    ) -> bool:
+        if not target_key:
+            return False
+        target_league = league_identity(target_key) or target_key
+        c_home, c_away = catchall_names
+        t_home, t_away = target_names
+        c_sq = (
+            _squash_for_league(c_home, target_league),
+            _squash_for_league(c_away, target_league),
+        )
+        t_sq = (
+            _squash_for_league(t_home, target_league),
+            _squash_for_league(t_away, target_league),
+        )
+        return bool(c_sq[0] and c_sq[1]) and c_sq == t_sq
+
     candidates: dict[int, set] = {}
     for index, members in enumerate(clusters):
         for member in members:
@@ -2520,8 +2538,11 @@ def _catchall_name_variant_merges(
                         league_key=target_key,
                     ):
                         continue
-                elif not _pair_matches_after_transliteration(
-                    names(index), names(target)
+                elif not (
+                    _pair_matches_after_transliteration(names(index), names(target))
+                    or _catchall_matches_target_league(
+                        names(index), names(target), target_key
+                    )
                 ):
                     continue
                 elif _names_a_different_squad(names(index), names(target)):

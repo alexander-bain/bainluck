@@ -117,7 +117,7 @@ describe("priceCadenceNote", () => {
   });
 
   it("CONTROL — the settled line survives #9567, identical in both lengths", () => {
-    expect(priceCadenceNote(true)).toBe("Final — prices no longer update");
+    expect(priceCadenceNote(true)).toBe("Final — probabilities no longer update");
     expect(priceCadenceNote(true, { long: true })).toBe(priceCadenceNote(true));
   });
 });

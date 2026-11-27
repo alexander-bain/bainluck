@@ -118,14 +118,14 @@ describe("L2-234: the typecheck is on the deploy path", () => {
   });
 
   it("deploy authority depends on that job", () => {
-    const deploy = jobBlock(ci, "deploy");
+    const deploy = jobBlock(ci, "deploy-after-full");
     const needs = /needs:\s*\[([^\]]*)\]/.exec(deploy);
-    assert.ok(needs, "the deploy job no longer declares `needs: [...]`");
+    assert.ok(needs, "the deploy-after-full job no longer declares `needs: [...]`");
     const named = needs[1].split(",").map((s) => s.trim());
     assert.ok(
       named.includes("frontend-build"),
-      `deploy no longer needs frontend-build (needs: ${named.join(", ")}), so a new ` +
-        "type error would not stop a Heroku release.",
+      `deploy-after-full no longer needs frontend-build (needs: ${named.join(", ")}), so a new ` +
+        "type error would not stop a full-gated Heroku release.",
     );
   });
 

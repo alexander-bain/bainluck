@@ -8,9 +8,18 @@ Covers the two writer bugs caught in CU-1 validation:
 """
 
 import inspect
+from datetime import datetime, timezone
+
+import pytest
+
+from app.utils.cu_event_facts import cu_event_facts, cu_model_geography, cu_unlinked_event_date
 
 from app.tasks.enrich_markets import (
     _compute_liveness,
+    _cu_prompt_outcome,
+    _cu_series_key,
+    _cu_v2_needs_retag,
+    DISCOVER_LLM_METADATA_KEY,
     enrich_cu_v2_profiles,
     CU_WRITER_REV,
     _CU_V2_PROMPT,
@@ -56,12 +65,52 @@ class TestProfileShape:
         # profiles get re-tagged without a schema_version bump.
         assert CU_WRITER_REV >= 2
 
+    def test_rev9_profiles_are_due_for_the_event_facts_fix(self):
+        timestamp = datetime(2025, 11, 28, 14, 0, tzinfo=timezone.utc)
+        metadata = {
+            DISCOVER_LLM_METADATA_KEY: {
+                "schema_version": 2,
+                "writer_rev": 9,
+                "generated_at": timestamp.isoformat(),
+            }
+        }
+        assert _cu_v2_needs_retag(metadata, now=timestamp)
+
     def test_profile_uses_temporal_class_key(self):
         # The profile dict must emit temporal_class (not temporal) and writer_rev.
         src = inspect.getsource(enrich_cu_v2_profiles)
         assert '"temporal_class": raw.get("temporal")' in src
         assert '"writer_rev": CU_WRITER_REV' in src
         assert '"temporal":' not in src
+
+
+class TestPilotInputAndProfile:
+    def test_an_unpriced_outcome_and_a_quoted_zero_have_different_prompt_text(self):
+        assert _cu_prompt_outcome({"name": "No", "prob": None, "move": 0.04}) == "- No: no price"
+        assert _cu_prompt_outcome({"name": "Yes", "prob": 0.0}) == "- Yes: 0%"
+        assert _cu_prompt_outcome({"name": "Other", "prob": 0.64, "move": -0.01}) == (
+            "- Other: 64%, 24h -1.0pp"
+        )
+
+    @pytest.mark.parametrize("raw_key", [None, "", "null", " NULL ", "None"])
+    def test_an_absent_series_key_is_json_null(self, raw_key):
+        assert _cu_series_key(raw_key) is None
+
+    def test_a_real_series_key_is_kept(self):
+        assert _cu_series_key("series:weekly-fed") == "series:weekly-fed"
+
+    def test_prompt_separates_the_event_day_from_venue_resolution(self):
+        prompt = _CU_V2_PROMPT.format(
+            name="Cup final on 14 July 2027",
+            category="soccer",
+            source="kalshi",
+            resolution_date="2027-07-31",
+            outcomes="- Home: no price",
+            measure_vocabulary="goals",
+        )
+        assert "Venue resolution date (settlement metadata): 2027-07-31" in prompt
+        assert 'event_date "2027-07-14"' in prompt
+        assert "Never use January 1 as a placeholder" in prompt
 
 
 class TestWriterV3Rubric:
@@ -128,3 +177,171 @@ class TestWriterV4Rubric:
         # Rule 6 must reject distant-past dates, not just far-future ones.
         assert "distant past" in p or "in the past" in p
         assert "13 months" in p
+
+
+@pytest.mark.parametrize(
+    ("league", "day"),
+    [
+        ("soccer_france_coupe_de_france", "2025-11-28"),
+        ("soccer_netherlands_knvb_cup", "2025-11-28"),
+        ("soccer_paraguay_primera_division", "2025-11-28"),
+        ("soccer_uefa_europa_league", "2025-11-28"),
+        ("icehockey_nhl", "2025-11-28"),
+        ("soccer_other", None),
+        (None, None),
+    ],
+)
+def test_linked_match_facts_take_the_day_from_the_league_calendar(league, day):
+    facts = cu_event_facts(
+        "Spread: home team (-1.5)",
+        linked_game_id=1,
+        linked_start=datetime(2025, 11, 28, 14, 0, tzinfo=timezone.utc),
+        start_source="odds_api",
+        linked_league=league,
+    )
+    assert facts == {"event_date": day}
+
+
+@pytest.mark.parametrize(
+    ("model_geography", "league", "home_league", "away_league", "expected"),
+    [
+        ("us", "soccer_other", None, None, None),
+        ("us", "soccer_uefa_europa_league", "soccer_italy_serie_a", None, None),
+        ("us", "soccer_other", "soccer_usa_mls", None, "us"),
+        ("us", "soccer_other", None, "soccer_usa_mls", "us"),
+        ("us", "soccer_usa_mls", None, None, "us"),
+        ("us", "soccer_italy_serie_a", None, None, "us"),
+        ("us", "basketball_other", None, None, "us"),
+        ("us", None, None, None, "us"),
+        ("country:DE", "soccer_other", None, None, "country:DE"),
+        ("global", "soccer_other", None, None, "global"),
+    ],
+)
+def test_only_unsupported_us_is_cleared(model_geography, league, home_league, away_league, expected):
+    assert cu_model_geography(
+        model_geography,
+        linked_league=league,
+        home_team_league=home_league,
+        away_team_league=away_league,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    ("league", "home_league", "away_league", "geography"),
+    [
+        ("soccer_other", "soccer_italy_serie_a", "soccer_germany_bundesliga", "global"),
+        ("soccer_italy_serie_a", "soccer_italy_serie_a", "soccer_germany_bundesliga", "global"),
+        ("soccer_uefa_europa_league", "soccer_italy_serie_a", "soccer_italy_serie_b", "country:IT"),
+        ("soccer_other", "soccer_italy_serie_a", None, None),
+    ],
+)
+def test_linked_fixture_derives_geography_when_both_club_countries_are_known(
+    league, home_league, away_league, geography
+):
+    facts = cu_event_facts(
+        "Total Corners: Over 10.5",
+        linked_game_id=1,
+        linked_league=league,
+        home_team_league=home_league,
+        away_team_league=away_league,
+    )
+    expected = {"event_date": None}
+    if geography is not None:
+        expected["geography"] = geography
+    assert facts == expected
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Vermont House Orleans-3 winner? (2028)",
+        "Alaska House District 11 winner? (2028)",
+        "West Virginia House of Delegates District 48 winner? (2028)",
+        "Massachusetts House 4th Suffolk District winner? (2028)",
+        "Hawaii House District 41 winner? (2028)",
+        "Connecticut Senate District 36 winner? (2028)",
+    ],
+)
+def test_state_legislative_districts_have_fixed_geography_and_ratings(title):
+    assert cu_event_facts(title) == {
+        "event_date": "2028-11-07",
+        "geography": "local",
+        "stakes": 1,
+        "breadth": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("title", "event_date"),
+    [
+        ("2028 U.S. Presidential Election winner?", "2028-11-07"),
+        ("Georgia Senate Election Winner (2022)", "2022-11-08"),
+        ("New Jersey Governor General Election Winner (2025)", "2025-11-04"),
+        ("California Governor race (2028 or 2032)", None),
+        ("Texas Senate election winner by 2028", None),
+    ],
+)
+def test_us_election_day_comes_from_a_single_clear_edition(title, event_date):
+    assert cu_event_facts(title) == {"event_date": event_date}
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Winner of California's 12th U.S. House district",
+        "VA-09 House election: Morgan Griffith vote percent",
+        "Ohio Senate election winner?",
+        "Alaska Governor primary winner (2028)",
+        "U.S. Senate special election winner (2028)",
+        "Georgia Senate runoff winner (2028)",
+        "Brazil Presidential Election Winner (2028)",
+        "Will the Cowboys win their season series?",
+    ],
+)
+def test_other_markets_keep_model_fields_when_there_is_no_link(title):
+    assert cu_event_facts(title) == {}
+
+
+@pytest.mark.parametrize(
+    ("league", "start", "local_day"),
+    [
+        ("basketball_ncaab", "2025-11-26T00:30:00+00:00", "2025-11-25"),
+        ("soccer_italy_serie_b", "2025-11-25T23:30:00+00:00", "2025-11-26"),
+    ],
+)
+def test_scheduled_link_uses_the_league_day(league, start, local_day):
+    facts = cu_event_facts(
+        "Who wins?",
+        linked_game_id=1,
+        linked_start=datetime.fromisoformat(start),
+        start_source="espn",
+        linked_league=league,
+    )
+    assert facts["event_date"] == local_day
+
+
+@pytest.mark.parametrize("source", ["kalshi", "kalshi_ticker", "polymarket_venue", None])
+def test_unscheduled_link_supplies_no_event_day(source):
+    facts = cu_event_facts(
+        "Who wins?",
+        linked_game_id=1,
+        linked_start=datetime(2025, 11, 26, 0, 30, tzinfo=timezone.utc),
+        start_source=source,
+        linked_league="basketball_ncaab",
+    )
+    assert facts == {"event_date": None}
+
+
+@pytest.mark.parametrize(
+    ("model_date", "settlement", "expected"),
+    [
+        ("2027-03-14", datetime(2027, 3, 14, 21, 0, tzinfo=timezone.utc), None),
+        ("2027-01-19", datetime(2027, 1, 19, 23, 59, tzinfo=timezone.utc), None),
+        ("2028-11-07", datetime(2028, 11, 8, 4, 59, tzinfo=timezone.utc), "2028-11-07"),
+        ("2028-11-08", datetime(2028, 11, 8, 4, 59), None),
+        ("2028-11-07", None, "2028-11-07"),
+        (None, None, None),
+    ],
+)
+def test_unlinked_payout_day_copies_are_dropped(model_date, settlement, expected):
+    assert cu_unlinked_event_date(model_date, settlement) == expected
