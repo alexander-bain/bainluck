@@ -1,6 +1,6 @@
-// SET THREE for /guess: THREE STEPS (430: A).
+// SET FOUR for /guess: FRIDAY'S FIFTEEN (443: A). Same three steps as set three (430: A).
 //
-// GENERATED from a public read of Bain Luck's own pages taken Wed Nov 25, 8:12 PM PT. Every
+// GENERATED from a public read of Bain Luck's own pages taken Thu Nov 26, 8:49 PM PT. Every
 // number below was looked up by market and outcome when the set was built;
 // none was typed, and each is the percent the site itself prints. The
 // sentences, the context lines and the roasts are written by hand. A set is a
@@ -24,9 +24,9 @@
 import type { GamePack } from "./types";
 
 export const GUESS_PACK: GamePack = {
-  "id": "2026-11-25-c",
-  "code": "c1",
-  "asOf": "Wed Nov 25, 8:12 PM PT",
+  "id": "2026-11-27-d",
+  "code": "d1",
+  "asOf": "Thu Nov 26, 8:49 PM PT",
   "perRound": 5,
   "steps": [
     {
@@ -43,16 +43,16 @@ export const GUESS_PACK: GamePack = {
     }
   ],
   "coinTaps": [
+    1,
     0,
     0,
     0,
     1,
-    1,
+    0,
     1,
     3,
-    3,
     1,
-    0,
+    3,
     null,
     null,
     null,
@@ -69,16 +69,16 @@ export const GUESS_PACK: GamePack = {
       "kind": "side",
       "flavor": "side",
       "ours": false,
-      "topic": "Sports",
-      "emoji": "⛳",
+      "topic": "Stars",
+      "emoji": "🧙",
       "extras": [
-        "🇺🇸",
-        "🏆"
+        "⚡",
+        "📺"
       ],
-      "prompt": "Team USA wins the 2027 Ryder Cup",
-      "short": "USA wins the Ryder Cup",
-      "context": "Europe has won the last two. The 2027 matches are in Ireland, and a tie is possible.",
-      "answer": 40,
+      "prompt": "The new Harry Potter series scores above 75 on Rotten Tomatoes",
+      "short": "Harry Potter series tops 75",
+      "context": "This is the new television series, not the 2001 film. The score is the share of critics who liked it.",
+      "answer": 60,
       "id": "t1"
     },
     {
@@ -86,22 +86,22 @@ export const GUESS_PACK: GamePack = {
       "flavor": "versus",
       "ours": true,
       "topic": "Sports",
-      "emoji": "🤼",
+      "emoji": "🏒",
       "prompt": "Which is more likely?",
-      "short": "Brady in the WWE, or Rondo at the Olympics",
-      "context": "Brady won seven Super Bowls. Rondo won NBA titles with the Celtics and the Lakers. Flag football joins the Olympics in 2028.",
+      "short": "A Canadian Stanley Cup, or the Yankees in the World Series",
+      "context": "Seven of the NHL’s 32 teams play in Canada, and they get four seasons to do it. Thirty baseball teams chase two World Series places.",
       "options": [
         {
-          "label": "Rajon Rondo plays flag football at the 2028 Olympics",
-          "short": "Rondo at the Olympics",
-          "emoji": "🏈",
-          "percent": 15
+          "label": "The Yankees reach the 2027 World Series",
+          "short": "Yankees in the Series",
+          "emoji": "⚾",
+          "percent": 26
         },
         {
-          "label": "Tom Brady fights in the WWE before 2028",
-          "short": "Brady in the WWE",
-          "emoji": "🤼",
-          "percent": 29
+          "label": "A Canadian team wins the Stanley Cup by 2030",
+          "short": "A Canadian Cup",
+          "emoji": "🍁",
+          "percent": 48
         }
       ],
       "id": "t2"
@@ -110,16 +110,16 @@ export const GUESS_PACK: GamePack = {
       "kind": "side",
       "flavor": "side",
       "ours": false,
-      "topic": "Stars",
-      "emoji": "💒",
+      "topic": "Odd stuff",
+      "emoji": "🛸",
       "extras": [
-        "🎤",
-        "🎬"
+        "📁",
+        "👽"
       ],
-      "prompt": "Harry Styles and Zoë Kravitz are married before 2027",
-      "short": "Styles and Kravitz marry this year",
-      "context": "The singer and the actor were first linked in 2025. The year has five weeks left.",
-      "answer": 18,
+      "prompt": "The president releases new UFO files before the year ends",
+      "short": "New UFO files this year",
+      "context": "The government has put out batches of files on unexplained sightings before. The year has five weeks left.",
+      "answer": 64,
       "id": "t3"
     },
     {
@@ -127,22 +127,22 @@ export const GUESS_PACK: GamePack = {
       "flavor": "versus",
       "ours": true,
       "topic": "Odd stuff",
-      "emoji": "🌋",
+      "emoji": "🌭",
       "prompt": "Which is more likely?",
-      "short": "A supervolcano, or a Rihanna album",
-      "context": "Rihanna’s last album, Anti, came out in 2016. The last supervolcano eruption was about 26,000 years ago.",
+      "short": "A Mars colony, or the end of the $1.50 hot dog",
+      "context": "Costco’s hot dog and soda combo has cost $1.50 since 1985. Nobody has been to Mars.",
       "options": [
         {
-          "label": "A supervolcano erupts before 2050",
-          "short": "A supervolcano",
-          "emoji": "🌋",
-          "percent": 31
+          "label": "Humans colonize Mars before 2050",
+          "short": "A Mars colony",
+          "emoji": "🚀",
+          "percent": 28
         },
         {
-          "label": "Rihanna releases an album this year",
-          "short": "A Rihanna album",
-          "emoji": "💿",
-          "percent": 2
+          "label": "Costco charges more than $1.50 for its hot dog combo before 2028",
+          "short": "A dearer hot dog",
+          "emoji": "🌭",
+          "percent": 11
         }
       ],
       "id": "t4"
@@ -151,37 +151,37 @@ export const GUESS_PACK: GamePack = {
       "kind": "side",
       "flavor": "side",
       "ours": false,
-      "topic": "Odd stuff",
-      "emoji": "❄️",
+      "topic": "Sports",
+      "emoji": "🏈",
       "extras": [
-        "🌨️",
-        "🏙️"
+        "🙌",
+        "🎯"
       ],
-      "prompt": "Boston gets more than two inches of snow in December",
-      "short": "Two inches of snow in Boston",
-      "context": "All the snow measured in Boston over the whole month counts.",
-      "answer": 62,
+      "prompt": "Travis Kelce catches seven or more touchdown passes this season",
+      "short": "Kelce catches seven touchdowns",
+      "context": "Kelce is a tight end in his fourteenth NFL season. The regular season ends in early January.",
+      "answer": 42,
       "id": "t5"
     },
     {
       "kind": "four",
       "flavor": "four",
       "ours": false,
-      "topic": "Odd stuff",
-      "emoji": "📺",
+      "topic": "Sports",
+      "emoji": "🎾",
       "extras": [
-        "🏃",
-        "💯"
+        "🇦🇺",
+        "🏆"
       ],
-      "prompt": "IShowSpeed reaches 100 million YouTube subscribers before 2029",
-      "short": "IShowSpeed hits 100 million",
-      "context": "IShowSpeed is a streamer. Only a few channels have ever passed 100 million subscribers.",
-      "answer": 51,
+      "prompt": "Carlos Alcaraz wins the Australian Open",
+      "short": "Alcaraz wins in Australia",
+      "context": "The Australian Open starts in January in Melbourne. 128 men start and one wins.",
+      "answer": 58,
       "options": [
-        12,
-        25,
-        38,
-        51
+        28,
+        43,
+        58,
+        73
       ],
       "id": "t6"
     },
@@ -190,36 +190,35 @@ export const GUESS_PACK: GamePack = {
       "flavor": "leader",
       "ours": false,
       "topic": "Stars",
-      "emoji": "🎤",
-      "prompt": "Who is most likely to perform at the Super Bowl halftime show?",
-      "sub": "Not counting Jay-Z, who is all but certain.",
-      "short": "Halftime show guests",
-      "independent": true,
-      "context": "The show is on February 14, 2027. More than one of these four can be on that stage.",
+      "emoji": "👰",
+      "prompt": "Who makes Taylor Swift’s wedding dress?",
+      "short": "Swift’s wedding dress",
+      "independent": false,
+      "context": "Swift and Travis Kelce got engaged in August 2025. Thirty designers are in the running.",
       "options": [
         {
-          "label": "Eminem",
-          "short": "Eminem",
-          "emoji": "🎧",
-          "percent": 24
+          "label": "Vera Wang",
+          "short": "Vera Wang",
+          "emoji": "👗",
+          "percent": 4
         },
         {
-          "label": "Justin Timberlake",
-          "short": "Timberlake",
-          "emoji": "🕺",
-          "percent": 40
+          "label": "Dior",
+          "short": "Dior",
+          "emoji": "✨",
+          "percent": 31
         },
         {
-          "label": "Beyoncé",
-          "short": "Beyoncé",
-          "emoji": "👑",
-          "percent": 70
+          "label": "Vivienne Westwood",
+          "short": "Westwood",
+          "emoji": "🎀",
+          "percent": 4
         },
         {
-          "label": "Pharrell Williams",
-          "short": "Pharrell",
-          "emoji": "🎩",
-          "percent": 43
+          "label": "Chanel",
+          "short": "Chanel",
+          "emoji": "🧵",
+          "percent": 3
         }
       ],
       "id": "t7"
@@ -228,21 +227,21 @@ export const GUESS_PACK: GamePack = {
       "kind": "four",
       "flavor": "four",
       "ours": false,
-      "topic": "Sports",
-      "emoji": "🏈",
+      "topic": "Odd stuff",
+      "emoji": "⛷️",
       "extras": [
-        "🧢",
-        "🏟️"
+        "❄️",
+        "🏔️"
       ],
-      "prompt": "The New England Patriots make the playoffs",
-      "short": "Patriots make the playoffs",
-      "context": "Fourteen of the 32 NFL teams get in. The regular season ends in early January.",
-      "answer": 30,
+      "prompt": "Alta ski area gets more than 100 inches of snow in December",
+      "short": "100 inches of snow at Alta",
+      "context": "Alta is in Utah. A hundred inches is more than eight feet of snow in one month.",
+      "answer": 51,
       "options": [
-        30,
-        45,
-        60,
-        75
+        36,
+        51,
+        66,
+        81
       ],
       "id": "t8"
     },
@@ -250,36 +249,36 @@ export const GUESS_PACK: GamePack = {
       "kind": "leader",
       "flavor": "leader",
       "ours": false,
-      "topic": "Sports",
-      "emoji": "🏈",
-      "prompt": "Who is the favorite to win the NFC South?",
-      "short": "NFC South favorite",
-      "independent": false,
-      "context": "Four teams, one division title. The regular season ends in early January.",
+      "topic": "Stars",
+      "emoji": "🦸",
+      "prompt": "Who is most likely to die in Avengers: Doomsday?",
+      "short": "Who dies in Doomsday",
+      "independent": true,
+      "context": "The film opens in December. More than one of these four can die in it.",
       "options": [
         {
-          "label": "Falcons",
-          "short": "Falcons",
-          "emoji": "🦅",
-          "percent": 10
+          "label": "Spider-Man",
+          "short": "Spider-Man",
+          "emoji": "🕷️",
+          "percent": 52
         },
         {
-          "label": "Panthers",
-          "short": "Panthers",
-          "emoji": "🐆",
-          "percent": 53
+          "label": "Thor",
+          "short": "Thor",
+          "emoji": "🔨",
+          "percent": 62
         },
         {
-          "label": "Saints",
-          "short": "Saints",
-          "emoji": "⚜️",
-          "percent": 8
+          "label": "Doctor Doom",
+          "short": "Doctor Doom",
+          "emoji": "🎭",
+          "percent": 9
         },
         {
-          "label": "Buccaneers",
-          "short": "Buccaneers",
-          "emoji": "🏴‍☠️",
-          "percent": 27
+          "label": "Loki",
+          "short": "Loki",
+          "emoji": "🐍",
+          "percent": 87
         }
       ],
       "id": "t9"
@@ -288,21 +287,21 @@ export const GUESS_PACK: GamePack = {
       "kind": "four",
       "flavor": "four",
       "ours": false,
-      "topic": "Stars",
-      "emoji": "🎬",
+      "topic": "Sports",
+      "emoji": "⚽",
       "extras": [
-        "🌟",
+        "🇺🇸",
         "🏆"
       ],
-      "prompt": "Zendaya is nominated for Best Actress at the Oscars",
-      "short": "Zendaya gets an Oscar nomination",
-      "context": "Nominations for the 99th Academy Awards come out in January.",
-      "answer": 36,
+      "prompt": "The USA wins the 2027 Women’s World Cup",
+      "short": "USA wins the Women’s World Cup",
+      "context": "The tournament is in Brazil in the summer of 2027. The USA has won four of the nine played so far.",
+      "answer": 19,
       "options": [
-        8,
-        22,
-        36,
-        57
+        19,
+        34,
+        49,
+        64
       ],
       "id": "t10"
     },
@@ -310,71 +309,70 @@ export const GUESS_PACK: GamePack = {
       "kind": "chance",
       "flavor": "straight",
       "ours": false,
-      "topic": "Stars",
-      "emoji": "👯",
+      "topic": "Sports",
+      "emoji": "⛳",
       "extras": [
-        "📸",
-        "🤝"
+        "🏌️",
+        "🏆"
       ],
-      "prompt": "Blake Lively and Taylor Swift are seen together in public this year",
-      "short": "Lively and Swift seen together",
-      "context": "The two were close friends for years. The year has five weeks left.",
-      "answer": 9,
-      "roastHigh": "{n} said {g}%. {n} still believe{s} in best friends forever. The world says {w}%.",
+      "prompt": "Scottie Scheffler wins a major in 2027",
+      "short": "Scheffler wins a 2027 major",
+      "context": "There are four majors a year: the Masters, the PGA Championship, the U.S. Open and the Open.",
+      "answer": 60,
+      "roastHigh": "{n} said {g}%. {n} {has} already had the trophy engraved.",
+      "roastLow": "{n} said {g}%. {n} think{s} four tries is not enough for him. The world says {w}%.",
       "id": "t11"
     },
     {
       "kind": "chance",
       "flavor": "straight",
       "ours": false,
-      "topic": "Sports",
-      "emoji": "🐻",
+      "topic": "Stars",
+      "emoji": "🎧",
       "extras": [
-        "🏒",
-        "🥅"
+        "🎤",
+        "📈"
       ],
-      "prompt": "The Boston Bruins make the playoffs",
-      "short": "Bruins make the playoffs",
-      "context": "Sixteen of the 32 NHL teams make the playoffs. The regular season ends in April.",
-      "answer": 71,
-      "roastHigh": "{n} said {g}%. {n} {has} already cleared the calendar for May.",
-      "roastLow": "{n} said {g}%. Nobody tell Boston what {n} said.",
+      "prompt": "Taylor Swift is the most-played artist on Spotify in the US this year",
+      "short": "Swift tops Spotify in the US",
+      "context": "Spotify counts every play in the United States from January on and names the winner in December.",
+      "answer": 4,
+      "roastHigh": "{n} said {g}%. {n} {has} one playlist and it is all Taylor. The world says {w}%.",
       "id": "t12"
     },
     {
       "kind": "chance",
       "flavor": "straight",
       "ours": false,
-      "topic": "Stars",
-      "emoji": "💍",
+      "topic": "Sports",
+      "emoji": "🏀",
       "extras": [
-        "🎬",
-        "🎵"
+        "👌",
+        "⏳"
       ],
-      "prompt": "Sydney Sweeney and Scooter Braun get engaged this year",
-      "short": "Sweeney and Braun get engaged",
-      "context": "The actor and the music manager were first linked in 2025. The year has five weeks left.",
-      "answer": 24,
-      "roastHigh": "{n} said {g}%. {n} {has} already picked an outfit for the wedding.",
-      "roastLow": "{n} said {g}%. {n} think{s} love is dead. The world says {w}%.",
+      "prompt": "Steph Curry retires before the 2029–30 NBA season",
+      "short": "Curry retires by 2029",
+      "context": "Curry turns 39 in March. His contract with the Warriors runs through this season.",
+      "answer": 55,
+      "roastHigh": "{n} said {g}%. {n} {is} ready to retire him. Curry is not.",
+      "roastLow": "{n} said {g}%. {n} think{s} he shoots threes until he is 45.",
       "id": "t13"
     },
     {
       "kind": "chance",
       "flavor": "straight",
       "ours": false,
-      "topic": "Sports",
-      "emoji": "👑",
+      "topic": "Stars",
+      "emoji": "🤠",
       "extras": [
-        "🏀",
-        "⏳"
+        "🧸",
+        "🏆"
       ],
-      "prompt": "LeBron James retires before the 2027–28 NBA season",
-      "short": "LeBron retires after this season",
-      "context": "James turns 42 on December 30. He entered the NBA in 2003.",
-      "answer": 42,
-      "roastHigh": "{n} said {g}%. {n} {has} been calling it his last year since 2020.",
-      "roastLow": "{n} said {g}%. {n} think{s} he plays until his grandkids are in the league.",
+      "prompt": "Toy Story 5 is nominated for the Oscar for best animated film",
+      "short": "Toy Story 5 gets an Oscar nomination",
+      "context": "Toy Story 3 and Toy Story 4 both won this award. Nominations come out in January.",
+      "answer": 85,
+      "roastLow": "{n} said {g}%. {n} {has} never cried at a Toy Story film. The world says {w}%.",
       "id": "t14"
     },
     {
@@ -382,16 +380,16 @@ export const GUESS_PACK: GamePack = {
       "flavor": "straight",
       "ours": false,
       "topic": "Odd stuff",
-      "emoji": "🎮",
+      "emoji": "🗳️",
       "extras": [
-        "🖥️",
-        "🚗"
+        "💪",
+        "🇺🇸"
       ],
-      "prompt": "Grand Theft Auto VI comes out on PC before 2028",
-      "short": "GTA VI on PC before 2028",
-      "context": "Rockstar has announced GTA VI for consoles only so far. Its last two big games took more than a year to reach PC.",
-      "answer": 90,
-      "roastLow": "{n} said {g}%. {n} think{s} PC players can wait. They always do. The world says {w}%.",
+      "prompt": "The Rock announces a run for president before 2028",
+      "short": "The Rock runs for president",
+      "context": "Dwayne Johnson wrestled as The Rock before he made films. He has said more than once that he has thought about it.",
+      "answer": 10,
+      "roastHigh": "{n} said {g}%. {n} can smell what The Rock is cooking. The world says {w}%.",
       "id": "t15"
     }
   ]
