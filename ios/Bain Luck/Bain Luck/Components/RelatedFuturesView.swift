@@ -2185,7 +2185,7 @@ private struct StatTrackerRow: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(DS.textSecondaryReadable)
                             if let prob = future.probability {
-                                Text("\(Int(prob * 100))%")
+                                Text(formatProbability(prob))
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundStyle(teamColor)
                             }
@@ -2495,7 +2495,7 @@ private struct SeriesMarketsSection: View {
                                 .foregroundStyle(change > 0 ? .green : .red)
                             }
                             if let prob = outcome.probability {
-                                Text("\(Int((prob * 100).rounded()))%")
+                                Text(formatProbability(prob))
                                     .font(.caption)
                                     .fontWeight(.bold)
                                     .monospacedDigit()

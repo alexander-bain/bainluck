@@ -80,7 +80,7 @@ struct EventModelsView: View {
                 }
                 Spacer()
                 if let value = source.value {
-                    Text("\(Int(value * 100))%")
+                    Text(formatProbability(value))
                         .font(.title3.weight(.bold).monospacedDigit())
                 }
             }

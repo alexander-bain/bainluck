@@ -73,7 +73,7 @@ enum DiscoverGroupRows {
         return cal
     }()
 
-    private static func utcDayString(_ date: Date) -> String {
+    static func utcDayString(_ date: Date) -> String {
         let comps = utcCalendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", comps.year ?? 0, comps.month ?? 1, comps.day ?? 1)
     }
@@ -156,6 +156,27 @@ enum DiscoverGroupRows {
         return nil
     }
 
+    static func distributionDatesByLabel(_ distributionOutcomes: [FeedDiscoverDistributionOutcome]?) -> [String: String] {
+        var map: [String: String] = [:]
+        for dist in distributionOutcomes ?? [] {
+            let key = dist.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !key.isEmpty, map[key] == nil, isIsoDateString(dist.date) {
+                map[key] = dist.date
+            }
+        }
+        return map
+    }
+
+    static func resolveRungDateIso(
+        point: FeedDiscoverThresholdPoint,
+        distDatesByLabel: [String: String],
+        now: Date = Date()
+    ) -> String? {
+        let key = point.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let distDateIso = key.isEmpty ? nil : distDatesByLabel[key]
+        return resolveRungDateIso(point: point, distDateIso: distDateIso, now: now)
+    }
+
     private static func buildHeatmapRows(for data: FeedFuturesData, now: Date) -> [HeatmapLadderRow] {
         var outcomesByName: [String: FeedFuturesOutcome] = [:]
         for outcome in data.topOutcomes ?? [] {
@@ -164,13 +185,7 @@ enum DiscoverGroupRows {
                 outcomesByName[key] = outcome
             }
         }
-        var distDatesByLabel: [String: String] = [:]
-        for dist in data.discoverCard?.distributionOutcomes ?? [] {
-            let key = dist.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if !key.isEmpty, distDatesByLabel[key] == nil, isIsoDateString(dist.date) {
-                distDatesByLabel[key] = dist.date
-            }
-        }
+        let distDatesByLabel = distributionDatesByLabel(data.discoverCard?.distributionOutcomes)
 
         var orderedKeys: [String] = []
         var byLabel: [String: HeatmapLadderRow] = [:]
@@ -187,7 +202,7 @@ enum DiscoverGroupRows {
             let movement = matchedOutcome?.movement ?? point.movement
             let pointValue = point.value ?? 0
             let sortValue = existing.map { min($0.sortValue, pointValue) } ?? pointValue
-            let dateIso = existing?.dateIso ?? resolveRungDateIso(point: point, distDateIso: distDatesByLabel[key], now: now)
+            let dateIso = existing?.dateIso ?? resolveRungDateIso(point: point, distDatesByLabel: distDatesByLabel, now: now)
 
             byLabel[key] = HeatmapLadderRow(
                 key: key,

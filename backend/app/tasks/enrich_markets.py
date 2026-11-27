@@ -11,6 +11,7 @@ import logging
 import asyncio
 import re
 import json
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -24,7 +25,11 @@ from app.services.llm_request import JobBudget, LLMCallRefused, complete_chat, c
 from app.tasks.base import get_task_session
 from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 from app.utils.image_dimensions import delivered_dimensions
-from app.utils.cu_event_facts import cu_event_facts, cu_unlinked_event_date
+from app.utils.cu_event_facts import (
+    cu_event_facts,
+    cu_model_geography,
+    cu_unlinked_event_date,
+)
 from app.utils.cu_frame import (
     DROP_ABSENT as CU_FRAME_DROP_ABSENT,
     DROP_UNIT_NOT_IN_TITLE as CU_FRAME_DROP_UNIT_NOT_IN_TITLE,
@@ -35,6 +40,7 @@ from app.utils.cu_frame import (
     is_resolved_ref,
     sanitize_cu_frame,
 )
+from app.utils.cu_junk_flags import cu_junk_flags
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +73,8 @@ DISCOVER_LLM_SCHEMA_VERSION = 1
 # persisted validation reasons. Unclassified markets still face the volume/tier bar.
 # rev 8 (#1809): grounded aliases must be unique and compatible with the mention.
 # rev 9 (#1809): use schedule-backed local game dates, state districts, and drop payout-date copies.
-CU_WRITER_REV = 9
+# rev 10 (#1809): ground election days and fixture geography, and reject settlement-day copies in sports too.
+CU_WRITER_REV = 10
 CU_V2_SCHEMA_VERSION = 2
 #: Per-run spend ceiling for ``enrich_cu_v2_profiles`` (USD).
 CU_V2_COST_CAP_USD = 30.0
@@ -353,7 +360,11 @@ def _v2_profile_as_v1_shape(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _get_discover_llm_view(market_metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+def _get_discover_llm_view(
+    market_metadata: dict[str, Any] | None,
+    *,
+    outcome_names: Iterable[str | None] = (),
+) -> dict[str, Any] | None:
     """The ONE decision about what a feed consumer reads out of `discover_llm`.
 
     Two writers own this key (v1 `enrich_discover_llm_metadata`, v2
@@ -377,7 +388,10 @@ def _get_discover_llm_view(market_metadata: dict[str, Any] | None) -> dict[str, 
     if version == DISCOVER_LLM_SCHEMA_VERSION:
         return metadata
     if version == CU_V2_SCHEMA_VERSION:
-        return _v2_profile_as_v1_shape(metadata)
+        view = _v2_profile_as_v1_shape(metadata)
+        # Existing profiles get the flags from the outcomes already loaded for ranking.
+        view["junk_flags"] = cu_junk_flags(outcome_names, view["junk_flags"])
+        return view
     return None
 
 
@@ -1603,6 +1617,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                    fm.resolution_date, fm.market_metadata,
                    fm.event_id AS linked_game_id, e.commence_time AS linked_start,
                    e.commence_time_source AS start_source, league.key AS linked_league,
+                   home_league.key AS linked_home_league, away_league.key AS linked_away_league,
                    (SELECT json_agg(json_build_object(
                        'name', fo.name,
                        'prob', fo.current_probability,
@@ -1615,6 +1630,10 @@ async def enrich_cu_v2_profiles(limit: int = 125):
             FROM futures_markets fm
             LEFT JOIN events e ON e.id = fm.event_id
             LEFT JOIN sports league ON league.id = e.sport_id
+            LEFT JOIN teams home_team ON home_team.id = e.home_team_id
+            LEFT JOIN teams away_team ON away_team.id = e.away_team_id
+            LEFT JOIN sports home_league ON home_league.id = home_team.sport_id
+            LEFT JOIN sports away_league ON away_league.id = away_team.sport_id
             WHERE fm.status = 'open'
               AND fm.llm_sport_category IS DISTINCT FROM 'crypto'
               AND (fm.llm_sport_category = ANY(:cats) OR fm.volume_24h >= 5000 OR fm.market_tier <= 3)
@@ -1645,6 +1664,11 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 if outcome.get("prob") is not None
             ]
 
+            fixture_leagues = {
+                "linked_league": r.get("linked_league"),
+                "home_team_league": r.get("linked_home_league"),
+                "away_team_league": r.get("linked_away_league"),
+            }
             work_items.append({
                 "id": r["id"],
                 "name": r["name"],
@@ -1654,13 +1678,15 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 "resolution_date": r["resolution_date"],
                 "metadata": dict(meta),
                 "outcome_lines": outcome_lines,
+                "outcome_names": [outcome.get("name") for outcome in outcomes_raw],
                 "outcome_probs": all_probs,
+                "fixture_leagues": fixture_leagues,
                 "event_facts": cu_event_facts(
                     r["name"] or "",
                     linked_game_id=r.get("linked_game_id"),
                     linked_start=r.get("linked_start"),
                     start_source=r.get("start_source"),
-                    linked_league=r.get("linked_league"),
+                    **fixture_leagues,
                 ),
             })
             if len(work_items) >= limit:
@@ -1803,13 +1829,14 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     "topic": raw.get("topic"),
                     "subtopic": raw.get("subtopic"),
                     "entities": raw.get("entities", []),
-                    "geography": raw.get("geography"),
+                    "geography": cu_model_geography(
+                        raw.get("geography"), **item["fixture_leagues"]
+                    ),
                     "story_key": raw.get("story_key"),
                     "series_key": _cu_series_key(raw.get("series_key")),
                     "temporal_class": raw.get("temporal"),
                     "event_date": cu_unlinked_event_date(
-                        raw.get("event_date"), settlement_at,
-                        category=item["category"], topic=raw.get("topic"),
+                        raw.get("event_date"), settlement_at
                     ),
                     "recurrence": raw.get("recurrence"),
                     "stakes": raw.get("stakes"),
@@ -1817,7 +1844,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     "oddity": raw.get("oddity"),
                     "arc": raw.get("arc"),
                     "hook_facts": raw.get("hook_facts", []),
-                    "junk_flags": raw.get("junk_flags", []),
+                    "junk_flags": cu_junk_flags(
+                        item["outcome_names"], raw.get("junk_flags")
+                    ),
                     "confidence": raw.get("confidence"),
                     "liveness": liveness,
                     # #1809 additive slots. `frame` is explicitly null when the

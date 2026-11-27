@@ -25,9 +25,10 @@ export interface MachinerySubjectArt {
 export interface MachineryOutcomeVisual {
   outcome_id: number;
   name: string;
-  probability: number;
-  rendered_percent: number;
+  probability: number | null;
+  rendered_percent: number | null;
   unfloored_percent?: number | null;
+  settled_out?: boolean;
   art: MachinerySubjectArt;
 }
 

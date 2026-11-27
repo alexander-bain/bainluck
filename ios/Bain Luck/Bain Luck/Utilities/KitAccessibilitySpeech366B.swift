@@ -398,7 +398,8 @@ nonisolated enum KitAccessibilitySpeech366B {
                     .map(expandPercent)
                 if !parts.isEmpty { numbers.append(parts.joined(separator: " ")) }
             case .ring(let r):
-                let raw = r.label ?? "\(Int((min(1, max(0, r.progress)) * 100).rounded()))%"
+                let clamped = min(1, max(0, r.progress))
+                let raw = r.label ?? DiscoverRoundupCardModel.probabilityText(probability: clamped, renderedPercent: nil)
                 numbers.append(expandPercent(raw))
             case .bar(let b):
                 if b.barStyle == .split, let segs = b.segments, segs.count == 2 {

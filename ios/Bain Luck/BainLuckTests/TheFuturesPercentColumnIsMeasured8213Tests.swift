@@ -269,7 +269,7 @@ final class TheFuturesPercentColumnIsMeasured8213Tests: XCTestCase {
     func testThePercentageIsDrawnOnOneLine() throws {
         let stripped = try Self.strippedSource("Components/DiscoverFuturesCard.swift")
         let percentBlock = stripped
-            .components(separatedBy: "Text(discoverFuturesCardPercentLabel(percent))")
+            .components(separatedBy: "Text(discoverFuturesCardPercentLabel(percent, probability: outcome.probability))")
         XCTAssertEqual(percentBlock.count, 2, "the percentage is printed in exactly one place")
         XCTAssertTrue(
             percentBlock[1].prefix(220).contains(".lineLimit(1)"),

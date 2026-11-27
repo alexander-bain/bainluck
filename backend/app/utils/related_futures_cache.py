@@ -156,6 +156,21 @@ SOURCE_STATUS_FIELD = _gmc.SOURCE_STATUS_FIELD
 #: exists", because the payload a release invalidates is YOUNG, not old.
 BUILD_FIELD = _gmc.BUILD_FIELD
 
+#: Raw `Event.status` value for pre-kickoff games (#13573).
+SCHEDULED_STATUS = "scheduled"
+
+#: Default mirror ceiling shared with `game_markets_cache` (`5 * 30 = 150 s`).
+STALE_SERVE_CEILING_LIVE = _gmc.STALE_SERVE_CEILING * _gmc.FRESH_TTL_LIVE
+
+#: Scheduled pre-kickoff mirror ceiling for `/related-futures` only (#13573 Option b):
+#: 10 minutes (600 s), server-only, hard-capped at `source_commence_time` and verified
+#: against live `Event.status`/`Event.commence_time` once age exceeds `150 s`.
+STALE_SERVE_CEILING_SCHEDULED = 600
+
+#: Additive envelope field: UTC ISO-8601 `Event.commence_time` stored when a
+#: `scheduled` payload is built (#13573).
+SOURCE_COMMENCE_TIME_FIELD = "source_commence_time"
+
 #: Explicit content/contract version stamped into `/related-futures` cache
 #: entries (#13573). Bump whenever `_build_related_futures` changes what a
 #: reader sees (shape, filtering, withholding, scoring); unrelated deploys leave
@@ -169,9 +184,40 @@ def current_cache_version() -> str:
     return f"rf-v{RELATED_FUTURES_CACHE_VERSION}"
 
 
+def _normalize_utc(value: Any) -> datetime | None:
+    """Parse a `datetime` or ISO-8601 string into timezone-aware UTC."""
+    if isinstance(value, datetime):
+        return (
+            value.astimezone(timezone.utc)
+            if value.tzinfo
+            else value.replace(tzinfo=timezone.utc)
+        )
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        return (
+            parsed.astimezone(timezone.utc)
+            if parsed.tzinfo
+            else parsed.replace(tzinfo=timezone.utc)
+        )
+    return None
+
+
 def is_final(status: Any) -> bool:
     """True when `status` is a finished game, by the page's own definition."""
     return _gmc.is_final(status)
+
+
+def is_scheduled(status: Any) -> bool:
+    """True when `status` is a scheduled (pre-kickoff) game."""
+    return str(status or "").lower() == SCHEDULED_STATUS
 
 
 def fresh_ttl(status: Any) -> int:
@@ -179,13 +225,16 @@ def fresh_ttl(status: Any) -> int:
     return FRESH_TTL_FINAL if is_final(status) else FRESH_TTL_LIVE
 
 
-def stale_serve_ceiling_seconds(status: Any) -> int:
+def stale_serve_ceiling_seconds(status: Any, payload: Any = None) -> int:
     """How old a mirror of a payload with `status` may be and still be served.
 
-    Delegated, not duplicated — see the module docstring. If the sibling tier
-    ever re-tunes the event page's mirror-age law, this tier moves with it
-    instead of quietly disagreeing with it.
+    Without a stamped `scheduled` payload carrying `source_commence_time`, every
+    status delegates to `game_markets_cache` (`150 s` live/scheduled, `18,000 s`
+    final) so status-only page invariants keep holding. Only a stamped
+    pre-kickoff `scheduled` `/related-futures` payload allows `600 s` (#13573 Option b).
     """
+    if is_scheduled(status) and source_commence_time_of(payload) is not None:
+        return STALE_SERVE_CEILING_SCHEDULED
     return _gmc.stale_serve_ceiling_seconds(status)
 
 
@@ -200,6 +249,7 @@ def stamp(
     source_status: Any,
     created_at: datetime | None = None,
     lifecycle_watermark: datetime | None = None,
+    source_commence_time: datetime | str | None = None,
 ) -> dict[str, Any]:
     """Attach the producer half of the envelope, plus this tier's raw status.
 
@@ -215,6 +265,9 @@ def stamp(
     envelope = dict(enveloped.get(ENVELOPE_FIELD) or {})
     envelope[SOURCE_STATUS_FIELD] = str(source_status or "")
     envelope[BUILD_FIELD] = current_cache_version()
+    commence_dt = _normalize_utc(source_commence_time)
+    if commence_dt is not None:
+        envelope[SOURCE_COMMENCE_TIME_FIELD] = commence_dt.isoformat()
     enveloped[ENVELOPE_FIELD] = envelope
     return enveloped
 
@@ -254,6 +307,171 @@ def source_status_of(payload: Any) -> str:
     return _gmc.source_status_of(payload)
 
 
+def source_commence_time_of(payload: Any) -> datetime | None:
+    """UTC kickoff stamped on a stored payload, or `None` when absent/invalid."""
+    if not isinstance(payload, dict):
+        return None
+    envelope = payload.get(ENVELOPE_FIELD)
+    if not isinstance(envelope, dict):
+        return None
+    return _normalize_utc(envelope.get(SOURCE_COMMENCE_TIME_FIELD))
+
+
+def with_source_commence_time(
+    payload: dict[str, Any], commence_time: datetime | str | None
+) -> dict[str, Any]:
+    """Attach normalized UTC `source_commence_time` to a stamped payload."""
+    commence_dt = _normalize_utc(commence_time)
+    if commence_dt is None:
+        return payload
+    updated = dict(payload)
+    envelope = dict(updated.get(ENVELOPE_FIELD) or {})
+    envelope[SOURCE_COMMENCE_TIME_FIELD] = commence_dt.isoformat()
+    updated[ENVELOPE_FIELD] = envelope
+    return updated
+
+
+def scheduled_kickoff_passed(payload: Any, now: datetime | None = None) -> bool:
+    """True when a scheduled payload's stamped kickoff is at or before `now`."""
+    if not is_scheduled(source_status_of(payload)):
+        return False
+    commence_at = source_commence_time_of(payload)
+    if commence_at is None:
+        return False
+    now_utc = _normalize_utc(now) if now is not None else datetime.now(timezone.utc)
+    return now_utc is not None and now_utc >= commence_at
+
+
+def resolve_commence_lookup_id(event_id: int, response: Any) -> int:
+    """Pick the canonical `event_id` carried by `response`, falling back to `event_id`."""
+    raw_eid = response.get("event_id") if isinstance(response, dict) else None
+    if isinstance(raw_eid, int) and not isinstance(raw_eid, bool):
+        return raw_eid
+    return event_id
+
+
+async def lookup_commence_time(db, event_id: int) -> datetime | None:
+    """Best-effort `Event.commence_time` lookup on a build (#13573)."""
+    try:
+        from sqlalchemy import select
+
+        from app.models.models import Event
+
+        commence_time = await db.scalar(
+            select(Event.commence_time).where(Event.id == event_id)
+        )
+    except Exception:
+        logger.warning("related-futures: commence_time query failed", exc_info=True)
+        return None
+    return _normalize_utc(commence_time)
+
+
+async def attach_scheduled_commence_time(
+    db,
+    event_id: int,
+    response: Any,
+    source_status: Any,
+    enveloped: dict[str, Any],
+    *,
+    lookup_fn=None,
+) -> dict[str, Any]:
+    """Resolve and stamp `source_commence_time` onto `scheduled` cache payloads."""
+    if not is_scheduled(source_status):
+        return enveloped
+    resolver = lookup_fn or lookup_commence_time
+    commence_time = await resolver(db, resolve_commence_lookup_id(event_id, response))
+    if commence_time is None:
+        return enveloped
+    return with_source_commence_time(enveloped, commence_time)
+
+
+def extended_scheduled_mirror_needs_live_check(
+    payload: Any, now: datetime | None = None
+) -> bool:
+    """True when a scheduled mirror is past `STALE_SERVE_CEILING_LIVE` (`150 s`).
+
+    Up to `150 s`, serving matches the untouched hot path with zero DB read. Past
+    `150 s`, the route checks current `Event.status` and `Event.commence_time`
+    so a live or rescheduled game never serves a stale pre-game copy.
+    """
+    if not isinstance(payload, dict) or not is_scheduled(source_status_of(payload)):
+        return False
+    age = payload_age_seconds(payload, now)
+    return age is None or age > STALE_SERVE_CEILING_LIVE
+
+
+async def lookup_event_schedule(
+    db, event_id: int
+) -> tuple[str, datetime | None] | None:
+    """Single-row `(Event.status, Event.commence_time)` lookup by id (#13573)."""
+    if db is None:
+        return None
+    try:
+        from sqlalchemy import select
+
+        from app.models.models import Event
+
+        stmt = select(Event.status, Event.commence_time).where(Event.id == event_id)
+        schedule_result = await db.execute(stmt)
+        row = schedule_result.first()
+    except Exception:
+        logger.warning("related-futures: live schedule query failed", exc_info=True)
+        return None
+    if row is None:
+        return None
+    return str(row[0] or ""), _normalize_utc(row[1])
+
+
+def live_event_allows_scheduled_mirror(
+    payload: Any,
+    live_status: Any,
+    live_commence_time: datetime | str | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[bool, str]:
+    """Validate an extended (`> 150 s`) scheduled mirror against live DB state."""
+    if not is_scheduled(live_status):
+        return False, "status_changed"
+    live_commence = _normalize_utc(live_commence_time)
+    if live_commence is None:
+        return False, "commence_time_missing"
+    now_utc = _normalize_utc(now) if now is not None else datetime.now(timezone.utc)
+    if now_utc is None or now_utc >= live_commence:
+        return False, "live_kickoff_passed"
+    stamped_commence = source_commence_time_of(payload)
+    if stamped_commence is None or live_commence != stamped_commence:
+        return False, "commence_time_moved"
+    return True, "still_scheduled"
+
+
+async def confirm_scheduled_mirror_live(
+    db,
+    event_id: int,
+    payload: Any,
+    *,
+    now: datetime | None = None,
+    lookup_fn=None,
+) -> tuple[bool, str]:
+    """Confirm a scheduled mirror past `150 s` is still pre-kickoff on the live row."""
+    if not extended_scheduled_mirror_needs_live_check(payload, now):
+        return True, "no_live_check_needed"
+    if db is None and lookup_fn is None:
+        logger.info("related-futures mirror refused after live schedule check — rebuilding")
+        return False, "live_lookup_unavailable"
+    resolver = lookup_fn or lookup_event_schedule
+    schedule = await resolver(db, resolve_commence_lookup_id(event_id, payload))
+    if schedule is None:
+        logger.info("related-futures mirror refused after live schedule check — rebuilding")
+        return False, "live_lookup_unavailable"
+    live_status, live_commence = schedule
+    allowed, reason = live_event_allows_scheduled_mirror(
+        payload, live_status, live_commence, now=now
+    )
+    if not allowed:
+        logger.info("related-futures mirror refused after live schedule check — rebuilding")
+    return allowed, reason
+
+
 def mirror_is_servable(
     payload: Any, now: datetime | None = None
 ) -> tuple[bool, str]:
@@ -272,7 +490,9 @@ def mirror_is_servable(
         # though it could — and here it would additionally be served under an
         # age bound we are unable to evaluate.
         return False, "no_created_at"
-    ceiling = stale_serve_ceiling_seconds(source_status_of(payload))
+    if scheduled_kickoff_passed(payload, now):
+        return False, "kickoff_passed"
+    ceiling = stale_serve_ceiling_seconds(source_status_of(payload), payload)
     if age > ceiling:
         return False, "too_old"
     return True, "fresh_enough"

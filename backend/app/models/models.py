@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     Numeric,
     SmallInteger,
     String,
@@ -3775,6 +3776,88 @@ class ClientTimingEvent(Base):
     )
 
 
+class MetricKitPayload(Base):
+    """#12309: one Apple MetricKit diagnostic, or one day's metrics, from a phone.
+
+    THE SHIP THIS SERVES. Hangs, slow launches and the crashes Crashlytics never
+    sees (watchdog kills, memory terminations, a crash before it starts) reach us
+    as Apple's own call stacks, so a fix like #12278 starts from a stack rather
+    than a guess.
+
+    WHAT MAY BE IN HERE. Only what a reader who GRANTED telemetry consent sends:
+    the app forwards nothing for anyone else (`TelemetryConsent`, deny by
+    default). Each row is MetricKit's JSON for one diagnostic (or the day's
+    metrics), untouched, plus the version and device fields copied out of its
+    own metadata. MetricKit carries no user id, and neither does this table:
+    no foreign key, no user, session, IP or cookie column. A row cannot be
+    attributed to a person, and that is a property of the schema.
+
+    Rows older than `app.routes.metrickit.RETENTION_DAYS` are deleted by the
+    ingest path.
+    """
+
+    __tablename__ = "metrickit_payloads"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+
+    #: One of `app.routes.metrickit.ACCEPTED_KINDS`.
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # Copied out of the payload's own metadata, so a read can group by them
+    # without opening the JSONB.
+    app_version: Mapped[Optional[str]] = mapped_column(String(64))
+    app_build: Mapped[Optional[str]] = mapped_column(String(64))
+    os_version: Mapped[Optional[str]] = mapped_column(String(64))
+    device_type: Mapped[Optional[str]] = mapped_column(String(64))
+
+    #: MetricKit's own JSON for this diagnostic or day, as the phone sent it.
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # Every read is "this kind, in this window".
+        Index("ix_metrickit_kind_time", "kind", "received_at"),
+        # The retention sweep walks the window alone.
+        Index("ix_metrickit_received_at", "received_at"),
+    )
+
+
+class AnonymousInstallCount(Base):
+    """434: A / 424: A — daily aggregate install lifecycle counts (#13261).
+
+    Stores ONLY summed daily counts keyed by ``(day, app_version, event)`` for
+    the three pre-consent lifecycle milestones (``first_open``,
+    ``first_run_finished``, ``previous_session_crashed``). Zero per-event rows,
+    zero IP addresses, and zero user/device/install identifiers by construction.
+    """
+
+    __tablename__ = "anonymous_install_counts"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True, nullable=False)
+    app_version: Mapped[str] = mapped_column(
+        String(16), primary_key=True, nullable=False
+    )
+    event: Mapped[str] = mapped_column(String(32), primary_key=True, nullable=False)
+    count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "event IN ('first_open', 'first_run_finished', 'previous_session_crashed')",
+            name="ck_anon_install_counts_event",
+        ),
+        CheckConstraint(
+            "count >= 0",
+            name="ck_anon_install_counts_count_nonneg",
+        ),
+    )
+
+
 class OpenFuturesOutcome(Base):
     """Outcome names and poll admission fields for open markets.
 
@@ -3850,4 +3933,56 @@ class RetiredTeamRedirect(Base):
             "sport_id",
             "retired_name",
         ),
+    )
+
+
+class GuessDailyEdition(Base):
+    """One PT calendar day's frozen /guess pack resolved from open markets (#12619, 443: A)."""
+
+    __tablename__ = "guess_daily_editions"
+
+    day_pt: Mapped[date] = mapped_column(Date, primary_key=True)
+    edition_code: Mapped[str] = mapped_column(String(6), nullable=False, unique=True)
+    frozen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    pack_json: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+    source_snapshot: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+
+
+class GuessGroupEntry(Base):
+    """One finished daily /guess entry inside a single group link (#12619, 443: A).
+
+    Stores ONLY day_pt, group_code, nickname(+lower), 15 answers, per-step
+    decision times, and nullable moderation hidden_at — zero user/account/
+    device/IP/address/score columns.
+    """
+
+    __tablename__ = "guess_group_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    day_pt: Mapped[date] = mapped_column(Date, nullable=False)
+    group_code: Mapped[str] = mapped_column(String(24), nullable=False)
+    nickname: Mapped[str] = mapped_column(String(12), nullable=False)
+    nickname_lower: Mapped[str] = mapped_column(String(12), nullable=False)
+    answers: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+    step_times: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+    hidden_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "day_pt",
+            "group_code",
+            "nickname_lower",
+            name="uq_guess_group_entries_day_group_nick",
+        ),
+        Index("ix_guess_group_entries_day_group", "day_pt", "group_code"),
     )

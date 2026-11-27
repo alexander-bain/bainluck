@@ -160,7 +160,7 @@ function validateMarksRecursive(node: unknown, insideMarksArray: boolean): boole
     }
   }
   for (const [key, val] of Object.entries(obj)) {
-    if (key === "route") continue;
+    if (key === "route" || key === "provenance") continue;
     if (!validateMarksRecursive(val, MARKS_ARRAY_KEYS.has(key))) {
       return false;
     }
@@ -652,22 +652,28 @@ function GridLayout({ body }: { body: KitV1GridBody }) {
       firstLeading[0]?.mark === "word" &&
       firstLeading[0]?.style === "rank";
     const isDenseMatrix = body.columns.length >= 3;
-    const colWidthPx = isDenseMatrix ? "40px" : "66px";
-    const gridCols = hasRank
-      ? `18px minmax(0,1fr) repeat(${body.columns.length}, ${colWidthPx})`
-      : `minmax(0,1fr) repeat(${body.columns.length}, ${colWidthPx})`;
+    const isFourPlusCols = body.columns.length >= 4;
+    const colWidthPx = isDenseMatrix ? "minmax(54px, 76px)" : "minmax(66px, 92px)";
+    const gridCols = isFourPlusCols
+      ? hasRank
+        ? `18px minmax(72px,1.2fr) repeat(${body.columns.length}, minmax(52px,1fr))`
+        : `minmax(84px,1.35fr) repeat(${body.columns.length}, minmax(52px,1fr))`
+      : hasRank
+        ? `18px minmax(0,1fr) repeat(${body.columns.length}, ${colWidthPx})`
+        : `minmax(0,1fr) repeat(${body.columns.length}, ${colWidthPx})`;
+    const gridGapClass = isFourPlusCols ? "gap-1" : "gap-1.5";
 
     return (
       <div className="space-y-1.5">
         {body.show_column_headers && (
           <div
-            className="grid items-end gap-1.5 pb-1 text-[10px] font-semibold leading-tight text-kit-muted"
+            className={`grid items-end ${gridGapClass} pb-1 ${isFourPlusCols ? "text-[9.5px]" : "text-[10px]"} font-semibold leading-tight text-kit-muted`}
             style={{ gridTemplateColumns: gridCols }}
           >
             {hasRank && <span>#</span>}
-            <span>{body.leading_label ?? "Item"}</span>
+            <span className="min-w-0 truncate">{body.leading_label ?? "Item"}</span>
             {body.columns.map((c) => (
-              <span key={c.key} className="text-center">
+              <span key={c.key} className="min-w-0 break-words text-center">
                 {c.label}
               </span>
             ))}
@@ -680,7 +686,7 @@ function GridLayout({ body }: { body: KitV1GridBody }) {
           return (
             <div
               key={row.id}
-              className="grid items-center gap-1.5 border-t border-surface-border/60 pt-1.5"
+              className={`grid items-center ${gridGapClass} border-t border-surface-border/60 pt-1.5`}
               style={{ gridTemplateColumns: gridCols }}
             >
               {rankMark && <KitMarkView mark={rankMark} />}
@@ -696,7 +702,7 @@ function GridLayout({ body }: { body: KitV1GridBody }) {
               {body.columns.map((c) => {
                 const cell = cellByKey.get(c.key);
                 return (
-                  <div key={`${row.id}-${c.key}`}>
+                  <div key={`${row.id}-${c.key}`} className="min-w-0">
                     {cell?.marks.map((cm, cIdx) => (
                       <KitMarkView key={`${row.id}-${c.key}-${cIdx}`} mark={cm} />
                     ))}

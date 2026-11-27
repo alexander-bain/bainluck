@@ -488,6 +488,9 @@ class TestTheWholeStackRecyclesForFree:
         monkeypatch.setattr(run_kalshi_ws, "asyncio", shim)
 
         with pytest.raises(_Stop):
+            # A TimeoutError here means `_RecycleWaitGateShim` stopped matching
+            # the consumer's recycle `asyncio.wait(..., timeout=...)` against
+            # `SUBSCRIPTION_REFRESH_SECONDS` (for example, if that timeout became computed).
             await asyncio.wait_for(run_kalshi_ws.run_polymarket(), timeout=10)
 
         assert connects["n"] == 4
