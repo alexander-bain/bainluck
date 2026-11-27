@@ -26,7 +26,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import GuessDailyEdition, GuessGroupEntry
-from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 from app.utils.market_staleness import is_title_implied_stale
 
 PT_TZ = ZoneInfo("America/Los_Angeles")
@@ -399,7 +398,6 @@ def _read_outcome_percent(
     if not target_norm:
         return None
 
-    purged_cutoff = reference_time - timedelta(days=PROVABLY_PURGED_AGE_DAYS)
     for outcome in detail.get("outcomes") or ():
         if not isinstance(outcome, Mapping):
             continue
@@ -418,9 +416,6 @@ def _read_outcome_percent(
             "unsupported",
             "settled",
         }:
-            return None
-        last_updated = _parse_utc_datetime(outcome.get("last_updated"))
-        if last_updated is not None and last_updated < purged_cutoff:
             return None
 
         raw_p = outcome.get("probability")

@@ -637,10 +637,10 @@ def test_stale_withheld_out_of_slot_and_over100_leader_swap_to_spare_or_fail():
     sched = _fixture_schedule()
     now = datetime(2026, 11, 27, 16, 0, tzinfo=timezone.utc)
 
-    # Rejects stale last_updated (>30d), unsupported source_mark, title-stale, past resolution, bad slot, sum > 100 leader.
+    # Rejects site-withheld probability (None), unsupported source_mark, title-stale, past resolution, bad slot, sum > 100 leader.
     details = _baseline_details()
     details[1001]["outcomes"][0]["source_mark"] = {"state": "unsupported"}  # e1 -> se1 (side low 22%)
-    details[1007]["outcomes"][0]["last_updated"] = "2026-08-01T00:00:00+00:00"  # e5 (>PROVABLY_PURGED_AGE_DAYS) -> se2
+    details[1007]["outcomes"][0]["probability"] = None  # e5 (withheld by get_futures_market) -> se2
     details[1009]["outcomes"][0]["probability"] = 0.92  # m2 needs slot 1 (impossible with max=99, 92+20>99) -> sm1
     details[1008]["outcomes"] = [  # non-independent sum = 135 > 100 -> rejected -> swaps to sm2 (independent=True)
         {"id": 1, "name": "North", "probability": 0.45, "is_winner": False, "is_out": False, "kalshi_no_bid": False, "source_mark": {"state": "verified"}},
