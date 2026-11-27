@@ -17,7 +17,11 @@ export interface SavedGame {
 }
 
 // The name of the browser-storage slot this game uses. A name, not a secret.
+// One slot per set (`<name>:<set id>`), so opening a link to an older set never
+// wipes a game in progress on today's. `SLOT` alone is where a game was kept
+// before sets could sit side by side; it is still read, and cleared with its set.
 const SLOT = "bainluck_guess_v1";
+const slotFor = (packId: string) => `${SLOT}:${packId}`;
 
 function cleanEntry(pack: GamePack, raw: unknown, from: PlayerEntry["from"]): PlayerEntry | null {
   if (!raw || typeof raw !== "object") return null;
@@ -47,7 +51,7 @@ function cleanEntry(pack: GamePack, raw: unknown, from: PlayerEntry["from"]): Pl
 
 export function loadGame(pack: GamePack): SavedGame | null {
   try {
-    const text = window.localStorage.getItem(SLOT);
+    const text = window.localStorage.getItem(slotFor(pack.id)) ?? window.localStorage.getItem(SLOT);
     if (!text) return null;
     const raw = JSON.parse(text) as Record<string, unknown>;
     if (raw.packId !== pack.id) return null;
@@ -70,16 +74,18 @@ export function loadGame(pack: GamePack): SavedGame | null {
 
 export function saveGame(game: SavedGame): void {
   try {
-    window.localStorage.setItem(SLOT, JSON.stringify(game));
+    window.localStorage.setItem(slotFor(game.packId), JSON.stringify(game));
   } catch {
     // Storage is a convenience. A phone that refuses it still plays.
   }
 }
 
-export function clearGame(): void {
+export function clearGame(packId: string): void {
   try {
-    window.localStorage.removeItem(SLOT);
+    window.localStorage.removeItem(slotFor(packId));
+    const old = window.localStorage.getItem(SLOT);
+    if (old && (JSON.parse(old) as Record<string, unknown>).packId === packId) window.localStorage.removeItem(SLOT);
   } catch {
-    // Nothing to clear.
+    // Storage is blocked or the old slot is unreadable. Nothing to clear.
   }
 }

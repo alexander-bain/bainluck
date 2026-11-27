@@ -60,7 +60,7 @@ export function LineChart({ title, note, series, yMax, yLabel, roundAt }: LineCh
   return (
     <figure className="rounded-3xl border-2 border-surface-border bg-surface-card p-3">
       <figcaption className="px-1 text-sm font-black text-text-primary">{title}</figcaption>
-      {note && <p className="px-1 text-xs text-text-secondary">{note}</p>}
+      {note && <p className="px-1 text-sm text-text-secondary">{note}</p>}
       <svg viewBox={`0 0 ${W} ${H}`} className="mt-1 h-auto w-full" role="img" aria-label={title}>
         {grid.map((v) => (
           <g key={v} className="text-text-muted">
