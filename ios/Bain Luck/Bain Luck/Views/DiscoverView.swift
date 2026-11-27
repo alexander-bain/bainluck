@@ -4362,7 +4362,7 @@ private struct NativeIPOComparisonRow: View {
                 .foregroundStyle(emphasized ? .primary : .secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.76)
-            Text("\(Int(((point?.probability ?? 0) * 100).rounded()))%")
+            Text(formatProbabilityOrDash(point?.probability))
                 .font(.subheadline.weight(.black).monospacedDigit())
         }
     }
@@ -4406,7 +4406,7 @@ private struct NativeThresholdComparisonRow: View {
                             .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
-                        Text("\(Int(((point.probability ?? 0) * 100).rounded()))%")
+                        Text(formatProbabilityOrDash(point.probability))
                             .font(.caption.weight(.black).monospacedDigit())
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -4473,7 +4473,7 @@ private struct NativeCompactFuturesRow: View {
                 }
                 Spacer()
                 if let leader = data.topOutcomes?.first {
-                    Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
+                    Text(formatProbabilityOrDash(leader.probability))
                         .font(.subheadline.weight(.black).monospacedDigit())
                     MovementBadge(movement: leader.movement)
                 }

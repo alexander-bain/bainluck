@@ -82,7 +82,7 @@ struct CardContextMenu: View {
 
         if let prob = Self.copyableHomeProbability(for: event) {
             Button {
-                let text = "\(event.homeTeam): \(Int(prob * 100))%"
+                let text = "\(event.homeTeam): \(formatProbability(prob))"
                 copyToClipboard(text)
             } label: {
                 Label("Copy Probability", systemImage: "doc.on.doc")
@@ -139,7 +139,7 @@ struct CardContextMenu: View {
 
         if let leader = futures.topOutcomes?.first, let prob = leader.probability {
             Button {
-                let text = "\(leader.name): \(Int(prob * 100))%"
+                let text = "\(leader.name): \(formatProbability(prob))"
                 copyToClipboard(text)
             } label: {
                 Label("Copy Probability", systemImage: "doc.on.doc")

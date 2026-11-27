@@ -55,6 +55,29 @@ nonisolated func discoverFuturesCardPercentLabel(_ percent: Int?) -> String {
     "\(percent ?? 0)%"
 }
 
+/// Open-probability-aware label helper: prints `"<1%"` for probabilities
+/// strictly inside `(0, 0.01)` (including `0.5%..<1%`) and `">99%"` when
+/// rounding would claim `100%` below `1.0`.
+nonisolated func discoverFuturesCardPercentLabel(_ percent: Int?, probability: Double?) -> String {
+    let parts = discoverFuturesCardPercentParts(percent, probability: probability)
+    return "\(parts.marker ?? "")\(parts.digits)%"
+}
+
+/// Split marker + digits for hero and outcome formatting without allowing open
+/// probabilities in `(0, 1)` to print as `0%` or `100%`.
+nonisolated func discoverFuturesCardPercentParts(
+    _ percent: Int?,
+    probability: Double?
+) -> (marker: String?, digits: String) {
+    guard let probability, probability.isFinite else {
+        return (nil, "\(percent ?? 0)")
+    }
+    return DiscoverRoundupCardModel.probabilityParts(
+        probability: probability,
+        renderedPercent: percent
+    )
+}
+
 /// The rows the SHARE IMAGE is handed — the card's whole served field, nils and
 /// all.
 ///
@@ -144,10 +167,8 @@ struct NativeFuturesDiscoverCard: View {
         discoverFuturesCardPercents(data.topOutcomes ?? [])
     }
 
-    /// The hero's number. `?? 0` preserves the previous behaviour for a card with
-    /// no leader or an unpriced one, which printed `0`.
-    private var leaderRenderedPercent: Int {
-        (renderedPercents.first ?? nil) ?? 0
+    private var leaderPercentParts: (marker: String?, digits: String) {
+        discoverFuturesCardPercentParts(renderedPercents.first ?? nil, probability: leader?.probability)
     }
 
     private var shareURL: URL {
@@ -156,7 +177,8 @@ struct NativeFuturesDiscoverCard: View {
 
     private var shareMessage: String {
         if let leader, leader.probability != nil {
-            return "\(leader.name) at \(leaderRenderedPercent)% — \(data.name) on Bain Luck"
+            let heroText = discoverFuturesCardPercentLabel(renderedPercents.first ?? nil, probability: leader.probability)
+            return "\(leader.name) at \(heroText) — \(data.name) on Bain Luck"
         }
         return "\(data.name) on Bain Luck"
     }
@@ -318,7 +340,8 @@ struct NativeFuturesDiscoverCard: View {
                         // metrics against black-weight numerals, so it was
                         // the first glyph to lose width under compression.
                         HStack(alignment: .firstTextBaseline, spacing: 0) {
-                            Text("\(leaderRenderedPercent)")
+                            let heroParts = leaderPercentParts
+                            Text("\(heroParts.marker ?? "")\(heroParts.digits)")
                                 .font(.system(size: heroNumeralSize, weight: .black).monospacedDigit())
                             Text("%")
                                 .font(.system(size: heroNumeralSize, weight: .black))
@@ -418,7 +441,9 @@ struct NativeFuturesDiscoverCard: View {
                         percentLabels: orderedRows.map { row in
                             let idx = row.originalIndex
                             return discoverFuturesCardPercentLabel(
-                                percents.indices.contains(idx) ? percents[idx] : nil)
+                                percents.indices.contains(idx) ? percents[idx] : nil,
+                                probability: row.outcome.probability
+                            )
                         },
                         availableWidth: outcomeRowWidth,
                         typeSize: dynamicTypeSize,
@@ -615,7 +640,7 @@ struct NativeFuturesDiscoverCard: View {
             }
         }
         .frame(height: 7)
-        let percentLabel = Text(discoverFuturesCardPercentLabel(percent))
+        let percentLabel = Text(discoverFuturesCardPercentLabel(percent, probability: outcome.probability))
             .font(.caption.weight(.bold).monospacedDigit())
             .lineLimit(1)
             .frame(width: columns.percentWidth, alignment: .trailing)

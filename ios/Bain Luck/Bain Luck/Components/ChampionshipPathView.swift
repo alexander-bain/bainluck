@@ -514,7 +514,7 @@ struct ChampionshipStageBadges: View {
 
     static func formatProb(_ p: Double) -> String {
         if p >= 0.995 { return ">99%" }
-        if p <= 0.005 { return "<1%" }
+        if p < 0.01 { return "<1%" }
         return "\(Int((p * 100).rounded()))%"
     }
 }

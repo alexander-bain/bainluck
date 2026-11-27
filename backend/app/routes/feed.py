@@ -17170,7 +17170,10 @@ async def _score_futures(
             # personalization feature tokens, the card-archetype axes, and the
             # public `discover_llm` payload. v1 profiles read natively; v2
             # profiles are adapted to the v1 shape (#1808).
-            discover_llm_metadata = _get_discover_llm_view(market.market_metadata)
+            discover_llm_metadata = _get_discover_llm_view(
+                market.market_metadata,
+                outcome_names=(outcome.name for outcome in market.outcomes),
+            )
             llm_score_adjustment = _discover_llm_score_adjustment(discover_llm_metadata)
             # #13100 (Ruling 277: A): a far-out quiet awards market whose gravity
             # is deferred gets no positive discover_llm_score lift above its

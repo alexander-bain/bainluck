@@ -660,7 +660,7 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
 
     static func probabilityParts(probability: Double, renderedPercent: Int?) -> (marker: String?, digits: String) {
         let clamped = min(1.0, max(0.0, probability))
-        if clamped > 0.0 && clamped < 0.005 {
+        if clamped > 0.0 && clamped < 0.01 {
             return ("<", "1")
         }
         if clamped > 0.995 && clamped < 1.0 {
