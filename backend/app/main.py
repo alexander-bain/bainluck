@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 from app.routes import activitykit
 from app.routes import devices
 from app.routes import paired_metrics
-from app.routes import containers, events, event_stream, event_publications, market_stream, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_rate_limit, admin_speed_switch, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, admin_ranking_eval, auth, user, feed, feed_prices, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, tournaments, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe, telemetry, guess
+from app.routes import containers, events, event_stream, event_publications, market_stream, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_cu_labeling, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_rate_limit, admin_speed_switch, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, admin_ranking_eval, auth, user, feed, feed_prices, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, tournaments, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe, telemetry, guess
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -352,6 +352,7 @@ app.include_router(admin_rate_limit.router, prefix="/api", tags=["Admin Rate Lim
 app.include_router(admin_speed_switch.router, prefix="/api", tags=["Admin Speed Switch"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_feed_config.router, prefix="/api/admin", tags=["Admin Feed Config"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_label_pass.router, prefix="/api/admin", tags=["Admin Label Pass"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_cu_labeling.router, prefix="/api/admin", tags=["Admin CU Labeling"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_team_clusters.router, prefix="/api/admin", tags=["Admin Team Clusters"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_cockpit.router, prefix="/api", tags=["Admin Cockpit"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_file_issue.router, prefix="/api", tags=["Admin File Issue"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
