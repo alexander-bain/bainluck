@@ -1,0 +1,57 @@
+{
+  "date_utc": "2026-10-21",
+  "parent_head": "654df18364946fd81819e3801daafa4d7692bfde",
+  "scope": "Portable selector only; no real Redis process or socket run in cloud",
+  "passed": {
+    "runtime_contract": 13,
+    "artifact_selection": 3,
+    "backend_startup": 4,
+    "frontend_build_exit": 0,
+    "post_build_typecheck_exit": 0,
+    "typecheck_errors": 66,
+    "unchanged_typecheck_baseline": 66
+  },
+  "independent_review": {
+    "runtime_contract": 13,
+    "artifact_selection": 3,
+    "actual_startup_refusal_probes": 3,
+    "review_sha256": "1039ed8b0acb0363ae5ccdb2093985967ffc9a669576bee63acc45f15d2037b4"
+  },
+  "prior_interrupted_build": {
+    "completion": "unknown; old process unavailable before fresh retry",
+    "metadata_transmission": "unknown",
+    "log_sha256": "1a4200fdb584faa55888900f9ae2ebce86d084c6513692991e117764b053dc9c"
+  },
+  "logs": {
+    "evidence/validation/runtime-portability-tests.log": {
+      "raw_sha256": "68e4e8850b792985249cf313909a269ee6d0640f24b0daf103b1d1e5ab552d75",
+      "published_sha256": "68e4e8850b792985249cf313909a269ee6d0640f24b0daf103b1d1e5ab552d75",
+      "normalization": "line endings and trailing whitespace only"
+    },
+    "evidence/validation/runtime-portability-artifacts.log": {
+      "raw_sha256": "ddf8457d33eb1fc4e4802f9611a41fe3aa1cfcb7c6734607a56d7f0fb94a497d",
+      "published_sha256": "ddf8457d33eb1fc4e4802f9611a41fe3aa1cfcb7c6734607a56d7f0fb94a497d",
+      "normalization": "line endings and trailing whitespace only"
+    },
+    "evidence/validation/portability-backend-startup.log": {
+      "raw_sha256": "86f2fc56bdde2648ca8c0753604bb85803a4828ebb5fa812a135964094ad59d9",
+      "published_sha256": "86f2fc56bdde2648ca8c0753604bb85803a4828ebb5fa812a135964094ad59d9",
+      "normalization": "line endings and trailing whitespace only"
+    },
+    "evidence/validation/portability-frontend-build-retry.log": {
+      "raw_sha256": "f020c753582972278e69e485674616204458ee101ca6a71a6f196e967a398c92",
+      "published_sha256": "4dc1ac16a1a7778ddeb1a8d422c14837246de2245d81eb7808933bb747b3f65b",
+      "normalization": "line endings and trailing whitespace only"
+    },
+    "evidence/validation/portability-post-build-typecheck.log": {
+      "raw_sha256": "ddc21043c5aff58dea472feb33621c2216591a74e0275ed8a44eb8b5dec41ad1",
+      "published_sha256": "ddc21043c5aff58dea472feb33621c2216591a74e0275ed8a44eb8b5dec41ad1",
+      "normalization": "line endings and trailing whitespace only"
+    }
+  },
+  "hosted_security_hold": {
+    "head": "654df18364946fd81819e3801daafa4d7692bfde",
+    "check_url": "https://github.com/alexander-bain/bainluck/runs/119345103182",
+    "summary": "CodeQL reports 1 error and47 notes; exact alert triage pending at this receipt. Not dismissed or treated as passing."
+  }
+}

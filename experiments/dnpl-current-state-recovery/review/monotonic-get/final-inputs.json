@@ -1,0 +1,18 @@
+{
+  "candidate": {
+    "monotonic-candidate/useLiveEventStream.ts": "73c6cc7257f1fbf7fbc78632400d1984782e8f13f2a6d2a25c0910efade8aeb0",
+    "monotonic-candidate/liveStreamController.ts": "3f4a75b89733814009c85da1f04a1cb1cb4d97d0a01c10e4b69e8db4513bd0a8",
+    "monotonic-candidate/acceptCurrentPreview.ts": "2b191c78865ec3007a681e95e1185b8a09d6b70ebe1893b377e71922c2fd332d",
+    "monotonic-candidate/install_route.py": "4c50455c38320f07be0a576097b2e82754d77e7741b81be195d13b6d837024dd",
+    "monotonic-candidate/requestLease.ts": "eec478a973407fac3558d518d5e159a4842802203b327a66ddf05c1c4145b666",
+    "monotonic-candidate/current_preview.py": "071dcb55e22126b0475caf0b3e1984e0a271ad2a174ba90b73f0eb1e552d980e",
+    "monotonic-candidate/EventPage.tsx": "0128114a5515497770ba4a990c71b60fc4b8b999cf6d56a36c5064eac326dbce",
+    "monotonic-candidate/blendPreview.ts": "1370f268029045da6b4dd82d8404d2fa1a0f7c72b29421b04b5ecb298418c749",
+    "monotonic-candidate/currentPreviewProbe.ts": "a7410673b208786ef403ba65557a891d3414f6e320c1d8cfc718c16a883409e1",
+    "monotonic-candidate/PendingHero.tsx": "b7b0df9e3b953eb04b1a780a6a15a4734210649ff8366060a8e0bc3ac9f544ea"
+  },
+  "test": {
+    "review/monotonic-get/test_mounted_get_expiry.cjs": "b4d199e87c5139f75bc4e434ae5653025521a6be1dcf15938d646e31950cc00a",
+    "review/monotonic-get/mounted-harness.cjs": "9b970d6a7f9d63854d8ffa20927bc2e73bc865d9ff6e86957d5b103fcb6cc7e9"
+  }
+}

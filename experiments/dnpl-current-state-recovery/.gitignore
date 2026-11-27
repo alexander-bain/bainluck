@@ -1,0 +1,6 @@
+source
+**/node_modules/
+.work/
+**/__pycache__/
+**/.pytest_cache/
+*.tsbuildinfo

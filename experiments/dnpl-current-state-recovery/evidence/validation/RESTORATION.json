@@ -1,0 +1,91 @@
+{
+  "restored_at_utc": "2026-10-21T17:56:00Z",
+  "base_head": "4ea72a1cde247c6f5b914323b761bdefddafad4a",
+  "scope": "Restored isolated CodeQL correction, focused checks and required application publication gates; no production wiring, Redis server or new browser capture",
+  "fresh_checks": {
+    "producer": 29,
+    "independent_producer": 12,
+    "runtime_contract_no_socket": 13,
+    "artifact_selection_no_socket": 3,
+    "command_exit": 0,
+    "python_ast_files": 5,
+    "cjs_syntax_files": 2,
+    "diff_check": "clean",
+    "client_selected": 81,
+    "client_independent_mounted": 17,
+    "snapshot_model": 8,
+    "scoped_tsc_exit": 0,
+    "backend_startup": 4,
+    "frontend_build_exit": 0,
+    "post_build_typecheck_exit": 0,
+    "typecheck_existing_errors": 66,
+    "typecheck_baseline_errors": 66
+  },
+  "fresh_static_review_sha256": "0bcf7b02a199d918cf6b8e3c399fc28417694f47f9bffeedc21bdd6ffbb51cbf",
+  "historical_only": "The prior numeric Lua/adapter/model tests are unchanged source-hash evidence, not reruns in this restored workspace. Two earlier interrupted correction-build attempts have unknown outcomes. This receipt records a new observed successful build after clarified permission.",
+  "pending_gates": [
+    "Exact staged index review",
+    "Hosted CodeQL reevaluation after publication"
+  ],
+  "logs": {
+    "evidence/validation/restored-producer-tests.log": {
+      "raw_sha256": "cc2bbaee47c7e56ca2fe0ba29f0ab07f2dbf5cd09a3b2a56ccd9eeda51140b0e",
+      "published_sha256": "cc2bbaee47c7e56ca2fe0ba29f0ab07f2dbf5cd09a3b2a56ccd9eeda51140b0e"
+    },
+    "evidence/validation/restored-review-producer-tests.log": {
+      "raw_sha256": "88272c1a42b4854bf1bf848cde091d6b18b2abf5aa32b35fa5f938ddd0b2ed6d",
+      "published_sha256": "88272c1a42b4854bf1bf848cde091d6b18b2abf5aa32b35fa5f938ddd0b2ed6d"
+    },
+    "evidence/validation/restored-runtime-contract-tests.log": {
+      "raw_sha256": "921b3cf7965fb988e913d39a5033cb63b3493303e5883a98428f542f10e6fce2",
+      "published_sha256": "921b3cf7965fb988e913d39a5033cb63b3493303e5883a98428f542f10e6fce2"
+    },
+    "evidence/validation/restored-selector-tests.log": {
+      "raw_sha256": "5ca86342b4d2c10282c1f4cbb4e5423b1fbcda602b409180a024d06dec75bcc3",
+      "published_sha256": "5ca86342b4d2c10282c1f4cbb4e5423b1fbcda602b409180a024d06dec75bcc3"
+    },
+    "evidence/validation/restored-client-tests.log": {
+      "raw_sha256": "757dd202c7f10d2794bc681cbf1afb4818e7e9895ab211d044168cf885d5a6bf",
+      "published_sha256": "757dd202c7f10d2794bc681cbf1afb4818e7e9895ab211d044168cf885d5a6bf"
+    },
+    "evidence/validation/restored-independent-client-tests.log": {
+      "raw_sha256": "cfb0bf8cbcdd2ede8f617c899e5638f2f703d850f5deed0ab5ca832a3241d88b",
+      "published_sha256": "cfb0bf8cbcdd2ede8f617c899e5638f2f703d850f5deed0ab5ca832a3241d88b"
+    },
+    "evidence/validation/restored-server-model-tests.log": {
+      "raw_sha256": "54d62a0149f447ee2867b9e102287fade45e0a057ff3b969489678c98884e9ae",
+      "published_sha256": "54d62a0149f447ee2867b9e102287fade45e0a057ff3b969489678c98884e9ae"
+    },
+    "evidence/validation/restored-scoped-tsc.log": {
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "evidence/validation/restored-startup.log": {
+      "raw_sha256": "ed520a34654204a5734cb0260fa5f549b855835e8ec34b53e02d9abb57a5b36a",
+      "published_sha256": "ed520a34654204a5734cb0260fa5f549b855835e8ec34b53e02d9abb57a5b36a"
+    },
+    "evidence/validation/restored-frontend-build.log": {
+      "raw_sha256": "0a6722273633f400689071734a6d840278290c4ff7614a48fd81cc392e64ab06",
+      "published_sha256": "f61425f0b0a281147e03fd25c79a1ef8e98bd20893b98a30f8721c46baff6301"
+    },
+    "evidence/validation/restored-typecheck.log": {
+      "raw_sha256": "08bd6caf92246dfff54a5831bd66e9426069a7c12f5cecd36ccdd13fd8e3e0f9",
+      "published_sha256": "08bd6caf92246dfff54a5831bd66e9426069a7c12f5cecd36ccdd13fd8e3e0f9"
+    }
+  },
+  "completed_at_utc": "2026-10-21T18:14:09.757137+00:00",
+  "build_scope": {
+    "next_telemetry_disabled": true,
+    "sentry_auth_token_supplied": false,
+    "possible_build_diagnostic_transmission_authorized": true,
+    "authorization_at_utc": "2026-10-21T17:58:45Z",
+    "source_upload_credentials_added": false,
+    "deployment": false
+  },
+  "dependency_restore": {
+    "frontend_lock_unchanged": true,
+    "harness_lock_unchanged": true,
+    "initial_npm_default_cache_failure": "ENOENT /home/agent/.npm; successful retry used workspace-local cache",
+    "python_freeze": "evidence/validation/restored-python-freeze.txt"
+  }
+}

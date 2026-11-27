@@ -1,0 +1,5 @@
+baseline: delayed-old result=published_retained; stored seq=1e+14; retained payload=OLD
+baseline: newer-revoke result=published_duplicate_or_older; stored seq=1.0000000000001e+14; retained kind=blend
+candidate: delayed-old result=published_duplicate_or_older; stored seq=100000000000004; retained payload=NEW
+candidate: newer-revoke result=published_retained; stored seq=100000000000007; retained kind=revoke
+PASS both old failures reproduced and corrected; interpreter plus deterministic commands only
