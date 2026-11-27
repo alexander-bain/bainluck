@@ -214,7 +214,7 @@ describe("Item 9 KitContainerPageView & preview page", () => {
     expect(themeCss).toContain(".bg-kit-track");
   });
 
-  test("KitContainerPagesPreviewResponse supports status=not_built_yet and frozen deck_id", () => {
+  test("KitContainerPagesPreviewResponse supports status=not_built_yet, status=error, and frozen deck_id", () => {
     const emptyDeck: import("@/components/collections/KitContainerPageView").KitContainerPagesPreviewResponse = {
       kit_page_version: 1,
       status: "not_built_yet",
@@ -223,7 +223,24 @@ describe("Item 9 KitContainerPageView & preview page", () => {
       count: 0,
       pages: [],
     };
+    const errorDeck: import("@/components/collections/KitContainerPageView").KitContainerPagesPreviewResponse = {
+      kit_page_version: 1,
+      status: "error",
+      error: "Could not read preview container deck from Redis.",
+      deck_id: null,
+      snapshot_captured_at: null,
+      count: 0,
+      pages: [],
+    };
     expect(emptyDeck.status).toBe("not_built_yet");
     expect(emptyDeck.pages).toEqual([]);
+    expect(errorDeck.status).toBe("error");
+    expect(errorDeck.error).toContain("Redis");
+    const gradeSrc = fs.readFileSync(
+      path.join(process.cwd(), "app", "grade", "containers-v2", "page.tsx"),
+      "utf-8",
+    );
+    expect(gradeSrc).toContain('previewRes.status === "error"');
+    expect(fs.readFileSync(path.join(process.cwd(), "app", "admin", "containers-kit-preview", "page.tsx"), "utf-8")).toContain('res.status === "error"');
   });
 });

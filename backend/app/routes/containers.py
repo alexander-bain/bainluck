@@ -764,23 +764,78 @@ async def get_kit_container_pages_preview(
 
     try:
         rc = get_redis_client()
-        cached_raw = rc.get(redis_key) if rc is not None else None
-        if cached_raw:
+    except Exception as exc:
+        logger.warning("kit-pages preview Redis client lookup failed: %s", exc, exc_info=True)
+        return {
+            "kit_page_version": 1,
+            "status": "error",
+            "error": "Could not connect to preview cache.",
+            "deck_id": requested_deck_id,
+            "snapshot_captured_at": None,
+            "covered_ids_count": 0,
+            "timings_ms": None,
+            "count": 0,
+            "pages": [],
+        }
+
+    if rc is None:
+        logger.warning("kit-pages preview Redis client unavailable")
+        return {
+            "kit_page_version": 1,
+            "status": "error",
+            "error": "Preview cache client is unavailable.",
+            "deck_id": requested_deck_id,
+            "snapshot_captured_at": None,
+            "covered_ids_count": 0,
+            "timings_ms": None,
+            "count": 0,
+            "pages": [],
+        }
+
+    try:
+        cached_raw = rc.get(redis_key)
+    except Exception as exc:
+        logger.warning("kit-pages preview Redis read failed for %s: %s", redis_key, exc, exc_info=True)
+        return {
+            "kit_page_version": 1,
+            "status": "error",
+            "error": "Could not read preview container deck from Redis.",
+            "deck_id": requested_deck_id,
+            "snapshot_captured_at": None,
+            "covered_ids_count": 0,
+            "timings_ms": None,
+            "count": 0,
+            "pages": [],
+        }
+
+    if cached_raw:
+        try:
             cached = json.loads(cached_raw)
-            if isinstance(cached, dict) and cached.get("pages"):
-                pages = cached.get("pages") or []
-                return {
-                    "kit_page_version": 1,
-                    "status": "ready",
-                    "deck_id": cached.get("deck_id"),
-                    "snapshot_captured_at": cached.get("updated_at"),
-                    "covered_ids_count": int(cached.get("covered_ids_count") or 0),
-                    "timings_ms": cached.get("timings_ms"),
-                    "count": len(pages),
-                    "pages": pages,
-                }
-    except Exception:
-        pass
+        except (TypeError, ValueError) as exc:
+            logger.warning("kit-pages preview Redis payload invalid JSON for %s: %s", redis_key, exc, exc_info=True)
+            return {
+                "kit_page_version": 1,
+                "status": "error",
+                "error": "Stored preview container deck payload could not be parsed.",
+                "deck_id": requested_deck_id,
+                "snapshot_captured_at": None,
+                "covered_ids_count": 0,
+                "timings_ms": None,
+                "count": 0,
+                "pages": [],
+            }
+        if isinstance(cached, dict) and cached.get("pages"):
+            pages = cached.get("pages") or []
+            return {
+                "kit_page_version": 1,
+                "status": "ready",
+                "deck_id": cached.get("deck_id"),
+                "snapshot_captured_at": cached.get("updated_at"),
+                "covered_ids_count": int(cached.get("covered_ids_count") or 0),
+                "timings_ms": cached.get("timings_ms"),
+                "count": len(pages),
+                "pages": pages,
+            }
 
     return {
         "kit_page_version": 1,

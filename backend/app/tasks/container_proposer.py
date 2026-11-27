@@ -62,8 +62,8 @@ async def load_covered_market_ids(session: Any) -> set[int]:
         if hasattr(session, "rollback"):
             try:
                 await session.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_exc:
+                logger.debug("[container-proposer] rollback after graph SQL read failed: %s", rollback_exc)
     try:
         def_ids, _stats = await definition_coverage(session)
         covered |= def_ids
@@ -72,8 +72,8 @@ async def load_covered_market_ids(session: Any) -> set[int]:
         if hasattr(session, "rollback"):
             try:
                 await session.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_exc:
+                logger.debug("[container-proposer] rollback after definition_coverage failed: %s", rollback_exc)
     return covered
 
 
@@ -94,8 +94,8 @@ async def load_covered_public_set_names(session: Any) -> set[str]:
         if hasattr(session, "rollback"):
             try:
                 await session.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_exc:
+                logger.debug("[container-proposer] rollback after container name lookup failed: %s", rollback_exc)
     return names
 
 

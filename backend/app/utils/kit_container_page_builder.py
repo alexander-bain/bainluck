@@ -366,27 +366,155 @@ def _binary_matches_multi_parent(binary_mkt: Mapping[str, Any], parent_outcomes:
     return any(len(oname) >= 3 and f" {oname} " in title_norm for oname in parent_outcomes)
 
 
+def _canonical_question_and_deadline(
+    name: str,
+    default_year: int,
+    *,
+    resolution_date: Any = None,
+) -> tuple[str, str | None]:
+    """Return `(dateless_stem_qkey, canonical_deadline_iso)` equating `before Jan 1, N+1` with `by Dec 31, N`."""
+    raw = str(name or "").strip()
+    dm = _parse_date_marker(raw, default_year=default_year)
+    canon_date: str | None = None
+    stem_text = raw
+    if dm is not None:
+        stem_text = str(dm.get("display_stem") or dm.get("stem") or raw)
+        dt = dm["sort_dt"]
+        phrase_low = str(dm.get("phrase") or "").lower()
+        if phrase_low.startswith("before ") and dt.month == 1 and dt.day == 1:
+            dt = dt - timedelta(days=1)
+        canon_date = dt.date().isoformat()
+    elif resolution_date is not None:
+        rd = _parse_iso_dt(resolution_date)
+        if rd is not None:
+            canon_date = rd.date().isoformat()
+    stem_qkey = _normalize_question_key(stem_text)
+    if not stem_qkey:
+        stem_qkey = _normalize_question_key(raw)
+    return stem_qkey, canon_date
+
+
+def _blend_binary_twin_bucket(bucket: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Pick lead twin and combine binary probabilities across distinct venues when sources disagree."""
+    ordered = sorted(
+        (dict(x) for x in bucket),
+        key=lambda x: (-_sources_count(x), -int(x.get("volume_24h") or 0), int(x.get("id") or 0)),
+    )
+    lead = dict(ordered[0])
+    sources = {str(x.get("source") or "kalshi").lower() for x in ordered}
+    lead["sources_count"] = max(_sources_count(lead), len(sources))
+    if len(sources) >= 2 and all(_is_binary_market(x) for x in ordered):
+        by_src: dict[str, tuple[int, float]] = {}
+        for x in ordered:
+            src_k = str(x.get("source") or "kalshi").lower()
+            vol = int(x.get("volume_24h") or 0)
+            frac, _, _ = _top_outcome_cell(x)
+            if src_k not in by_src or vol > by_src[src_k][0]:
+                by_src[src_k] = (vol, frac)
+        if len(by_src) >= 2:
+            combined_prob = max(0.0, min(1.0, sum(v[1] for v in by_src.values()) / len(by_src)))
+            combined_pct = rendered_percent(combined_prob)
+            new_outs = []
+            for o in lead.get("outcomes") or ():
+                if not isinstance(o, Mapping):
+                    continue
+                oc = dict(o)
+                oname = str(oc.get("name") or "").strip().lower()
+                if oname == "yes":
+                    oc["probability"] = combined_prob
+                    oc["current_probability"] = combined_prob
+                    oc["rendered_percent"] = combined_pct
+                elif oname == "no":
+                    no_p = max(0.0, min(1.0, 1.0 - combined_prob))
+                    oc["probability"] = no_p
+                    oc["current_probability"] = no_p
+                    oc["rendered_percent"] = rendered_percent(no_p)
+                else:
+                    oc["probability"] = combined_prob
+                    oc["current_probability"] = combined_prob
+                    oc["rendered_percent"] = combined_pct
+                new_outs.append(oc)
+            if new_outs:
+                lead["outcomes"] = new_outs
+    return lead
+
+
 def _dedupe_twins(markets: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Collapse cross-venue twins and same-group binary clones of multi-outcome fields."""
+    """Collapse cross-venue twins (including before Jan 1 / by Dec 31 equivalents) and same-group clones."""
+    ref_now = datetime.now(timezone.utc)
+    default_year = ref_now.year
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for m in markets:
         item = dict(m)
         gid = str(item.get("group_id") or "").strip()
-        qkey = _normalize_question_key(str(item.get("name") or item.get("title") or ""))
-        dedupe_key = f"q:{qkey}" if qkey else f"gid:{gid}:{item.get('id')}"
+        raw_name = str(item.get("name") or item.get("title") or "")
+        qkey = _normalize_question_key(raw_name)
+        if _is_binary_market(item):
+            stem_qkey, canon_date = _canonical_question_and_deadline(
+                raw_name,
+                default_year,
+                resolution_date=None,
+            )
+            if stem_qkey and canon_date:
+                dedupe_key = f"bd:{stem_qkey}@{canon_date}"
+            elif qkey:
+                dedupe_key = f"q:{qkey}"
+            else:
+                dedupe_key = f"gid:{gid}:{item.get('id')}"
+        else:
+            dedupe_key = f"q:{qkey}" if qkey else f"gid:{gid}:{item.get('id')}"
         groups[dedupe_key].append(item)
 
-    deduped: list[dict[str, Any]] = []
-    for bucket in groups.values():
-        bucket.sort(key=lambda x: (-_sources_count(x), -int(x.get("volume_24h") or 0), int(x.get("id") or 0)))
-        lead = dict(bucket[0])
-        sources = {str(x.get("source") or "kalshi").lower() for x in bucket}
-        lead["sources_count"] = max(_sources_count(lead), len(sources))
-        deduped.append(lead)
+    deduped = [_blend_binary_twin_bucket(bucket) for bucket in groups.values()]
+
+    # Absorb binary markets duplicating a rung on a multi-outcome date-ladder market, combining distinct sources.
+    multi_date_rungs: dict[tuple[str, str], tuple[dict[str, Any], dict[str, Any]]] = {}
+    for m in deduped:
+        if _is_binary_market(m):
+            continue
+        m_title = str(m.get("name") or m.get("title") or "")
+        m_stem = _normalize_question_key(re.sub(r"\s+(?:by|before)\.\.\.\??$", "", m_title))
+        if not m_stem:
+            continue
+        for o in m.get("outcomes") or ():
+            if not isinstance(o, Mapping):
+                continue
+            _, rung_date = _canonical_question_and_deadline(
+                str(o.get("name") or ""),
+                default_year,
+            )
+            if rung_date:
+                multi_date_rungs[(m_stem, rung_date)] = (m, o)  # type: ignore[assignment]
+
+    if multi_date_rungs:
+        absorbed_ids: set[int] = set()
+        for m in deduped:
+            if not _is_binary_market(m) or m.get("id") is None:
+                continue
+            b_stem, b_date = _canonical_question_and_deadline(
+                str(m.get("name") or m.get("title") or ""),
+                default_year,
+            )
+            if not b_stem or not b_date or (b_stem, b_date) not in multi_date_rungs:
+                continue
+            parent_m, rung_o = multi_date_rungs[(b_stem, b_date)]
+            src_parent = str(parent_m.get("source") or "kalshi").lower()
+            src_bin = str(m.get("source") or "kalshi").lower()
+            if src_parent != src_bin:
+                p_rung = _normalize_prob(rung_o.get("current_probability") if rung_o.get("current_probability") is not None else rung_o.get("probability"))
+                p_bin, _, _ = _top_outcome_cell(m)
+                if p_rung is not None:
+                    blended = max(0.0, min(1.0, (p_rung + p_bin) / 2.0))
+                    rung_o["probability"] = blended
+                    rung_o["current_probability"] = blended
+                    rung_o["rendered_percent"] = rendered_percent(blended)
+                    parent_m["sources_count"] = max(_sources_count(parent_m), 2)
+            absorbed_ids.add(int(m["id"]))
+        if absorbed_ids:
+            deduped = [m for m in deduped if m.get("id") not in absorbed_ids]
 
     # Collapse binary submarkets that share a group_id with an eligible multi-outcome parent
     # (e.g. "Will Clavicular visit Russia?" alongside "Which countries will Clavicular visit?").
-    ref_now = datetime.now(timezone.utc)
     parent_outcomes_by_gid: dict[str, set[str]] = defaultdict(set)
     for m in deduped:
         gid = str(m.get("group_id") or "").strip()
@@ -545,30 +673,31 @@ _SECTION_THEME_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bpublicly\s+insult\b", re.I), "public insults"),
     (re.compile(r"\bpublicly\s+praise\b", re.I), "public praise"),
     (re.compile(r"\b(?:stage|keynote|conference|earnings call)\b", re.I), "stage remarks"),
-    (re.compile(r"\b(?:say|mention|speak|remarks?)\b", re.I), "public statements"),
+    (re.compile(r"\b(?:say\s+(?:the\s+words?|\"|\u201c)|mention\s+[A-Z]|public\s+remarks?|public\s+statements?)\b", re.I), "public statements"),
     (re.compile(r"\b(?:token\s+price|output\s+token|api\s+pric\w*|frontier.*price)\b", re.I), "token pricing"),
     (re.compile(r"\b(?:visit|travel\s+to|tourist|tourism|countries\s+(?:will|to)\s+visit|destination)\b", re.I), "travel destinations"),
     (re.compile(r"\b(?:insult|praise|criticiz\w*|endorse\w*)\b", re.I), "public remarks"),
-    (re.compile(r"\b(?:approval\s+rating|impeach\w*|pardon|veto|executive\s+order)\b", re.I), "executive actions"),
+    (re.compile(r"\bapproval\s+rating\b", re.I), "approval rating"),
+    (re.compile(r"\b(?:impeach\w*|pardon|veto|executive\s+order)\b", re.I), "executive actions"),
     (re.compile(r"\b(?:academy\s+awards?|oscar|golden\s+globes?|emmy|grammy|nomina\w*|best\s+picture|best\s+actor|best\s+actress|best\s+visual|best\s+sound|best\s+cinematography|person\s+of\s+the\s+year|nobel|pulitzer|prize)\b", re.I), "awards & honors"),
     (re.compile(r"\b(?:rotten\s+tomatoes|tomatometer|popcornmeter|metacritic)\b", re.I), "critic & fan scores"),
     (re.compile(r"\b(?:box\s+office|opening\s+weekend|gross)\b", re.I), "box office performance"),
     (re.compile(r"\b(?:when\s+will\b.*\bbe\s+released|be\s+released|be\s+delayed|premiere|opening\s+date)\b", re.I), "release timeline"),
-    (re.compile(r"\b(?:criminally\s+charg\w*|fine[ds]?\b|indict\w*|sue[ds]?\b|lawsuit|prosecut\w*|investigat\w*|antitrust|subpoena|testify|congress|regulator|trial)\b", re.I), "legal & enforcement"),
+    (re.compile(r"\b(?:criminally\s+charg\w*|fine[ds]?\b|indict\w*|sue[ds]?\b|lawsuit|prosecut\w*|criminal\s+investigat\w*|regulatory\s+investigat\w*|antitrust|subpoena|testify\s+(?:before|in)|(?:criminal|court|jury|federal|civil)\s+trial)\b", re.I), "legal & enforcement"),
     (re.compile(r"\b(?:outage|ground\s+stop|attributed\s+to|technical\s+failure|system\s+failure|cyberattack|hack)\b", re.I), "outage causes"),
     (re.compile(r"\b(?:sandbox\s+escape|training\s+pause|self-improvement|millennium\s+prize|#1\s+ai|frontier\s+model|humanity.?s\s+last\s+exam|benchmark|agi|superintelligence)\b", re.I), "AI & safety"),
-    (re.compile(r"\b(?:earbuds|headphones|clip-on|hardware|wearable|device|glasses|headset)\b", re.I), "hardware & devices"),
+    (re.compile(r"\b(?:earbuds|headphones|clip-on|hardware|wearable|(?:hardware|wearable|ai|consumer)\s+device|smart\s+glasses|headset)\b", re.I), "hardware & devices"),
     (re.compile(r"\b(?:valuation|market\s+cap|ipo|revenue|trillion|billion)\b", re.I), "market valuations"),
     (re.compile(r"\b(?:s&p\s+500|nasdaq|bankrupt\w*|default|acqui\w*|merger|spin[- ]?off|stock\s+split|auditor)\b", re.I), "corporate milestones"),
-    (re.compile(r"\b(?:launch\s+in|operate\s+in|expand\s+to)\b", re.I), "city expansion"),
-    (re.compile(r"\b(?:join\s+a\s+new|found\s+a\s+new|resign|step\s+down|removed|removal|oust|ceo|chair|board|appoint)\b", re.I), "career & roles"),
-    (re.compile(r"\b(?:halftime|super\s+bowl|coachella|big\s+game|post\s+again|most\s+searched|meet\s+[A-Z]|tour|concert|perform\s+at|attend)\b", re.I), "public appearances"),
-    (re.compile(r"\b(?:album|song|billboard|spotify|chart)\b", re.I), "charts & releases"),
-    (re.compile(r"\b(?:military\s+action|ground\s+operation|airstrike|strike\s+on)\b", re.I), "military action"),
+    (re.compile(r"\b(?:operate\s+in|expand\s+to|service\s+in\s+[A-Z])\b", re.I), "city expansion"),
+    (re.compile(r"\b(?:join\s+a\s+new|found\s+a\s+new|resign|step\s+down|removed|removal|oust|ceo|chair|(?:join|leave|sit\s+on|appointed\s+to)\s+(?:the\s+)?board|board\s+of\s+directors)\b", re.I), "career & roles"),
+    (re.compile(r"\b(?:halftime\s+show|super\s+bowl|coachella|big\s+game|meet\s+[A-Z]|concert|world\s+tour|eras\s+tour|perform\s+at|public\s+appearance)\b", re.I), "public appearances"),
+    (re.compile(r"\b(?:studio\s+album|new\s+album|new\s+song|album\s+release|lead\s+single|billboard\s+(?:hot\s+100|200|chart)|spotify\s+(?:top|chart)|music\s+chart)\b", re.I), "charts & releases"),
+    (re.compile(r"\b(?:military\s+action|ground\s+operation|airstrike|air\s+strike|drone\s+strike|missile\s+strike|strike\s+(?:on|against))\b", re.I), "military action"),
     (re.compile(r"\b(?:withdraw\w*|annex\w*|normaliz\w*|ceasefire|truce|peace\s+talks?|diploma\w*)\b", re.I), "borders & diplomacy"),
-    (re.compile(r"\b(?:strike|ceasefire|truce|talks|summit|peace|nato|territory|nuclear)\b", re.I), "conflict & talks"),
-    (re.compile(r"\b(?:rate|cut|hike|bps|inflation|dissent|policy)\b", re.I), "policy decisions"),
-    (re.compile(r"\b(?:launch|unveil|debut|trailer|sequel)\b", re.I), "upcoming launches"),
+    (re.compile(r"\b(?:ceasefire|truce|peace\s+talks?|nato\s+summit|peace\s+summit|nuclear\s+(?:deal|test|strike|weapon))\b", re.I), "conflict & talks"),
+    (re.compile(r"\b(?:(?:interest|policy|funds)\s+rate|rate\s+(?:cut|hike)|central\s+bank\s+(?:cut|hike|dissent)|bps\b|basis\s+points?|monetary\s+policy)\b", re.I), "policy decisions"),
+    (re.compile(r"\b(?:product\s+launch|commercial\s+launch|official\s+trailer|official\s+teaser|box\s+office\s+sequel)\b", re.I), "upcoming launches"),
 )
 
 _THEME_SYNONYM_ALTS: dict[str, tuple[str, ...]] = {
@@ -786,7 +915,22 @@ def _derive_section_headline(
             if all(pat.search(t) for t in titles_list):
                 matched_themes.append((idx, label))
         for _idx, label in matched_themes:
-            candidates = [_title_case_phrase(label)]
+            candidates = []
+            if label == "approval rating":
+                ref_y = datetime.now(timezone.utc).year
+                parsed_dates = [
+                    _parse_date_marker(t, default_year=ref_y) for t in titles_list
+                ]
+                if parsed_dates and all(p is not None for p in parsed_dates):
+                    unique_md = {
+                        (p["sort_dt"].month, p["sort_dt"].day)
+                        for p in parsed_dates
+                        if p is not None
+                    }
+                    if len(unique_md) == 1:
+                        mo, dy = next(iter(unique_md))
+                        candidates.append(f"{_MONTH_ABBR[mo]} {dy} Approval Rating")
+            candidates.append(_title_case_phrase(label))
             candidates.extend(_title_case_phrase(alt) for alt in _THEME_SYNONYM_ALTS.get(label, ()))
             for cand in candidates:
                 if _valid(cand):
@@ -881,14 +1025,15 @@ def _parse_date_marker(
         is_before = prep_low.startswith("before")
         is_on = prep_low.startswith("on")
         is_by = prep_low.startswith("by")
-        prefix = "Before " if is_before else ("by " if is_by else "")
+        day_prep = "before" if is_before else ("on" if is_on else ("by" if is_by else default_day_prep))
         if day_tok:
+            prefix = "Before " if day_prep == "before" else ("on " if day_prep == "on" else "by ")
             period = f"{prefix}{mon_str} {int(day_tok)} {yr_short}".strip()
-            day_prep = "before" if is_before else ("on" if is_on else ("by" if is_by else default_day_prep))
             phrase = f"{day_prep} {mon_str} {int(day_tok)}, {year}".strip()
         else:
+            prefix = "Before " if is_before else ("by " if is_by else "")
             period = f"{prefix}{mon_str} {yr_short}".strip()
-            phrase = f"{'before' if is_before else 'in'} {mon_str} {year}".strip()
+            phrase = f"{'before' if is_before else ('by' if is_by else 'in')} {mon_str} {year}".strip()
 
         raw_stem = (title[: m.start()] + title[m.end() :]).strip()
         raw_stem = re.sub(r"[?!.,'\s]+$", "", raw_stem).strip()
@@ -903,6 +1048,7 @@ def _parse_date_marker(
             "period": period,
             "phrase": phrase,
             "sort_dt": sort_dt,
+            "has_day": bool(day_tok),
             "stem": stem or title,
             "display_stem": display_stem,
             "norm_stem": norm_stem,
@@ -960,10 +1106,15 @@ def _distinguishing_row_label(title: str, all_titles: Sequence[str], *, max_len:
             break
 
     # Point 3: never strip leading subject / "Will" into ungrammatical verb fragments
-    # (e.g. "Criminally charges...", "Huang be TIME Person...") unless reducing cleanly to a threshold value.
+    # (e.g. "Criminally charges...", "6500 measles cases in the U.S. in") unless reducing cleanly to a compact value/threshold.
     joined_diff = " ".join(diff_tokens)
     is_pure_value = bool(
-        re.match(r"^(?:\$|\d|>|<|at\s+least\b|under\b|over\b|above\b|below\b)", joined_diff, re.IGNORECASE)
+        len(diff_tokens) <= 4
+        and re.fullmatch(
+            r"(?:(?:at\s+(?:least|most)|over|under|above|below|more\s+than|less\s+than|up\s+to)\s+)?(?:\$?[0-9.,]+[%KMBQT+]*)(?:\s*[-–]\s*\$?[0-9.,]+[%KMBQT+]*)?",
+            joined_diff,
+            re.IGNORECASE,
+        )
     )
     if prefix_len > 0 and diff_tokens and not is_pure_value:
         if (tokens and tokens[0].lower() in {"will", "does", "do", "did", "can", "could", "is", "are"}) or diff_tokens[0][0].islower():
@@ -971,7 +1122,7 @@ def _distinguishing_row_label(title: str, all_titles: Sequence[str], *, max_len:
 
     if prefix_len == 0 and len(diff_tokens) >= 4 and diff_tokens[0].lower() in {"is", "are"}:
         diff_tokens = diff_tokens[1:]
-    diff = " ".join(diff_tokens).strip(" -–—:,")
+    diff = _DANGLING_TRAILING_PREP_RE.sub("", " ".join(diff_tokens)).strip(" -–—:,")
     if not diff:
         diff = orig if orig.endswith("?") and _INTERROGATIVE_START_RE.match(orig) else cleaned
     if diff and diff[0].islower():
@@ -1056,6 +1207,16 @@ def _consume_templates(
         for m in picked_markets
         if str(m.get("name") or m.get("title") or "").strip()
     }
+    def_y = datetime.now(timezone.utc).year
+    canon_keys = {
+        _canonical_question_and_deadline(
+            str(m.get("name") or m.get("title") or ""),
+            def_y,
+        )
+        for m in picked_markets
+        if _is_binary_market(m) and str(m.get("name") or m.get("title") or "").strip()
+    }
+    canon_keys = {k for k in canon_keys if k[0] and k[1]}
     multi_gid_outcomes: dict[str, set[str]] = defaultdict(set)
     for m in picked_markets:
         if m.get("id") is not None:
@@ -1071,11 +1232,18 @@ def _consume_templates(
         mid = m.get("id")
         if mid is None:
             continue
-        qkey = _normalize_question_key(str(m.get("name") or m.get("title") or ""))
+        raw_nm = str(m.get("name") or m.get("title") or "")
+        qkey = _normalize_question_key(raw_nm)
+        ckey = (
+            _canonical_question_and_deadline(raw_nm, def_y)
+            if _is_binary_market(m) and canon_keys
+            else ("", None)
+        )
         gid = str(m.get("group_id") or "").strip()
         if (
             _template_signature(m) in sigs
             or (qkey and qkey in qkeys)
+            or (ckey[0] and ckey[1] and ckey in canon_keys)
             or (gid in multi_gid_outcomes and _binary_matches_multi_parent(m, multi_gid_outcomes[gid]))
         ):
             used_ids.add(int(mid))
@@ -1373,6 +1541,76 @@ def _build_scoreboard_grid_section(
         for i, c in enumerate(col_names_raw)
     ]
     all_titles = [str(m.get("name") or "") for m, _ in chosen_group]
+    # Format rows: normalize dates when >= 2 rows are dated deadlines; keep uniform Deadline header (#13696 Point 3).
+    all_titles = [str(m.get("name") or "") for m, _ in chosen_group]
+    all_dated = len(dated_markers) == len(chosen_group) and len(dated_markers) >= 2
+    eff_subj = set(subject_tokens) if subject_tokens is not None else _subject_tokens_from_headline(family_headline)
+
+    # Derive a market-specific headline before falling back to generic "Contender Odds".
+    scoreboard_hl: str | None = None
+    seen_low = {s.lower().strip() for s in seen_headlines if s} | _BANNED_SECTION_HEADINGS
+    seen_base = {_heading_base_key(s, eff_subj) for s in seen_headlines if s}
+
+    def _sb_ok(cand: str) -> bool:
+        words = [w for w in cand.split() if w]
+        low = cand.lower().strip()
+        bkey = _heading_base_key(cand, eff_subj)
+        return (
+            2 <= len(words) <= 4
+            and low not in seen_low
+            and not any(banned in low for banned in _BANNED_SECTION_HEADINGS)
+            and (not bkey or bkey not in seen_base)
+            and _passes_taste_and_harm(cand)
+        )
+
+    cleaned_sb = [
+        _BEFORE_DATE_RE.sub(
+            "",
+            re.sub(
+                r"^(?:Will|Which|What|Who)\s+",
+                "",
+                re.sub(r"[?!.:]+$", "", str(t or "")).strip(),
+                flags=re.IGNORECASE,
+            ),
+        ).strip()
+        for t in all_titles
+        if t
+    ]
+    hl_direct, err_direct = derive_common_headline(None, cleaned_sb)
+    if not err_direct and hl_direct and not hl_direct.lower().endswith(" outlook") and _sb_ok(hl_direct):
+        scoreboard_hl = hl_direct
+    if scoreboard_hl is None:
+        # Stem-normalized common content tokens (e.g. capture/captures/captured + city/cities -> Cities Russia Captures).
+        tok_sets = [
+            [
+                w.rstrip("s") if len(w) > 4 else w
+                for w in re.findall(r"[a-z]+", c.lower())
+                if w not in _GENERIC_STOPWORDS and len(w) > 2
+            ]
+            for c in cleaned_sb
+            if c
+        ]
+        if tok_sets:
+            common_order = []
+            for tok in tok_sets[0]:
+                if tok not in common_order and all(
+                    any(t.startswith(tok[:5]) if len(tok) >= 5 else t == tok for t in ts)
+                    for ts in tok_sets[1:]
+                ):
+                    common_order.append(tok)
+            if 2 <= len(common_order) <= 4:
+                cand_sb = _title_case_phrase(" ".join(common_order))
+                if _sb_ok(cand_sb):
+                    scoreboard_hl = cand_sb
+
+    headline = scoreboard_hl or _derive_section_headline(
+        "scoreboard_grid",
+        all_titles,
+        family_headline,
+        seen_headlines,
+        subject_tokens=eff_subj,
+    )
+
     rows: list[dict[str, Any]] = []
     lead_caption = None
     best_pct = -1
@@ -1383,13 +1621,22 @@ def _build_scoreboard_grid_section(
             o["name"].lower().strip(): (float(o["prob"]), o.get("id"), int(o["rendered_percent"]))
             for o in outs
         }
-        row_label = _distinguishing_row_label(str(m.get("name") or ""), all_titles, max_len=80)
         dm = dated_markers.get(mid)
-        if dm is not None:
-            yr_tok = f"'{dm['sort_dt'].year % 100:02d}"
-            yr_full = str(dm["sort_dt"].year)
-            if yr_tok not in row_label and yr_full not in row_label:
-                row_label = f"{row_label} {yr_tok}".strip()
+        if all_dated and dm is not None:
+            dt = dm["sort_dt"]
+            phrase_low = str(dm.get("phrase") or "").lower()
+            prep_word = "Before" if phrase_low.startswith("before") else ("On" if phrase_low.startswith("on") else ("In" if phrase_low.startswith("in") else "By"))
+            if dm.get("has_day"):
+                row_label = f"{prep_word} {_MONTH_ABBR[dt.month]} {dt.day}, {dt.year}"
+            else:
+                row_label = f"{prep_word} {_MONTH_ABBR[dt.month]} {dt.year}"
+        else:
+            row_label = _distinguishing_row_label(str(m.get("name") or ""), all_titles, max_len=80)
+            if dm is not None:
+                yr_tok = f"'{dm['sort_dt'].year % 100:02d}"
+                yr_full = str(dm["sort_dt"].year)
+                if yr_tok not in row_label and yr_full not in row_label:
+                    row_label = f"{row_label} {yr_tok}".strip()
         cells: list[dict[str, Any]] = []
         row_probs = [by_name.get(cname.lower().strip(), (0.0, None, 0))[0] for cname in col_names_raw]
         row_max = max(row_probs) if row_probs else 0.0
@@ -1411,11 +1658,12 @@ def _build_scoreboard_grid_section(
                 })
                 if pct > best_pct:
                     best_pct = pct
-                    lead_caption = (
-                        f'{cname} leads on "{row_label}" at {pct_str}'
-                        if _INTERROGATIVE_START_RE.match(row_label)
-                        else f"{cname} leads {row_label} at {pct_str}"
-                    )
+                    if all_dated:
+                        lead_caption = f"{cname} is highest for {headline.lower()} ({row_label}) at {pct_str}"
+                    elif _INTERROGATIVE_START_RE.match(row_label):
+                        lead_caption = f'{cname} leads on "{row_label}" at {pct_str}'
+                    else:
+                        lead_caption = f"{cname} leads {row_label} at {pct_str}"
             else:
                 cells.append({
                     "column_key": col["key"],
@@ -1432,13 +1680,6 @@ def _build_scoreboard_grid_section(
             "cells": cells,
         })
 
-    headline = _derive_section_headline(
-        "scoreboard_grid",
-        all_titles,
-        family_headline,
-        seen_headlines,
-        subject_tokens=subject_tokens,
-    )
     src_count = max(_sources_count(m) for m, _ in chosen_group)
     card = _finalize_section(_make_kit_card(
         card_id=f"{slug}-scoreboard",
@@ -1450,7 +1691,7 @@ def _build_scoreboard_grid_section(
         source_count=src_count,
         route_slug=slug,
         body={
-            "leading_label": "Market",
+            "leading_label": "Deadline" if all_dated else "Market",
             "show_column_headers": True,
             "row_layout": "matrix",
             "columns": columns,
@@ -1461,6 +1702,22 @@ def _build_scoreboard_grid_section(
         return None
     _consume_templates([m for m, _ in chosen_group], markets, used_ids)
     return card
+
+
+_SINGLE_DAY_EVENT_RE = re.compile(
+    r"\b(?:on\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|military\s+action|airstrike|ground\s+operation|strike\s+on|visit\s+|meet\s+)\b",
+    re.IGNORECASE,
+)
+
+
+def _infer_binary_default_prep(title_str: str) -> str:
+    if re.search(r"\b(?:by|before|until|through)\b", title_str, re.I):
+        return "by"
+    if re.search(r"\b(?:withdraw\w*|resign\w*|impeach\w*|oust\w*|removed|step\s+down|out\s+as|join\s+|ipo\b)\b", title_str, re.I):
+        return "by"
+    if re.search(r"\b(?:Dec(?:ember)?\s+31|Mar(?:ch)?\s+31|Jun(?:e)?\s+30|Sep(?:tember)?\s+30)\b", title_str, re.I) and not re.search(r"\bon\s+", title_str, re.I):
+        return "by"
+    return "on"
 
 
 def _build_dated_tiles_section(
@@ -1482,7 +1739,7 @@ def _build_dated_tiles_section(
         if mid in used_ids or not _is_binary_market(m):
             continue
         title_str = str(m.get("name") or "")
-        default_prep = "by" if re.search(r"\b(?:by|before|until|through)\b", title_str, re.I) else "on"
+        default_prep = _infer_binary_default_prep(title_str)
         parsed = _parse_date_marker(title_str, default_year=now.year, default_day_prep=default_prep)
         if not parsed or len(parsed["norm_stem"]) < 4:
             continue
@@ -1520,8 +1777,8 @@ def _build_dated_tiles_section(
                 if cand_dt <= res_dt + timedelta(days=35) and cand_dt.date() >= today_d:
                     mon_str = _MONTH_ABBR[cand_dt.month]
                     yr_short = f"'{cand_dt.year % 100:02d}"
-                    old_prep = p["phrase"].split()[0] if p.get("phrase") else parent_prep
-                    new_prefix = "Before " if p["period"].lower().startswith("before") else ("by " if p["period"].lower().startswith("by ") else "")
+                    old_prep = p["phrase"].split()[0].lower() if p.get("phrase") else parent_prep
+                    new_prefix = "Before " if p["period"].lower().startswith("before") else ("on " if old_prep == "on" else "by ")
                     p = {
                         **p,
                         "sort_dt": cand_dt,
@@ -1762,7 +2019,7 @@ def _build_shared_scale_section(
             clusters.append(grp)
     if require_cluster and not clusters:
         return None
-    chosen_pool = max(clusters, key=lambda g: len(g), default=pool)
+    chosen_pool = max(clusters, key=len, default=pool)
     monotonic_chosen = _drop_inverted_threshold_rows([
         {
             "market": m,
@@ -1830,7 +2087,7 @@ def _build_shared_scale_section(
         variant="shared_scale",
         kicker=f"{kicker} · OVERVIEW",
         common_headline=headline,
-        stat_caption=_caption_for_row(caption_label, f"leads at {top_pct_str}"),
+        stat_caption=_caption_for_row(caption_label, f"stands at {top_pct_str}"),
         source_count=src_count,
         route_slug=slug,
         body={
@@ -2170,7 +2427,7 @@ def _build_casting_sheet_section(
             variant="casting_sheet",
             kicker=f"{kicker} · CONTENDERS",
             common_headline=headline,
-            stat_caption=f"{top_o['name']} leads {headline.lower()} at {top_pct_str}",
+            stat_caption=f"{top_o['name']} is the favorite for {headline} at {top_pct_str}",
             source_count=_sources_count(m),
             route_slug=slug,
             body={"header_layout": "none", "header_marks": [], "items": items},
@@ -2230,7 +2487,7 @@ def _build_plain_bar_stack_section(
             variant="plain_bar_stack",
             kicker=f"{kicker} · RACE",
             common_headline=headline,
-            stat_caption=f"{top_o['name']} leads {headline.lower()} at {top_pct_str}",
+            stat_caption=f"{top_o['name']} is the favorite for {headline} at {top_pct_str}",
             source_count=_sources_count(m),
             route_slug=slug,
             body={"header_layout": "none", "header_marks": [], "items": items},
@@ -2294,7 +2551,7 @@ def _build_plain_bar_stack_section(
         variant="plain_bar_stack",
         kicker=f"{kicker} · MARKETS",
         common_headline=headline,
-        stat_caption=_caption_for_row(lead_title, f"leads at {lead_pct_str}"),
+        stat_caption=_caption_for_row(lead_title, f"stands at {lead_pct_str}"),
         source_count=max(_sources_count(m) for m in picked),
         route_slug=slug,
         body={"header_layout": "none", "header_marks": [], "items": items},
@@ -2531,12 +2788,29 @@ def audit_container_page_invariants(
     seen_base_headings: dict[str, str] = {}
     seen_market_sections: dict[int, str] = {}
     seen_binary_qkeys: dict[str, str] = {}
+    seen_canon_deadlines: dict[tuple[str, str], str] = {}
     theme_by_label = {label.lower(): pat for pat, label in _SECTION_THEME_PATTERNS}
 
     ref_year = datetime.now(timezone.utc).year
     snap = _parse_iso_dt(page.get("snapshot_captured_at"))
     if snap is not None:
         ref_year = snap.year
+
+    def _record_market_canon(m_id: int | None, fallback_text: str, sec_id_val: str) -> None:
+        src_title = (
+            str(markets_by_id[int(m_id)].get("name") or fallback_text)
+            if (m_id is not None and markets_by_id and int(m_id) in markets_by_id)
+            else fallback_text
+        )
+        stem_q, canon_d = _canonical_question_and_deadline(src_title, ref_year)
+        if stem_q and canon_d:
+            key = (stem_q, canon_d)
+            if key in seen_canon_deadlines and seen_canon_deadlines[key] != sec_id_val:
+                violations.append(
+                    f"{sec_id_val}: canonical event+deadline {key!r} repeats {seen_canon_deadlines[key]}"
+                )
+            else:
+                seen_canon_deadlines[key] = sec_id_val
 
     for sec in sections:
         sec_id = str(sec.get("id") or sec.get("variant") or "section")
@@ -2592,6 +2866,12 @@ def audit_container_page_invariants(
                         pm = _parse_date_marker(t_lbl, default_year=ref_year)
                         if pm is not None:
                             row_dts.append((t_lbl, pm["sort_dt"]))
+                            t_low = t_lbl.lower()
+                            if not t_low.startswith(("by ", "before ", "on ", "in ")):
+                                violations.append(
+                                    f"{sec_id}: dated_tiles tile {t_lbl!r} missing 'by'/'before'/'on' prefix"
+                                )
+                        _record_market_canon(mid, f"{lead_word} {t_lbl}".strip(), sec_id)
                 for idx_d in range(len(row_dts) - 1):
                     if row_dts[idx_d][1] > row_dts[idx_d + 1][1]:
                         violations.append(
@@ -2671,6 +2951,7 @@ def audit_container_page_invariants(
                         if qk in seen_binary_qkeys:
                             violations.append(f"{sec_id}: duplicate normalized question {qk!r}")
                         seen_binary_qkeys[qk] = sec_id
+                    _record_market_canon(mid, full_name, sec_id)
                     if pct_val is not None:
                         section_row_entries.append({
                             "rung_text": full_name,
@@ -2698,8 +2979,9 @@ def audit_container_page_invariants(
                 violations.append(f"{sec_id}: inverted numeric threshold rung detected")
 
         # 5a. Check 100%-row-match when a thematic label from _SECTION_THEME_PATTERNS is used
-        if len(raw_texts_for_theme) >= 2 and hl_low in theme_by_label:
-            pat = theme_by_label[hl_low]
+        theme_lookup_key = "approval rating" if hl_low.endswith("approval rating") else hl_low
+        if len(raw_texts_for_theme) >= 2 and theme_lookup_key in theme_by_label:
+            pat = theme_by_label[theme_lookup_key]
             if not all(pat.search(t) for t in raw_texts_for_theme):
                 violations.append(
                     f"{sec_id}: thematic headline {hl!r} not true for all {len(raw_texts_for_theme)} rows"

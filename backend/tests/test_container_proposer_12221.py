@@ -1297,7 +1297,7 @@ def test_13696_fable_nov26_rework_six_invariants():
     dt_nov = _build_dated_tiles_section("meridian-nov", "WORLD", nov_mkts, set(), now=REF_NOW)
     assert dt_nov is not None
     tile_periods = [c["marks"][0]["top_label"] for c in dt_nov["body"]["rows"][0]["cells"]]
-    assert tile_periods == ["Nov 26 '26", "Nov 28 '26", "Nov 29 '26"], tile_periods
+    assert tile_periods == ["on Nov 26 '26", "on Nov 28 '26", "on Nov 29 '26"], tile_periods
 
     # 5a. 100%-row-match requirement: 1/4 match cannot produce "Upcoming Launches"
     hl_mix = _derive_section_headline(
@@ -1398,3 +1398,161 @@ def test_13696_fable_nov26_rework_six_invariants():
     }
     bad_v = audit_container_page_invariants(bad_page)
     assert any("repeats" in v for v in bad_v), bad_v
+
+
+def test_13696_fable_nov27_seven_fixes_and_must_not_headings(monkeypatch):
+    """Regression suite for all 7 Fable Nov 27 review items + explicit must-not headings."""
+    import asyncio
+    from types import SimpleNamespace
+    from app.routes import containers as containers_route
+    from app.utils.kit_container_page_builder import (
+        _build_casting_sheet_section,
+        _build_dated_tiles_section,
+        _build_plain_bar_stack_section,
+        _build_scoreboard_grid_section,
+        _dedupe_twins,
+        _derive_section_headline,
+        audit_container_page_invariants,
+        propose_container_page_for_family,
+    )
+
+    # Points 1 & 4: Must-not list for overbroad single words & mismatched themes.
+    must_not_cases = [
+        (["Will President approval rating be at least 36.0 on Nov 27?", "Will President approval rating be at least 37.0 on Nov 27?"], {"executive actions"}),
+        (["Phase 3 clinical trial announced", "New clinical trial for RSV vaccine"], {"legal & enforcement"}),
+        (["Will league players' strike last into May?", "Owners respond to players' strike"], {"conflict & talks", "military action"}),
+        (["Will Exec post again on X in 2026?", "Will Exec be Google most searched CEO in 2026?"], {"public appearances"}),
+        (["Will team win NBA championship after trade cut?", "Will Fed dissent hold rate?", "Will Senate confirm board nominee?"], set()),
+        (["Will Exec speak at summit?", "What will happen to hardware device?"], {"public statements", "hardware & devices"}),
+        (["Will Star chart higher on Spotify?", "Will Rocket launch in July?"], {"charts & releases", "upcoming launches"}),
+    ]
+    for titles, forbidden in must_not_cases:
+        hl = _derive_section_headline("shared_scale", titles, "Subject Outlook")
+        assert hl.lower() not in forbidden, (titles, hl)
+
+    # Verify Trump approval-rating rows get "Nov 27 Approval Rating" instead of "Executive Actions".
+    trump_approval = _derive_section_headline(
+        "shared_scale",
+        [
+            "Will Donald Trump's approval rating be at least 36.0 on Nov 27?",
+            "Will Donald Trump's approval rating be at least 37.0 on Nov 27?",
+            "Will Donald Trump's approval rating be at least 38.0 on Nov 27?",
+        ],
+        "Donald Trump",
+    )
+    assert trump_approval == "Nov 27 Approval Rating", trump_approval
+
+    # Point 2: Cross-venue twins ("before Jan 1, 2027" == "by December 31, 2026") collapse & combine probability.
+    openai_mkts = [
+        {**_bin(77001, "Will OpenAI or Anthropic announce recursive self-improvement before Jan 1, 2027?", 18, res_days=400, vol=50000), "source": "kalshi"},
+        {**_bin(77002, "Will OpenAI or Anthropic announce recursive self-improvement by December 31, 2026?", 13, res_days=35, vol=30000), "source": "polymarket"},
+        {**_bin(77003, "Will OpenAI or Anthropic announce recursive self-improvement before Jan 1, 2028?", 44, res_days=700, vol=40000), "source": "kalshi"},
+        {**_bin(77004, "Will OpenAI IPO valuation hit $1T+ in 2026?", 98, res_days=20, vol=20000), "source": "kalshi"},
+        {**_bin(77005, "Will OpenAI release GPT-6 in 2027?", 61, res_days=120, vol=15000), "source": "kalshi"},
+        {**_bin(77006, "Will OpenAI acquire Windsurf in 2026?", 7, res_days=30, vol=15000), "source": "kalshi"},
+        {**_bin(77007, "Will OpenAI face antitrust lawsuit in 2027?", 11, res_days=220, vol=15000), "source": "kalshi"},
+    ]
+    deduped_ai = _dedupe_twins(openai_mkts)
+    rsi_rows = [m for m in deduped_ai if "recursive" in m["name"].lower() and "2028" not in m["name"]]
+    assert len(rsi_rows) == 1, rsi_rows
+    # (0.18 + 0.13) / 2 = 0.155 -> rendered_percent 16
+    assert rsi_rows[0]["outcomes"][0]["rendered_percent"] == 16, rsi_rows[0]
+    page_ai = propose_container_page_for_family("OpenAI Outlook", openai_mkts, now=REF_NOW)
+    assert page_ai["accepted"], page_ai
+    assert audit_container_page_invariants(page_ai["page"], markets_by_id={m["id"]: m for m in openai_mkts}) == []
+
+    # Point 3: Scoreboard grid with 2 deadlines uses "Deadline" leading column, uniform dates, and market-naming headline.
+    cities = ["Druzhkivka", "Pokrovsk", "Kupiansk", "Toretsk"]
+    ru_mkts = [
+        {
+            "id": 77101,
+            "name": "Which cities will Russia capture by December 31, 2026?",
+            "mutually_exclusive": False,
+            "status": "open",
+            "volume_24h": 25000,
+            "outcomes": [{"id": i + 1, "name": c, "current_probability": p} for i, (c, p) in enumerate(zip(cities, [0.30, 0.25, 0.20, 0.15]))],
+        },
+        {
+            "id": 77102,
+            "name": "Which cities will Russia capture by June 30, 2027?",
+            "mutually_exclusive": False,
+            "status": "open",
+            "volume_24h": 25000,
+            "outcomes": [{"id": i + 10, "name": c, "current_probability": p} for i, (c, p) in enumerate(zip(cities, [0.45, 0.30, 0.18, 0.12]))],
+        },
+    ]
+    sb = _build_scoreboard_grid_section("russia-outlook", "GEOPOLITICS", ru_mkts, set(), now=REF_NOW, family_headline="Russia Outlook")
+    assert sb is not None
+    assert sb["common_headline"] != "Contender Odds", sb["common_headline"]
+    assert sb["body"]["leading_label"] == "Deadline", sb["body"]["leading_label"]
+    row_dates = [r["leading"][0]["text"] for r in sb["body"]["rows"]]
+    assert row_dates == ["By Dec 31, 2026", "By Jun 30, 2027"], row_dates
+    assert "leads June" not in sb["stat_caption"] and sb["common_headline"].lower() in sb["stat_caption"].lower(), sb["stat_caption"]
+
+    # Point 5: Deadline tiles always say "by"/"before"; single-day tiles always say "on".
+    dl_mkts = [
+        _bin(77201, "Out as NVIDIA CEO again Dec 31, 2026?", 22, vol=10000),
+        _bin(77202, "Out as NVIDIA CEO again Jun 30, 2027?", 41, vol=10000),
+        _bin(77203, "Will TechExec join SpaceX Dec 31, 2026?", 18, vol=9000),
+        _bin(77204, "Will TechExec join SpaceX Jun 30, 2027?", 31, vol=9000),
+    ]
+    dt_dl = _build_dated_tiles_section("techexec", "TECH", dl_mkts, set(), now=REF_NOW)
+    assert dt_dl is not None
+    for row in dt_dl["body"]["rows"]:
+        for cell in row["cells"]:
+            lbl = cell["marks"][0]["top_label"].lower()
+            assert lbl.startswith(("by ", "before ")), cell
+
+    # Point 6: Preview route returns status="error" on Redis error / malformed JSON (never "not_built_yet").
+    async def _admin_ok(*_a, **_kw):
+        return True
+
+    class BrokenRedis:
+        def get(self, _k):
+            raise RuntimeError("redis down")
+
+    class CorruptRedis:
+        def get(self, _k):
+            return "{not valid json"
+
+    monkeypatch.setattr("app.routes.admin_utils._check_admin_auth", _admin_ok)
+    req = SimpleNamespace(headers={}, query_params={})
+
+    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: BrokenRedis())
+    err1 = asyncio.run(containers_route.get_kit_container_pages_preview(request=req, db=None))
+    assert err1["status"] == "error" and err1["pages"] == []
+
+    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: CorruptRedis())
+    err2 = asyncio.run(containers_route.get_kit_container_pages_preview(request=req, db=None))
+    assert err2["status"] == "error" and err2["pages"] == []
+
+    # Point 7: Clean captions on single-market fields and non-competing binary rows.
+    dress_mkt = {
+        "id": 77301,
+        "name": "Taylor Swift: Wedding Dress",
+        "status": "open",
+        "volume_24h": 30000,
+        "outcomes": [
+            {"id": 1, "name": "Christian Dior", "current_probability": 0.34},
+            {"id": 2, "name": "Oscar de la Renta", "current_probability": 0.25},
+            {"id": 3, "name": "Vera Wang", "current_probability": 0.21},
+            {"id": 4, "name": "Alexander McQueen", "current_probability": 0.20},
+        ],
+    }
+    pb_dress = _build_plain_bar_stack_section("taylor-swift", "CULTURE", [dress_mkt], set(), now=REF_NOW, family_headline="Taylor Swift")
+    assert pb_dress is not None
+    assert "leads wedding dress" not in pb_dress["stat_caption"].lower(), pb_dress["stat_caption"]
+    assert "34%" in pb_dress["stat_caption"]
+    assert _build_casting_sheet_section is not None
+
+    # Regression: never strip shared prefix+year into a dangling preposition fragment ("... in the U.S. in").
+    from app.utils.kit_container_page_builder import _distinguishing_row_label
+    sibling_qs = [
+        "Will there be at least 6500 widget shipments in the U.S. in 2026?",
+        "Will there be at least 7000 widget shipments in the U.S. in 2026?",
+        "Will there be at least 6200 widget shipments in the U.S. by November 30, 2026?",
+    ]
+    for q in sibling_qs:
+        lbl = _distinguishing_row_label(q, sibling_qs)
+        assert not lbl.lower().endswith((" in", " by", " on", " at")), lbl
+        assert lbl.startswith("Will "), lbl

@@ -42,6 +42,12 @@ function ContainersKitPreviewContent() {
     adminFetchJSON<KitContainerPagesPreviewResponse>("/api/containers/preview/kit-pages", secret)
       .then((res) => {
         if (!cancelled) {
+          if (res.status === "error") {
+            setErrorMsg(res.error || "Could not load Kit container preview pages from cache.");
+            setPayload(null);
+            setLoading(false);
+            return;
+          }
           setPayload(res);
           setLoading(false);
         }

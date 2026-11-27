@@ -24,7 +24,8 @@ export interface KitContainerPageSpec {
 
 export interface KitContainerPagesPreviewResponse {
   kit_page_version: number;
-  status?: "ready" | "not_built_yet";
+  status?: "ready" | "not_built_yet" | "error";
+  error?: string | null;
   deck_id?: string | null;
   snapshot_captured_at: string | null;
   covered_ids_count?: number;

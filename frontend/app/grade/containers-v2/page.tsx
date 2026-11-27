@@ -52,7 +52,7 @@ function ContainersV2Session() {
   const { secret, clearSecret } = useAdminAuth();
 
   const [pages, setPages] = useState<KitContainerPageSpec[]>([]);
-  const [deckStatus, setDeckStatus] = useState<"ready" | "not_built_yet" | null>(null);
+  const [deckStatus, setDeckStatus] = useState<"ready" | "not_built_yet" | "error" | null>(null);
   const [deckId, setDeckId] = useState<string | null>(null);
   const [reviewer, setReviewer] = useState<string>("alex");
   const [snapshotAt, setSnapshotAt] = useState<string | null>(null);
@@ -96,6 +96,13 @@ function ContainersV2Session() {
     ])
       .then(([previewRes, judgmentsRes]) => {
         if (cancelled) return;
+        if (previewRes.status === "error") {
+          setErrorMsg(previewRes.error || "Could not load preview container pages from cache.");
+          setPages([]);
+          setDeckStatus(null);
+          setLoading(false);
+          return;
+        }
         const resolvedPages = previewRes.pages || [];
         const resolvedDeckId = previewRes.deck_id ?? null;
         setPages(resolvedPages);
