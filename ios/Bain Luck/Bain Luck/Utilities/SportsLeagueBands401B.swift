@@ -205,3 +205,59 @@ enum SportsLeagueBands401B {
         }.map(\.element)
     }
 }
+
+/// #13869 — Partition unit for Sports tab bands on regular (iPad/Mac) widths.
+/// Consecutive single-game leagues are packed side-by-side into one multi-column
+/// block with per-card league headers instead of each single-game league sitting
+/// alone in the leftmost masonry column while the right side stays empty.
+nonisolated enum SportsRegularBandBlock13869: Identifiable, Sendable {
+    case singletons(id: String, groups: [SportsLeagueGroup401B])
+    case league(SportsLeagueGroup401B)
+
+    var id: String {
+        switch self {
+        case .singletons(let id, _): return id
+        case .league(let group): return group.id
+        }
+    }
+}
+
+enum SportsRegularGridLayout13869 {
+    /// Preserves canonical league priority order inside a band while coalescing
+    /// runs of 2+ consecutive single-game (`items.count == 1`) leagues into a
+    /// shared multi-column block.
+    nonisolated static func blocks(from groups: [SportsLeagueGroup401B]) -> [SportsRegularBandBlock13869] {
+        var result: [SportsRegularBandBlock13869] = []
+        var singletonBuffer: [SportsLeagueGroup401B] = []
+
+        func flushSingletons() {
+            guard !singletonBuffer.isEmpty else { return }
+            if singletonBuffer.count == 1, let only = singletonBuffer.first {
+                result.append(.league(only))
+            } else {
+                let firstId = singletonBuffer.first?.id ?? "group"
+                result.append(.singletons(id: "singletons-\(firstId)", groups: singletonBuffer))
+            }
+            singletonBuffer.removeAll(keepingCapacity: true)
+        }
+
+        for group in groups {
+            if group.items.count == 1 {
+                singletonBuffer.append(group)
+            } else {
+                flushSingletons()
+                result.append(.league(group))
+            }
+        }
+        flushSingletons()
+        return result
+    }
+
+    /// Never allocate more masonry columns than cards available to fill them, so
+    /// 1-card sections expand across the row and 2-card sections on 1194 pt
+    /// span 2 equal columns rather than leaving an empty third column on the right.
+    nonisolated static func effectiveColumnCount(baseColumns: Int, itemCount: Int) -> Int {
+        guard itemCount > 0 else { return max(1, baseColumns) }
+        return max(1, min(baseColumns, itemCount))
+    }
+}
