@@ -214,7 +214,11 @@ final class DiscoverFuturesCardSumsTo100Tests: XCTestCase {
             "the outcome list no longer indexes the card's decision — rows are getting nil"
         )
         XCTAssertTrue(
-            code.contains("let _ = leaderRenderedPercent"),
+            code.contains("let heroParts = leaderPercentParts"),
+            "the hero numeral no longer reads the card's formatted leader parts"
+        )
+        XCTAssertTrue(
+            code.contains("discoverFuturesCardPercentParts(renderedPercents.first ?? nil, probability: leader?.probability)"),
             "the hero numeral no longer shares the card's decision with the rows beneath it"
         )
     }

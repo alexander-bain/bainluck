@@ -78,11 +78,20 @@ CONVERTED_SITES = [
 EXPECTED_ORDASH_SITES = 7
 
 # The two percent renders that are correctly guarded by `if let` and must STAY
-# hand-rolled — converting them would change their layout, since they render
-# nothing at all when the price is absent.
+# inside `if let` (never converted to `formatProbabilityOrDash`, never given a
+# `?? 0` default) because they render nothing when the price is absent. They
+# were updated from hand-rolled `Int(prob * 100)` / `Int((prob * 100).rounded())`
+# (which floored 0.6% to "0%" or rounded it to "1%") to `formatProbability(prob)`
+# so sub-1% probabilities print "<1%" inside those same `if let` blocks.
 GUARDED_PERCENT_RENDERS = [
-    'Text("\\(Int(prob * 100))%")',
-    'Text("\\(Int((prob * 100).rounded()))%")',
+    (
+        "if let prob = future.probability {\n"
+        "                                Text(formatProbability(prob))"
+    ),
+    (
+        "if let prob = outcome.probability {\n"
+        "                                Text(formatProbability(prob))"
+    ),
 ]
 
 
@@ -166,9 +175,9 @@ class TestNoTextRenderInventsAProbability:
 
     def test_the_two_guarded_renders_stay_hand_rolled(self):
         """The other half of CERT-550's compensating move: it satisfied the
-        count by converting an `if let` site. Those must NOT be converted —
-        they render nothing when the price is absent, which is a different and
-        equally correct answer, and converting them changes their layout."""
+        count by converting an `if let` site. Those must stay inside `if let`
+        with `formatProbability(prob)` (no `formatProbabilityOrDash`, no `?? 0`
+        default) — they render nothing when absent while printing `<1%` under 1%."""
         code = _view_code()
         for snippet in GUARDED_PERCENT_RENDERS:
             assert snippet in code, (

@@ -167,12 +167,6 @@ struct NativeFuturesDiscoverCard: View {
         discoverFuturesCardPercents(data.topOutcomes ?? [])
     }
 
-    /// The hero's number. `?? 0` preserves the previous behaviour for a card with
-    /// no leader or an unpriced one, which printed `0`.
-    private var leaderRenderedPercent: Int {
-        (renderedPercents.first ?? nil) ?? 0
-    }
-
     private var leaderPercentParts: (marker: String?, digits: String) {
         discoverFuturesCardPercentParts(renderedPercents.first ?? nil, probability: leader?.probability)
     }
@@ -346,7 +340,6 @@ struct NativeFuturesDiscoverCard: View {
                         // metrics against black-weight numerals, so it was
                         // the first glyph to lose width under compression.
                         HStack(alignment: .firstTextBaseline, spacing: 0) {
-                            let _ = leaderRenderedPercent
                             let heroParts = leaderPercentParts
                             Text("\(heroParts.marker ?? "")\(heroParts.digits)")
                                 .font(.system(size: heroNumeralSize, weight: .black).monospacedDigit())
