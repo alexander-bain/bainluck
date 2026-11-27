@@ -35,7 +35,7 @@
         "key": "long_shots_board",
         "title": "Long Shots on the Board",
         "item_noun": "long shots",
-        "note": "Aliens, Mars, Taylor Swift and the Pope, and the biggest long shots markets actually price.",
+        "note": "Aliens, Mars, Taylor Swift and the Pope, and the biggest long shots with an open market.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "long-shot",

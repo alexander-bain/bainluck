@@ -32,7 +32,7 @@
       {
         "key": "jan_fomc",
         "title": "January 2027 FOMC Rate Decision",
-        "note": "Priced probabilities along the policy-move scale from cut to hike.",
+        "note": "Probabilities along the policy-move scale from cut to hike.",
         "atom_query": {
           "kind": "markets",
           "title_all_tokens": ["fed", "decision", "jan"],

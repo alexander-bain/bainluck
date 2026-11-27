@@ -43,12 +43,13 @@ async def test_prior_season_does_not_replace_current_race(
         ),
         (_outcome(5022, "Chet Holmgren", 0.0 if settled else 0.1), old),
     ]
+    current_screen = _screened(now, [o for o, parent in rows if parent is now])
+    # Keep the 1% control a real two-sided reading under 418-A.
+    current_screen.outcomes[1].current_yes_bid = 0.005
     mock_db.execute.side_effect = _routed(
         team,
         [rows, [], []],
-        markets=[
-            _screened(m, [o for o, parent in rows if parent is m]) for m in (now, old)
-        ],
+        markets=[current_screen, _screened(old, [o for o, parent in rows if parent is old])],
     )
     response = await client.get("/api/teams/thunder/prop-families")
     assert response.status_code == 200

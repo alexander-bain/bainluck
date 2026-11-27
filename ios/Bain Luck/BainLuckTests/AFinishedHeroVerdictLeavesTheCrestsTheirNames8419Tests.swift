@@ -35,34 +35,45 @@ final class AFinishedHeroVerdictLeavesTheCrestsTheirNames8419Tests: XCTestCase {
             .filter { !$0.isWhitespace }
     }
 
-    /// The modifier chain of the `Text` opened by `anchor` (which must occur
-    /// exactly once), up to the brace that closes its branch.
-    private func chain(after anchor: String,
-                       file: StaticString = #filePath, line: UInt = #line) throws -> String {
-        let code = try pageCode()
-        let hits = code.components(separatedBy: anchor).count - 1
-        XCTAssertEqual(hits, 1, "anchor \(anchor) found \(hits) times", file: file, line: line)
-        let lower = try XCTUnwrap(code.range(of: anchor), file: file, line: line)
-        let upper = try XCTUnwrap(code.range(of: "}", range: lower.upperBound..<code.endIndex),
-                                  file: file, line: line)
-        return String(code[lower.upperBound..<upper.lowerBound])
+    private func cardCode() throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // BainLuckTests
+            .deletingLastPathComponent()   // Bain Luck (project dir)
+            .appendingPathComponent("Bain Luck")
+            .appendingPathComponent("Components")
+            .appendingPathComponent("EventSportHeadlineCard12472.swift")
+        return try String(contentsOf: url, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                guard let slashes = line.range(of: "//") else { return String(line) }
+                return String(line[line.startIndex..<slashes.lowerBound])
+            }
+            .joined(separator: "\n")
+            .filter { !$0.isWhitespace }
     }
 
+    /// Direction 199 replaced the centered verdict column in `EventDetailView`
+    /// with unified horizontal rows in `EventSportHeadlineCard12472` where team
+    /// names size to `sharedTeamNameFontSize`, reserve the winner tick, and
+    /// stay cleanly inside the row alongside crests and `Pregame | Final`.
     func testTheWinnerVerdictIsBoundedToTheSlot() throws {
-        let verdict = try chain(after: #"Text("\(winnerName)Win")"#)
-        XCTAssertTrue(verdict.contains(".frame(maxWidth:Self.heroVerdictWidth(at:dynamicTypeSize))"),
-                      "the finished verdict is unbounded again — a long winner name squeezes the crest names")
-        XCTAssertTrue(verdict.contains(".lineLimit(2)"),
-                      "the bounded verdict must be allowed to wrap, or it truncates itself instead")
-        XCTAssertTrue(verdict.contains(".multilineTextAlignment(.center)"))
+        let card = try cardCode()
+        XCTAssertTrue(card.contains("privatefunccompetitorIdentityStack(_row:EventSportHeadlines12472.CompetitorRow)->someView{"),
+                      "control: scan reads competitorIdentityStack")
+        XCTAssertTrue(card.contains("scaledSize:sharedTeamNameFontSize)"),
+                      "team names in the unified headline stopped sizing to sharedTeamNameFontSize")
+        XCTAssertTrue(card.contains(".lineLimit(1).minimumScaleFactor(stacksRowsVertically?0.72:0.80)"),
+                      "the bounded team name row lost its single-line scaling")
+        XCTAssertTrue(card.contains("ifreservesWinnerTick{"),
+                      "the unified finished hero no longer reserves the winner tick slot")
     }
 
     func testTheNamedPregameCaptionIsBoundedToTheSlot() throws {
-        let caption = try chain(
-            after: #"Text("\(pregameWord)\(named.home)\(formatProbability(opened.home))")"#)
-        XCTAssertTrue(caption.contains(".frame(maxWidth:Self.heroVerdictWidth(at:dynamicTypeSize))"),
-                      "the named pre-match caption is unbounded — it carries the same full name as the verdict")
-        XCTAssertTrue(caption.contains(".lineLimit(2)"))
+        let card = try cardCode()
+        XCTAssertTrue(card.contains("privatevarsharedTeamNameFontSize:CGFloat{"),
+                      "control: scan reads sharedTeamNameFontSize")
+        XCTAssertTrue(card.contains("max(measuredInnerWidth-crestSize-16-totalColumnsWidth,64)"),
+                      "horizontal name budget stopped reserving crest and trailing Pregame | Final column widths")
     }
 
     func testTheSlotIsStillUnderAThirdOfAnIPhone() {

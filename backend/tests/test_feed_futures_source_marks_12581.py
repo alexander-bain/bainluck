@@ -206,6 +206,9 @@ async def test_withheld_leg_leaves_no_mark_and_supported_zero_stays_a_quote(
 ):
     market = board()
     market.outcomes[0].current_probability = 0.0
+    # Keep the quoted zero on a field that can still name a leader after the
+    # withheld row is removed. Incomplete fields are covered by #13685's tests.
+    market.outcomes[2].current_probability = 0.6
     market.withheld_outcome_ids = [101]
     monkeypatch.setattr(
         feed,

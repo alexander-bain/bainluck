@@ -38,7 +38,7 @@
         "fallback_title": "Tech & Space Milestone Odds",
         "item_noun": "charts",
         "preserve_note": true,
-        "note": "Pricing on SpaceX and OpenAI milestones shifted sharply over the past week.",
+        "note": "Probabilities on SpaceX and OpenAI milestones shifted sharply over the past week.",
         "atom_query": {
           "kind": "market_history",
           "fun_sub_tag": "batch7-tech-and-space-movers",

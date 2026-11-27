@@ -168,7 +168,7 @@ def test_final_statuses_match_the_in_memory_tier_s_own_definition():
         events_route._related_futures_cache[1] = (
             _time.time(),
             status,
-            events_route._current_build_id(),
+            rfc.current_cache_version(),
             {"x": 1},
         )
         assert events_route._read_related_futures_memo(1) == {"x": 1}
@@ -183,7 +183,7 @@ def test_the_L1_still_expires_a_LIVE_entry_on_its_own_ttl():
     events_route._related_futures_cache[1] = (
         _time.time() - (events_route._RELATED_FUTURES_LIVE_TTL + 1),
         "live",
-        events_route._current_build_id(),
+        rfc.current_cache_version(),
         {"x": 1},
     )
     assert events_route._read_related_futures_memo(1) is None

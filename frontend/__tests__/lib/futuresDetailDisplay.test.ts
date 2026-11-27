@@ -276,9 +276,9 @@ describe("#10453 current-price eligibility for the automatic chart", () => {
 
   test("an unpriced drawn line is named once; several are counted; none says nothing", () => {
     expect(currentUnavailableNote([])).toBeNull();
-    expect(currentUnavailableNote(["Mensik"])).toBe("No current price for Mensik. Its line shows past prices.");
+    expect(currentUnavailableNote(["Mensik"])).toBe("No recent probability for Mensik. Its line shows earlier readings.");
     expect(currentUnavailableNote(["Mensik", "Sinner"])).toBe(
-      "No current price for 2 of these lines. They show past prices.",
+      "No recent probability for 2 of these lines. They show earlier readings.",
     );
   });
 });

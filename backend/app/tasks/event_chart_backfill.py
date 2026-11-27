@@ -1244,6 +1244,13 @@ async def _backfill_sources(
                 source, event.id, exc_info=True,
             )
 
+    if verdict["points_written"] > 0:
+        from app.services.finished_event_history import (
+            invalidate_finished_event_history,
+        )
+
+        await invalidate_finished_event_history(session, [event.id])
+
     verdict.setdefault(
         "status", "written" if verdict["points_written"] else "no_new_points"
     )
@@ -1699,7 +1706,7 @@ def release_on_demand_claim(event_id: int) -> None:
 
 
 async def plan_on_demand_fill(
-    session, event, *, served_points: int
+    session, event, *, served_points: int, allow_claim: bool = True
 ) -> Optional[dict]:
     """A thin chart was just SERVED — decide whether to start filling it.
 
@@ -1728,7 +1735,7 @@ async def plan_on_demand_fill(
     """
     try:
         return await _plan_on_demand_fill(
-            session, event, served_points=served_points
+            session, event, served_points=served_points, allow_claim=allow_claim
         )
     except Exception:  # noqa: BLE001 — a chart endpoint never fails on its own
         logger.warning(
@@ -1739,7 +1746,7 @@ async def plan_on_demand_fill(
 
 
 async def _plan_on_demand_fill(
-    session, event, *, served_points: int
+    session, event, *, served_points: int, allow_claim: bool = True
 ) -> Optional[dict]:
     from sqlalchemy import func, select
 
@@ -1786,6 +1793,9 @@ async def _plan_on_demand_fill(
 
     if not is_thin_chart(served_points, lifetime):
         return None
+
+    if not allow_claim:
+        return {"enqueue": False, "reason": "background_deferred"}
 
     claimed, why = claim_on_demand_fill(event_id)
     if not claimed:

@@ -14,12 +14,16 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import re
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from app.utils.discover_image_policy import _lookup_team_or_nation_logo
+
+__all__ = ["ALLOWED_LAYOUTS", "ALLOWED_MARKS", "validate_kit_v1_card"]
 
 KIT_VERSION = 1
 
@@ -257,15 +261,40 @@ def _validate_adaptive_color(val: Any, label: str, errors: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _initials_for_label(label: str) -> str:
+    """Return 1-2 uppercase alphanumeric initials for a row without verified art (387: A)."""
+    cleaned = str(label or "").strip().rstrip("?").strip()
+    if " · " in cleaned:
+        cleaned = cleaned.rsplit(" · ", 1)[1].strip()
+    elif ":" in cleaned:
+        _prefix, right = cleaned.rsplit(":", 1)
+        if right.strip():
+            cleaned = right.strip()
+    raw_words = [w for w in cleaned.split() if re.search(r"[A-Za-z0-9]", w)]
+    non_year_words = [w for w in raw_words if not re.fullmatch(r"\d{4}", re.sub(r"[^A-Za-z0-9]", "", w))]
+    chosen_words = non_year_words or raw_words
+    if not chosen_words:
+        return "?"
+    if len(chosen_words) == 1:
+        chars = re.sub(r"[^A-Za-z0-9]", "", chosen_words[0])
+        return (chars[:2] or "?").upper()
+    c0 = re.sub(r"[^A-Za-z0-9]", "", chosen_words[0])
+    c1 = re.sub(r"[^A-Za-z0-9]", "", chosen_words[1])
+    first = c0[:1]
+    second = c1[:1] if c1 else c0[1:2]
+    return f"{first}{second}".upper() or "?"
+
+
 def _mark_picture(
     *,
-    url: str,
+    url: str | None = None,
     alt: str,
     subject_kind: str,
     size: str = "sm",
     contain: bool = True,
+    initials: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "mark": "picture",
         "url": url,
         "alt": alt,
@@ -273,6 +302,11 @@ def _mark_picture(
         "size": size,
         "contain": contain,
     }
+    if url is None:
+        out["initials"] = (initials or _initials_for_label(alt)).strip() or "?"
+    elif initials is not None:
+        out["initials"] = initials
+    return out
 
 
 def _mark_word(
@@ -386,8 +420,9 @@ def _mark_dot(
     color: dict[str, str] | None = None,
     in_band: bool = False,
     picture: dict[str, Any] | None = None,
+    badge_text: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "mark": "dot",
         "x": float(x),
         "y_lane": y_lane,
@@ -396,6 +431,9 @@ def _mark_dot(
         "in_band": in_band,
         "picture": picture,
     }
+    if badge_text is not None:
+        out["badge_text"] = badge_text
+    return out
 
 
 def _make_kit_card(
@@ -587,7 +625,17 @@ def _walk_and_validate_marks(
             errors.append(f"Unsupported mark {mark_val!r}")
         elif mark_val == "picture":
             url = node.get("url")
-            if not _is_valid_image_url(url):
+            initials = node.get("initials")
+            has_url = _is_valid_image_url(url)
+            has_initials = (
+                url is None
+                and isinstance(initials, str)
+                and 1 <= len(initials.strip()) <= 3
+                and bool(re.fullmatch(r"[A-Za-z0-9?]+", initials.strip()))
+            )
+            if has_url:
+                stats["verified_picture_count"] = stats.get("verified_picture_count", 0) + 1
+            elif not has_initials:
                 errors.append(f"Rule 1/4: picture mark missing verified HTTPS image_url ({url!r})")
             stats["picture_count"] += 1
             if node.get("subject_kind") == "person":
@@ -690,7 +738,22 @@ def _validate_stack_body(body: dict[str, Any], *, variant: str | None, errors: l
                 )
         if variant in {"casting_sheet", "photo_wall"}:
             if not any(isinstance(m, dict) and m.get("mark") == "picture" for m in item_marks):
+                errors.append(f"Rule 1: {variant} row {idx} refused without picture or initials")
+            elif variant == "photo_wall" and not any(
+                isinstance(m, dict) and m.get("mark") == "picture" and _is_valid_image_url(m.get("url"))
+                for m in item_marks
+            ):
                 errors.append(f"Rule 1: {variant} row {idx} refused without verified picture")
+
+    if variant == "casting_sheet":
+        has_any_verified = any(
+            isinstance(m, dict) and m.get("mark") == "picture" and _is_valid_image_url(m.get("url"))
+            for item in items
+            if isinstance(item, dict)
+            for m in (item.get("marks") or [])
+        )
+        if not has_any_verified:
+            errors.append("Rule 1 (387: A): casting_sheet requires at least one verified picture")
 
 
 def _validate_grid_body(body: dict[str, Any], *, variant: str | None, errors: list[str]) -> None:
@@ -724,7 +787,22 @@ def _validate_grid_body(body: dict[str, Any], *, variant: str | None, errors: li
             errors.append(f"Rule 4: grid row {idx} must carry sequential rank={idx}")
         if variant in {"casting_sheet", "photo_wall"}:
             if not any(isinstance(m, dict) and m.get("mark") == "picture" for m in leading):
+                errors.append(f"Rule 1: {variant} row {idx} refused without picture or initials")
+            elif variant == "photo_wall" and not any(
+                isinstance(m, dict) and m.get("mark") == "picture" and _is_valid_image_url(m.get("url"))
+                for m in leading
+            ):
                 errors.append(f"Rule 1: {variant} row {idx} refused without verified picture")
+
+    if variant == "casting_sheet":
+        has_any_verified = any(
+            isinstance(m, dict) and m.get("mark") == "picture" and _is_valid_image_url(m.get("url"))
+            for row in rows
+            if isinstance(row, dict)
+            for m in (row.get("leading") or [])
+        )
+        if not has_any_verified:
+            errors.append("Rule 1 (387: A): casting_sheet requires at least one verified picture")
 
         cells = row.get("cells") or []
         for c_idx, cell in enumerate(cells):
@@ -887,7 +965,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
             stat_caption="Georgia leads the college football national championship at 34%, with SEC contenders across the same board",
             source_count=2,
             route_slug="college-football-national-championship",
-            footnote="Shaded cells show served chances across both title races.",
+            footnote="Shaded cells show each team's chance in both title races.",
             disclosure="2 more in this set",
             body={
                 "leading_label": "Contender",

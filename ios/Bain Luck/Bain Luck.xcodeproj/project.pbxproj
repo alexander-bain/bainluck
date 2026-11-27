@@ -190,6 +190,7 @@
 			membershipExceptions = (
 				WidgetFeedDecoding.swift,
 				SavedLockScreenMatchup13432.swift,
+				GameLiveActivity.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
@@ -1123,6 +1124,10 @@
 		A7869E362F525C6C000542D3 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = (
+					AppIconWinter,
+					AppIconNewYearsEve,
+				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Bain Luck/Bain Luck.entitlements";
@@ -1171,6 +1176,10 @@
 		A7869E372F525C6C000542D3 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = (
+					AppIconWinter,
+					AppIconNewYearsEve,
+				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Bain Luck/Bain Luck.entitlements";

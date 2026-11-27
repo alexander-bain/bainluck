@@ -551,6 +551,12 @@ READ_SIDE_CONSUMERS = {
         "load it removed, on exactly the live games it exists to spare. No "
         "wrong number reaches a reader; the cost is lock and write churn."
     ),
+    "app/tasks/kalshi.py": (
+        "WRITE ORDER — record_kalshi_ask_ceilings compares last_updated and "
+        "price_changed_at with the poll fetch time to protect a newer quote, "
+        "and its write can only keep or clear an existing probability, so "
+        "an incorrect stamp cannot turn the ask into a displayed number."
+    ),
     "app/tasks/venue_poll_30s.py": (
         "POLLER ALIVE — #10090's 30-second venue poll. Its write (through "
         "`futures_price_refresh._write_prices`) requires `last_updated < "
@@ -709,7 +715,9 @@ PRICE_CHANGE_STAMPERS = {
     # live quote beside the verdict in the same statement. When the venue has
     # answered, the price IS the answer, so that arm re-stamps against the
     # terminal 1.0/0.0 — through the shared helper, for the reason above.
-    "app/tasks/kalshi.py": 6,
+    # 6 -> 7 (#13738): record_kalshi_ask_ceilings clears unsupported quotes
+    # and uses the shared helper to record a probability going away.
+    "app/tasks/kalshi.py": 7,
     # 3 -> 4 (#9399): `_withdraw_book_refuted_legs`' CLEAR of a stored price the
     # leg's current book prices out. Stamped with `None` as the new price through
     # the shared helper, exactly as #4356's withdrawn-leg clear in `kalshi.py` —

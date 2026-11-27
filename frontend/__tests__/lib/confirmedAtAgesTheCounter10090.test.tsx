@@ -156,7 +156,7 @@ describe("#10090 J=A the open socket's words", () => {
     expect(presentConnectionStatus(t, { ...input, status: "retrying", priceConfirmed: true }, NOW).label)
       .toBe("Updates interrupted · reconnecting");
     expect(presentConnectionStatus(t, { ...input, priceMayBeOld: true, priceConfirmed: true }, NOW).label)
-      .toBe("Price may be old");
+      .toBe("Probability may be old");
     expect(presentConnectionStatus(t, { ...input, terminalLabel: "Finished", priceConfirmed: true }, NOW).label)
       .toBe("Finished");
   });

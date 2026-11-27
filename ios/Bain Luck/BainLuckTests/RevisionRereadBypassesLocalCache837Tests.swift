@@ -101,7 +101,7 @@ final class RevisionRereadBypassesLocalCache837Tests: XCTestCase {
         Origin.advance()
         // Ordinary reads intentionally remain cached; advancing Origin is not enough.
         let cached = try await api.fetchEvent(id: 4242)
-        let cachedHistory = try await api.fetchEventHistory(id: 4242, hours: 168)
+        let cachedHistory = try await api.fetchEventHistory(id: 4242, hours: 168, range: "since_start")
         XCTAssertEqual(cached.currentOdds?.homeProbability, 0.60)
         XCTAssertEqual(cachedHistory.aggregateLine?.last?.homeProbability, 0.60)
         XCTAssertEqual(Origin.requests(ending: "/4242").count, 1)
@@ -125,11 +125,12 @@ final class RevisionRereadBypassesLocalCache837Tests: XCTestCase {
             XCTAssertEqual(query.first { $0.name == "fresh" }?.value, "true")
             if request.url?.path.hasSuffix("/history") == true {
                 XCTAssertEqual(query.first { $0.name == "hours" }?.value, "168")
+                XCTAssertEqual(query.first { $0.name == "range" }?.value, "since_start")
             }
         }
         // Fresh responses replace cached bytes, without disabling subsequent normal caching.
         let latest = try await api.fetchEvent(id: 4242)
-        let latestHistory = try await api.fetchEventHistory(id: 4242, hours: 168)
+        let latestHistory = try await api.fetchEventHistory(id: 4242, hours: 168, range: "since_start")
         XCTAssertEqual(latest.currentOdds?.homeProbability, 0.55)
         XCTAssertEqual(latestHistory.aggregateLine?.last?.homeProbability, 0.55)
         XCTAssertEqual(Origin.requests(ending: "/4242").count, 2)

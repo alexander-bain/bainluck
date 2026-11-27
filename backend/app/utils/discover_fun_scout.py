@@ -38,10 +38,11 @@ import math
 import os
 import re
 import unicodedata
+from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from app.services.llm_models import (
     MODELS,
@@ -55,6 +56,7 @@ from app.utils.discover_fun_tags import (
     check_fun_real_trading,
     check_fun_still_ahead,
     check_fun_taste_guard,
+    fun_market_ids_for_sub_tag,
     load_fun_markets_registry,
 )
 from app.utils.roundup_containers import (
@@ -77,6 +79,8 @@ SCOUT_MONTHLY_CAP_USD = 30.0
 #: Ruling 385: A (#13102) daily staging cap and minimum set size.
 SCOUT_MAX_NEW_SETS_PER_DAY = 10
 SCOUT_MIN_LIVE_MEMBERS = 3
+#: #13544: target minimum size before stopping missing-member catalog lookup.
+SCOUT_PREFERRED_MIN_MEMBERS = 4
 
 #: Ruling 385: A (#13102): staged scout sets NEVER auto-promote to public;
 #: promotion happens only after Alex grades "Keep".
@@ -95,7 +99,11 @@ SCOUT_ALLOWED_LOOKS: frozenset[str] = frozenset({"map", "faces", "bars"})
 SCOUT_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "discover"
 SCOUT_STAGED_SETS_DIR = SCOUT_DATA_DIR / "scout_sets"
 SCOUT_RETIRED_SETS_PATH = SCOUT_DATA_DIR / "scout_retired_sets.json"
+SCOUT_GRADED_SETS_PATH = SCOUT_DATA_DIR / "scout_graded_sets.json"
 SCOUT_LICENCE_STATE_PATH = SCOUT_DATA_DIR / "scout_licence_state.json"
+
+#: Maximum un-truncated length of a scout card kicker (#13102 Fable Thu 1:15 AM look).
+SCOUT_KICKER_MAX_CHARS = 32
 
 #: Additional severe-harm guard layered on top of 273: B taste guard so violent
 #: or geopolitical catastrophe markets (e.g. nuclear weapons, mass casualty)
@@ -121,6 +129,32 @@ _DEFAULT_SET_INPUT_TOKENS = 25_000
 _DEFAULT_SET_OUTPUT_TOKENS = 16_000
 
 _SCOUT_BANNED_VOICE_RE = re.compile(r"\b(?:traders?|bets?|betting)\b", re.IGNORECASE)
+_SCOUT_FORBIDDEN_QUESTION_RE = re.compile(r"\bquestions?\b", re.IGNORECASE)
+_LADDER_SCORE_RE = re.compile(
+    r"(?:\b(?:rotten\s+tomatoes|metacritic|imdb)\s+score\b|"
+    r"\bscore\s+on\s+(?:rotten\s+tomatoes|metacritic|imdb)\b)",
+    re.IGNORECASE,
+)
+_LADDER_DATE_RE = re.compile(
+    r"(?:\bwhen\s+will\b|"
+    r"\bin\s+what\s+(?:month|year|quarter)\b|"
+    r"\bby\s*(?:\.\.\.|…)\s*\??\s*$|"
+    r"\brelease\s+date\b|"
+    r"\bid?entity\s+be\s+proven\s+by\b|"
+    r"\bbe\s+(?:announced|released|launched|proven)\s+by\s*(?:\.\.\.|…)?\s*\??\s*$)",
+    re.IGNORECASE,
+)
+_LADDER_VALUE_RE = re.compile(
+    r"(?:\bnet\s+worth\b|"
+    r"\bhow\s+(?:low|high|much|many)\b|"
+    r"\bbox\s+office\b|"
+    r"\bfirst\s+week\s+sales\b|"
+    r"\b(?:total\s+)?snowfall(?:\s+total)?\b|"
+    r"\bpeak\s+(?:roni|temp|temperature|price)\b|"
+    r"#\s*(?:of\s+)?(?:tweets|views|streams)\b|"
+    r"\bhigher\s+strikes\b)",
+    re.IGNORECASE,
+)
 _SCOUT_MECHANICAL_FAMILY_RE = re.compile(
     r"(?:point[\s-]+of[\s-]+sale\s+growth|\bpos\s+growth\b|\bsales\s+growth\b|"
     r"\bapp\s+downloads?\b|\bdownload\s+counts?\b|"
@@ -212,6 +246,47 @@ class ScoutProposedSet:
     title_ilike: Optional[str] = None
     template: Optional[str] = None
     footer: Optional[str] = None
+    narrowed_name: Optional[str] = None
+    narrowed_why_better_together: Optional[str] = None
+    row_answers: tuple[tuple[int, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class ScoutSplitSetFinding:
+    """Detected split-set fault where a subset shares a subject the rest lack (#13544)."""
+
+    reason: str
+    shared_feature: str
+    coherent_indices: tuple[int, ...]
+    outlier_indices: tuple[int, ...]
+    trimmable: bool = True
+
+
+@dataclass(frozen=True)
+class ScoutKnownSet:
+    """Already-graded or already-public set checked so the scout never duplicates work (#13102)."""
+
+    source: str  # "graded" | "public"
+    slug: str
+    name: str
+    member_ids: tuple[int, ...] = ()
+    member_titles: tuple[str, ...] = ()
+    grade: Optional[str] = None
+    note: str = ""
+    deck_id: Optional[str] = None
+    graded_at: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ScoutKnownSetOverlap:
+    """Detected overlap between a candidate scout set and a graded/public set (#13102)."""
+
+    known_set: ScoutKnownSet
+    matched_by_name: bool
+    matched_by_slug: bool
+    shared_member_ids: tuple[int, ...]
+    shared_count: int
+    candidate_count: int
 
 
 @dataclass(frozen=True)
@@ -231,6 +306,11 @@ class ScoutValidatedSet:
     footer: str
     dropped_members: tuple[tuple[int, str], ...] = ()
     deduped_members: tuple[tuple[int, int], ...] = ()
+    trimmed_members: tuple[tuple[int, str], ...] = ()
+    added_member_ids: tuple[int, ...] = ()
+    trimmed_member_details: tuple[dict[str, Any], ...] = ()
+    added_members: tuple[dict[str, Any], ...] = ()
+    row_answers: tuple[tuple[int, str], ...] = ()
 
 
 @dataclass
@@ -898,6 +978,117 @@ def check_scout_voice_words(
     return None
 
 
+def check_scout_no_question_word(
+    name: str,
+    kicker: str,
+    why_better_together: str,
+    footer: str,
+) -> Optional[str]:
+    """Fable Thu 1:15 AM look (c): never refer to a market as a 'question'."""
+    for field in (name, kicker, why_better_together, footer):
+        match = _SCOUT_FORBIDDEN_QUESTION_RE.search(field or "")
+        if match:
+            return f"forbidden_word:{match.group(0).lower()}"
+    return None
+
+
+def normalize_scout_kicker(
+    raw_kicker: Optional[str],
+    *,
+    max_chars: int = SCOUT_KICKER_MAX_CHARS,
+) -> str:
+    """Fable Thu 1:15 AM look (b): keep valid short kickers whole, or omit (`\"\"`) — never slice."""
+    cleaned = re.sub(r"\s+", " ", (raw_kicker or "").strip()).upper()
+    if not cleaned or len(cleaned) > max(1, int(max_chars)):
+        return ""
+    return cleaned
+
+
+def normalize_scout_row_answers(
+    raw_answers: Any,
+) -> tuple[tuple[int, str], ...]:
+    """Normalize per-member stated ladder answers (`{market_id: answer}` or pairs)."""
+    pairs: dict[int, str] = {}
+    if isinstance(raw_answers, Mapping):
+        items: Iterable[tuple[Any, Any]] = raw_answers.items()
+    elif isinstance(raw_answers, Sequence) and not isinstance(raw_answers, (str, bytes)):
+        items = (
+            (item[0], item[1])
+            for item in raw_answers
+            if isinstance(item, (tuple, list)) and len(item) >= 2
+        )
+    else:
+        return ()
+    for raw_id, raw_ans in items:
+        try:
+            mid = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        ans = re.sub(r"\s+", " ", str(raw_ans or "").strip())
+        if mid > 0 and ans:
+            pairs[mid] = ans
+    return tuple(sorted(pairs.items()))
+
+
+def classify_scout_member_shape(row: ScoutMarketRow) -> str:
+    """Classify a scout member as ``yes_no`` vs ``score_ladder`` / ``date_ladder`` / ``value_ladder``."""
+    meta = row.market_metadata if isinstance(row.market_metadata, Mapping) else {}
+    hint = str(meta.get("row_shape") or meta.get("market_shape") or "").strip().lower()
+    if hint in {"yes_no", "score_ladder", "date_ladder", "value_ladder"}:
+        return hint
+    title = str(row.title or "").strip()
+    if _LADDER_SCORE_RE.search(title):
+        return "score_ladder"
+    if _LADDER_DATE_RE.search(title):
+        return "date_ladder"
+    if _LADDER_VALUE_RE.search(title):
+        return "value_ladder"
+    return "yes_no"
+
+
+def _stated_ladder_answer_for_row(
+    row: ScoutMarketRow,
+    answers_map: Mapping[int, str],
+) -> str:
+    meta = row.market_metadata if isinstance(row.market_metadata, Mapping) else {}
+    raw = (
+        answers_map.get(int(row.market_id))
+        or str(meta.get("row_answer") or "")
+        or str(meta.get("ladder_answer") or "")
+        or str(meta.get("context_line") or "")
+    )
+    cleaned = re.sub(r"\s+", " ", str(raw or "").strip())
+    if not cleaned:
+        return ""
+    if _normalized_title_key(cleaned) == _normalized_title_key(row.title):
+        return ""
+    return cleaned
+
+
+def check_scout_mixed_ladder_answers(
+    members: Sequence[ScoutMarketRow],
+    *,
+    row_answers: Mapping[int, str] | Sequence[tuple[int, str]] = (),
+) -> Optional[str]:
+    """Fable Thu 1:15 AM look (d): mixed yes/no + ladder/score sets must state each ladder row's answer."""
+    if not members:
+        return None
+    answers_map = dict(normalize_scout_row_answers(row_answers))
+    shapes = [classify_scout_member_shape(row) for row in members]
+    has_yes_no = "yes_no" in shapes
+    ladder_rows = [row for row, shape in zip(members, shapes) if shape != "yes_no"]
+    if not has_yes_no or not ladder_rows:
+        return None
+    missing = [
+        str(row.market_id)
+        for row in ladder_rows
+        if not _stated_ladder_answer_for_row(row, answers_map)
+    ]
+    if missing:
+        return f"mixed_ladder_missing_row_answer:{','.join(missing)}"
+    return None
+
+
 def check_scout_blurb_matches_members(
     why_better_together: str,
     members: Sequence[ScoutMarketRow],
@@ -1090,6 +1281,1277 @@ def check_scout_no_politics_only_set(
     return None
 
 
+_CONSUMER_PRICE_SET_TITLE_RE = re.compile(
+    r"\b(?:what\s+(?:things|stuff)\s+costs?|everyday\s+prices?)\b",
+    re.IGNORECASE,
+)
+_CONSUMER_PRICE_MEMBER_RE = re.compile(
+    r"(?:\b(?:ticket\s+price|eggs?\s+price|gas\s+prices?|diesel\s+price|"
+    r"hot\s+dog\s+combo\s+price|big\s+mac\s+price|burrito\s+price)\b|"
+    r":\s*price\s+in\s+20\d\d\b)",
+    re.IGNORECASE,
+)
+
+
+# ---------------------------------------------------------------------------
+# #13544: Split-set coherence gate and <4-member missing-member fill
+# ---------------------------------------------------------------------------
+
+_SPLIT_QUOTED_RE = re.compile(r'["\u201c][^"\u201d]{2,140}["\u201d]')
+_SPLIT_UNIFIED_ANCHOR_STOP: frozenset[str] = frozenset(
+    {
+        "a", "an", "the", "in", "on", "at", "to", "of", "for", "by", "or", "and",
+        "is", "are", "be", "will", "who", "what", "when", "where", "which", "how",
+        "many", "more", "most", "this", "that", "his", "her", "their", "its", "with",
+        "from", "as", "before", "after", "during", "next", "new", "first", "last",
+        "best", "year", "years", "2025", "2026", "2027", "2028", "2029", "2030",
+        "1", "2", "3", "2nd", "3rd", "vs", "get", "gets", "make", "makes", "hit",
+        "hits", "win", "wins", "winner", "winners", "does", "do", "have", "has",
+        "one", "two", "three", "four", "five", "six", "other", "another", "any",
+        "all", "over", "under", "into", "out", "up", "about", "among", "highest",
+        "biggest", "total", "show", "movie", "film", "game", "work", "season",
+        "series", "person", "time",
+    }
+)
+_SPLIT_TITLE_SUBJECT_STOP: frozenset[str] = _SPLIT_UNIFIED_ANCHOR_STOP | frozenset(
+    {
+        "pure", "long", "shot", "shots", "hardest", "problem", "problems",
+        "science", "earth", "rattled", "gavel", "drop", "summed", "title",
+        "titles", "still", "big", "minus", "football", "wild", "card", "cards",
+        "stuff", "thing", "things", "cost", "costs", "now", "ever", "come",
+        "never", "finale", "week", "night", "countdown", "showdown", "fresh",
+        "rotten", "put", "ring", "take", "takes", "home", "gold", "nomination",
+        "nominations", "opening", "weekend", "box", "office", "america", "top",
+        "song", "songs", "album", "albums", "chart", "music", "tv", "back",
+        "release", "released", "announce", "announced",
+    }
+)
+_SPLIT_SUBJECT_ALIASES: dict[str, tuple[str, ...]] = {
+    "gta": ("gta vi", "grand theft auto vi", "grand theft auto 6", "gta 6"),
+    "elon": ("elon musk", "elon", "tesla", "spacex", "xai", "neuralink"),
+    "record": ("record", "album", "selling", "sales", "cd", "vinyl"),
+    "moon": ("moon", "lunar"),
+    "taylor": ("taylor swift", "taylor"),
+    "cast": ("cast",),
+    "festival": ("festival",),
+    "headliner": ("headliner", "headliners"),
+}
+_SPLIT_CLAUSE_STARTERS: frozenset[str] = frozenset(
+    {
+        "will", "who", "what", "when", "where", "which", "how", "is", "are",
+        "does", "do", "can", "could", "should", "would", "top", "next",
+        "major", "human", "best", "most", "first", "last", "new", "another",
+        "two", "three",
+    }
+)
+_SPLIT_PERSON_NON_NAMES: frozenset[str] = frozenset(
+    {
+        "united states", "new york", "los angeles", "san francisco", "new orleans",
+        "golden globe", "golden globes", "rotten tomatoes", "box office", "big game",
+        "world cup", "super bowl", "hall of fame", "year in search", "game awards",
+        "the game awards", "millennium prize", "best picture", "best actor",
+        "best actress", "best director", "best supporting", "best original",
+        "best narrative", "best audio", "best mobile", "best television",
+        "opening weekend", "top spotify", "top us", "sport illustrated",
+        "sports illustrated", "swimsuit issue", "saturday night", "night live",
+        "human moon", "first week", "album equivalent", "equivalent units",
+        "physical and", "digital sales", "sales combined", "cover models",
+        "cover model", "new episode", "stranger things", "hunger games",
+        "angry birds", "open world", "cliff booth", "miami vice",
+        "miles morales", "iron man", "dune part", "avengers doomsday",
+        "grand theft", "theft auto", "nuclear fusion", "merriam webster",
+        "oxford word", "time person", "sports personality", "bbc sports",
+        "critics choice", "choice awards", "the voice", "dancing with",
+        "minnesota yacht", "yacht club", "club festival", "jazz heritage",
+        "largest company", "searched person", "spotify artist", "spotify song",
+        "spotify album", "motion picture", "sale growth", "sales growth",
+    }
+)
+_SPLIT_PLATFORM_BRANDS: tuple[str, ...] = (
+    "spotify",
+    "billboard",
+    "apple music",
+    "netflix",
+    "youtube",
+    "tiktok",
+    "instagram",
+    "twitch",
+    "hbo",
+    "disney+",
+    "hulu",
+    "amazon",
+    "vogue",
+    "espn",
+    "pitchfork",
+    "rolling stone",
+    "metacritic",
+    "rotten tomatoes",
+)
+_AWAITED_RELEASE_PATTERN_RE = re.compile(
+    r"(?:\bwhen\s+will\b.*\brelease\b"
+    r"|\bnew\s+(?:album|episode|season|trailer|game|book)\b"
+    r"|\bannounced?\s+(?:before|in\s+202\d)\b"
+    r"|\breleased?\s+(?:by|before|in\s+202\d)\b)",
+    re.IGNORECASE,
+)
+_AWAITED_TITLE_HINT_RE = re.compile(
+    r"\b(?:come\s+out|ever|await(?:ed|ing)|release\s+date|this\s+year\s+or\s+never|countdown)\b",
+    re.IGNORECASE,
+)
+
+
+def check_scout_price_set_context(
+    name: str,
+    members: Sequence[ScoutMarketRow | Mapping[str, Any]],
+) -> Optional[str]:
+    """Rule 3.7 (#13544 Ask 4): Keep consumer price sets off Discover without per-row context."""
+    if not members:
+        return None
+    titles: list[str] = []
+    missing_context = 0
+    price_hits = 0
+    for m in members:
+        if isinstance(m, Mapping):
+            t = str(m.get("title") or "")
+            meta = m.get("market_metadata")
+            has_ctx = bool(
+                str(m.get("context_line") or "").strip()
+                or (isinstance(meta, Mapping) and str(meta.get("context_line") or "").strip())
+            )
+        else:
+            t = str(m.title or "")
+            meta = m.market_metadata
+            has_ctx = bool(
+                isinstance(meta, Mapping) and str(meta.get("context_line") or "").strip()
+            )
+        titles.append(t)
+        if _CONSUMER_PRICE_MEMBER_RE.search(t):
+            price_hits += 1
+        if not has_ctx:
+            missing_context += 1
+
+    is_price_set = (
+        bool(_CONSUMER_PRICE_SET_TITLE_RE.search(name or "")) and price_hits >= 2
+    ) or (price_hits >= max(2, math.ceil(len(members) * 0.5)))
+    if is_price_set and missing_context > 0:
+        return f"price_set_missing_row_context:{missing_context}/{len(members)}"
+    return None
+
+
+def _split_fold(text: str) -> str:
+    folded = _fold_text(text)
+    return re.sub(r"\bu\.s\.\b", "us", folded)
+
+
+def _split_singularize(word: str) -> str:
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 4 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
+def _split_norm_tokens(text: str) -> set[str]:
+    return {
+        _split_singularize(tok)
+        for tok in re.findall(r"[a-z0-9]+", _split_fold(text))
+        if not tok.isdigit() and len(tok) > 2
+    }
+
+
+def _strip_quoted_substrings(text: str) -> str:
+    return _SPLIT_QUOTED_RE.sub(" ", text or "")
+
+
+def _has_unified_parent_frame(set_title: str, member_titles: Sequence[str]) -> bool:
+    """Return True when every member belongs to one explicit unifying frame."""
+    if len(member_titles) < 2:
+        return True
+    folded = [_split_fold(t) for t in member_titles]
+
+    vs_m = re.search(
+        r"\b([a-z0-9][a-z0-9\s'&-]{1,24}?)\s+vs\.?\s+([a-z0-9][a-z0-9\s'&-]{1,24})\b",
+        _split_fold(set_title),
+    )
+    if vs_m:
+        left_toks = _split_norm_tokens(vs_m.group(1)) - _SPLIT_UNIFIED_ANCHOR_STOP
+        right_toks = _split_norm_tokens(vs_m.group(2)) - _SPLIT_UNIFIED_ANCHOR_STOP
+        combined = left_toks | right_toks
+        if left_toks and right_toks and all(_split_norm_tokens(t) & combined for t in member_titles):
+            return True
+
+    if all(f.startswith("top us ") for f in folded):
+        return True
+    if all(re.search(r"\bwhen will\b.*\brelease\b", f) for f in folded):
+        return True
+
+    title_toks = _split_norm_tokens(set_title)
+    if "album" in title_toks and all(
+        "album" in f or ("release" in f and "song" not in f) for f in folded
+    ):
+        return True
+    for key, variants in _SPLIT_SUBJECT_ALIASES.items():
+        # "elon" in title allows Elon-company sets (e.g. Elon + Tesla); never bypass Taylor sets.
+        if key == "taylor":
+            continue
+        if key == "elon" and "elon" not in title_toks:
+            continue
+        if all(any(re.search(rf"\b{re.escape(v)}s?\b", f) for v in variants) for f in folded):
+            return True
+
+    shows = [_extract_show_season(_strip_quoted_substrings(t)) for t in member_titles]
+    if shows and shows[0] and all(s == shows[0] for s in shows):
+        return True
+
+    if all("big game" in f for f in folded):
+        return True
+    return False
+
+
+def _extract_split_named_persons(text: str) -> set[str]:
+    persons: set[str] = set()
+    for clause in re.split(r"[:\u00b7?!.;]+", _strip_quoted_substrings(text)):
+        for match in re.finditer(r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,3})\b", clause):
+            words = match.group(1).split()
+            while words and _split_fold(words[0]) in _SPLIT_CLAUSE_STARTERS:
+                words.pop(0)
+            if len(words) < 2:
+                continue
+            cand = _split_fold(" ".join(words[:2]))
+            if cand not in _SPLIT_PERSON_NON_NAMES:
+                persons.add(cand)
+    return persons
+
+
+def detect_scout_split_set(
+    set_title: str,
+    members: Sequence[ScoutMarketRow],
+) -> Optional[ScoutSplitSetFinding]:
+    """Detect when a strict subset (2 <= k < N) shares a narrower subject (#13544)."""
+    n = len(members)
+    if n < 3:
+        return None
+    titles = [m.title or "" for m in members]
+    if _has_unified_parent_frame(set_title, titles):
+        return None
+
+    stripped = [_strip_quoted_substrings(t) for t in titles]
+    stripped_folded = [_split_fold(t) for t in stripped]
+    tok_sets = [_split_norm_tokens(t) for t in stripped]
+
+    # Detector A: Title concrete subject token fits strict subset (2 <= k < N)
+    title_words = [
+        _split_singularize(w)
+        for w in re.findall(r"[a-z0-9]+", _split_fold(set_title))
+        if len(w) > 2 and not w.isdigit()
+    ]
+    for tw in title_words:
+        if tw in _SPLIT_TITLE_SUBJECT_STOP:
+            continue
+        variants = _SPLIT_SUBJECT_ALIASES.get(tw, (tw,))
+        matched = tuple(
+            i
+            for i, (sf, ts) in enumerate(zip(stripped_folded, tok_sets))
+            if tw in ts or any(re.search(rf"\b{re.escape(v)}s?\b", sf) for v in variants)
+        )
+        if 2 <= len(matched) < n:
+            outliers = tuple(i for i in range(n) if i not in matched)
+            return ScoutSplitSetFinding(
+                reason="title_subject_split",
+                shared_feature=tw,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector B1: Structured colon/middot series prefix shared by 2 <= k < N
+    prefix_map: dict[str, list[int]] = defaultdict(list)
+    for i, raw in enumerate(stripped):
+        m = re.match(r"^\s*([A-Z][A-Za-z0-9&'.\-\s]{3,40}?)\s*(?::|\u00b7)\s+\S", raw)
+        if m:
+            pfx = re.sub(r"\s+", " ", _split_fold(m.group(1))).strip()
+            if len(pfx) >= 4 and pfx not in {"next", "top", "who", "what"}:
+                prefix_map[pfx].append(i)
+    for pfx, idxs in sorted(prefix_map.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if 2 <= len(idxs) < n:
+            matched = tuple(idxs)
+            outliers = tuple(i for i in range(n) if i not in idxs)
+            return ScoutSplitSetFinding(
+                reason="series_prefix_split",
+                shared_feature=pfx,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector B2: TV show with "Season N" shared by 2 <= k < N
+    show_names: set[str] = set()
+    for raw in stripped:
+        m = re.search(
+            r"\b([A-Z][A-Za-z0-9'&]+(?:\s+(?:the|with|of|and|[A-Z][A-Za-z0-9'&]+)){0,4})\s+Season\s+\d+\b",
+            raw,
+        )
+        if m:
+            show = re.sub(r"^(?:who will (?:win|host)|will)\s+", "", _split_fold(m.group(1))).strip()
+            if len(show) >= 4:
+                show_names.add(show)
+    for show in sorted(show_names):
+        matched = tuple(
+            i for i, sf in enumerate(stripped_folded) if re.search(rf"\b{re.escape(show)}\b", sf)
+        )
+        if 2 <= len(matched) < n:
+            outliers = tuple(i for i in range(n) if i not in matched)
+            return ScoutSplitSetFinding(
+                reason="show_season_split",
+                shared_feature=show,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector B3: Named person outside quotes shared by 2 <= k < N
+    person_map: dict[str, list[int]] = defaultdict(list)
+    for i, raw in enumerate(titles):
+        for person in _extract_split_named_persons(raw):
+            person_map[person].append(i)
+    for person, idxs in sorted(person_map.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if 2 <= len(idxs) < n:
+            matched = tuple(idxs)
+            outliers = tuple(i for i in range(n) if i not in idxs)
+            return ScoutSplitSetFinding(
+                reason="named_person_split",
+                shared_feature=person,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector B4: Platform / chart brand shared by 2 <= k < N
+    for brand in _SPLIT_PLATFORM_BRANDS:
+        matched = tuple(
+            i for i, sf in enumerate(stripped_folded) if re.search(rf"\b{re.escape(brand)}\b", sf)
+        )
+        if 2 <= len(matched) < n:
+            outliers = tuple(i for i in range(n) if i not in matched)
+            return ScoutSplitSetFinding(
+                reason="platform_brand_split",
+                shared_feature=brand,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector C: Trailing structured colon template suffix shared by 2 <= k < N
+    suffix_map: dict[str, list[int]] = defaultdict(list)
+    for i, raw in enumerate(stripped):
+        m = re.search(r":\s*([A-Za-z][A-Za-z\s]{1,28})\s*$", raw)
+        if m:
+            words = [_split_singularize(w) for w in re.findall(r"[a-z]+", _split_fold(m.group(1)))]
+            key = " ".join(words)
+            if key and key not in {"2026", "2027", "year"}:
+                suffix_map[key].append(i)
+    for sfx, idxs in sorted(suffix_map.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if 2 <= len(idxs) < n:
+            matched = tuple(idxs)
+            outliers = tuple(i for i in range(n) if i not in idxs)
+            return ScoutSplitSetFinding(
+                reason="template_suffix_split",
+                shared_feature=sfx,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    # Detector D1: Skipped ordinal rank (e.g. biggest/1st and 3rd without 2nd)
+    ranks_found: dict[int, int] = {}
+    for i, sf in enumerate(stripped_folded):
+        if re.search(r"\b(?:1st|first)\s+(?:biggest|highest|place|largest)\b|\b(?:has|be)\s+(?:the\s+)?biggest\b", sf):
+            ranks_found[1] = i
+        elif re.search(r"\b(?:2nd|second)\s+(?:biggest|highest|place|largest)\b", sf):
+            ranks_found[2] = i
+        elif re.search(r"\b(?:3rd|third)\s+(?:biggest|highest|place|largest)\b", sf):
+            ranks_found[3] = i
+    if 1 in ranks_found and 3 in ranks_found and 2 not in ranks_found:
+        matched = tuple(sorted(ranks_found.values()))
+        outliers = tuple(i for i in range(n) if i not in matched)
+        return ScoutSplitSetFinding(
+            reason="skipped_ordinal_rank",
+            shared_feature="1_and_3_missing_2",
+            coherent_indices=matched,
+            outlier_indices=outliers,
+            trimmable=False,
+        )
+
+    # Detector D2: Question stem shared by 2 <= k < N
+    stem_map: dict[str, list[int]] = defaultdict(list)
+    for i, sf in enumerate(stripped_folded):
+        m = re.match(r"^(which\s+[a-z]+\s+has)\b", sf)
+        if m:
+            stem_map[m.group(1)].append(i)
+    for stem, idxs in sorted(stem_map.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if 2 <= len(idxs) < n:
+            matched = tuple(idxs)
+            outliers = tuple(i for i in range(n) if i not in idxs)
+            return ScoutSplitSetFinding(
+                reason="question_stem_split",
+                shared_feature=stem,
+                coherent_indices=matched,
+                outlier_indices=outliers,
+                trimmable=True,
+            )
+
+    return None
+
+
+def trim_scout_split_set(
+    set_title: str,
+    members: Sequence[ScoutMarketRow],
+) -> tuple[list[ScoutMarketRow], list[tuple[ScoutMarketRow, str]], Optional[ScoutSplitSetFinding]]:
+    """Trim a split set down to its coherent narrower core when trimmable (#13544)."""
+    finding = detect_scout_split_set(set_title, members)
+    if finding is None:
+        return list(members), [], None
+    reason_str = f"split_set:{finding.reason}:{finding.shared_feature}"
+    if not finding.trimmable:
+        return [], [(m, reason_str) for m in members], finding
+    trim_reason = f"split_set_trimmed:{finding.reason}:{finding.shared_feature}"
+    kept = [members[i] for i in finding.coherent_indices]
+    trimmed = [(members[i], trim_reason) for i in finding.outlier_indices]
+    return kept, trimmed, finding
+
+
+def _token_list(raw: Any) -> tuple[str, ...]:
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        return ()
+    return tuple(str(tok).strip().lower() for tok in raw if str(tok or "").strip())
+
+
+def _matches_atom_query_title(title: str, query: Mapping[str, Any]) -> bool:
+    folded = _fold_text(title)
+    all_toks = _token_list(query.get("title_all_tokens"))
+    any_toks = _token_list(query.get("any_tokens"))
+    excl_toks = _token_list(query.get("exclude_tokens"))
+    if all_toks and not all(tok in folded for tok in all_toks):
+        return False
+    if any_toks and not any(tok in folded for tok in any_toks):
+        return False
+    if excl_toks and any(tok in folded for tok in excl_toks):
+        return False
+    return bool(all_toks or any_toks)
+
+
+def _load_curated_entry_titles() -> dict[int, str]:
+    """Read known short titles from curated grouping files so sub_tag members always carry titles."""
+    titles: dict[int, str] = {}
+    groupings_dir = SCOUT_DATA_DIR.parent / "groupings"
+    for path in sorted(groupings_dir.glob("batch*_curated_sets.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        sets_map = payload.get("sets") if isinstance(payload, Mapping) else None
+        if not isinstance(sets_map, Mapping):
+            continue
+        for entry_wrap in sets_map.values():
+            entries = entry_wrap.get("entries") if isinstance(entry_wrap, Mapping) else None
+            if not isinstance(entries, Sequence):
+                continue
+            for item in entries:
+                if not isinstance(item, Mapping):
+                    continue
+                try:
+                    mid = int(item.get("id"))
+                except (TypeError, ValueError):
+                    continue
+                label = str(item.get("short_label") or "").strip()
+                if mid > 0 and label and mid not in titles:
+                    titles[mid] = label
+    return titles
+
+
+def load_graded_scout_sets(path: Path = SCOUT_GRADED_SETS_PATH) -> list[ScoutKnownSet]:
+    """Load committed graded sets newest-first so carried grades never re-stage (#13102)."""
+    if not path.exists():
+        return []
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    rows = raw.get("graded_sets") if isinstance(raw, Mapping) else raw
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return []
+    out: list[ScoutKnownSet] = []
+    for item in rows:
+        if not isinstance(item, Mapping):
+            continue
+        name = str(item.get("name") or "").strip()
+        slug = _slugify(str(item.get("slug") or name))
+        grade = str(item.get("grade") or "").strip()
+        if not name or not slug or grade not in {"Keep", "Fix", "Drop"}:
+            continue
+        mids: list[int] = []
+        for raw_mid in item.get("member_ids") or ():
+            try:
+                mid = int(raw_mid)
+            except (TypeError, ValueError):
+                continue
+            if mid > 0 and mid not in mids:
+                mids.append(mid)
+        titles = tuple(
+            str(t).strip()
+            for t in (item.get("member_titles") or ())
+            if str(t or "").strip()
+        )
+        out.append(
+            ScoutKnownSet(
+                source="graded",
+                slug=slug,
+                name=name,
+                member_ids=tuple(mids),
+                member_titles=titles,
+                grade=grade,
+                note=str(item.get("note") or "").strip(),
+                deck_id=str(item.get("deck_id") or "").strip() or None,
+                graded_at=str(item.get("graded_at") or "").strip() or None,
+            )
+        )
+    out.sort(key=lambda ks: ks.graded_at or "", reverse=True)
+    return out
+
+
+def _collect_cached_public_members(
+    slug: str,
+    redis_client: Any,
+) -> tuple[list[int], list[str]]:
+    if redis_client is None:
+        return [], []
+    try:
+        raw = redis_client.get(f"roundup:feed_card:v1:{slug}")
+    except Exception:
+        return [], []
+    if not raw:
+        return [], []
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return [], []
+    mids: list[int] = []
+    titles: list[str] = []
+    for row in parsed.get("members") or () if isinstance(parsed, Mapping) else ():
+        if not isinstance(row, Mapping):
+            continue
+        try:
+            mid = int(row.get("id") or row.get("market_id"))
+        except (TypeError, ValueError):
+            mid = 0
+        title = str(row.get("name") or row.get("title") or "").strip()
+        if mid > 0:
+            mids.append(mid)
+        if title:
+            titles.append(title)
+    return mids, titles
+
+
+def load_public_scout_sets(
+    *,
+    catalog_by_id: Optional[Mapping[int, ScoutMarketRow]] = None,
+    redis_client: Any = None,
+) -> list[ScoutKnownSet]:
+    """Read live ``stage == 'public'`` container & machinery sets and their members (#13102)."""
+    from app.utils.container_machinery import (
+        discover_machinery_candidate_paths,
+        load_machinery_definition,
+    )
+    from app.utils.roundup_containers import load_roundup_definitions_from_dir
+
+    fun_reg = load_fun_markets_registry().markets
+    curated_titles = _load_curated_entry_titles()
+    pool_rows: list[tuple[int, str]] = []
+    seen_pool_ids: set[int] = set()
+    if catalog_by_id:
+        for mid, row in catalog_by_id.items():
+            seen_pool_ids.add(int(mid))
+            pool_rows.append((int(mid), str(row.title or "")))
+    for mid, entry in fun_reg.items():
+        if int(mid) not in seen_pool_ids:
+            seen_pool_ids.add(int(mid))
+            pool_rows.append((int(mid), str(entry.title or "")))
+
+    defs: list[Mapping[str, Any]] = []
+    seen_slugs: set[str] = set()
+    for path in discover_machinery_candidate_paths():
+        try:
+            defn = load_machinery_definition(path)
+        except Exception:
+            continue
+        slug = _slugify(str(defn.get("slug") or ""))
+        if not slug or slug in seen_slugs or defn.get("stage", "public") != "public":
+            continue
+        seen_slugs.add(slug)
+        defs.append(defn)
+    for defn in load_roundup_definitions_from_dir(CONTAINERS_DATA_DIR):
+        slug = _slugify(str(defn.get("slug") or ""))
+        if not slug or slug in seen_slugs or defn.get("stage", "public") != "public":
+            continue
+        seen_slugs.add(slug)
+        defs.append(defn)
+
+    out: list[ScoutKnownSet] = []
+    for defn in defs:
+        slug = _slugify(str(defn.get("slug") or ""))
+        name = str(defn.get("name") or defn.get("section_title") or slug).strip()
+        rule = defn.get("rule") if isinstance(defn.get("rule"), Mapping) else {}
+        mids_list, titles_list = _collect_cached_public_members(slug, redis_client)
+        seen_mids: set[int] = set(mids_list)
+        seen_titles: set[str] = {t for t in titles_list if t}
+
+        def _add_mid(mid_val: Any) -> None:
+            try:
+                mid_int = int(mid_val)
+            except (TypeError, ValueError):
+                return
+            if mid_int <= 0 or mid_int in seen_mids:
+                return
+            seen_mids.add(mid_int)
+            mids_list.append(mid_int)
+            title = ""
+            if catalog_by_id and mid_int in catalog_by_id:
+                title = str(catalog_by_id[mid_int].title or "").strip()
+            elif mid_int in fun_reg:
+                title = str(fun_reg[mid_int].title or "").strip()
+            elif mid_int in curated_titles:
+                title = curated_titles[mid_int]
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                titles_list.append(title)
+
+        for key in ("candidates", "market_ids"):
+            for raw_id in rule.get(key) or ():
+                _add_mid(raw_id)
+
+        title_ilike = str(rule.get("title_ilike") or "").strip()
+        if title_ilike:
+            for pool_mid, pool_title in pool_rows:
+                if _matches_title_ilike(pool_title, title_ilike):
+                    _add_mid(pool_mid)
+
+        sections = rule.get("sections") or defn.get("sections") or ()
+        if isinstance(sections, Sequence) and not isinstance(sections, (str, bytes)):
+            for sec in sections:
+                if not isinstance(sec, Mapping):
+                    continue
+                for key in ("candidates", "market_ids"):
+                    for raw_id in sec.get(key) or ():
+                        _add_mid(raw_id)
+                aq = sec.get("atom_query")
+                if not isinstance(aq, Mapping):
+                    continue
+                sub_tag = str(aq.get("fun_sub_tag") or "").strip()
+                excl_toks = _token_list(aq.get("exclude_tokens"))
+                if sub_tag:
+                    for tag_mid in fun_market_ids_for_sub_tag(sub_tag):
+                        candidate_title = ""
+                        if catalog_by_id and tag_mid in catalog_by_id:
+                            candidate_title = catalog_by_id[tag_mid].title
+                        elif tag_mid in fun_reg:
+                            candidate_title = fun_reg[tag_mid].title
+                        if (
+                            candidate_title
+                            and excl_toks
+                            and any(tok in _fold_text(candidate_title) for tok in excl_toks)
+                        ):
+                            continue
+                        _add_mid(tag_mid)
+                elif aq.get("title_all_tokens") or aq.get("any_tokens"):
+                    for pool_mid, pool_title in pool_rows:
+                        if _matches_atom_query_title(pool_title, aq):
+                            _add_mid(pool_mid)
+
+        out.append(
+            ScoutKnownSet(
+                source="public",
+                slug=slug,
+                name=name,
+                member_ids=tuple(mids_list),
+                member_titles=tuple(titles_list),
+            )
+        )
+    return out
+
+
+async def load_db_graded_scout_sets(
+    db: Any,
+    *,
+    redis_client: Any = None,
+    committed_path: Path = SCOUT_GRADED_SETS_PATH,
+    decks_dir: Path = SCOUT_DATA_DIR,
+) -> list[ScoutKnownSet]:
+    """Read live DB morning/deck ``RankingJudgment`` grades merged ahead of committed decks."""
+    from sqlalchemy import desc, select
+
+    from app.models.models import RankingJudgment
+
+    committed = load_graded_scout_sets(committed_path)
+    deck_cards_by_id: dict[tuple[str, str], dict[str, Any]] = {}
+    for deck_file in (
+        decks_dir / "fun_scout_blind_40_deck_v2_2026_11_23.json",
+        decks_dir / "fun_scout_blind_40_deck_2026_11_23.json",
+    ):
+        if not deck_file.exists():
+            continue
+        try:
+            payload = json.loads(deck_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        did = str(payload.get("deck_id") or "").strip()
+        for card in payload.get("cards") or ():
+            if isinstance(card, Mapping) and card.get("card_id"):
+                deck_cards_by_id[(did, str(card["card_id"]))] = dict(card)
+
+    deck_keys_cache: dict[str, dict[str, Any]] = {}
+    run_sets_cache: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def _redis_json(key: str) -> Optional[dict[str, Any]]:
+        if redis_client is None:
+            return None
+        try:
+            raw = redis_client.get(key)
+        except Exception:
+            return None
+        if not raw:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    stmt = (
+        select(RankingJudgment)
+        .where(
+            RankingJudgment.surface.in_(
+                ("grade_scout_morning_deck", "grade_sets_v2_deck", "grade_sets_deck")
+            )
+        )
+        .order_by(desc(RankingJudgment.created_at), desc(RankingJudgment.id))
+        .limit(500)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    dynamic: list[ScoutKnownSet] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for row in rows:
+        meta = row.label_metadata if isinstance(row.label_metadata, Mapping) else {}
+        grade = str(meta.get("grade") or row.label or "").strip()
+        if grade not in {"Keep", "Fix", "Drop"}:
+            continue
+        item_id = str(meta.get("item_id") or row.market_name or "").strip()
+        deck_date = str(meta.get("deck_date") or "").strip()
+        surface = str(getattr(row, "surface", "") or "").strip()
+        note = str(meta.get("note") or row.notes or "").strip()
+        created_at = getattr(row, "created_at", None)
+        graded_at = (
+            str(meta.get("timestamp") or "").strip()
+            or (created_at.astimezone(timezone.utc).isoformat() if created_at else "")
+        )
+
+        name = ""
+        slug = ""
+        member_ids: list[int] = []
+        member_titles: list[str] = []
+        deck_id: Optional[str] = None
+
+        if surface == "grade_scout_morning_deck" and deck_date and item_id:
+            if deck_date not in deck_keys_cache:
+                dk = _redis_json(f"bainluck:fun_scout:deck_key:{deck_date}") or {}
+                deck_keys_cache[deck_date] = (
+                    dict(dk.get("entries") or {})
+                    if isinstance(dk.get("entries"), Mapping)
+                    else {}
+                )
+            if deck_date not in run_sets_cache:
+                run_obj = (
+                    _redis_json(f"bainluck:fun_scout:run:{deck_date}")
+                    or _redis_json("bainluck:fun_scout:latest")
+                    or {}
+                )
+                by_slug: dict[str, dict[str, Any]] = {}
+                for s in run_obj.get("staged_sets") or ():
+                    if isinstance(s, Mapping) and s.get("slug"):
+                        by_slug[str(s["slug"]).strip().lower()] = dict(s)
+                run_sets_cache[deck_date] = by_slug
+
+            key_entry = deck_keys_cache[deck_date].get(item_id)
+            if isinstance(key_entry, Mapping):
+                slug = _slugify(str(key_entry.get("slug") or key_entry.get("name") or ""))
+                name = str(key_entry.get("name") or "").strip()
+                deck_id = f"scout-morning-{deck_date}"
+                staged = run_sets_cache[deck_date].get(slug)
+                if staged:
+                    for m in staged.get("members") or ():
+                        if not isinstance(m, Mapping):
+                            continue
+                        try:
+                            mid = int(m.get("market_id"))
+                        except (TypeError, ValueError):
+                            mid = 0
+                        if mid > 0:
+                            member_ids.append(mid)
+                        mt = str(m.get("title") or "").strip()
+                        if mt:
+                            member_titles.append(mt)
+                if not member_ids:
+                    for raw_mid in key_entry.get("member_ids") or ():
+                        try:
+                            mid = int(raw_mid)
+                        except (TypeError, ValueError):
+                            mid = 0
+                        if mid > 0 and mid not in member_ids:
+                            member_ids.append(mid)
+        elif item_id:
+            target_deck = (
+                "discover-blind-40-v2-2026-11-23"
+                if surface == "grade_sets_v2_deck"
+                else "discover-blind-40-2026-11-23"
+            )
+            card = deck_cards_by_id.get((target_deck, item_id))
+            if card:
+                deck_id = target_deck
+                name = str(card.get("title") or "").strip()
+                slug = _slugify(name)
+                for m in card.get("members") or ():
+                    if not isinstance(m, Mapping):
+                        continue
+                    try:
+                        mid = int(m.get("market_id"))
+                    except (TypeError, ValueError):
+                        mid = 0
+                    if mid > 0:
+                        member_ids.append(mid)
+                    mt = str(m.get("title") or "").strip()
+                    if mt:
+                        member_titles.append(mt)
+
+        if not name or not slug:
+            continue
+        dedup_k = (deck_id or "", item_id or slug)
+        if dedup_k in seen_keys:
+            continue
+        seen_keys.add(dedup_k)
+        dynamic.append(
+            ScoutKnownSet(
+                source="graded",
+                slug=slug,
+                name=name,
+                member_ids=tuple(member_ids),
+                member_titles=tuple(member_titles),
+                grade=grade,
+                note=note,
+                deck_id=deck_id,
+                graded_at=graded_at or None,
+            )
+        )
+
+    merged = dynamic + committed
+    merged.sort(key=lambda ks: ks.graded_at or "", reverse=True)
+    return merged
+
+
+def load_known_sets_for_scout(
+    *,
+    catalog_by_id: Optional[Mapping[int, ScoutMarketRow]] = None,
+    graded_sets: Optional[Sequence[ScoutKnownSet]] = None,
+    public_sets: Optional[Sequence[ScoutKnownSet]] = None,
+    redis_client: Any = None,
+) -> list[ScoutKnownSet]:
+    """Combine graded sets and public sets into a single lookup list."""
+    graded = (
+        list(graded_sets) if graded_sets is not None else load_graded_scout_sets()
+    )
+    public = (
+        list(public_sets)
+        if public_sets is not None
+        else load_public_scout_sets(catalog_by_id=catalog_by_id, redis_client=redis_client)
+    )
+    return graded + public
+
+
+def _canonical_public_slug(slug: str) -> str:
+    cleaned = _slugify(slug)
+    return cleaned.removeprefix("machinery-")
+
+
+def find_scout_known_set_overlap(
+    name: str,
+    slug: str,
+    members: Sequence[ScoutMarketRow],
+    known_sets: Sequence[ScoutKnownSet],
+) -> Optional[ScoutKnownSetOverlap]:
+    """Return the highest-priority graded/public overlap (exact name/slug or >= 50% members)."""
+    if not known_sets:
+        return None
+    cand_name_key = _normalized_title_key(name)
+    cand_slug = _canonical_public_slug(slug or name)
+    cand_count = len(members)
+    best: Optional[ScoutKnownSetOverlap] = None
+    best_rank: Optional[tuple[int, str, int, int, int]] = None
+
+    for ks in known_sets:
+        ks_name_key = _normalized_title_key(ks.name)
+        ks_slug = _canonical_public_slug(ks.slug or ks.name)
+        matched_by_name = bool(cand_name_key and cand_name_key == ks_name_key)
+        matched_by_slug = bool(cand_slug and cand_slug == ks_slug)
+        ks_ids = frozenset(ks.member_ids)
+        ks_titles = frozenset(
+            k for t in ks.member_titles if (k := _normalized_title_key(t))
+        )
+        shared_ids: list[int] = []
+        for m in members:
+            if int(m.market_id) in ks_ids or (
+                ks_titles and _normalized_title_key(m.title) in ks_titles
+            ):
+                shared_ids.append(int(m.market_id))
+        shared_count = len(shared_ids)
+        half_or_more = cand_count > 0 and shared_count * 2 >= cand_count
+        if not (matched_by_name or matched_by_slug or half_or_more):
+            continue
+        graded_day = (ks.graded_at or "")[:10]
+        rank = (
+            1 if ks.source == "graded" else 0,
+            graded_day,
+            shared_count,
+            1 if matched_by_slug else 0,
+            1 if matched_by_name else 0,
+            ks.graded_at or "",
+        )
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best = ScoutKnownSetOverlap(
+                known_set=ks,
+                matched_by_name=matched_by_name,
+                matched_by_slug=matched_by_slug,
+                shared_member_ids=tuple(shared_ids),
+                shared_count=shared_count,
+                candidate_count=cand_count,
+            )
+    return best
+
+
+def _matches_title_ilike(title: str, pattern: Optional[str]) -> bool:
+    raw_pat = (pattern or "").strip()
+    if not raw_pat:
+        return False
+    regex_parts = [re.escape(part) for part in raw_pat.split("%")]
+    regex_str = "^" + ".*".join(regex_parts) + "$"
+    if "%" not in raw_pat:
+        regex_str = re.escape(raw_pat)
+    return bool(re.search(regex_str, title or "", re.IGNORECASE))
+
+
+_STRUCTURED_PREFIX_RE = re.compile(
+    r"^\s*([A-Z][A-Za-z0-9&'.\-\s]{3,40}?)\s*(?::|\u00b7)\s+\S"
+)
+_STRUCTURED_SUFFIX_RE = re.compile(r":\s*([A-Za-z][A-Za-z\s]{1,28})\s*$")
+_SHOW_SEASON_RE = re.compile(
+    r"\b([A-Z][A-Za-z0-9'&]+(?:\s+(?:the|with|of|and|[A-Z][A-Za-z0-9'&]+)){0,4}\s+Season\s+\d+)\b"
+)
+_GENERIC_PREFIXES = frozenset({"next", "top", "who", "what"})
+_TEMPLATE_PHRASE_BOILERPLATE_RE = re.compile(
+    r"\b(?:released?\s+by|announced?\s+(?:by|before|this)|this\s+year|before\s+202\d|in\s+202\d)\b"
+)
+
+
+def _extract_structured_prefix(stripped_title: str) -> tuple[str, str]:
+    match = _STRUCTURED_PREFIX_RE.match(stripped_title or "")
+    if not match:
+        return "", ""
+    raw_pfx = re.sub(r"\s+", " ", match.group(1)).strip()
+    folded_pfx = re.sub(r"\s+", " ", _split_fold(raw_pfx)).strip()
+    if len(folded_pfx) < 4 or folded_pfx in _GENERIC_PREFIXES:
+        return "", ""
+    return folded_pfx, raw_pfx
+
+
+def _extract_structured_suffix(stripped_title: str) -> str:
+    match = _STRUCTURED_SUFFIX_RE.search(stripped_title or "")
+    if not match:
+        return ""
+    words = [_split_singularize(w) for w in re.findall(r"[a-z]+", _split_fold(match.group(1)))]
+    key = " ".join(words)
+    if key in {"", "2026", "2027", "year"}:
+        return ""
+    return key
+
+
+def _extract_show_season(stripped_title: str) -> str:
+    match = _SHOW_SEASON_RE.search(stripped_title or "")
+    if not match:
+        return ""
+    cleaned = re.sub(r"^(?:who will (?:win|host)|will)\s+", "", _split_fold(match.group(1))).strip()
+    return re.sub(r"\s+", " ", cleaned)
+
+
+def _extract_shared_template_phrase(stripped_titles: Sequence[str]) -> Optional[str]:
+    """Find the longest non-person 3+-word contiguous template phrase shared by all members."""
+    if len(stripped_titles) < 2:
+        return None
+    norm_lists: list[list[str]] = []
+    for raw in stripped_titles:
+        words = re.findall(r"[a-z0-9]+", _split_fold(raw))
+        if len(words) < 3:
+            return None
+        norm_lists.append(words)
+
+    first = norm_lists[0]
+    rest_joined = [" ".join(w) for w in norm_lists[1:]]
+    best: Optional[str] = None
+    best_score = (0, 0)
+    for start in range(len(first)):
+        for end in range(len(first), start + 2, -1):
+            span = first[start:end]
+            phrase = " ".join(span)
+            if len(phrase) < 12 or _TEMPLATE_PHRASE_BOILERPLATE_RE.search(phrase):
+                continue
+            content = [w for w in span if w not in _SPLIT_UNIFIED_ANCHOR_STOP and not w.isdigit()]
+            if len(content) < 2:
+                continue
+            pattern = re.compile(rf"(?:^|\s){re.escape(phrase)}(?:$|\s)")
+            if not all(pattern.search(joined) for joined in rest_joined):
+                continue
+            title_case = " ".join(w.capitalize() for w in span)
+            if _extract_split_named_persons(title_case):
+                continue
+            score = (len(content), len(span))
+            if score > best_score:
+                best_score = score
+                best = phrase
+    return best
+
+
+def _is_templated_title_ilike(pattern: str) -> bool:
+    cleaned = re.sub(r"%+", " ", (pattern or "").strip()).strip()
+    if not cleaned:
+        return False
+    if ":" in cleaned or re.search(r"\bseason\s+\d+\b", cleaned, re.IGNORECASE):
+        return not bool(_extract_split_named_persons(cleaned))
+    words = [
+        w
+        for w in re.findall(r"[a-z0-9]+", _split_fold(cleaned))
+        if w not in _SPLIT_UNIFIED_ANCHOR_STOP and not w.isdigit()
+    ]
+    return len(words) >= 3 and not bool(_extract_split_named_persons(cleaned))
+
+
+def _compound_title_has_dropped_facet(
+    set_title: str, kept_rows: Sequence[ScoutMarketRow]
+) -> Optional[str]:
+    """Return missing side label if a trimmed compound 'A & B' title lost a side."""
+    parts = re.split(r"\s+(?:&|and|vs\.?)\s+", set_title.strip(), flags=re.IGNORECASE)
+    if len(parts) < 2:
+        return None
+    kept_tokens: set[str] = set()
+    for row in kept_rows:
+        kept_tokens |= _split_norm_tokens(row.title or "")
+    for part in parts:
+        part_tokens = _split_norm_tokens(part) - _SPLIT_TITLE_SUBJECT_STOP
+        if part_tokens and not (part_tokens & kept_tokens):
+            return part.strip()
+    return None
+
+
+def _fill_missing_scout_members_with_details(
+    name: str,
+    category: str,
+    look: str,
+    members: Sequence[ScoutMarketRow],
+    catalog_by_id: Mapping[int, ScoutMarketRow],
+    *,
+    title_ilike: Optional[str] = None,
+    tagged_by_id: Optional[Mapping[int, ScoutTaggedMarket]] = None,
+    target_min_members: int = SCOUT_PREFERRED_MIN_MEMBERS,
+    max_members: int = 6,
+    min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
+    now: Optional[datetime] = None,
+) -> tuple[list[ScoutMarketRow], list[dict[str, Any]]]:
+    """Search the catalog using only structural title templates (#13544 / #13703)."""
+    del tagged_by_id  # Template-only fill: never expand solely by tagging group.
+    out = list(members)
+    if len(out) >= target_min_members or len(out) >= max_members:
+        return out, []
+    if len(out) < 2 and not (title_ilike or "").strip():
+        return out, []
+
+    existing_ids = {m.market_id for m in out}
+    existing_tkeys = {_normalized_title_key(m.title) for m in out if m.title}
+    existing_ckeys = {
+        (m.canonical_market_key or "").strip().lower()
+        for m in out
+        if (m.canonical_market_key or "").strip()
+    }
+
+    titles = [m.title or "" for m in out]
+    stripped = [_strip_quoted_substrings(t) for t in titles]
+
+    # Derive strict template anchors shared by ALL existing members.
+    shared_prefix: Optional[str] = None
+    pfx_pairs = [_extract_structured_prefix(raw) for raw in stripped]
+    if pfx_pairs and pfx_pairs[0][0] and all(p == pfx_pairs[0][0] for p, _ in pfx_pairs):
+        raw_pfx_sample = pfx_pairs[0][1]
+        if not _extract_split_named_persons(f"{raw_pfx_sample}: Placeholder"):
+            shared_prefix = pfx_pairs[0][0]
+
+    shared_suffix: Optional[str] = None
+    suffixes = [_extract_structured_suffix(raw) for raw in stripped]
+    if suffixes and suffixes[0] and all(s == suffixes[0] for s in suffixes):
+        shared_suffix = suffixes[0]
+
+    shared_show_season: Optional[str] = None
+    shows = [_extract_show_season(raw) for raw in stripped]
+    if shows and shows[0] and all(s == shows[0] for s in shows):
+        shared_show_season = shows[0]
+
+    shared_phrase = _extract_shared_template_phrase(stripped)
+
+    raw_ilike = (title_ilike or "").strip()
+    ilike_pat = raw_ilike if raw_ilike and _is_templated_title_ilike(raw_ilike) else None
+
+    if not any([ilike_pat, shared_prefix, shared_suffix, shared_show_season, shared_phrase]):
+        return out, []
+
+    anchor_parts: list[str] = []
+    if shared_suffix:
+        anchor_parts.append(f"template_suffix:{shared_suffix}")
+    if shared_prefix:
+        anchor_parts.append(f"template_prefix:{shared_prefix}")
+    if shared_show_season:
+        anchor_parts.append(f"show_season:{shared_show_season}")
+    if shared_phrase:
+        anchor_parts.append(f"template_phrase:{shared_phrase}")
+    if ilike_pat:
+        anchor_parts.append(f"title_ilike:{ilike_pat}")
+    fill_reason = "+".join(anchor_parts)
+
+    phrase_re = (
+        re.compile(rf"(?:^|\s){re.escape(shared_phrase)}(?:$|\s)")
+        if shared_phrase
+        else None
+    )
+
+    non_political_set = (category or "").strip().lower() not in _SCOUT_POLITICAL_CATEGORIES
+    scored_candidates: list[tuple[tuple[float, float, int], ScoutMarketRow]] = []
+    for cand in catalog_by_id.values():
+        if cand.market_id in existing_ids:
+            continue
+        tkey = _normalized_title_key(cand.title)
+        ckey = (cand.canonical_market_key or "").strip().lower()
+        if (tkey and tkey in existing_tkeys) or (ckey and ckey in existing_ckeys):
+            continue
+        ok, _ = check_scout_member(cand, min_volume=min_volume, now=now)
+        if not ok:
+            continue
+        if non_political_set and _is_political_market(cand):
+            continue
+        if _SCOUT_MECHANICAL_FAMILY_RE.search(cand.title or ""):
+            continue
+        if look == "map" and not _extract_specific_places(cand.title or ""):
+            continue
+
+        cand_stripped = _strip_quoted_substrings(cand.title or "")
+        cand_word_str = " ".join(re.findall(r"[a-z0-9]+", _split_fold(cand_stripped)))
+
+        relevance = 0.0
+        if ilike_pat:
+            if not _matches_title_ilike(cand.title or "", ilike_pat):
+                continue
+            relevance += 5.0
+        if shared_prefix:
+            cand_pfx, _ = _extract_structured_prefix(cand_stripped)
+            if cand_pfx != shared_prefix:
+                continue
+            relevance += 4.0
+        if shared_suffix:
+            cand_sfx = _extract_structured_suffix(cand_stripped)
+            if cand_sfx != shared_suffix:
+                continue
+            relevance += 4.0
+        if shared_show_season:
+            cand_show = _extract_show_season(cand_stripped)
+            if cand_show != shared_show_season:
+                continue
+            relevance += 4.0
+        if phrase_re is not None:
+            if not phrase_re.search(cand_word_str):
+                continue
+            relevance += 3.5
+
+        if relevance <= 0.0:
+            continue
+        if (cand.category or "").strip().lower() == (category or "").strip().lower():
+            relevance += 0.5
+        vol = float(cand.volume) if cand.volume is not None else 0.0
+        scored_candidates.append(((-relevance, -vol, cand.market_id), cand))
+
+    scored_candidates.sort(key=lambda pair: pair[0])
+    added_details: list[dict[str, Any]] = []
+    limit = min(target_min_members, max_members)
+    for _, cand in scored_candidates:
+        if len(out) >= limit:
+            break
+        tkey = _normalized_title_key(cand.title)
+        ckey = (cand.canonical_market_key or "").strip().lower()
+        if (tkey and tkey in existing_tkeys) or (ckey and ckey in existing_ckeys):
+            continue
+        trial = out + [cand]
+        if detect_scout_split_set(name, trial) is not None:
+            continue
+        out = trial
+        added_details.append(
+            {
+                "market_id": cand.market_id,
+                "title": cand.title,
+                "reason": fill_reason,
+            }
+        )
+        existing_ids.add(cand.market_id)
+        if tkey:
+            existing_tkeys.add(tkey)
+        if ckey:
+            existing_ckeys.add(ckey)
+
+    return out, added_details
+
+
+def fill_missing_scout_members(
+    name: str,
+    category: str,
+    look: str,
+    members: Sequence[ScoutMarketRow],
+    catalog_by_id: Mapping[int, ScoutMarketRow],
+    *,
+    title_ilike: Optional[str] = None,
+    tagged_by_id: Optional[Mapping[int, ScoutTaggedMarket]] = None,
+    target_min_members: int = SCOUT_PREFERRED_MIN_MEMBERS,
+    max_members: int = 6,
+    min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
+    now: Optional[datetime] = None,
+) -> tuple[list[ScoutMarketRow], list[int]]:
+    """Search the full live catalog for missing siblings when a set has <4 members (#13544)."""
+    out, details = _fill_missing_scout_members_with_details(
+        name,
+        category,
+        look,
+        members,
+        catalog_by_id,
+        title_ilike=title_ilike,
+        tagged_by_id=tagged_by_id,
+        target_min_members=target_min_members,
+        max_members=max_members,
+        min_volume=min_volume,
+        now=now,
+    )
+    return out, [int(item["market_id"]) for item in details]
+
+
 def validate_scout_proposed_set(
     proposal: ScoutProposedSet,
     catalog_by_id: Mapping[int, ScoutMarketRow],
@@ -1097,8 +2559,12 @@ def validate_scout_proposed_set(
     retired_slugs: frozenset[str] = frozenset(),
     retired_title_keys: frozenset[str] = frozenset(),
     existing_slugs: frozenset[str] = frozenset(),
+    known_sets: Sequence[ScoutKnownSet] = (),
     min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
     min_members: int = SCOUT_MIN_LIVE_MEMBERS,
+    preferred_min_members: int = SCOUT_PREFERRED_MIN_MEMBERS,
+    tagged_by_id: Optional[Mapping[int, ScoutTaggedMarket]] = None,
+    fill_missing_members: bool = True,
     now: Optional[datetime] = None,
 ) -> tuple[Optional[ScoutValidatedSet], Optional[str]]:
     """Run all code-enforced checks on one model-proposed set."""
@@ -1131,6 +2597,14 @@ def validate_scout_proposed_set(
     if selector_kind == "title_ilike" and not (proposal.title_ilike or "").strip():
         return None, "missing_title_ilike_selector"
 
+    kicker = normalize_scout_kicker(proposal.kicker)
+    row_answers = normalize_scout_row_answers(proposal.row_answers)
+    category = (proposal.category or "culture").strip().lower()
+    footer = (
+        (proposal.footer or "").strip()
+        or "Separate markets grouped together. They do not add up to 100%."
+    )
+
     passing: list[ScoutMarketRow] = []
     dropped: list[tuple[int, str]] = []
     dropped_rows: list[tuple[ScoutMarketRow, str]] = []
@@ -1150,24 +2624,130 @@ def validate_scout_proposed_set(
                 dropped_rows.append((row, reason_str))
 
     deduped_rows, deduped_pairs = dedupe_cross_venue_members(passing)
+
+    initial_overlap = find_scout_known_set_overlap(name, slug, deduped_rows, known_sets)
+    if initial_overlap is not None:
+        if initial_overlap.known_set.source == "graded":
+            return (
+                None,
+                f"graded_set_carried:{initial_overlap.known_set.grade}:{initial_overlap.known_set.slug}",
+            )
+        return None, f"public_set_overlap:{initial_overlap.known_set.slug}"
+
+    early_mech_err = check_scout_no_mechanical_sales_downloads(name, why, deduped_rows)
+    if early_mech_err is not None:
+        return None, early_mech_err
+
+    trimmed_members: list[tuple[int, str]] = []
+    trimmed_member_details: list[dict[str, Any]] = []
+    narrowed_rows, trimmed_outliers, split_finding = trim_scout_split_set(name, deduped_rows)
+    if split_finding is not None and not split_finding.trimmable:
+        return (
+            None,
+            f"split_set:{split_finding.reason}:{split_finding.shared_feature}",
+        )
+    if split_finding is not None:
+        # Never lean on missing-member fill to rescue a trim that dropped below min_members.
+        if len(narrowed_rows) < min_members:
+            return (
+                None,
+                f"split_set_too_small_after_trim:{split_finding.reason}:"
+                f"{split_finding.shared_feature}:{len(narrowed_rows)}<{min_members}",
+            )
+        deduped_rows = narrowed_rows
+        for out_row, out_reason in trimmed_outliers:
+            trimmed_members.append((out_row.market_id, out_reason))
+            trimmed_member_details.append(
+                {
+                    "market_id": out_row.market_id,
+                    "title": out_row.title,
+                    "reason": out_reason,
+                }
+            )
+            dropped.append((out_row.market_id, out_reason))
+            dropped_rows.append((out_row, out_reason))
+
+        dropped_facet = (
+            _compound_title_has_dropped_facet(name, deduped_rows)
+            if split_finding.reason == "title_subject_split"
+            else None
+        )
+        if split_finding.reason != "title_subject_split" or dropped_facet is not None:
+            narrow_name = (proposal.narrowed_name or "").strip()
+            narrow_why = (proposal.narrowed_why_better_together or "").strip()
+            if (
+                not narrow_name
+                or not narrow_why
+                or _normalized_title_key(narrow_name) == _normalized_title_key(name)
+            ):
+                return (
+                    None,
+                    f"split_set_needs_narrow_title:{split_finding.reason}:{split_finding.shared_feature}",
+                )
+            narrow_ok, narrow_taste_reason = check_fun_taste_guard(narrow_name)
+            if not narrow_ok:
+                return None, f"set_title_{narrow_taste_reason}"
+            if _SCOUT_NON_FUN_HARM_RE.search(narrow_name):
+                return None, "set_title_taste_guard:severe_harm"
+            if detect_scout_split_set(narrow_name, deduped_rows) is not None:
+                return (
+                    None,
+                    f"split_set_needs_narrow_title:{split_finding.reason}:{split_finding.shared_feature}",
+                )
+            name = narrow_name
+            why = narrow_why
+    elif len(deduped_rows) < min_members:
+        return (
+            None,
+            f"too_few_live_members:{len(deduped_rows)}<{min_members}",
+        )
+
+    added_details: list[dict[str, Any]] = []
+    if fill_missing_members and len(deduped_rows) < preferred_min_members:
+        deduped_rows, added_details = _fill_missing_scout_members_with_details(
+            name,
+            category,
+            look,
+            deduped_rows,
+            catalog_by_id,
+            title_ilike=(proposal.title_ilike or "").strip() or None,
+            tagged_by_id=tagged_by_id,
+            target_min_members=preferred_min_members,
+            min_volume=min_volume,
+            now=now,
+        )
+    added_member_ids = [int(item["market_id"]) for item in added_details]
+
     if len(deduped_rows) < min_members:
         return (
             None,
             f"too_few_live_members:{len(deduped_rows)}<{min_members}",
         )
 
-    kicker = (proposal.kicker or "DISCOVER SET").strip().upper()[:32]
-    category = (proposal.category or "culture").strip().lower()
-    footer = (
-        (proposal.footer or "").strip()
-        or "Separate markets grouped together. They do not add up to 100%."
-    )
+    recheck_split = detect_scout_split_set(name, deduped_rows)
+    if recheck_split is not None:
+        return (
+            None,
+            f"split_set:{recheck_split.reason}:{recheck_split.shared_feature}",
+        )
+
+    recheck_overlap = find_scout_known_set_overlap(name, slug, deduped_rows, known_sets)
+    if recheck_overlap is not None:
+        if recheck_overlap.known_set.source == "graded":
+            return (
+                None,
+                f"graded_set_carried:{recheck_overlap.known_set.grade}:{recheck_overlap.known_set.slug}",
+            )
+        return None, f"public_set_overlap:{recheck_overlap.known_set.slug}"
 
     for rule_err in (
         check_scout_voice_words(name, kicker, why, footer),
+        check_scout_no_question_word(name, kicker, why, footer),
         check_scout_no_mechanical_sales_downloads(name, why, deduped_rows),
         check_scout_no_politics_only_set(category, name, deduped_rows),
         check_scout_map_look_places(look, deduped_rows),
+        check_scout_price_set_context(name, deduped_rows),
+        check_scout_mixed_ladder_answers(deduped_rows, row_answers=row_answers),
         check_scout_blurb_matches_members(why, deduped_rows, dropped_rows),
     ):
         if rule_err is not None:
@@ -1188,6 +2768,11 @@ def validate_scout_proposed_set(
             footer=footer,
             dropped_members=tuple(dropped),
             deduped_members=tuple(deduped_pairs),
+            trimmed_members=tuple(trimmed_members),
+            added_member_ids=tuple(added_member_ids),
+            trimmed_member_details=tuple(trimmed_member_details),
+            added_members=tuple(added_details),
+            row_answers=row_answers,
         ),
         None,
     )
@@ -1230,6 +2815,24 @@ def build_scout_rule_file_definition(
     else:
         rule["selector"] = {"fun_tag": validated_set.slug}
 
+    trimmed_records = [dict(item) for item in validated_set.trimmed_member_details]
+    if not trimmed_records and validated_set.trimmed_members:
+        trimmed_records = [
+            {"market_id": int(mid), "title": "", "reason": str(reason)}
+            for mid, reason in validated_set.trimmed_members
+        ]
+    added_records = [dict(item) for item in validated_set.added_members]
+    if not added_records and validated_set.added_member_ids:
+        member_titles = {int(m.market_id): m.title for m in validated_set.members}
+        added_records = [
+            {
+                "market_id": int(mid),
+                "title": member_titles.get(int(mid), ""),
+                "reason": "catalog_fill",
+            }
+            for mid in validated_set.added_member_ids
+        ]
+
     definition: dict[str, Any] = {
         "slug": validated_set.slug,
         "stage": "preview",
@@ -1258,6 +2861,13 @@ def build_scout_rule_file_definition(
             "created_at": created_at.astimezone(timezone.utc).isoformat(),
             "verified_member_count": len(validated_set.members),
             "fun_tag": validated_set.slug,
+            "trimmed_members": trimmed_records,
+            "added_members": added_records,
+            **(
+                {"row_answers": {str(mid): ans for mid, ans in validated_set.row_answers}}
+                if validated_set.row_answers
+                else {}
+            ),
         },
         "rule": rule,
     }
@@ -1385,6 +2995,133 @@ def retire_scout_set(
     updated = [r for r in retired_sets if _slugify(str(r.get("slug") or "")) != clean_slug]
     updated.append(entry)
     return updated
+
+
+def normalize_retired_scout_sets(
+    retired_sets: Iterable[Mapping[str, Any] | str] = (),
+) -> list[dict[str, Any]]:
+    """Normalize any iterable of retired set mappings or slugs into a deterministic list.
+
+    Prevents ``TypeError`` when callers pass an unordered ``set`` or bare slugs
+    where prompt builders slice ``retired_sets[:N]`` and read ``r.get(...)``.
+    """
+    is_unordered = isinstance(retired_sets, (set, frozenset))
+    by_key: dict[str, dict[str, Any]] = {}
+    ordered_keys: list[str] = []
+
+    for item in retired_sets:
+        if isinstance(item, Mapping):
+            raw_slug = str(item.get("slug") or "").strip()
+            raw_name = str(item.get("name") or "").strip()
+            raw_reason = str(item.get("reason") or "").strip()
+            raw_retired_at = str(item.get("retired_at") or "").strip()
+            slug = _slugify(raw_slug or raw_name)
+            name = raw_name or raw_slug
+            if not slug and not name:
+                continue
+            entry: dict[str, Any] = {
+                "slug": slug,
+                "name": name,
+                "reason": raw_reason,
+            }
+            if raw_retired_at:
+                entry["retired_at"] = raw_retired_at
+        elif isinstance(item, str):
+            cleaned = item.strip()
+            slug = _slugify(cleaned)
+            if not slug:
+                continue
+            entry = {"slug": slug, "name": cleaned, "reason": ""}
+        else:
+            continue
+
+        key = entry["slug"] or entry["name"].lower()
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = entry
+            ordered_keys.append(key)
+        else:
+            for field in ("name", "reason", "retired_at"):
+                if not existing.get(field) and entry.get(field):
+                    existing[field] = entry[field]
+
+    normalized = [by_key[k] for k in ordered_keys]
+    if is_unordered:
+        normalized.sort(key=lambda r: (str(r.get("slug") or ""), str(r.get("name") or "")))
+    return normalized
+
+
+def _normalize_reader_dismissed_sets(
+    reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
+) -> dict[str, int]:
+    """Normalize reader bundle dismissals (`{set_id: count}`) for scout prompts."""
+    if isinstance(reader_dismissed_sets, Mapping):
+        out: dict[str, int] = {}
+        for k, v in reader_dismissed_sets.items():
+            clean_id = str(k or "").strip()
+            try:
+                cnt = int(v)
+            except (TypeError, ValueError):
+                cnt = 0
+            if clean_id and cnt > 0:
+                out[clean_id] = cnt
+        return out
+    out = {}
+    for row in reader_dismissed_sets:
+        if not isinstance(row, Mapping):
+            continue
+        clean_id = str(row.get("item_id") or row.get("set_id") or "").strip()
+        try:
+            cnt = int(row.get("dismiss_count") or row.get("count") or 0)
+        except (TypeError, ValueError):
+            cnt = 0
+        if clean_id and cnt > 0:
+            out[clean_id] = out.get(clean_id, 0) + cnt
+    return out
+
+
+async def load_reader_dismissed_sets(
+    db: Any,
+    *,
+    lookback_days: int = 30,
+    now: Optional[datetime] = None,
+) -> dict[str, int]:
+    """Read user-provenance grouped-card ('not for me') dismissals by set (#13644).
+
+    Queries ``DiscoverInteraction`` rows written by the grouped card ``✕`` button
+    (``item_type == 'bundle'``, ``action in ('dismiss', 'unlike')``,
+    ``provenance == 'user'``) so the scout (385: A) can read per-set dismissals.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.models import DiscoverInteraction
+
+    ref_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    cutoff = ref_now - timedelta(days=max(1, int(lookback_days)))
+    stmt = (
+        select(
+            DiscoverInteraction.item_id,
+            func.count(DiscoverInteraction.id).label("dismiss_count"),
+        )
+        .where(
+            DiscoverInteraction.item_type == "bundle",
+            DiscoverInteraction.action.in_(("dismiss", "unlike")),
+            DiscoverInteraction.provenance == "user",
+            DiscoverInteraction.created_at >= cutoff,
+        )
+        .group_by(DiscoverInteraction.item_id)
+        .order_by(
+            func.count(DiscoverInteraction.id).desc(),
+            DiscoverInteraction.item_id.asc(),
+        )
+    )
+    rows = (await db.execute(stmt)).all()
+    counts: dict[str, int] = {}
+    for raw_id, count in rows:
+        clean_id = str(raw_id or "").strip()
+        if clean_id and int(count or 0) > 0:
+            counts[clean_id] = int(count)
+    return counts
 
 
 # ---------------------------------------------------------------------------
@@ -1528,14 +3265,15 @@ def run_scout_tagging_pass(
     *,
     openai_client: Any,
     approved_examples: Sequence[FunMarketEntry],
-    retired_sets: Sequence[Mapping[str, Any]] = (),
+    retired_sets: Iterable[Mapping[str, Any] | str] = (),
     job_budget: Optional[JobBudget] = None,
     batch_size: int = _TAG_BATCH_SIZE,
 ) -> tuple[list[ScoutTaggedMarket], float]:
     """Run the small-model high-recall tagging pass over open non-sports titles."""
     examples_json = json.dumps(_approved_examples_summary(approved_examples))
+    normalized_retired = normalize_retired_scout_sets(retired_sets)
     retired_json = json.dumps(
-        [{"name": r.get("name"), "reason": r.get("reason")} for r in retired_sets[:12]]
+        [{"name": r.get("name"), "reason": r.get("reason")} for r in normalized_retired[:12]]
     )
     system_prompt = (
         "You are filtering prediction markets for Bain Luck's Discover feed. "
@@ -1593,8 +3331,10 @@ def run_scout_set_writing_pass(
     *,
     anthropic_client: Any,
     approved_examples: Sequence[FunMarketEntry],
-    retired_sets: Sequence[Mapping[str, Any]] = (),
+    retired_sets: Iterable[Mapping[str, Any] | str] = (),
+    known_sets: Sequence[ScoutKnownSet] = (),
     morning_grades: Sequence[Mapping[str, Any]] = (),
+    reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
     job_budget: Optional[JobBudget] = None,
     min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
     now: Optional[datetime] = None,
@@ -1615,24 +3355,35 @@ def run_scout_set_writing_pass(
         "1. Every set needs at least 3 distinct live markets from `Live tagged fun candidates`; "
         "prefer 4 to 6 `member_ids` whenever a theme has >= 4 candidates so every set has depth.\n"
         "2. Never put two venues' copies of the same market in one set.\n"
-        "3. Voice ban: NEVER use the words `trader`, `traders`, `bet`, `bets`, or `betting` "
-        "in the set name, kicker, why_better_together, or footer. Write for casual readers.\n"
-        "4. Blurb honesty & brevity: keep `why_better_together` to ONE crisp sentence (<= 25 words) "
+        "3. Voice & copy ban: NEVER use the words `trader`, `traders`, `bet`, `bets`, `betting`, "
+        "`question`, or `questions` in the set name, kicker, why_better_together, or footer. "
+        "Call them markets, never questions. Write for casual readers.\n"
+        "4. Kicker length: keep `kicker` <= 32 characters in whole words (never cut mid-word), or use `\"\"` to omit it.\n"
+        "5. Blurb honesty & brevity: keep `why_better_together` to ONE crisp sentence (<= 25 words) "
         "and mention ONLY markets, people, couples, albums, books, movies, or facts whose exact "
         "`market_id` is in `member_ids` — NEVER cite an `Approved examples` sample or outside title "
         "unless its exact `market_id` is in `member_ids`.\n"
-        '5. Visual look: choose `"map"` ONLY when EVERY market title in `member_ids` explicitly names '
+        '6. Visual look: choose `"map"` ONLY when EVERY market title in `member_ids` explicitly names '
         "a specific city, state, ski resort, mountain, or lake; choose `faces` for specific people "
         "(requires credited portraits); otherwise choose `bars` (including global storms/volcanoes).\n"
-        "6. No mechanical financial metrics (never group monthly sales growth, POS growth, or app downloads).\n"
-        "7. No politics-only, cabinet/government-exit, or routine election sets.\n"
-        "8. Taste guard: no named person's pregnancy, health, affairs, divorce, arrest, trial, or death "
-        "(engagements are allowed); no war/violence/nukes. Never repeat a retired/down-graded set.\n"
+        "7. No mechanical financial metrics (never group monthly sales growth, POS growth, or app downloads).\n"
+        "8. No politics-only, cabinet/government-exit, or routine election sets.\n"
+        "9. Taste & novelty guard: no named person's pregnancy, health, affairs, divorce, arrest, trial, or death "
+        "(engagements are allowed); no war/violence/nukes. NEVER repeat a retired set or overlap >= 50% of members "
+        "with (or reuse the name of) any set in `Already graded sets` or `Already public sets`.\n"
+        "10. Set unity (#13544): NEVER bundle a subset sharing a narrower person, show, platform, award, "
+        "or template (e.g. 2 Taylor Swift or Critics Choice or Spotify rows) alongside unrelated filler rows; "
+        "if a strong set has fewer than 4 members, include all available matching sibling markets from the catalog "
+        "(never skip an ordinal rank like 2nd when 1st and 3rd are included).\n"
+        "11. Mixed yes/no + ladder or score rows: prefer one kind of market per set; if a set mixes yes-or-no rows "
+        "with 'When will...'/'by...?' ladders or review/value scores, include `row_answers` mapping each ladder "
+        "market_id to its stated answer (date, band, or score range), or do not propose it.\n"
         "Return strict JSON only:\n"
         '{"sets": [{"slug": str, "name": str, "kicker": str, "category": str, '
         '"why_better_together": str, "look": "map"|"faces"|"bars", '
         '"selector_kind": "fun_tag"|"title_ilike", "title_ilike": str|null, '
-        '"template": str|null, "footer": str|null, "member_ids": [int, ...]}]}'
+        '"template": str|null, "footer": str|null, "row_answers": {str: str}|null, '
+        '"member_ids": [int, ...]}]}'
     )
 
     live_rows_raw: list[tuple[ScoutTaggedMarket, ScoutMarketRow]] = []
@@ -1668,10 +3419,30 @@ def run_scout_set_writing_pass(
         f"{f.family_key} (open={f.open_count}, sample={f.sample_title})"
         for f in uncovered_families[:80]
     ]
+    normalized_retired = normalize_retired_scout_sets(retired_sets)
+    normalized_reader_dismissed = _normalize_reader_dismissed_sets(reader_dismissed_sets)
+    top_reader_dismissed = sorted(
+        normalized_reader_dismissed.items(), key=lambda kv: (-kv[1], kv[0])
+    )[:20]
+    graded_summary = [
+        {
+            "name": ks.name,
+            "grade": ks.grade,
+            **({"note": ks.note} if ks.note else {}),
+        }
+        for ks in known_sets
+        if ks.source == "graded"
+    ][:60]
+    public_summary = [
+        ks.name for ks in known_sets if ks.source == "public"
+    ][:60]
     user_prompt = (
         f"Approved examples: {json.dumps(_approved_examples_summary(approved_examples))}\n"
-        f"Retired sets (do NOT repeat): {json.dumps(list(retired_sets)[:20])}\n"
+        f"Retired sets (do NOT repeat): {json.dumps(normalized_retired[:20])}\n"
+        f"Already graded sets (do NOT repeat or overlap >=50%): {json.dumps(graded_summary)}\n"
+        f"Already public sets (do NOT repeat or overlap >=50%): {json.dumps(public_summary)}\n"
         f"Recent morning grades: {json.dumps(list(morning_grades)[:20])}\n"
+        f"Reader dismissed sets ('not for me'): {json.dumps(dict(top_reader_dismissed))}\n"
         f"Uncovered sentinel families ({len(family_lines)}):\n"
         + "\n".join(family_lines)
         + f"\n\nTagged group counts ({len(group_counts)} themes): "
@@ -1714,7 +3485,7 @@ def run_scout_set_writing_pass(
             ScoutProposedSet(
                 slug=str(raw_set.get("slug") or ""),
                 name=str(raw_set.get("name") or ""),
-                kicker=str(raw_set.get("kicker") or "DISCOVER SET"),
+                kicker=str(raw_set["kicker"]) if raw_set.get("kicker") is not None else "",
                 category=str(raw_set.get("category") or "culture"),
                 why_better_together=str(raw_set.get("why_better_together") or ""),
                 look=str(raw_set.get("look") or "bars"),
@@ -1725,9 +3496,66 @@ def run_scout_set_writing_pass(
                 ),
                 template=str(raw_set["template"]) if raw_set.get("template") else None,
                 footer=str(raw_set["footer"]) if raw_set.get("footer") else None,
+                row_answers=normalize_scout_row_answers(raw_set.get("row_answers")),
             )
         )
     return proposals, result.model, round(result.cost_usd or 0.0, 6)
+
+
+def _rejected_proposal_record(
+    prop: ScoutProposedSet,
+    err: Optional[str],
+    catalog_by_id: Mapping[int, ScoutMarketRow],
+    known_sets: Sequence[ScoutKnownSet],
+    *,
+    min_volume: float,
+    now: datetime,
+) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
+    rec: dict[str, Any] = {"slug": prop.slug, "name": prop.name, "reason": err}
+    if not err or not (
+        err.startswith("graded_set_carried:") or err.startswith("public_set_overlap:")
+    ):
+        return rec, None
+    passing: list[ScoutMarketRow] = []
+    for mid in dict.fromkeys(prop.member_ids):
+        row = catalog_by_id.get(mid)
+        ok, _ = check_scout_member(row, min_volume=min_volume, now=now)
+        if ok and row is not None:
+            passing.append(row)
+    deduped_rows, _ = dedupe_cross_venue_members(passing)
+    overlap = find_scout_known_set_overlap(
+        (prop.name or "").strip(),
+        _slugify(prop.slug or prop.name),
+        deduped_rows,
+        known_sets,
+    )
+    if overlap is None:
+        return rec, None
+    ks = overlap.known_set
+    rec["matched_set"] = ks.name
+    rec["matched_slug"] = ks.slug
+    rec["matched_source"] = ks.source
+    rec["shared_members"] = overlap.shared_count
+    rec["candidate_count"] = overlap.candidate_count
+    if ks.source == "graded" and ks.grade:
+        rec["carried_grade"] = ks.grade
+        if ks.note:
+            rec["carried_note"] = ks.note
+        if ks.deck_id:
+            rec["matched_deck_id"] = ks.deck_id
+        carried = {
+            "proposed_name": prop.name,
+            "proposed_slug": prop.slug,
+            "matched_set": ks.name,
+            "matched_slug": ks.slug,
+            "deck_id": ks.deck_id,
+            "grade": ks.grade,
+            "note": ks.note,
+            "shared_members": overlap.shared_count,
+            "candidate_count": overlap.candidate_count,
+        }
+        return rec, carried
+    return rec, None
 
 
 def run_nightly_fun_scout(
@@ -1738,8 +3566,10 @@ def run_nightly_fun_scout(
     anthropic_client: Any,
     output_dir: Optional[Path] = None,
     approved_examples: Optional[Sequence[FunMarketEntry]] = None,
-    retired_sets: Sequence[Mapping[str, Any]] = (),
+    retired_sets: Iterable[Mapping[str, Any] | str] = (),
+    known_sets: Optional[Sequence[ScoutKnownSet]] = None,
     morning_grades: Sequence[Mapping[str, Any]] = (),
+    reader_dismissed_sets: Mapping[str, int] | Sequence[Mapping[str, Any]] = (),
     existing_slugs: frozenset[str] = frozenset(),
     licence_state: Optional[ScoutLicenceState] = None,
     prior_monthly_spend_usd: float = 0.0,
@@ -1766,6 +3596,12 @@ def run_nightly_fun_scout(
     job_budget = JobBudget(SCOUT_RUN_CAP_USD)
     catalog_by_id = {m.market_id: m for m in markets}
 
+    normalized_retired = normalize_retired_scout_sets(retired_sets)
+    effective_known_sets = (
+        list(known_sets)
+        if known_sets is not None
+        else load_known_sets_for_scout(catalog_by_id=catalog_by_id)
+    )
     if pretagged is not None:
         tagged = list(pretagged[0])
         tag_cost = round(float(pretagged[1]), 6)
@@ -1774,32 +3610,41 @@ def run_nightly_fun_scout(
             markets,
             openai_client=openai_client,
             approved_examples=examples,
-            retired_sets=retired_sets,
+            retired_sets=normalized_retired,
             job_budget=job_budget,
         )
+    normalized_reader_dismissed = _normalize_reader_dismissed_sets(reader_dismissed_sets)
     proposals, set_model_used, set_cost = run_scout_set_writing_pass(
         tagged,
         catalog_by_id,
         uncovered_families,
         anthropic_client=anthropic_client,
         approved_examples=examples,
-        retired_sets=retired_sets,
+        retired_sets=normalized_retired,
+        known_sets=effective_known_sets,
         morning_grades=morning_grades,
+        reader_dismissed_sets=normalized_reader_dismissed,
         job_budget=job_budget,
         min_volume=min_volume,
         now=run_now,
     )
 
     retired_slugs = frozenset(
-        _slugify(str(r.get("slug") or r.get("name") or "")) for r in retired_sets
+        s
+        for r in normalized_retired
+        if (s := _slugify(str(r.get("slug") or r.get("name") or "")))
     )
     retired_title_keys = frozenset(
-        _normalized_title_key(str(r.get("name") or "")) for r in retired_sets
+        k
+        for r in normalized_retired
+        if (k := _normalized_title_key(str(r.get("name") or "")))
     )
 
     validated: list[ScoutValidatedSet] = []
     rejected: list[dict[str, Any]] = []
+    carried_grades: list[dict[str, Any]] = []
     seen_slugs = set(existing_slugs)
+    tagged_by_id = {t.market_id: t for t in tagged}
     for prop in proposals:
         vset, err = validate_scout_proposed_set(
             prop,
@@ -1807,14 +3652,26 @@ def run_nightly_fun_scout(
             retired_slugs=retired_slugs,
             retired_title_keys=retired_title_keys,
             existing_slugs=frozenset(seen_slugs),
+            known_sets=effective_known_sets,
             min_volume=min_volume,
+            tagged_by_id=tagged_by_id,
             now=run_now,
         )
         if vset is not None:
             validated.append(vset)
             seen_slugs.add(vset.slug)
         else:
-            rejected.append({"slug": prop.slug, "name": prop.name, "reason": err})
+            rec, carried = _rejected_proposal_record(
+                prop,
+                err,
+                catalog_by_id,
+                effective_known_sets,
+                min_volume=min_volume,
+                now=run_now,
+            )
+            rejected.append(rec)
+            if carried is not None:
+                carried_grades.append(carried)
 
     written_files: list[str] = []
     if output_dir is not None:
@@ -1857,6 +3714,7 @@ def run_nightly_fun_scout(
         "proposed_set_count": len(proposals),
         "validated_sets": validated,
         "rejected_sets": rejected,
+        "carried_grades": carried_grades,
         "written_rule_files": written_files,
         "licence_state": lic.to_dict(),
     }
@@ -1963,3 +3821,272 @@ def evaluate_tagging_pass_against_seed_sets(
         "unique_seed_survived": len(unique_seed_ids & tagged_ids),
         "groups": groups_report,
     }
+
+
+def build_fun_scout_set_producer(definition: Mapping[str, Any]) -> Any:
+    """Build a ``RoundupProducer`` from a Nightly Fun Scout rule definition (#13102)."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.models.models import FuturesMarket
+    from app.utils.container_presentation import market_destination
+    from app.utils.discover_fun_tags import fun_market_ids_for_sub_tag
+    from app.utils.roundup_containers import (
+        RoundupMembers,
+        RoundupProducer,
+        RoundupRefusal,
+    )
+
+    validated = validate_roundup_definition(dict(definition))
+    if isinstance(validated.get("sections"), Sequence) and not isinstance(
+        validated.get("sections"), (str, bytes)
+    ) and len(validated["sections"]) > 0:
+        from app.utils.container_machinery import build_container_machinery_producer
+
+        return build_container_machinery_producer(validated)
+
+    rule = dict(validated.get("rule") or {})
+    selector = rule.get("selector") if isinstance(rule.get("selector"), Mapping) else {}
+    fun_tag = str(selector.get("fun_tag") or "").strip()
+    title_ilike = str(rule.get("title_ilike") or selector.get("title_ilike") or "").strip()
+    scout_meta = validated.get("scout") if isinstance(validated.get("scout"), Mapping) else {}
+    row_answers_map = dict(normalize_scout_row_answers(scout_meta.get("row_answers") or {}))
+    graded_ids = [
+        int(mid)
+        for mid in (scout_meta.get("graded_member_ids") or ())
+        if isinstance(mid, int) and mid > 0
+    ]
+    allow_rule_additions = bool(rule.get("allow_rule_additions"))
+    min_members = max(1, int(rule.get("min_numbered_members") or SCOUT_MIN_LIVE_MEMBERS))
+    card_rows = max(1, int(rule.get("card_rows") or 4))
+    open_status = "open"
+
+    async def _produce(db: Any) -> RoundupMembers | RoundupRefusal:
+        if graded_ids:
+            graded_stmt = (
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.status == open_status,
+                    FuturesMarket.id.in_(graded_ids),
+                )
+            )
+            graded_rows = list((await db.execute(graded_stmt)).scalars().all())
+            graded_order = {mid: idx for idx, mid in enumerate(graded_ids)}
+            graded_rows.sort(
+                key=lambda m: (
+                    graded_order.get(int(getattr(m, "id", 0) or 0), len(graded_order)),
+                    int(getattr(m, "id", 0) or 0),
+                )
+            )
+            market_rows = list(graded_rows)
+            if allow_rule_additions and (title_ilike or fun_tag):
+                detector = globals().get("detect_scout_split_set")
+                row_cls = globals().get("ScoutMarketRow")
+                if callable(detector) and row_cls is not None:
+                    extra_rows: list[Any] = []
+                    if title_ilike:
+                        extra_stmt = (
+                            select(FuturesMarket)
+                            .options(selectinload(FuturesMarket.outcomes))
+                            .where(
+                                FuturesMarket.status == open_status,
+                                FuturesMarket.name.ilike(title_ilike),
+                            )
+                            .limit(50)
+                        )
+                        extra_rows = list((await db.execute(extra_stmt)).scalars().all())
+                    elif fun_tag:
+                        extra_ids = [int(mid) for mid in fun_market_ids_for_sub_tag(fun_tag)]
+                        if extra_ids:
+                            extra_stmt = (
+                                select(FuturesMarket)
+                                .options(selectinload(FuturesMarket.outcomes))
+                                .where(
+                                    FuturesMarket.status == open_status,
+                                    FuturesMarket.id.in_(extra_ids),
+                                )
+                            )
+                            extra_rows = list((await db.execute(extra_stmt)).scalars().all())
+                    seen_mids = {int(getattr(m, "id")) for m in market_rows}
+                    default_cat = str(validated.get("category") or "culture")
+                    extra_rows.sort(
+                        key=lambda m: (
+                            -(float(getattr(m, "volume", None) or 0.0)),
+                            int(getattr(m, "id", 0) or 0),
+                        )
+                    )
+                    for extra in extra_rows:
+                        eid = int(getattr(extra, "id"))
+                        if eid in seen_mids:
+                            continue
+                        trial_markets = market_rows + [extra]
+                        trial_scout_rows = [
+                            row_cls(
+                                market_id=int(getattr(m, "id")),
+                                title=str(getattr(m, "question", None) or getattr(m, "name", None) or "").strip(),
+                                category=str(getattr(m, "category", None) or default_cat),
+                                source=str(getattr(m, "source", None) or "kalshi"),
+                            )
+                            for m in trial_markets
+                        ]
+                        if detector(str(validated["name"]), trial_scout_rows) is None:
+                            market_rows = trial_markets
+                            seen_mids.add(eid)
+        elif title_ilike:
+            stmt = (
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.status == open_status,
+                    FuturesMarket.name.ilike(title_ilike),
+                )
+                .limit(50)
+            )
+            market_rows = list((await db.execute(stmt)).scalars().all())
+            market_rows.sort(
+                key=lambda m: (
+                    -(float(getattr(m, "volume", None) or 0.0)),
+                    int(getattr(m, "id", 0) or 0),
+                )
+            )
+        elif fun_tag:
+            candidate_ids = [int(mid) for mid in fun_market_ids_for_sub_tag(fun_tag)]
+            if not candidate_ids:
+                return RoundupRefusal(("empty_fun_scout_selector",))
+            stmt = (
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.status == open_status,
+                    FuturesMarket.id.in_(candidate_ids),
+                )
+            )
+            market_rows = list((await db.execute(stmt)).scalars().all())
+            market_rows.sort(
+                key=lambda m: (
+                    -(float(getattr(m, "volume", None) or 0.0)),
+                    int(getattr(m, "id", 0) or 0),
+                )
+            )
+        else:
+            return RoundupRefusal(("missing_fun_scout_selector",))
+
+        if len(market_rows) < min_members:
+            return RoundupRefusal(
+                (f"too_few_live_members:{len(market_rows)}<{min_members}",)
+            )
+
+        member_cards: list[dict[str, Any]] = []
+        rows_out: list[dict[str, Any]] = []
+        default_category = str(validated.get("category") or "culture")
+        for m in market_rows:
+            mid = int(getattr(m, "id"))
+            title = str(getattr(m, "question", None) or getattr(m, "name", None) or "").strip()
+            if not title:
+                continue
+            outs = sorted(
+                list(getattr(m, "outcomes", None) or ()),
+                key=lambda o: (
+                    getattr(o, "rank", None) or 9999,
+                    -(float(getattr(o, "current_probability", None) or 0.0)),
+                ),
+            )
+            # No made-up numbers (196-A): never invent 0.5 / "Yes" for missing prices/outcomes.
+            lead = None
+            prob: float | None = None
+            lead_name = ""
+            delta: float | None = None
+            for cand_out in outs:
+                cand_name = str(getattr(cand_out, "name", None) or "").strip()
+                raw_prob = getattr(cand_out, "current_probability", None)
+                if not cand_name or raw_prob is None:
+                    continue
+                try:
+                    p_val = float(raw_prob)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(p_val) or not (0.0 <= p_val <= 1.0):
+                    continue
+                lead = cand_out
+                prob = p_val
+                lead_name = cand_name
+                raw_delta = getattr(cand_out, "probability_change_24h", None)
+                if raw_delta is not None:
+                    try:
+                        d_val = float(raw_delta)
+                        if math.isfinite(d_val):
+                            delta = d_val
+                    except (TypeError, ValueError):
+                        delta = None
+                break
+            if lead is None or prob is None or not lead_name:
+                continue
+            row_answer = row_answers_map.get(mid)
+            member_card: dict[str, Any] = {
+                "id": mid,
+                "name": title,
+                "question": title,
+                "category": str(getattr(m, "category", None) or default_category),
+                "top_outcomes": [
+                    {
+                        "name": lead_name,
+                        "probability": round(prob, 4),
+                        "movement": round(delta, 4) if delta is not None else None,
+                    }
+                ],
+                "destination": market_destination(mid),
+            }
+            row_entry: dict[str, Any] = {
+                "label": title,
+                "probability": round(prob, 4),
+                "rendered_percent": round(prob * 100),
+                "movement": round(delta, 4) if delta is not None else None,
+                "destination_href": f"/markets/{mid}",
+            }
+            if row_answer:
+                member_card["context_line"] = row_answer
+                member_card["row_answer"] = row_answer
+                row_entry["context_line"] = row_answer
+                row_entry["row_answer"] = row_answer
+            member_cards.append(member_card)
+            rows_out.append(row_entry)
+
+        if len(member_cards) < min_members:
+            return RoundupRefusal(
+                (f"too_few_live_members:{len(member_cards)}<{min_members}",)
+            )
+
+        raw_kicker = validated.get("kicker")
+        resolved_kicker = str(raw_kicker) if raw_kicker is not None else "CURIOSITIES"
+        return RoundupMembers(
+            member_cards,
+            rows_out[:card_rows],
+            footer=str(validated.get("footer") or ""),
+            title=str(validated["name"]),
+            kicker=resolved_kicker,
+            destination_href=validated.get("destination_href"),
+        )
+
+    top_kicker_raw = validated.get("kicker")
+    top_kicker = str(top_kicker_raw) if top_kicker_raw is not None else "CURIOSITIES"
+    return RoundupProducer(
+        slug=str(validated["slug"]),
+        name=str(validated["name"]),
+        kind=str(validated.get("kind") or "roundup"),
+        category=str(validated.get("category") or "culture"),
+        section_title=validated.get("section_title") or str(validated["name"]),
+        footer=str(validated.get("footer") or ""),
+        produce=_produce,
+        membership=str(validated.get("membership") or "computed-produced"),
+        relations=tuple(validated["relations"]),
+        level=str(validated["level"]),
+        rule=rule,
+        tag=validated.get("tag"),
+        kicker=top_kicker,
+        destination_href=validated.get("destination_href"),
+        stage=str(validated.get("stage") or "preview"),
+        look=str(validated.get("look") or "bars"),
+        enabled=(lambda: bool(validated["enabled"])) if "enabled" in validated else None,
+    )
+

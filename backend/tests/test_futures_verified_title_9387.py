@@ -452,7 +452,7 @@ def by_name(payload, name, key="outcomes"):
 
 
 @pytest.mark.usefixtures("opening_seating_off")
-async def test_sports_feed_and_saved_pin_read_the_same_title_13500(monkeypatch):
+async def test_sports_feed_and_saved_pin_read_the_same_title_13500(monkeypatch, caplog):
     from unittest.mock import AsyncMock
 
     from fastapi import FastAPI
@@ -460,10 +460,28 @@ async def test_sports_feed_and_saved_pin_read_the_same_title_13500(monkeypatch):
 
     from app.dependencies.auth import get_optional_user
     from app.routes import feed
+    from app.routes.title_feed_projection import _SHARED_KEY
     from app.services.database import get_db
     from app.utils import futures_page_cache, request_cache
     from tests.integration.conftest import _make_mock_result
     from tests.integration.test_route_feed_prewarm import _RecordingRedis, _install_redis
+
+    class StoredTitleRedis(_RecordingRedis):
+        def __init__(self, *, stale_payload):
+            super().__init__(stale_payload=stale_payload)
+            self.title = None
+
+        async def get(self, key):
+            if key == _SHARED_KEY:
+                return self.title
+            return await super().get(key)
+
+        async def set(self, key, value, *, ex, nx):
+            assert key == _SHARED_KEY and ex == 30 and nx
+            if self.title is None:
+                self.title = value
+                return True
+            return False
 
     markets = trio()
     feed_db = AsyncMock()
@@ -507,13 +525,16 @@ async def test_sports_feed_and_saved_pin_read_the_same_title_13500(monkeypatch):
                     "id": ODDS_ID, "source": "odds_api", "status": "open",
                     "top_outcomes": top(source),
                 }, "headline": "Source-only points"}
-                _install_redis(monkeypatch, _RecordingRedis(stale_payload={
+                redis = StoredTitleRedis(stale_payload={
                     "items": [card], "total": 1, "limit": 50, "offset": 0, "has_more": False,
-                }))
+                })
+                _install_redis(monkeypatch, redis)
 
-                cold = await client.get(feed_url)
+                with caplog.at_level("INFO", logger="app.routes.title_feed_projection"):
+                    cold = await client.get(feed_url)
                 assert cold.status_code == 200
-                assert all(row["probability"] is None for row in cold.json()["items"][0]["data"]["top_outcomes"])
+                assert cold.json()["items"] == []
+                assert "sports title projection withheld market_id=86832" in caplog.text
                 assert detail_db.kinds.count("candidates") == 0
 
                 result = await client.get(detail_url, params={"representation": VERIFIED})
@@ -521,6 +542,9 @@ async def test_sports_feed_and_saved_pin_read_the_same_title_13500(monkeypatch):
                 detail_payload = result.json()
                 assert detail_payload["representation"] == VERIFIED
                 assert visible(top(detail_payload)) != visible(top(source))
+                assert redis.title is not None
+                # A new web worker has no in-process title verdict.
+                futures_routes._VERIFIED_TITLE_CACHE.clear()
                 events_before = feed_db.execute.await_count
                 sports = await client.get(feed_url)
                 assert sports.status_code == 200
@@ -530,6 +554,13 @@ async def test_sports_feed_and_saved_pin_read_the_same_title_13500(monkeypatch):
                 assert item["headline"] is None
                 assert feed_db.execute.await_count == events_before
                 assert detail_db.kinds.count("candidates") == 1
+
+                saved = json.loads(redis.title)
+                saved["saved_at"] -= 31
+                redis.title = json.dumps(saved)
+                expired = await client.get(feed_url)
+                assert expired.status_code == 200
+                assert expired.json()["items"] == []
 
                 # A subsequent snapshot loses the other venues. Both reader
                 # paths go back to the same admitted source rows.
@@ -875,10 +906,25 @@ class TestSameKeyQuestionsNeverJoin:
         assert "canonical_market_key" not in sql
         assert "'KXSB-27'" in sql
         assert "'americanfootball_nfl_super_bowl_winner'" in sql
-        assert "LIKE 'pro-football-2027-champion%%'" in sql or \
-            "LIKE 'pro-football-2027-champion%'" in sql
+        assert "LIKE" not in sql
+        assert 'COLLATE "C"' in sql
+        assert ">= 'pro-football-2027-champion'" in sql
+        assert "< 'pro-football-2027-champioo'" in sql
         assert "status = 'open'" in sql
         assert "polymarket_event_slug" in sql
+
+    def test_slug_prefix_upper_bound_matches_bytewise_prefix(self):
+        stem = NFL_TITLE.polymarket_slug_stem("2027")
+        upper = futures_routes._slug_prefix_upper_bound(stem)
+        assert upper == "pro-football-2027-champioo"
+        for matching in (stem, f"{stem}-2", f"{stem}-99"):
+            assert stem <= matching < upper
+        for non_matching in ("pro-football-2026-champion", "pro-football-2027-champio", upper, f"{stem}a"):
+            if non_matching.startswith(stem):
+                continue
+            assert not (stem <= non_matching < upper)
+        with pytest.raises(ValueError, match="non-empty"):
+            futures_routes._slug_prefix_upper_bound("")
 
 
 # ── 3. the sportsbook anchor ─────────────────────────────────────────────────

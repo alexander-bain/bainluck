@@ -65,6 +65,7 @@ from app.routes.futures import (
     _refuted_midpoint_verdicts,
     _unsupported_price_candidates,
     _unsupported_price_verdicts,
+    _withheld_price_outcome_ids,
     withheld_price_outcome_ids_for_markets,
 )
 from app.utils.futures_market_snapshot import (
@@ -117,6 +118,20 @@ def _market(market_id, name, outcomes, *, source="kalshi", status="open"):
     market.outcomes = outcomes
     market.sport = None
     return market
+
+
+@pytest.mark.asyncio
+async def test_zero_bid_has_no_current_number_on_the_page_or_card():
+    listed = _leg(1, "Priced contender", 0.40, bid=0.39, ask=0.41)
+    zero = _leg(2, "Unpriced contender", 0.21, bid=0, ask=0.21)
+    unknown = _leg(3, "Contender without a book reading", 0.30)
+    decided = _leg(4, "Graded contender", 0, bid=0, ask=0.01, resolution_source="api_settlement")
+    market = _market(65521771, "Pro Basketball Points Per Game Leader", [listed, zero, unknown, decided])
+    db = _CountingSession([(zero.id, 0.21)])
+    page_withheld = await _withheld_price_outcome_ids(db, market)
+    batched = await withheld_price_outcome_ids_for_markets(db, [market])
+    assert page_withheld == batched[market.id] == {zero.id}
+    assert [row.id for row in _drop_withheld_price_legs(market, market.outcomes, page_withheld)] == [1, 3, 4]
 
 
 # ── The ship ─────────────────────────────────────────────────────────────────

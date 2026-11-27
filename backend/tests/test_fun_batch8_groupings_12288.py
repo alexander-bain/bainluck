@@ -259,7 +259,10 @@ async def test_batch8_eight_public_groupings_build_and_hit_mix(caplog: pytest.Lo
         assert classify_discover_opening_topic(fi) == expected_topics[slug], slug
         by_slug[slug] = (fi, cp, mc)
 
-    assert not any("dropped row pictures" in rec.message for rec in caplog.records)
+    assert not any(
+        "missing art for subjects=" in rec.message or "dropped row pictures" in rec.message
+        for rec in caplog.records
+    )
 
     # 1. NFL Division & Seed Races: Bengals crest (not FC Cincinnati), all 32 city-only names scoped to NFL
     nfl_card = by_slug["machinery-nfl-conference-and-division-races"][2]

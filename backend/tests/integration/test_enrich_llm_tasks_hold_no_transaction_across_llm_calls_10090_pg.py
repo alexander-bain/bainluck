@@ -388,6 +388,55 @@ async def test_cu_v2_holds_nothing_while_it_waits_on_the_next_markets_llm_call(p
         assert profile["story_key"] == STORY_KEY and profile["schema_version"] == 2
 
 
+@pytest.mark.parametrize(
+    ("start_source", "expected_linked_day"), [("espn", "2026-11-28"), ("kalshi", None)]
+)
+@pytest.mark.parametrize(
+    ("unlinked_category", "expected_unlinked_day"),
+    [("football", "2026-12-02"), ("politics", None)],
+)
+async def test_cu_v2_grounds_the_linked_day_and_screens_unlinked_payout_copies(
+    pg_engine, monkeypatch, start_source, expected_linked_day,
+    unlinked_category, expected_unlinked_day
+):
+    from app.tasks.enrich_markets import DISCOVER_LLM_METADATA_KEY, enrich_cu_v2_profiles
+
+    start = datetime(2026, 11, 29, 0, 30, tzinfo=timezone.utc)
+    settlement = datetime(2026, 12, 2, 4, 59, tzinfo=timezone.utc)
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE events SET commence_time = :start, commence_time_source = :source "
+                "WHERE id = :event_id"
+            ),
+            {"start": start, "source": start_source, "event_id": EVENT_ID},
+        )
+        await conn.execute(
+            text("UPDATE futures_markets SET resolution_date = :date WHERE id = ANY(:ids)"),
+            {"date": settlement, "ids": list(MARKET_IDS)},
+        )
+        await conn.execute(
+            text(
+                "UPDATE futures_markets SET event_id = NULL, llm_sport_category = :category "
+                "WHERE id = :id"
+            ),
+            {"category": unlinked_category, "id": M2},
+        )
+    payload = {**_cu_payload(), "geography": "global", "event_date": "2026-12-02"}
+    _install(monkeypatch, _LLMStub(payload))
+
+    stats = await enrich_cu_v2_profiles(limit=2)
+
+    assert stats["generated"] == 2
+    rows = await _rows(pg_engine)
+    linked = rows[M1]["market_metadata"][DISCOVER_LLM_METADATA_KEY]
+    unlinked = rows[M2]["market_metadata"][DISCOVER_LLM_METADATA_KEY]
+    assert linked["event_date"] == expected_linked_day
+    assert linked["geography"] == "us"
+    assert unlinked["event_date"] == expected_unlinked_day
+    assert unlinked["geography"] == "global"
+
+
 async def test_cu_v2_write_still_bumps_updated_at(pg_engine, monkeypatch):
     # The merged write goes through a table clause with no `onupdate`, so the
     # `updated_at=now()` the old ORM UPDATE carried must be written by name.

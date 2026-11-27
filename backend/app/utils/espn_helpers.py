@@ -2387,6 +2387,7 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
                     "away_score": ee.away_score,
                 },
                 is_completed=is_completed,
+                commence_time=getattr(event, "commence_time", None),
             )
             if is_new:
                 session.add(espn_wp_snap)
@@ -2491,6 +2492,18 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
                 stats["stat_model_no_score"] = stats.get("stat_model_no_score", 0) + 1
             elif not ee.clock:
                 stats["stat_model_no_clock"] = stats.get("stat_model_no_clock", 0) + 1
+        return False
+
+    # #12108: refuse live stat_model writes before stored commence_time so
+    # delayed/pre-kickoff score updates cannot stamp in-play readings pre-start.
+    if espn_live_write_is_premature(
+        getattr(event, "commence_time", None),
+        datetime.now(timezone.utc),
+        grace=timedelta(0),
+    ):
+        stats["stat_model_premature_skipped"] = (
+            stats.get("stat_model_premature_skipped", 0) + 1
+        )
         return False
 
     try:
@@ -2602,6 +2615,7 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
                         "time_source": "espn",
                     },
                     is_completed=is_completed,
+                    commence_time=getattr(event, "commence_time", None),
                     # #10673: this branch is reached only while ESPN reports the
                     # game live, and the helper ignores the floor once
                     # `is_completed` is set (#922), so this heartbeat stops at

@@ -76,7 +76,10 @@ nonisolated func futuresDetailHeroOutcome(_ market: FuturesMarketDetail) -> Futu
        lead.probability != nil {
         return lead
     }
-    return market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
+    let eligible = market.status == "resolved"
+        ? market.outcomes
+        : market.outcomes.filter { $0.probability != nil }
+    return eligible.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
 }
 
 /// The share sentence for this page.
@@ -202,6 +205,7 @@ struct FuturesDetailView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
+                .noteReviewPromptTrouble12304()
             } else if let market = viewModel.market {
                 ScrollView {
                     Group {
@@ -749,13 +753,21 @@ struct FuturesDetailView: View {
         // Decided over the SERVED field, not `sorted` — re-sorting the table must
         // move rows without repricing them (#8097).
         let percents = futuresDetailRenderedPercents(market.outcomes)
-        let displayed = showAllOutcomes ? sorted : Array(sorted.prefix(25))
-        let hasMore = sorted.count > 25
+        let folded = market.status == "resolved" ? [] : sorted.filter { outcome in
+            let value = FuturesDetailRowValue.of(
+                outcome, marketStatus: market.status, marketSource: market.source
+            )
+            return outcome.isOut != true && value == .none
+        }
+        let foldedIds = Set(folded.map(\.id))
+        let listed = sorted.filter { !foldedIds.contains($0.id) }
+        let displayed = showAllOutcomes ? listed : Array(listed.prefix(25))
+        let hasMore = listed.count > 25
         let availableSortFields: [FuturesSortField] = isNumerical
             ? [.value, .probability, .change, .name]
             : [.probability, .change, .name]
         let showsRank = !(isNumerical && activeSortField == .value)
-        let modalLeaderId = isNumerical ? futuresDetailHeroOutcome(market)?.id : sorted.first?.id
+        let modalLeaderId = isNumerical ? futuresDetailHeroOutcome(market)?.id : listed.first?.id
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
@@ -767,7 +779,7 @@ struct FuturesDetailView: View {
                     .foregroundStyle(DS.textPrimary)
                 Spacer()
                 if hasMore {
-                    Button(showAllOutcomes ? "Show less" : "Show all \(sorted.count)") {
+                    Button(showAllOutcomes ? "Show less" : "Show all \(listed.count)") {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             showAllOutcomes.toggle()
                         }
@@ -809,7 +821,7 @@ struct FuturesDetailView: View {
                         showAllOutcomes = true
                     }
                 } label: {
-                    Text("Show \(sorted.count - 25) more outcomes")
+                    Text("Show \(listed.count - 25) more outcomes")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(DS.textSecondary)
                         .frame(maxWidth: .infinity)
@@ -820,6 +832,8 @@ struct FuturesDetailView: View {
                         .stroke(DS.border, lineWidth: 1)
                 )
             }
+
+            NoRecentProbabilityOutcomes(names: folded.map(\.name), hasListedOutcomes: !listed.isEmpty)
         }
         .padding(16)
         .background(DS.cardBg)

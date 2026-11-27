@@ -16,6 +16,7 @@ from app.main import app
 from app.routes import admin_ranking_eval as eval_route
 from app.routes import events as events_route
 from app.services import get_db, get_db_rw
+from app.tasks import redis_state
 from app.utils.game_nuggets import (
     NUGGET_FIRST_EIGHT,
     NUGGET_KINDS,
@@ -40,6 +41,35 @@ _EVENT_INFO = {
 
 def _fresh_ts(hours_ago: float = 0.5) -> str:
     return (NOW - timedelta(hours=hours_ago)).isoformat()
+
+
+_REAL_DATETIME = datetime
+
+
+class _FrozenDateTimeMeta(type(_REAL_DATETIME)):
+    def __instancecheck__(cls, inst: object) -> bool:
+        return isinstance(inst, _REAL_DATETIME)
+
+    def __subclasscheck__(cls, sub: type) -> bool:
+        return issubclass(sub, _REAL_DATETIME)
+
+
+class _FrozenDateTime(_REAL_DATETIME, metaclass=_FrozenDateTimeMeta):
+    @classmethod
+    def now(cls, tz=None):
+        return NOW if tz is None else NOW.astimezone(tz)
+
+    @classmethod
+    def utcnow(cls):
+        return NOW.replace(tzinfo=None)
+
+
+def _freeze_nuggets_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.utils import game_nuggets as game_nuggets_mod
+
+    monkeypatch.setattr(events_route, "datetime", _FrozenDateTime)
+    monkeypatch.setattr(eval_route, "datetime", _FrozenDateTime)
+    monkeypatch.setattr(game_nuggets_mod, "datetime", _FrozenDateTime)
 
 
 def _rich_payloads():
@@ -532,6 +562,7 @@ async def test_related_futures_strips_american_odds_from_fresh_and_cached_payloa
 async def test_http_nuggets_and_admin_grading_scorecard_e2e(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _freeze_nuggets_clock(monkeypatch)
     gm, rf, tp = _rich_payloads()
     fake_ev = SimpleNamespace(
         id=14780582,
@@ -615,11 +646,27 @@ async def test_http_nuggets_and_admin_grading_scorecard_e2e(
     async def _db_override():
         yield fake_db
 
+    class _FakeRedis:
+        def __init__(self) -> None:
+            self.data: dict[str, bytes] = {}
+
+        def get(self, key: str):
+            return self.data.get(key)
+
+        def setex(self, key: str, _ttl: int, value):
+            self.data[key] = value.encode("utf-8") if isinstance(value, str) else value
+            return True
+
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **kw: fake_redis)
     monkeypatch.setattr(events_route, "resolve_served_event", AsyncMock(return_value=SimpleNamespace(event=fake_ev, event_id=14780582)))
     monkeypatch.setattr(events_route, "get_game_markets", AsyncMock(return_value=gm))
-    monkeypatch.setattr(events_route, "get_related_futures", AsyncMock(return_value=rf))
-    monkeypatch.setattr(events_route, "get_team_progression", AsyncMock(return_value=tp))
+    monkeypatch.setattr(events_route, "_load_fast_nugget_stakes", AsyncMock(return_value=rf))
+    monkeypatch.setattr(events_route, "_load_nuggets_team_progression", AsyncMock(return_value=tp))
     monkeypatch.setattr(eval_route, "_check_admin_secret", lambda *_a, **_kw: None)
+
+    from app.utils import game_nuggets_cache
+    game_nuggets_cache.clear_l1()
 
     prior = dict(app.dependency_overrides)
     app.dependency_overrides[get_db] = _db_override
@@ -644,9 +691,20 @@ async def test_http_nuggets_and_admin_grading_scorecard_e2e(
             assert deck["games"][0]["nugget_count"] >= 6
             assert deck["games"][0]["kind_count"] >= 3
             assert "nuggets" not in deck["games"][0]
-            # Deck qualifies candidates from grouped SQL counts, never calling build_event_nuggets
+            # Deck qualifies candidates from grouped SQL counts and never walks games to trigger
+            # uncached get_game_markets/_load_fast_nugget_stakes builds.
             assert events_route.get_game_markets.await_count == 1
 
+            # Opening a cached event hits game_nuggets_cache first; clear L1+Redis to test
+            # the cold per-game admin read builds via get_game_markets cleanly (#13650).
+            r_game_cached = await client.get(
+                f"/api/admin/ranking/game-nuggets/games/14780582?limit=8&slate={deck['slate_id']}"
+            )
+            assert r_game_cached.status_code == 200, r_game_cached.text
+            assert events_route.get_game_markets.await_count == 1
+
+            game_nuggets_cache.clear_l1()
+            fake_redis.data.clear()
             r_game = await client.get(
                 f"/api/admin/ranking/game-nuggets/games/14780582?limit=8&slate={deck['slate_id']}"
             )
@@ -1258,6 +1316,8 @@ def test_reader_league_name_uses_plain_labels() -> None:
 async def test_game_nuggets_deck_deals_qualified_best_covered_first_with_league_cap_and_shorter_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _freeze_nuggets_clock(monkeypatch)
+
     def _make_ev(eid: int, sport_key: str, sport_name: str, hours_ahead: int, away: str, home: str):
         return SimpleNamespace(
             id=eid,
@@ -1423,6 +1483,8 @@ async def test_game_nuggets_deck_timeout_ceiling_returns_short_deck_cleanly(
 ) -> None:
     """An ~8s ceiling stops slow /deck work and returns what qualified without caching (#13642)."""
     import asyncio
+
+    _freeze_nuggets_clock(monkeypatch)
 
     ev = SimpleNamespace(
         id=4001,

@@ -63,7 +63,7 @@ Nothing reaches master except through a merged PR.
 Tier A merges on green. Tier B: claude[bot] at head; Fable ACCEPT if reader-visible/destructive/eval (119-A); author window merges.
 Tier C requires Alex's tap.
 `live-path` is the two-minute lane for live delivery fixes.
-NOW #11852 is the priority list; status lines: #12779.
+NOW #11852 is the priority list; status lines: #13580.
 Runner inboxes, YOUR-TURN.md and artifacts/ are retired.
 Gates prove something about the commit you tested, not the commit you push.
 

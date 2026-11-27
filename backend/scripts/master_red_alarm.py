@@ -26,14 +26,27 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 import re
 import sys
 import subprocess
 from typing import Iterable, Optional
 
+NOW_LINES_ISSUE_FILE = Path(__file__).resolve().parents[2] / ".github" / "now-lines-issue.txt"
+
+
+def read_now_lines_issue(path: Path = NOW_LINES_ISSUE_FILE) -> int:
+    """Return the active NOW-lines GitHub issue number from ``.github/now-lines-issue.txt``."""
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw.isdigit() or int(raw) <= 0:
+        raise ValueError(f"Invalid NOW-lines issue file {path}: {raw!r}")
+    return int(raw)
+
 #: The line is only for runs that really failed. `cancelled` is a superseded
 #: run (concurrency), not a red master.
 RED_CONCLUSIONS = ("failure", "timed_out")
+DEPLOY_JOB_NAMES = frozenset({"deploy", "deploy-after-full"})
+NON_BLOCKING_JOB_NAMES = frozenset({"flaky-canary"})
 MAX_TESTS = 5
 
 _TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z\s?")
@@ -98,6 +111,8 @@ def compose(
     ref = pr_reference(title)
     headline = title.splitlines()[0][:120] if title else ""
     what = f"{ref} " if ref else ""
+    blocking_failed = [j for j in failed_jobs if j not in NON_BLOCKING_JOB_NAMES]
+    canary_only = deployed and bool(failed_jobs) and not blocking_failed
     if rerun is None:
         if deployed:
             rerun = "not_needed"
@@ -105,12 +120,21 @@ def compose(
             rerun = "triggered"
         else:
             rerun = "already_ran"
-    if deployed:
+    if canary_only:
         hold, policy, procedure = (
             "",
-            "This run's `deploy` job still succeeded, so the server slot is not held. ",
+            "This run's release still succeeded (only non-blocking canary failed), so the server slot is not held. ",
             "",
         )
+    elif deployed:
+        hold = "HOLD (no further merges until Fable posts a line), "
+        release_tag = f"`{sha[:10]}`" + (f" ({ref})" if ref else "")
+        policy = (
+            f"Ruling 394(d): the full test run beside release {release_tag} went red "
+            "(run concluded red after release succeeded). "
+            "**No further merge happens until Fable posts a line.**"
+        )
+        procedure = ""
     else:
         hold = "HOLD (server), "
         policy = (
@@ -149,8 +173,9 @@ def compose(
             "tests-only PR (`backend/tests/timing_quarantine.json`) with an issue and 7 days to repair or delete it."
         )
         procedure = f"\n\n{line1}\n{line2}"
+    release_label = f" beside release `{sha[:10]}`{f' ({ref})' if ref else ''}" if (deployed and not canary_only) else ""
     return (
-        f"stuck: master red, {hold}{shown}, [run {run_id}]({run_url})"
+        f"stuck: master red{release_label}, {hold}{shown}, [run {run_id}]({run_url})"
         + (f" (attempt {attempt})" if attempt > 1 else "")
         + f"\n\nMaster `{sha[:10]}` — {what}{headline}. "
         "Posted automatically by `master-red-alarm.yml`. "
@@ -200,7 +225,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     repo = os.environ["REPO"]
-    issue = int(os.environ["NOW_LINES_ISSUE"])
+    raw_issue = os.environ.get("NOW_LINES_ISSUE", "").strip()
+    issue = int(raw_issue) if raw_issue else read_now_lines_issue()
     run_id = int(os.environ["RUN_ID"])
 
     run = json.loads(_gh(f"repos/{repo}/actions/runs/{run_id}"))
@@ -228,7 +254,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             if node not in tests:
                 tests.append(node)
 
-    deployed = any(j.get("name") == "deploy" and j.get("conclusion") == "success" for j in jobs)
+    deployed = any(
+        j.get("name") in DEPLOY_JOB_NAMES and j.get("conclusion") == "success" for j in jobs
+    )
 
     if not args.dry_run and already_posted(_recent_comment_bodies(repo, issue), run_id, attempt):
         print(f"already posted for run {run_id} attempt {attempt}")

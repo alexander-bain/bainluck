@@ -285,7 +285,7 @@ AUTHORED_STORY_QUESTIONS = {
     "story:macro_rates": "What does the Fed do next?",
     "story:oil": "Where is the oil price going?",
     "story:single_stock_earnings": "Who beats their earnings number?",
-    "story:ipo_markets": "Who goes public, and at what price?",
+    "story:ipo_markets": "Who goes public, and at what valuation?",
     "story:spacex_ipo": "Does SpaceX go public, and at what valuation?",
     # Tech / science
     # #8742: this was "Which AI model comes out on top?", which is true of the
@@ -569,7 +569,7 @@ def _bundle_subtitle(measure: str, count: int) -> str:
     :func:`_measure_key` is what makes each sentence true of every member under it.
     """
     if measure == "ipo_valuation":
-        return "Which of these companies is priced highest to list?"
+        return "Which of these companies lists at the highest valuation?"
     if measure == "commodity_ranges":
         return "Where do these commodity prices land?"
     if measure == "rotten_tomatoes_scores":
@@ -583,6 +583,28 @@ def _bundle_subtitle(measure: str, count: int) -> str:
     if measure == "weather:storm_category":
         return "How strong do these storms get?"
     return f"What do these {count} markets say together?"
+
+
+def _member_outcomes_are_dates(data: Mapping[str, Any]) -> bool:
+    """Return True when a bundle member's outcomes form a multi-date ladder."""
+    dc = data.get("discover_card")
+    if isinstance(dc, Mapping):
+        raw_pts = dc.get("threshold_points") or ()
+        priced = [
+            pt
+            for pt in raw_pts
+            if isinstance(pt, Mapping) and pt.get("probability") is not None
+        ]
+        if len(priced) >= 2 and all(
+            str(pt.get("source") or "") == "date_bucket" for pt in priced
+        ):
+            return True
+    top_outs = data.get("top_outcomes") or ()
+    if isinstance(top_outs, Sequence) and not isinstance(top_outs, (str, bytes)):
+        return _outcomes_are_all_date_buckets(
+            [dict(o) for o in top_outs if isinstance(o, Mapping)]
+        )
+    return False
 
 
 def _bundle_member_single_row_label(data: Mapping[str, Any]) -> Optional[str]:
@@ -635,25 +657,201 @@ def _public_member_item(item: dict[str, Any]) -> dict[str, Any]:
             else data.get("name")
         )
         if isinstance(template_source, str) and _ANY_TEMPLATE_BLANK.search(template_source):
-            chosen_label = _bundle_member_single_row_label(data)
-            if chosen_label:
+            if _member_outcomes_are_dates(data):
                 filled = fill_market_display_name_blank(
                     template_source,
-                    chosen_label,
-                    single_row=True,
+                    single_row=False,
                 )
+                updated_data = {
+                    k: v
+                    for k, v in data.items()
+                    if k != "title_states_single_answer"
+                }
                 if filled:
-                    pub["data"] = {
-                        **data,
-                        "name": filled,
-                        "title_states_single_answer": True,
-                    }
+                    updated_data["name"] = filled
+                pub["data"] = updated_data
+            else:
+                chosen_label = _bundle_member_single_row_label(data)
+                if chosen_label:
+                    filled = fill_market_display_name_blank(
+                        template_source,
+                        chosen_label,
+                        single_row=True,
+                    )
+                    if filled:
+                        pub["data"] = {
+                            **data,
+                            "name": filled,
+                            "title_states_single_answer": True,
+                        }
     return pub
+
+
+_BINARY_POLARITY_NAMES: frozenset[str] = frozenset(
+    {"yes", "no", "true", "false", "over", "under", "draw", "tie", "other", "none"}
+)
+_BINARY_QUESTION_LEAD_RE = re.compile(
+    r"^(will|does|do|is|are|can|could|did|would|should|has|have)\s+",
+    re.I,
+)
+_SUBJECT_STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "will", "does", "do", "is", "are", "be", "the", "a", "an", "in", "of",
+        "on", "at", "for", "to", "by", "or", "and", "who", "what", "which",
+        "win", "wins", "winner", "named", "become", "becomes",
+    }
+)
+
+
+def _canonical_member_id(item: dict[str, Any]) -> str:
+    data = _futures_data(item) or (
+        item.get("data") if isinstance(item.get("data"), dict) else {}
+    )
+    mid = data.get("id") if data.get("id") is not None else data.get("market_id")
+    if mid is not None:
+        return f"{item.get('type') or 'futures'}:{mid}"
+    return f"obj:{id(item)}"
+
+
+def _subject_tokens(name: str) -> set[str]:
+    return {
+        tok
+        for tok in _name_tokens(name)
+        if tok not in _SUBJECT_STOP_WORDS and len(tok) >= 2
+    }
+
+
+def _field_leader_spec(item: dict[str, Any]) -> tuple[str, list[str], str, set[str]] | None:
+    """Return ``(member_key, leader_tokens, group_id, subject_tokens)`` if ``item`` is
+    a multi-outcome field with a named leading contender; else None (#13805).
+    """
+    data = _futures_data(item)
+    if not data:
+        return None
+    outcomes = [o for o in (data.get("top_outcomes") or []) if isinstance(o, dict)]
+    outcome_names = [str(o.get("name") or "").strip() for o in outcomes]
+    outcome_names = [n for n in outcome_names if n]
+    if not outcome_names:
+        return None
+    lower_set = {n.casefold() for n in outcome_names}
+    outcome_count = int(data.get("outcome_count") or len(outcome_names))
+    if outcome_count < 2:
+        return None
+    if outcome_count == 2 and lower_set.issubset(_BINARY_POLARITY_NAMES):
+        return None
+    leader_raw = outcome_names[0]
+    if leader_raw.casefold() in _BINARY_POLARITY_NAMES:
+        return None
+    leader_toks = _name_tokens(leader_raw)
+    if not leader_toks:
+        return None
+    return (
+        _canonical_member_id(item),
+        leader_toks,
+        str(data.get("group_id") or "").strip(),
+        _subject_tokens(str(data.get("name") or "")),
+    )
+
+
+def _is_binary_yes_no_member(item: dict[str, Any]) -> bool:
+    """True when a bundle member is a single yes-or-no binary question (#13805)."""
+    data = _futures_data(item)
+    if not data:
+        return False
+    outcomes = [o for o in (data.get("top_outcomes") or []) if isinstance(o, dict)]
+    outcome_names = [
+        str(o.get("name") or "").strip().casefold()
+        for o in outcomes
+        if str(o.get("name") or "").strip()
+    ]
+    raw_count = data.get("outcome_count")
+    if raw_count is not None and int(raw_count) > 2:
+        return False
+    if len(outcome_names) >= 3:
+        return False
+    if outcome_names and set(outcome_names).issubset({"yes", "no"}):
+        return True
+    discover_card = _discover_card(data)
+    if str(discover_card.get("suggested_format") or "") == "binary_probability":
+        return True
+    name = str(data.get("name") or "").strip()
+    return bool(name and (_BINARY_QUESTION_LEAD_RE.match(name) or name.endswith("?")))
+
+
+def _sanitize_bundle_members(members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Enforce grouped-card member invariants across all bundlers (#13805):
+
+    1. A grouped card never repeats the same market (deduped by canonical market id).
+    2. A grouped card never shows a multi-outcome field's leader and that leader's
+       own yes-or-no binary market as two separate rows.
+    """
+    deduped: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for item in members:
+        if not isinstance(item, dict):
+            continue
+        cid = _canonical_member_id(item)
+        if cid in seen_ids:
+            continue
+        seen_ids.add(cid)
+        deduped.append(item)
+
+    field_leaders = [
+        spec
+        for item in deduped
+        if (spec := _field_leader_spec(item)) is not None
+    ]
+    if not field_leaders:
+        return deduped
+
+    filtered: list[dict[str, Any]] = []
+    for item in deduped:
+        if not _is_binary_yes_no_member(item):
+            filtered.append(item)
+            continue
+        cid = _canonical_member_id(item)
+        data = _futures_data(item)
+        b_name = str(data.get("name") or "")
+        b_tokens = _name_tokens(b_name)
+        b_subject = _subject_tokens(b_name)
+        b_group = str(data.get("group_id") or "").strip()
+
+        redundant = False
+        for f_cid, leader_toks, f_group, f_subject in field_leaders:
+            if f_cid == cid:
+                continue
+            if not _contains_subseq(b_tokens, leader_toks):
+                continue
+            same_group = bool(b_group and f_group and b_group == f_group)
+            leader_set = set(leader_toks)
+            f_subject_core = {
+                tok for tok in (f_subject - leader_set)
+                if not tok.isdigit()
+            }
+            b_subject_core = {
+                tok for tok in (b_subject - leader_set)
+                if not tok.isdigit()
+            }
+            f_years = {tok for tok in f_subject if len(tok) == 4 and tok.isdigit()}
+            b_years = {tok for tok in b_subject if len(tok) == 4 and tok.isdigit()}
+            years_compatible = not f_years or not b_years or f_years == b_years
+            exact_subject_match = (
+                years_compatible
+                and len(f_subject_core) >= 2
+                and f_subject_core == b_subject_core
+            )
+            if same_group or exact_subject_match:
+                redundant = True
+                break
+        if not redundant:
+            filtered.append(item)
+    return filtered
 
 
 def _make_bundle_item(
     theme: str, measure: str, items: list[dict[str, Any]]
 ) -> dict[str, Any]:
+    items = _sanitize_bundle_members(items)
     score = max(float(item.get("score") or 0) for item in items)
     sort_time = max(float(item.get("_sort_time") or 0) for item in items)
     title = _THEME_TITLES.get(theme, "Comparable market ranges")
@@ -740,7 +938,7 @@ def assemble_discover_comparison_bundles(
     # whose first member ranks earliest, because `groups` is in feed order.
     best_by_theme: dict[str, tuple[tuple[float, int], list[dict[str, Any]], str]] = {}
     for (theme, measure), candidates in groups.items():
-        top_candidates = candidates[:max_items_per_bundle]
+        top_candidates = _sanitize_bundle_members(candidates)[:max_items_per_bundle]
         if len(top_candidates) < min_items:
             continue
         rank = (
@@ -1233,6 +1431,9 @@ def _make_theme_bundle_item(
     questions. Splitting hands the reader "2030 FIFA World Cup Champion —
     France 12%", which is true.
     """
+    items = _sanitize_bundle_members(items)
+    if not items:
+        return None
     # Members ranked by feed score (most feed-worthy leads the mini-ranked-peek);
     # the bundle competes for ONE slot scored by its best member.
     # Ruling 275 (#13100): the Oscars card leads with Best Picture, then Director,
@@ -2062,6 +2263,12 @@ def assemble_story_theme_bundles(
         members, folded = _dedupe_same_question_members(members)
         if oscar_folded:
             folded = oscar_folded + folded
+        pre_sanitize_ids = {_item_id(it): it for it in members}
+        members = _sanitize_bundle_members(members)
+        kept_ids_after_sanitize = {_item_id(it) for it in members}
+        for iid, dropped in pre_sanitize_ids.items():
+            if iid not in kept_ids_after_sanitize:
+                folded.append(dropped)
         if story_key == "story:oscars":
             members = sorted(members, key=oscars_market_rank_key)
         if is_congress_control_story_key(story_key):
@@ -2179,7 +2386,8 @@ def _award_members_for(item: dict[str, Any]) -> list[dict[str, Any]] | None:
     siblings = _grouped_members(item)
     if not siblings:
         return None
-    return [item, *siblings]
+    cleaned = _sanitize_bundle_members([item, *siblings])
+    return cleaned if len(cleaned) >= 2 else None
 
 
 _LABEL_LEAD_RE = re.compile(r"^(will|the|a|an)\s+", re.I)
@@ -2311,6 +2519,7 @@ def _award_group_question(members: list[dict[str, Any]]) -> str | None:
 def _make_awards_bundle_item(
     group_id: str, members: list[dict[str, Any]]
 ) -> dict[str, Any]:
+    members = _sanitize_bundle_members(members)
     ranked = sorted(members, key=lambda it: float(it.get("score") or 0), reverse=True)
     score = max(float(item.get("score") or 0) for item in ranked)
     sort_time = max(float(item.get("_sort_time") or 0) for item in ranked)
@@ -2370,7 +2579,10 @@ def assemble_awards_theme_bundles(
     survivor_ids: set[str] = set()
     for item in items:
         members = _award_members_for(item)
-        if members is None or len(members) < min_items:
+        if members is None:
+            continue
+        members = _sanitize_bundle_members(members)
+        if len(members) < min_items:
             continue
         group_id = str(_futures_data(item).get("group_id"))
         if len(members) > max_items_per_bundle:
@@ -2408,6 +2620,7 @@ def _make_deadline_family_bundle_item(
     members: list[dict[str, Any]],
     all_group_items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    members = _sanitize_bundle_members(members)
     member_by_id = {
         int(_futures_data(item).get("id")): item
         for item in members
@@ -2575,12 +2788,14 @@ def assemble_deadline_family_bundles(
     lead_item_id_by_group: dict[tuple[str, str], str] = {}
 
     for key, members in candidates_by_group.items():
-        child_members = [
-            m
-            for m in members
-            if str(_futures_data(m).get("group_type") or "").strip().lower()
-            != "polymarket_event"
-        ]
+        child_members = _sanitize_bundle_members(
+            [
+                m
+                for m in members
+                if str(_futures_data(m).get("group_type") or "").strip().lower()
+                != "polymarket_event"
+            ]
+        )
         if len(child_members) >= min_items and any(
             (_futures_data(m).get("discover_card") or {}).get(
                 "ladder_treatment_refused"
@@ -2802,7 +3017,10 @@ def _swing_magnitude(
 
 def _make_swings_bundle_item(scored: list[tuple[float, dict[str, Any]]]) -> dict[str, Any]:
     # Members ranked by swing magnitude (biggest mover leads the mini-ranked-peek).
-    ranked = [it for _, it in scored]
+    sanitized_items = _sanitize_bundle_members([it for _, it in scored])
+    kept_item_keys = {id(it) for it in sanitized_items}
+    ranked = [it for _, it in scored if id(it) in kept_item_keys]
+    scored = [(mag, it) for mag, it in scored if id(it) in kept_item_keys]
     score = max(float(it.get("score") or 0) for it in ranked)
     sort_time = max(float(it.get("_sort_time") or 0) for it in ranked)
     member_ids = [_futures_data(it).get("id") for it in ranked]
@@ -2846,14 +3064,17 @@ def assemble_swings_theme_bundles(
     """Fold the biggest GUARDED 24h movers into ONE "Today's biggest swings"
     bundle (Discover-mode only). Fewer than ``min_items`` qualifiers → untouched.
     """
-    scored: list[tuple[float, dict[str, Any]]] = []
+    raw_scored: list[tuple[float, dict[str, Any]]] = []
     for item in items:
         mag = _swing_magnitude(item, min_swing=min_swing, extreme=extreme)
         if mag is not None:
-            scored.append((mag, item))
+            raw_scored.append((mag, item))
+    raw_scored.sort(key=lambda x: x[0], reverse=True)
+    sanitized_swing_items = _sanitize_bundle_members([it for _, it in raw_scored])
+    allowed_swing_obj_ids = {id(it) for it in sanitized_swing_items}
+    scored = [(mag, it) for mag, it in raw_scored if id(it) in allowed_swing_obj_ids]
     if len(scored) < min_items:
         return items
-    scored.sort(key=lambda x: x[0], reverse=True)
     chosen = scored[:max_items_per_bundle]
     chosen_ids = {_item_id(it) for _, it in chosen}
     bundle = _make_swings_bundle_item(chosen)

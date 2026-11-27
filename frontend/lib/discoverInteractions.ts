@@ -42,7 +42,7 @@ export type DiscoverAction =
   | "context_collapse";
 
 export interface DiscoverItemAnalytics {
-  content_type: "event" | "futures" | "grid";
+  content_type: "event" | "futures" | "grid" | "bundle";
   item_id: number | string;
   category: string;
   item_name: string;

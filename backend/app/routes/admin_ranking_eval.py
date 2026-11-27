@@ -68,6 +68,44 @@ router = APIRouter(prefix="/admin/ranking", tags=["admin-ranking-eval"])
 
 
 _DATE_REF = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_HEX_SLATE_REF = re.compile(r"^[a-f0-9]{8,64}$")
+SHIPPED_SLATE_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+
+
+def _load_shipped_slate_snapshot(ref: str, surface: str) -> Any:
+    """Read-only fallback to a PR-frozen slate JSON in ``backend/app/data/ranking_slate_<id>.json``."""
+    if not _HEX_SLATE_REF.match(ref or ""):
+        return None
+    path = SHIPPED_SLATE_DATA_DIR / f"ranking_slate_{ref}.json"
+    if not path.is_file():
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or doc.get("slate_id") != ref:
+        return None
+    if doc.get("surface", SURFACE_DISCOVER) != surface:
+        return None
+    from types import SimpleNamespace
+
+    captured_raw = doc.get("captured_at")
+    captured_dt = None
+    if isinstance(captured_raw, str) and captured_raw:
+        try:
+            captured_dt = datetime.fromisoformat(captured_raw.replace("Z", "+00:00"))
+        except ValueError:
+            captured_dt = None
+    return SimpleNamespace(
+        id=str(doc.get("id") or ref),
+        surface=doc.get("surface", SURFACE_DISCOVER),
+        slate_id=ref,
+        captured_at=captured_dt,
+        ranker_version=str(doc.get("ranker_version") or "shipped"),
+        served_order=list(doc.get("served_order") or []),
+        candidates=list(doc.get("candidates") or []),
+        summary=dict(doc.get("summary") or {}),
+    )
 
 
 def slate_date_bounds(ref: str) -> tuple[datetime, datetime] | None:
@@ -99,6 +137,8 @@ async def _slate_row(db: AsyncSession, ref: str, surface: str):
         )
     stmt = stmt.order_by(RankingSlateSnapshot.captured_at.desc()).limit(1)
     row = (await db.execute(stmt)).scalars().first()
+    if row is None and ref != "latest" and bounds is None:
+        row = _load_shipped_slate_snapshot(ref, surface)
     if row is None:
         raise HTTPException(status_code=404, detail=f"no {surface} slate for {ref!r}")
     return row
@@ -486,6 +526,8 @@ def latest_grades(rows) -> list[dict]:
             if r.surface == SURFACE_GROUPING
             else _DB_TO_PAIR_PICK.get(raw_grade, raw_grade)
             if r.surface == "pair"
+            else _DB_TO_GAME_NUGGET_GRADE.get(raw_grade, raw_grade)
+            if r.surface == SURFACE_GAME_NUGGETS
             else raw_grade
         )
         latest[(r.slate_id, r.grader, r.item_key)] = {
@@ -537,7 +579,10 @@ async def get_grades(
     if slate_id:
         stmt = stmt.where(RankingGrade.slate_id == slate_id)
     else:
-        stmt = stmt.where(RankingGrade.surface != SURFACE_GROUPING)
+        stmt = stmt.where(
+            RankingGrade.surface != SURFACE_GROUPING,
+            RankingGrade.surface != SURFACE_GAME_NUGGETS,
+        )
     grades = latest_grades((await db.execute(stmt)).scalars().all())
     return {"grades": grades, "tally": family_tally(grades, now)}
 
@@ -1412,6 +1457,7 @@ SURFACE_PAIR = "pair"
 PAIRS_PATH = Path(__file__).resolve().parents[1] / "data" / "ranking_pairs.json"
 PAIR_CHOICES = ("left", "right", "none")
 PAIR_SIZE = 10
+_PAIR_SIZES: dict[str, int] = {"p13645": 40}
 DEFAULT_MORNING_PAIR = "p3"
 MORNING_PAIR_PAUSED_ENV = "RANKING_MORNING_PAIR_PAUSED"
 MORNING_PAIR_PAUSED_DETAIL = (
@@ -1437,9 +1483,15 @@ def _frozen_pair_rankers() -> dict[str, Any]:
     never calls these while the ranking switch is off.
     """
     from app.utils.discover_rank import rank_c1_story, rank_c2_score
+    from app.utils.discover_rank_13645 import rank_13645_downranks
     from app.utils.discover_rank_c3 import rank_c3_mix
 
-    return {"p1": rank_c2_score, "p2": rank_c1_story, "p3": rank_c3_mix}
+    return {
+        "p1": rank_c2_score,
+        "p2": rank_c1_story,
+        "p3": rank_c3_mix,
+        "p13645": rank_13645_downranks,
+    }
 
 
 def load_pairs(path: Path = PAIRS_PATH) -> dict[str, dict[str, list[str]]]:
@@ -1450,6 +1502,12 @@ def load_pairs(path: Path = PAIRS_PATH) -> dict[str, dict[str, list[str]]]:
     return data if isinstance(data, dict) else {}
 
 
+def _pair_size_for(pair: str, explicit_keys: list[str] | None = None) -> int:
+    if explicit_keys is not None:
+        return max(PAIR_SIZE, len(explicit_keys))
+    return _PAIR_SIZES.get(pair, PAIR_SIZE)
+
+
 def _resolve_pair_keys(row: Mapping[str, Any], pair: str) -> list[str] | None:
     """Explicit keys from ``ranking_pairs.json`` first, else the frozen server-side pair."""
     explicit = load_pairs().get(row["slate_id"], {}).get(pair)
@@ -1458,9 +1516,10 @@ def _resolve_pair_keys(row: Mapping[str, Any], pair: str) -> list[str] | None:
     ranker = _frozen_pair_rankers().get(pair)
     if ranker is None:
         return None
+    target_size = _pair_size_for(pair)
     ordered = ranker(row.get("candidates") or ())
-    keys = [c.get("item_key") for c in ordered[:PAIR_SIZE] if c.get("item_key")]
-    return keys if len(keys) >= PAIR_SIZE else None
+    keys = [c.get("item_key") for c in ordered[:target_size] if c.get("item_key")]
+    return keys if len(keys) >= target_size else None
 
 
 def _side_key() -> bytes:
@@ -1476,13 +1535,18 @@ def candidate_on_left(slate_id: str, pair: str) -> bool:
 
 
 def _pair_sides(row: Mapping[str, Any], keys: list[str]) -> tuple[list[dict], list[dict]]:
+    pair_size = max(PAIR_SIZE, len(keys))
     by_key = {c.get("item_key"): c for c in row.get("candidates") or ()}
-    served = [by_key.get(k) for k in (row.get("served_order") or [])[:PAIR_SIZE]]
-    candidate = [by_key.get(k) for k in keys[:PAIR_SIZE]]
-    if any(c is None for c in served + candidate) or len(candidate) < PAIR_SIZE:
+    served = [by_key.get(k) for k in (row.get("served_order") or [])[:pair_size]]
+    candidate = [by_key.get(k) for k in keys[:pair_size]]
+    if (
+        len(served) < pair_size
+        or len(candidate) < pair_size
+        or any(c is None for c in served + candidate)
+    ):
         raise HTTPException(status_code=422, detail="the pair names cards this slate doesn't hold")
     if not all(has_drawing(c.get("card")) for c in served + candidate):
-        raise HTTPException(status_code=409, detail="a card in one of the two first tens has no stored drawing")
+        raise HTTPException(status_code=409, detail="a card in one of the two comparison lists has no stored drawing")
     # Only the drawing goes out: no positions, keys or scores that could tell a side.
     return [{"card": c["card"]} for c in served], [{"card": c["card"]} for c in candidate]
 
@@ -1842,6 +1906,19 @@ async def get_screen_grades(
 
 SURFACE_GAME_NUGGETS = "game_nuggets"
 _GAME_NUGGET_GRADES = ("yes", "no")
+# Lossless 1-to-1 bijection scoped to RankingGrade.surface == "game_nuggets" so
+# writes satisfy Postgres ck_ranking_grades_grade ("grade IN ('shareable',
+# 'interesting', 'neither')") from ranking_slates_12095.py without a schema migration.
+_GAME_NUGGET_TO_DB_GRADE: dict[str, str] = {
+    "yes": "shareable",
+    "no": "neither",
+}
+_DB_TO_GAME_NUGGET_GRADE: dict[str, str] = {
+    "shareable": "yes",
+    "neither": "no",
+    "yes": "yes",
+    "no": "no",
+}
 
 
 class GameNuggetGradeIn(BaseModel):
@@ -2026,7 +2103,8 @@ def _summarize_game_nugget_grades(rows: list[RankingGrade]) -> dict[str, Any]:
     by_grader: dict[str, dict[str, int]] = {}
     grades_out: list[dict[str, Any]] = []
     for (_, item_key), r in latest_by_pair.items():
-        gval = str(r.grade or "").lower()
+        raw_gval = str(r.grade or "").lower()
+        gval = _DB_TO_GAME_NUGGET_GRADE.get(raw_gval, raw_gval)
         if gval == "yes":
             yes_count += 1
         elif gval == "no":
@@ -2479,7 +2557,7 @@ async def post_game_nugget_grade(
             expert=True,
             position=body.position,
             item_key=item_key,
-            grade=grade_val,
+            grade=_GAME_NUGGET_TO_DB_GRADE[grade_val],
             note=(body.note or "").strip() or None,
         )
     )
@@ -2512,4 +2590,21 @@ async def get_game_nugget_grades(
         "surface": SURFACE_GAME_NUGGETS,
         **summary,
     }
+
+
+@router.get("/scout-deck")
+async def get_scout_morning_deck(
+    request: Request,
+    date: str | None = Query(None, max_length=10),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Return the blind equal-mix morning scout deck (sealed key kept in Redis only, #13102)."""
+    from app.utils.scout_morning_deck import DATE_PARAM_RE, build_scout_morning_deck
+
+    _check_admin_secret(secret, request=request)
+    if date is not None and not DATE_PARAM_RE.match(date.strip()):
+        raise HTTPException(status_code=422, detail="date must match YYYY-MM-DD")
+    clean_date = date.strip() if date is not None else None
+    return await build_scout_morning_deck(db, deck_date=clean_date)
 

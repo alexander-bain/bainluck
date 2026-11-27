@@ -136,7 +136,7 @@ describe("Alex 67 — on the page: the status speaks only when something is wron
       },
     }));
     expect(status).not.toContain("data-quiet");
-    expect(status).toContain(">Price may be old</span>");
+    expect(status).toContain(">Probability may be old</span>");
   });
 
   it("?ekg=0: no EKG, and the status line exactly as today", () => {

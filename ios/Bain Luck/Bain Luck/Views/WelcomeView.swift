@@ -53,8 +53,7 @@ struct WelcomeView: View {
         VStack(spacing: 24) {
             Spacer()
 
-            Text("🍀")
-                .font(.system(size: 64))
+            BainLuckMarkView(size: 64)
 
             Text("What the world\nthinks will happen")
                 .font(.largeTitle.weight(.black))

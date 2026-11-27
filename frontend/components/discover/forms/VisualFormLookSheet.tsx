@@ -19,9 +19,6 @@ import React, { useState } from "react";
 import {
   OSCARS_CONTAINER_LOOK_SHEET_OPTIONS,
   PAIRED_METRIC_REGISTER,
-  TMDB_ATTRIBUTION_LINE,
-  TMDB_ATTRIBUTION_URL,
-  TMDB_OFFICIAL_LOGO_PATH,
   VISUAL_FORM_LOOK_SHEET_CARDS,
   VISUAL_FORM_SHEET_2_CARDS,
   formatStage1Display,
@@ -133,38 +130,6 @@ function ArtThumb({ entry, kidSurface = false, size = "md" }: ArtThumbProps) {
     >
       {initials}
     </div>
-  );
-}
-
-function TMDBAttributionNote({ set }: { set: PairedMetricSet }) {
-  const usesTmdb = set.entries.some(
-    (e) => e.art?.kind === "tmdb_poster" || e.art?.kind === "tmdb_headshot",
-  );
-  if (!usesTmdb) return null;
-  return (
-    <span
-      data-testid="tmdb-attribution-line"
-      className="inline-flex flex-wrap items-center gap-2 text-xs text-text-muted"
-    >
-      <a
-        href={TMDB_ATTRIBUTION_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        data-testid="tmdb-attribution-link"
-        aria-label="The Movie Database (TMDB)"
-        className="inline-flex shrink-0 items-center rounded border border-surface-border bg-surface-elevated px-1.5 py-0.5"
-      >
-        <img
-          src={TMDB_OFFICIAL_LOGO_PATH}
-          alt="The Movie Database (TMDB)"
-          width={85}
-          height={11}
-          data-testid="tmdb-official-logo"
-          className="inline-block h-[11px] w-auto shrink-0"
-        />
-      </a>
-      <span>{TMDB_ATTRIBUTION_LINE}</span>
-    </span>
   );
 }
 
@@ -409,7 +374,6 @@ function PairedBarsWithArtCard({
           Sorted by {set.stage_2_label.toLowerCase()} %, ties broken by{" "}
           {set.stage_1_label.toLowerCase()} %
         </span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );
@@ -507,7 +471,6 @@ function PairedBarsTop5ExpandableCard({
           Sorted by {set.stage_2_label.toLowerCase()} %, ties broken by{" "}
           {set.stage_1_label.toLowerCase()} %
         </span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );
@@ -622,7 +585,6 @@ function PairedBarsSingleLineCard({
 
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>Top bar = {set.stage_1_label} % · Bottom green bar = {set.stage_2_label} %</span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );
@@ -723,7 +685,6 @@ function PairedBarsTop3PlusStripCard({
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>Top 10 most likely nominees · Top 3 bars + 7 compact tiles</span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );
@@ -847,7 +808,6 @@ function PosterSpotlightTilesCard({
         <span>
           Showing 6 of {set.entries.length} most likely nominees · {set.stage_1_label} and {set.stage_2_label} kept separate.
         </span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );
@@ -968,7 +928,6 @@ function StepConversionPathCard({
 
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted">
         <span>Light bar = {set.stage_1_label} % · Green bar = {set.stage_2_label} %</span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );
@@ -1108,7 +1067,6 @@ function LeaderAndChasersSplitCard({
 
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>Leader spotlight + compact chasers</span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );
@@ -1380,7 +1338,6 @@ function PodiumAndTiersCard({
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>3-spot podium + 2 ballot tiers</span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );
@@ -1510,7 +1467,6 @@ function BarbellRaceTrackCard({
 
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>Green dot = {set.stage_2_label} % · Dark dot = {set.stage_1_label} %</span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );
@@ -1651,7 +1607,6 @@ function BallotQuadrantMapCard({
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>2×2 spatial quadrant classification</span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );
@@ -1770,7 +1725,6 @@ function SettledGateAfterNominationsCard({
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-surface-border pt-2 text-xs text-text-muted">
         <span>Settled step 1 preview</span>
-        <TMDBAttributionNote set={set} />
       </div>
     </article>
   );

@@ -76,6 +76,7 @@ _CITY_CLUBS = {
         ("New York Liberty", "basketball_wnba", "Brooklyn"),
         ("New York City FC", MLS, "New York City"),
         ("New York Red Bulls", MLS, "Harrison"),
+        ("LIU Sharks", NCAAB, "Long Island University"),
     ),
     "LA": (
         ("Los Angeles Lakers", NBA, "Los Angeles"),
@@ -94,7 +95,7 @@ _CITY_CLUBS = {
         ("Kansas City Chiefs", NFL, "Kansas City"),
         ("Kansas City Royals", MLB, "Kansas City"),
         ("Sporting Kansas City", MLS, "Kansas City, KS"),
-        ("Kansas City Current", "soccer_usa_nwsl", "Kansas City"),
+        ("Kansas City Current", "soccer_usa_nwsl", "Riverside"),
     ),
     "SF": (
         ("San Francisco Giants", MLB, "San Francisco"),
@@ -103,7 +104,8 @@ _CITY_CLUBS = {
         ("Golden State Valkyries", "basketball_wnba", "San Francisco"),
         ("San Jose Sharks", "icehockey_nhl", "San Jose"),
         ("San Jose Earthquakes", MLS, "San Jose"),
-        ("Bay FC", "soccer_usa_nwsl", "San Jose"),
+        ("Bay FC", "soccer_usa_nwsl", None),
+        ("San Jose State Spartans", NCAAF, "San José State"),
     ),
     "Vegas": (
         ("Vegas Golden Knights", "icehockey_nhl", "Vegas"),
@@ -128,7 +130,7 @@ _CITY_CLUBS = {
         ("Washington Wizards", NBA, "Washington"),
         ("Washington Capitals", "icehockey_nhl", "Washington"),
         ("Washington Mystics", "basketball_wnba", "Washington"),
-        ("Washington Spirit", "soccer_usa_nwsl", "Washington, DC"),
+        ("Washington Spirit", "soccer_usa_nwsl", "Audi Field"),
         ("D.C. United", MLS, "Washington"),
     ),
     "Twin Cities": (
@@ -461,6 +463,19 @@ async def test_issue_and_additional_onboarding_queries_return_real_clubs(
         (1226, "New Orleans Pelicans", NBA, "New Orleans"),
         (1227, "Indianapolis Colts", NFL, "Indianapolis"),
         (1228, "Oklahoma City Thunder", NBA, "Oklahoma City"),
+        (1229, "Boston Celtics", "basketball_nba_summer_league", "Boston"),
+        (1230, "Boston College Eagles", "basketball_wncaab", "Iowa"),
+        (1231, "Boston College Eagles", NCAAF, "Boston College"),
+        (1232, "Oakland Golden Grizzlies", "basketball_wncaab", "Oakland"),
+        (1233, "Santa Clara", "soccer_portugal_primeira_liga", None),
+        (1234, "Washington State Cougars", "basketball_wncaab", "Washington State"),
+        (1235, "Washington Huskies", "basketball_wncaab", "Washington"),
+        (1236, "Boston Cannons", "lacrosse_pll", "Boston"),
+        (1237, "Philadelphia Union", "soccer_concacaf_leagues_cup", "Philadelphia"),
+        (1238, "Los Angeles FC", "soccer_concacaf_leagues_cup", "Los Angeles"),
+        (1239, "Sporting Kansas City", "soccer_concacaf_leagues_cup", "Kansas City"),
+        (1240, "New York Yankees", MLS, "New York"),
+        (1400, "Long Island University Sharks", "baseball_ncaa", "Long Island University"),
         *((tid, *club) for tid, club in enumerate(
             (club for region in _CITY_CLUBS.values() for club in region), start=1300
         )),
@@ -526,6 +541,40 @@ async def test_issue_and_additional_onboarding_queries_return_real_clubs(
         assert len(names) == len(wanted) and set(names) == wanted, (
             city, sorted(names), sorted(wanted)
         )
+        assert all(row["id"] not in range(1229, 1241) for row in response.json()), city
+
+
+async def test_new_york_applies_the_cap_after_folding_season_registrations(
+    sessions, writer, client,
+):
+    async with sessions.begin() as db:
+        sports = dict((await db.execute(select(Sport.key, Sport.id))).all())
+        summer_key = "basketball_nba_summer_league"
+        if summer_key not in sports:
+            sports[summer_key] = max(sports.values()) + 1
+            db.add(Sport(id=sports[summer_key], key=summer_key, name="NBA Summer League"))
+        await db.execute(update(Team).where(Team.id == 1020).values(location="New York"))
+        db.add_all(
+            Team(id=tid, name="New York Knicks", sport_id=sports[summer_key], location="New York")
+            for tid in range(2100, 2160)
+        )
+        db.add(Team(
+            id=2160, name="New York Rangers", sport_id=sports["icehockey_nhl"],
+            location="New York",
+        ))
+        await db.flush()
+        db.add(Event(
+            sport_id=sports["icehockey_nhl"], home_team_id=2160, home_team_name="New York Rangers",
+            away_team_name="Opponent", commence_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        ))
+    await rebuild(sessions, writer)
+
+    response = await client.get("/api/me/teams/by-location", params={"q": "New York"})
+    assert response.status_code == 200, response.text
+    rows = response.json()
+    assert len(rows) <= 50
+    assert [row["id"] for row in rows if row["name"] == "New York Knicks"] == [1020]
+    assert [row["id"] for row in rows if row["name"] == "New York Rangers"] == [2160]
 
 
 async def test_prefixes_keep_other_clubs_separate_and_group_confirmed_spurs_variants(

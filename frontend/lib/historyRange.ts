@@ -83,7 +83,7 @@ export function archiveWidenedRange(
 }
 
 /** The one caption a partial full read earns. Plain words, no counts. */
-export const PARTIAL_HISTORY_CAPTION = "Some older prices aren't shown.";
+export const PARTIAL_HISTORY_CAPTION = "Some older readings aren't shown.";
 
 /**
  * True only when a full read says it left history out (`served_history:

@@ -158,7 +158,11 @@ from app.utils.draw_priced_winner import (
 )
 from app.utils.market_identity import ticker_game_date
 from app.utils.game_market_class import (
+    OU_NON_TEAM_SUBJECT_RE,
+    extract_ou_subject,
+    fold_ascii,
     is_game_winner_market,
+    is_named_team_ou_market,
     kalshi_series_period,
     names_a_scoped_segment,
     outcomes_refute_game_winner,
@@ -23684,6 +23688,11 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
             return "half_total"
         if any(x in lower for x in _QUARTER_PATTERNS):
             return "quarter_total"
+        # #13754: "A vs. B: <Team> O/U N" (without "team") is one club's scoring
+        # ladder, never the combined-game total. Period & non-scoring checks above
+        # have already run so "1st Half <Team> O/U" stays period-scoped.
+        if is_named_team_ou_market(name):
+            return "team_total"
         # Name says "total" but no period marker — check ticker for period
         ticker_type = _classify_from_ticker(external_id) if external_id else None
         if ticker_type and ticker_type.endswith("_total"):
@@ -26574,7 +26583,7 @@ def _read_game_markets_memo(event_id: int):
     if entry is None:
         return None
     cached_ts, cached_status, cached_build, cached_response = entry
-    if cached_build != _current_build_id():
+    if cached_build != gmc.current_cache_version():
         return None
     age = _time.time() - cached_ts
     ttl = (
@@ -26640,13 +26649,15 @@ def _write_game_markets_memo(event_id: int, source_status, response) -> None:
     the bound is reached is the one holding the OLDEST CONTENT rather than the
     one this process happened to read first.
     """
+    from app.utils import game_markets_cache as gmc
+
     if len(_game_markets_cache) >= _GAME_MARKETS_MAX_SIZE:
         oldest_key = min(_game_markets_cache, key=lambda k: _game_markets_cache[k][0])
         del _game_markets_cache[oldest_key]
     _game_markets_cache[event_id] = (
         _memo_stamp(response),
         str(source_status or ""),
-        _current_build_id(),
+        gmc.current_cache_version(),
         response,
     )
 
@@ -28220,15 +28231,15 @@ async def _build_game_markets(
     # 7. Deduplicate totals — split game_total vs team_total vs period totals
     seen_thresholds: dict[float, dict] = {}
     team_total_items: list[dict] = []
-    home_lower = (event.home_team_name or "").lower()
-    away_lower = (event.away_team_name or "").lower()
+    home_lower = fold_ascii(event.home_team_name or "")
+    away_lower = fold_ascii(event.away_team_name or "")
     # A word both club names share ("york", "angeles") identifies neither.
     _home_words = {w for w in home_lower.split() if len(w) >= 4}
     _away_words = {w for w in away_lower.split() if len(w) >= 4}
     _home_words, _away_words = _home_words - _away_words, _away_words - _home_words
 
     def _clubs_named(text: str | None) -> set[str]:
-        low = (text or "").lower()
+        low = fold_ascii(text or "")
         named = set()
         if any(w in low for w in _home_words):
             named.add("home")
@@ -28255,6 +28266,16 @@ async def _build_game_markets(
             # points") or both, so only a one-club leg is left out.
             if len(_clubs_named(t.get("outcome_name"))) == 1:
                 continue
+            # #13754 fallback: a stored/market row whose O/U subject names one
+            # club of this event routes to `team_totals`, never `totals`.
+            _ou_subj = extract_ou_subject(t.get("market_name"))
+            if (
+                _ou_subj
+                and not OU_NON_TEAM_SUBJECT_RE.search(_ou_subj)
+                and len(_clubs_named(_ou_subj)) == 1
+            ):
+                t["market_type"] = "team_total"
+        if t["market_type"] == "game_total":
             key = t["threshold"]
             incumbent = seen_thresholds.get(key)
             if incumbent is None:
@@ -28283,7 +28304,12 @@ async def _build_game_markets(
             # capped Raiders rungs with Patriots prices. A text naming both clubs
             # attributes neither — an untagged row is served as it is, never
             # guessed onto a side.
-            named = _clubs_named(t.get("outcome_name")) or _clubs_named(t.get("market_name"))
+            _tt_subj = extract_ou_subject(t.get("market_name"))
+            named = (
+                _clubs_named(t.get("outcome_name"))
+                or (_clubs_named(_tt_subj) if _tt_subj else set())
+                or _clubs_named(t.get("market_name"))
+            )
             side = next(iter(named)) if len(named) == 1 else None
             if side == "home":
                 t["team_name"] = event.home_team_name
@@ -29618,7 +29644,7 @@ async def _build_game_markets(
 # defect (LAT-P136 / P127-2 — the defect is that it was the ONLY cache the tier
 # had; see `utils/related_futures_cache.py` for the ten-event cold measurement).
 _related_futures_cache: dict[int, tuple[float, str, str, dict]] = {}
-# event_id → (timestamp, source_status, build_id, response)
+# event_id → (timestamp, source_status, cache_version, response)
 _RELATED_FUTURES_LIVE_TTL = 60
 _RELATED_FUTURES_MAX_SIZE = 10
 
@@ -29768,8 +29794,8 @@ def _read_related_futures_memo(event_id: int):
     entry = _related_futures_cache.get(event_id)
     if entry is None:
         return None
-    cached_at, cached_status, cached_build, cached_response = entry
-    if cached_build != _current_build_id():
+    cached_at, cached_status, cached_version, cached_response = entry
+    if cached_version != rfc.current_cache_version():
         return None
     age = _time.time() - cached_at
     ttl = (
@@ -29783,7 +29809,7 @@ def _read_related_futures_memo(event_id: int):
 
 
 def _write_related_futures_memo(event_id: int, source_status, response) -> None:
-    """The L1 write, with its size bound. Now stamped with the build (#6883).
+    """The L1 write, with its size bound. Stamped with `rfc.current_cache_version()`.
 
     The timestamp is the payload's own build time, not this moment — `_memo_stamp`,
     shared with the sibling tier, and the reason is #6394's: the read is not the
@@ -29794,13 +29820,15 @@ def _write_related_futures_memo(event_id: int, source_status, response) -> None:
     the bound is reached is the one holding the OLDEST CONTENT rather than the
     one this process happened to read first.
     """
+    from app.utils import related_futures_cache as rfc
+
     if len(_related_futures_cache) >= _RELATED_FUTURES_MAX_SIZE:
         oldest = min(_related_futures_cache, key=lambda k: _related_futures_cache[k][0])
         del _related_futures_cache[oldest]
     _related_futures_cache[event_id] = (
         _memo_stamp(response),
         str(source_status or ""),
-        _current_build_id(),
+        rfc.current_cache_version(),
         response,
     )
 
@@ -32212,15 +32240,457 @@ async def get_team_progression(
     return _response
 
 
-async def build_event_nuggets(
+NUGGETS_REQUEST_TIMEOUT_SECONDS = float(os.getenv("GAME_NUGGETS_TIMEOUT_SECONDS", "8.0"))
+NUGGETS_SQL_STATEMENT_TIMEOUT_MS = int(os.getenv("GAME_NUGGETS_SQL_TIMEOUT_MS", "6500"))
+_NUGGETS_SEASON_MARKETS_TTL = 300
+
+
+def _is_timeout_or_query_canceled(exc: BaseException) -> bool:
+    """True when an exception indicates a request deadline or SQL statement timeout."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, TimeoutError) or type(cur).__name__ == "TimeoutError":
+            return True
+        code = getattr(cur, "sqlstate", None) or getattr(cur, "pgcode", None)
+        if code == "57014":
+            return True
+        msg = str(cur).lower()
+        if "statement timeout" in msg or "querycanceled" in msg or "canceling statement" in msg:
+            return True
+        cur = getattr(cur, "orig", None) or getattr(cur, "__cause__", None)
+    return False
+
+
+def _is_nuggets_season_market_excluded(
+    sport_key: Optional[str],
+    name: Optional[str],
+    external_id: Optional[str],
+) -> bool:
+    """Filter sibling-league and wrong-gender markets in Python from cached pool."""
+    if not sport_key:
+        return False
+    from app.utils.league_scope import is_refused as _league_scope_is_refused
+
+    if _league_scope_is_refused(sport_key, name, external_id):
+        return True
+
+    key_low = sport_key.lower()
+    name_low = (name or "").lower()
+    ext_low = (external_id or "").lower()
+    is_womens_mkt = (
+        "women" in name_low
+        or "wnba" in name_low
+        or "wncaa" in name_low
+        or ext_low.startswith(("basketball_wnba", "basketball_wncaab", "kxwnba", "kxncaawb"))
+    )
+    if not key_low.endswith("_other"):
+        womens_event = _is_womens_league_key(sport_key)
+        if not womens_event and is_womens_mkt:
+            return True
+        if womens_event and not is_womens_mkt:
+            return True
+
+    if key_low == "basketball_nba" and (
+        ext_low.startswith(("kxncaa", "basketball_ncaab"))
+        or ("ncaa" in name_low and "nba" not in name_low)
+    ):
+        return True
+    if key_low == "basketball_ncaab" and (
+        ext_low.startswith(("kxnba", "basketball_nba"))
+        or (re.search(r"\bnba\b", name_low) and "ncaa" not in name_low)
+    ):
+        return True
+    return False
+
+
+async def _load_nuggets_open_season_markets(
+    db: AsyncSession,
+    sport_key: str,
+    *,
+    event_is_finished: bool = False,
+) -> list[dict[str, Any]]:
+    """Load/cache open tier 1-4 season markets using partial index ``ix_fm_feed_open_sports``."""
+    from app.utils import game_nuggets_cache
+    from app.utils import season_market_discovery as _smd
+
+    cached = game_nuggets_cache.get_season_markets_l1(sport_key)
+    if cached is not None:
+        return cached
+
+    redis_key = f"bainluck:nuggets:season_mkts:v2:{sport_key}"
+    rc = None
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client(fast_fail=True)
+        raw = rc.get(redis_key)
+        if raw:
+            parsed = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else str(raw))
+            if isinstance(parsed, list):
+                game_nuggets_cache.set_season_markets_l1(sport_key, parsed)
+                return parsed
+    except Exception:
+        rc = None
+
+    cached_ids: list[int] | None = None
+    try:
+        cached_ids = _smd.read(sport_key, event_is_finished, rc=rc)
+    except Exception:
+        cached_ids = None
+
+    if isinstance(cached_ids, list) and cached_ids:
+        pk_stmt = select(
+            FuturesMarket.id,
+            FuturesMarket.name,
+            FuturesMarket.market_tier,
+            FuturesMarket.source,
+            FuturesMarket.external_id,
+            FuturesMarket.category,
+            FuturesMarket.resolution_date,
+        ).where(FuturesMarket.id.in_(cached_ids[:400]))
+        rows = (await db.execute(pk_stmt)).all()
+    else:
+        prefix = sport_key.split("_")[0]
+        llm_category = SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix, prefix)
+        if not llm_category:
+            return []
+
+        stmt = (
+            select(
+                FuturesMarket.id,
+                FuturesMarket.name,
+                FuturesMarket.market_tier,
+                FuturesMarket.source,
+                FuturesMarket.external_id,
+                FuturesMarket.category,
+                FuturesMarket.resolution_date,
+            )
+            .where(
+                FuturesMarket.status == "open",
+                FuturesMarket.event_id.is_(None),
+                FuturesMarket.llm_sport_category == llm_category,
+                FuturesMarket.market_tier.in_([1, 2, 3, 4]),
+            )
+            .order_by(FuturesMarket.market_tier.asc(), FuturesMarket.id.desc())
+            .limit(1200)
+        )
+        rows = (await db.execute(stmt)).all()
+
+    markets: list[dict[str, Any]] = []
+    for row in rows:
+        if _is_nuggets_season_market_excluded(sport_key, row.name, row.external_id):
+            continue
+        markets.append(
+            {
+                "id": int(row.id),
+                "name": row.name or "",
+                "market_tier": row.market_tier,
+                "source": row.source or "",
+                "external_id": row.external_id or "",
+                "category": row.category or "championship",
+                "resolution_date": row.resolution_date.isoformat() if row.resolution_date else None,
+            }
+        )
+        if len(markets) >= 400:
+            break
+
+    game_nuggets_cache.set_season_markets_l1(sport_key, markets)
+    try:
+        if rc is None:
+            from app.tasks.redis_state import get_redis_client
+
+            rc = get_redis_client(fast_fail=True)
+        rc.setex(redis_key, _NUGGETS_SEASON_MARKETS_TTL, json.dumps(markets, separators=(",", ":")))
+    except Exception as exc:
+        logger.debug("nuggets: failed writing season-markets redis cache: %s", exc)
+    return markets
+
+
+def _collect_side_match_terms(
+    team_name: str,
+    team_row: Any,
+) -> tuple[list[str], list[str], dict[str, dict[str, Any]]]:
+    """Build token patterns for team/player matching from already-loaded Team metadata."""
+    base_patterns = [p.replace("\\%", "%").replace("\\_", "_") for p in _team_name_patterns(team_name or "")]
+    team_patterns = list(base_patterns)
+    all_patterns = list(base_patterns)
+    player_meta: dict[str, dict[str, Any]] = {}
+
+    seen_low = {p.lower() for p in all_patterns}
+    if team_row is not None:
+        alts = getattr(team_row, "alternate_names", None)
+        if isinstance(alts, list):
+            for alt in alts:
+                if isinstance(alt, str) and len(alt.strip()) >= 2:
+                    clean = alt.strip()
+                    if clean.lower() not in seen_low:
+                        seen_low.add(clean.lower())
+                        team_patterns.append(clean)
+                        all_patterns.append(clean)
+        roster = getattr(team_row, "roster_players", None)
+        if isinstance(roster, list):
+            for item in roster:
+                if isinstance(item, dict):
+                    pname = item.get("name")
+                    if isinstance(pname, str) and pname.strip():
+                        pclean = pname.strip()
+                        if item.get("espn_id") or item.get("headshot"):
+                            player_meta[pclean.lower()] = {
+                                k: v for k, v in item.items() if k in ("espn_id", "headshot", "name")
+                            }
+                        if len(pclean) >= 4 and pclean.lower() not in seen_low:
+                            seen_low.add(pclean.lower())
+                            all_patterns.append(pclean)
+                elif isinstance(item, str) and len(item.strip()) >= 4:
+                    pclean = item.strip()
+                    if pclean.lower() not in seen_low:
+                        seen_low.add(pclean.lower())
+                        all_patterns.append(pclean)
+    return team_patterns, all_patterns, player_meta
+
+
+async def _load_fast_nugget_stakes(
+    db: AsyncSession,
+    event: Event,
+    resolved_id: int,
+    sport_key: Optional[str],
+    by_tid: dict[int, Team],
+    *,
+    event_is_finished: bool = False,
+) -> dict[str, Any]:
+    """Load season-stakes inputs for nuggets via indexed queries + cache (no 500k scan)."""
+    from app.utils import related_futures_cache as rfc
+    from app.utils.futures_market_snapshot import reader_change_24h
+    from app.utils.market_label_normalization import normalize_market_label
+    from app.utils.team_pattern_match import any_pattern_matches_token
+
+    memo_rf = _read_related_futures_memo(resolved_id)
+    if isinstance(memo_rf, dict):
+        return memo_rf
+
+    try:
+        l2_rf, state = rfc.read(resolved_id)
+        if state in ("live", "stale_ok") and isinstance(l2_rf, dict):
+            return l2_rf
+    except Exception as exc:
+        logger.debug("nuggets: L2 related_futures cache read failed for event %s: %s", resolved_id, exc)
+
+    empty = {"home_team_futures": [], "away_team_futures": [], "series_markets": []}
+    if not sport_key:
+        return empty
+
+    season_markets = await _load_nuggets_open_season_markets(
+        db,
+        sport_key,
+        event_is_finished=event_is_finished,
+    )
+    if not season_markets:
+        return empty
+
+    market_by_id = {int(m["id"]): m for m in season_markets}
+    season_mids = list(market_by_id.keys())
+
+    outcomes = (
+        await db.execute(
+            select(FuturesOutcome).where(
+                FuturesOutcome.market_id.in_(season_mids),
+                FuturesOutcome.current_probability.isnot(None),
+            )
+        )
+    ).scalars().all()
+    if not outcomes:
+        return empty
+
+    ht = by_tid.get(event.home_team_id) if getattr(event, "home_team_id", None) else None
+    at = by_tid.get(event.away_team_id) if getattr(event, "away_team_id", None) else None
+    home_team_pat, home_all_pat, home_players = _collect_side_match_terms(
+        event.home_team_name or "", ht
+    )
+    away_team_pat, away_all_pat, away_players = _collect_side_match_terms(
+        event.away_team_name or "", at
+    )
+    player_meta = {**home_players, **away_players}
+    home_tid = getattr(event, "home_team_id", None)
+    away_tid = getattr(event, "away_team_id", None)
+
+    home_entries: list[dict[str, Any]] = []
+    away_entries: list[dict[str, Any]] = []
+
+    for o in outcomes:
+        mkt = market_by_id.get(int(o.market_id))
+        if mkt is None:
+            continue
+        prob = float(o.current_probability) if o.current_probability is not None else None
+        if prob is None:
+            continue
+        if o.current_yes_bid is not None and o.current_yes_ask is not None:
+            if float(o.current_yes_bid) <= 0.0 and float(o.current_yes_ask) >= 0.99:
+                continue
+
+        oname = o.name or ""
+        oname_low = oname.strip().lower()
+        is_home = bool(
+            (home_tid is not None and o.team_id == home_tid)
+            or any_pattern_matches_token(oname, home_all_pat)
+            or (oname_low == "yes" and any_pattern_matches_token(mkt["name"], home_team_pat))
+        )
+        is_away = bool(
+            (away_tid is not None and o.team_id == away_tid)
+            or any_pattern_matches_token(oname, away_all_pat)
+            or (oname_low == "yes" and any_pattern_matches_token(mkt["name"], away_team_pat))
+        )
+        if not is_home and not is_away:
+            continue
+
+        market_proxy = SimpleNamespace(
+            id=mkt["id"],
+            source=mkt["source"],
+            external_id=mkt["external_id"],
+            name=mkt["name"],
+            category=mkt["category"],
+            market_tier=mkt["market_tier"],
+        )
+        chg = reader_change_24h(
+            market_proxy,
+            o.id,
+            o.current_probability,
+            o.probability_change_24h,
+        )
+        clean_label = normalize_market_label(mkt["name"])
+        tier_val = mkt["market_tier"] or 4
+        tier_bonus = {1: 40.0, 2: 28.0, 3: 24.0, 4: 18.0}.get(int(tier_val), 10.0)
+        entry: dict[str, Any] = {
+            "market_id": mkt["id"],
+            "market_name": mkt["name"],
+            "clean_label": clean_label,
+            "market_tier": tier_val,
+            "category": mkt["category"],
+            "source": mkt["source"],
+            "outcome_id": o.id,
+            "outcome_name": resolve_binary_matchup_outcome_name(oname, mkt["name"]),
+            "probability": prob,
+            "probability_change_24h": float(chg) if chg is not None else None,
+            "bookmaker_count": 1,
+            "relevance_score": tier_bonus + prob * 20.0,
+            "last_updated": o.last_updated.isoformat() if o.last_updated else None,
+        }
+        matched = player_meta.get(oname.split(":")[0].strip().lower())
+        if matched:
+            entry["matched_player"] = matched
+
+        if is_home and not is_away:
+            home_entries.append(entry)
+        elif is_away and not is_home:
+            away_entries.append(entry)
+        else:
+            if home_tid is not None and o.team_id == home_tid:
+                home_entries.append(entry)
+            elif away_tid is not None and o.team_id == away_tid:
+                away_entries.append(entry)
+
+    home_entries.sort(key=lambda r: r["relevance_score"], reverse=True)
+    away_entries.sort(key=lambda r: r["relevance_score"], reverse=True)
+    return {
+        "home_team_futures": home_entries[:25],
+        "away_team_futures": away_entries[:25],
+        "series_markets": [],
+    }
+
+
+async def _load_nuggets_team_progression(
+    resolved_id: int,
+    event: Event,
+    sport_key: Optional[str],
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Read team progression from cache only; never block nuggets on cold grid rebuild."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client(fast_fail=True)
+        cached = rc.get(_team_progression_cache_key(resolved_id))
+        if cached:
+            return json.loads(cached.decode("utf-8") if isinstance(cached, bytes) else str(cached))
+    except Exception as exc:
+        logger.debug("nuggets: progression redis read failed for event %s: %s", resolved_id, exc)
+
+    if not sport_key:
+        return {}
+
+    from app.config.league_configs import LEAGUE_TO_SPORT, get_league_for_sport_key
+    from app.services.league_context import _format_event_league_context, read_cached_league_context
+
+    config = get_league_for_sport_key(sport_key)
+    if not config:
+        return {}
+
+    ctx = read_cached_league_context(config.slug)
+    if ctx is None:
+        return {"_league_context_missing": True}
+
+    league_ctx = _format_event_league_context(event, config, ctx)
+    if not league_ctx:
+        return {}
+    sport_group = LEAGUE_TO_SPORT.get(config.slug, "")
+    grid_url = f"/{sport_group}/{config.slug}" if sport_group else f"/playoffs/{config.slug}"
+
+    def _side(team_ctx_dict: Optional[dict[str, Any]], team_name: Optional[str]):
+        if not team_ctx_dict:
+            return None
+        stages = []
+        for col in league_ctx.get("columns") or ():
+            ckey = col.get("key", "")
+            prob = (team_ctx_dict.get("cells") or {}).get(ckey)
+            state = (team_ctx_dict.get("states") or {}).get(ckey)
+            if prob is not None or state:
+                stages.append(
+                    {
+                        "key": ckey,
+                        "label": col.get("label", ckey),
+                        "probability": prob,
+                        "trend_24h": (team_ctx_dict.get("changes_24h") or {}).get(ckey),
+                        "state": state,
+                        "sources": team_ctx_dict.get("sources_available") or [],
+                    }
+                )
+        if not stages:
+            return None
+        return {
+            "name": team_name,
+            "logo_url": team_ctx_dict.get("logo_url"),
+            "stages": stages,
+        }
+
+    return {
+        "event_id": resolved_id,
+        "league": config.slug,
+        "grid_url": grid_url,
+        "home_team": _side(league_ctx.get("home_team"), event.home_team_name),
+        "away_team": _side(league_ctx.get("away_team"), event.away_team_name),
+    }
+
+
+async def _build_event_nuggets_inner(
     event_id: int,
     db: AsyncSession,
     *,
-    limit: int = 12,
-    now: Optional[datetime] = None,
+    clamped_limit: int,
+    now: Optional[datetime],
+    use_cache: bool,
 ) -> dict:
     """Build ranked below-the-charts nuggets from existing event sub-surfaces (#13511)."""
+    from app.utils import game_nuggets_cache
     from app.utils.game_nuggets import NUGGET_DEFAULT_LIMIT, rank_game_nuggets, reader_league_name
+
+    try:
+        bind = db.get_bind() if isinstance(db, AsyncSession) else getattr(db, "bind", None)
+        dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
+        if dialect_name == "postgresql":
+            await db.execute(text(f"SET LOCAL statement_timeout = {int(NUGGETS_SQL_STATEMENT_TIMEOUT_MS)}"))
+    except Exception as exc:
+        logger.debug("nuggets: unable to apply statement_timeout hint: %s", exc)
 
     row = (
         await db.execute(
@@ -32235,9 +32705,20 @@ async def build_event_nuggets(
     served = await resolve_served_event(db, row, requested_id=event_id)
     event = served.event
     resolved_id = int(served.event_id)
+    clock_now = now or datetime.now(timezone.utc)
+    status_str = served_event_status(event.status, event.commence_time, clock_now)
+    is_final = game_nuggets_cache.is_final_status(status_str) or game_nuggets_cache.is_final_status(
+        getattr(event, "status", None)
+    )
+
+    if use_cache:
+        cached = game_nuggets_cache.read(resolved_id, is_final=is_final, limit=clamped_limit)
+        if cached is not None:
+            return cached
 
     home_logo: Optional[str] = None
     away_logo: Optional[str] = None
+    by_tid: dict[int, Team] = {}
     team_ids = [tid for tid in (event.home_team_id, event.away_team_id) if isinstance(tid, int)]
     if team_ids:
         teams = (await db.execute(select(Team).where(Team.id.in_(team_ids)))).scalars().all()
@@ -32245,34 +32726,84 @@ async def build_event_nuggets(
         ht = by_tid.get(event.home_team_id) if event.home_team_id else None
         at = by_tid.get(event.away_team_id) if event.away_team_id else None
         if ht is not None:
-            home_logo = getattr(ht, "logo_small", None) or getattr(ht, "logo_url", None) or getattr(ht, "logo_large", None)
+            home_logo = (
+                getattr(ht, "logo_url_small", None)
+                or getattr(ht, "logo_small", None)
+                or getattr(ht, "logo_url", None)
+                or getattr(ht, "logo_url_large", None)
+                or getattr(ht, "logo_large", None)
+            )
         if at is not None:
-            away_logo = getattr(at, "logo_small", None) or getattr(at, "logo_url", None) or getattr(at, "logo_large", None)
+            away_logo = (
+                getattr(at, "logo_url_small", None)
+                or getattr(at, "logo_small", None)
+                or getattr(at, "logo_url", None)
+                or getattr(at, "logo_url_large", None)
+                or getattr(at, "logo_large", None)
+            )
 
     safe_event_id = getattr(event, "id", None)
+    sport_key = event.sport.key if getattr(event, "sport", None) else None
+    build_complete = True
+
     try:
         game_markets = await get_game_markets(resolved_id, db=db, fresh=False, response=None)
-    except HTTPException:
-        game_markets = {}
-    except Exception:
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            game_markets = {}
+        elif exc.status_code in (503, 504):
+            raise
+        else:
+            raise
+    except Exception as exc:
+        if _is_timeout_or_query_canceled(exc):
+            raise
         logger.warning("nuggets: game_markets read failed for event %s", safe_event_id, exc_info=True)
         game_markets = {}
+        build_complete = False
 
     try:
-        related_futures = await get_related_futures(resolved_id, debug=False, db=db)
-    except HTTPException:
+        related_futures = await _load_fast_nugget_stakes(
+            db,
+            event,
+            resolved_id,
+            sport_key,
+            by_tid,
+            event_is_finished=is_final,
+        )
+    except HTTPException as exc:
+        if exc.status_code in (503, 504):
+            raise
+        logger.warning("nuggets: fast stakes HTTP error for event %s", safe_event_id, exc_info=True)
         related_futures = {}
-    except Exception:
-        logger.warning("nuggets: related_futures read failed for event %s", safe_event_id, exc_info=True)
+        build_complete = False
+    except Exception as exc:
+        if _is_timeout_or_query_canceled(exc):
+            raise
+        logger.warning("nuggets: fast stakes read failed for event %s", safe_event_id, exc_info=True)
         related_futures = {}
+        build_complete = False
 
     try:
-        team_progression = await get_team_progression(resolved_id, db=db)
-    except HTTPException:
+        team_progression = await _load_nuggets_team_progression(resolved_id, event, sport_key, db)
+    except HTTPException as exc:
+        if exc.status_code in (503, 504):
+            raise
+        logger.warning("nuggets: progression HTTP error for event %s", safe_event_id, exc_info=True)
         team_progression = {}
-    except Exception:
-        logger.warning("nuggets: team_progression read failed for event %s", safe_event_id, exc_info=True)
+        build_complete = False
+    except Exception as exc:
+        if _is_timeout_or_query_canceled(exc):
+            raise
+        logger.warning("nuggets: progression read failed for event %s", safe_event_id, exc_info=True)
         team_progression = {}
+        build_complete = False
+
+    if isinstance(team_progression, dict) and team_progression.get("_league_context_missing"):
+        build_complete = False
+        team_progression = {
+            k: v for k, v in team_progression.items() if k != "_league_context_missing"
+        }
 
     event_info = {
         "event_id": resolved_id,
@@ -32280,31 +32811,91 @@ async def build_event_nuggets(
         "away_team": event.away_team_name,
         "home_logo": home_logo,
         "away_logo": away_logo,
-        "sport": event.sport.key if event.sport else None,
+        "sport": sport_key,
         "sport_name": reader_league_name(event.sport),
-        "status": served_event_status(
-            event.status, event.commence_time, now or datetime.now(timezone.utc)
-        ),
+        "status": status_str,
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
     }
-    return rank_game_nuggets(
+    full_payload = rank_game_nuggets(
         event_info=event_info,
         game_markets=game_markets if isinstance(game_markets, dict) else {},
         related_futures=related_futures if isinstance(related_futures, dict) else {},
         team_progression=team_progression if isinstance(team_progression, dict) else {},
-        limit=max(1, min(int(limit), NUGGET_DEFAULT_LIMIT)),
-        now=now,
+        limit=NUGGET_DEFAULT_LIMIT,
+        now=clock_now,
     )
+    keep_seven_days = bool(
+        is_final
+        and build_complete
+        and game_nuggets_cache.game_markets_fully_settled(game_markets)
+    )
+    if use_cache:
+        game_nuggets_cache.write(resolved_id, full_payload, is_final=keep_seven_days)
+    return game_nuggets_cache.slice_nuggets_payload(full_payload, clamped_limit)
+
+
+async def build_event_nuggets(
+    event_id: int,
+    db: AsyncSession,
+    *,
+    limit: int = 12,
+    now: Optional[datetime] = None,
+    use_cache: bool = True,
+    timeout_seconds: Optional[float] = None,
+) -> dict:
+    """Build ranked below-the-charts nuggets with caching and pre-router timeout (#13511, #13650)."""
+    import asyncio as _nuggets_asyncio
+
+    from app.utils.game_nuggets import NUGGET_DEFAULT_LIMIT
+
+    clamped_limit = max(1, min(int(limit), NUGGET_DEFAULT_LIMIT))
+    effective_timeout = (
+        NUGGETS_REQUEST_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else max(0.01, float(timeout_seconds))
+    )
+    try:
+        return await _nuggets_asyncio.wait_for(
+            _build_event_nuggets_inner(
+                event_id,
+                db,
+                clamped_limit=clamped_limit,
+                now=now,
+                use_cache=use_cache,
+            ),
+            timeout=effective_timeout,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if _is_timeout_or_query_canceled(exc):
+            logger.warning(
+                "nuggets: request timed out after %.2fs",
+                effective_timeout,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Event nuggets timed out before completion",
+                headers={"Retry-After": "5"},
+            ) from exc
+        raise
 
 
 @router.get("/{event_id}/nuggets")
 async def get_event_nuggets(
     event_id: int,
+    request: Request,
     limit: int = Query(12, ge=1, le=12),
+    fresh: bool = Query(False),
+    secret: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Ranked below-the-charts nuggets and kind counts for an event (#13511)."""
-    return await build_event_nuggets(event_id, db, limit=limit)
+    """Ranked below-the-charts nuggets and kind counts for an event (#13511, #13650)."""
+    if fresh:
+        from app.routes.admin_utils import _check_admin_secret
+
+        _check_admin_secret(secret, request=request)
+    return await build_event_nuggets(event_id, db, limit=limit, use_cache=not fresh)
 
 
 #: Five minutes, unchanged from the inline literal this replaced.
@@ -33090,6 +33681,7 @@ def _served_point_bounds(win_prob_history: dict, history: list):
 #: value a future client invents — is today's whole-journey payload, so an
 #: unrecognised range can never delete a point. Fail-open is the only safe
 #: direction for a parameter whose job is to omit data.
+EVENT_HISTORY_RANGE_ALL = "all"
 EVENT_HISTORY_RANGE_SINCE_START = "since_start"
 
 
@@ -33180,6 +33772,7 @@ def _omit_pre_kickoff_points(
     *,
     commence_time,
     start_is_kickoff: bool = True,
+    preserve_range_all_counts: bool = False,
     history: list,
     bookmaker_history: dict,
     win_prob_history: dict,
@@ -33319,12 +33912,22 @@ def _omit_pre_kickoff_points(
     for bookmaker in list(bookmaker_history):
         bookmaker_history[bookmaker] = _since_kickoff(bookmaker_history[bookmaker])
     for source in list(win_prob_history):
-        win_prob_history[source] = _since_kickoff(win_prob_history[source])
-        # Keep the advertised count honest — it is rendered.
+        before_len = len(win_prob_history[source])
+        kept = _since_kickoff(win_prob_history[source])
+        win_prob_history[source] = kept
+        # Keep the advertised count honest: explicit range=since_start follows
+        # len(kept) (#2000), while cold-miss range=all fallback preserves the
+        # range=all stored-reading count when nothing was trimmed and excludes
+        # any synthesized terminal `final` point when trimming ran (#7878/#8514).
         if source in win_prob_sources_meta:
-            win_prob_sources_meta[source]["snapshot_count"] = len(
-                win_prob_history[source]
-            )
+            if not preserve_range_all_counts:
+                win_prob_sources_meta[source]["snapshot_count"] = len(kept)
+            elif len(kept) < before_len:
+                win_prob_sources_meta[source]["snapshot_count"] = sum(
+                    1
+                    for p in kept
+                    if (p.get("evidence") or {}).get("kind") != "final"
+                )
 
     return omitted > 0
 
@@ -34192,15 +34795,26 @@ async def get_event_odds_history_cached(
     from app.utils import event_history_cache as ehc
     from app.utils import request_cache as _rc
 
-    key = ehc.cache_key(event_id, hours, chart_range)
+    if not isinstance(chart_range, str):
+        chart_range = EVENT_HISTORY_RANGE_ALL
 
-    def _respond(body: bytes, cache_control: Optional[str], state: str) -> Response:
+    key = ehc.cache_key(event_id, hours, chart_range)
+    finished_key = ehc.finished_cache_key(event_id, chart_range)
+
+    def _respond(
+        body: bytes,
+        cache_control: Optional[str],
+        state: str,
+        extra_headers: Optional[dict[str, str]] = None,
+    ) -> Response:
         headers = {"X-Feed-Cache": state}
         if cache_control:
             headers["Cache-Control"] = cache_control
+        if extra_headers:
+            headers.update(extra_headers)
         return Response(content=body, media_type="application/json", headers=headers)
 
-    async def _build(publish: bool) -> tuple[bytes, Optional[str]]:
+    async def _build(publish: bool) -> tuple[bytes, Optional[str], dict[str, str]]:
         sub = Response()
         marks, token = ehc.begin_marks()
         try:
@@ -34216,23 +34830,30 @@ async def get_event_odds_history_cached(
             ehc.end_marks(token)
         body = _encode_history_payload(payload)
         cache_control = sub.headers.get("cache-control")
-        if publish:
-            ehc.write(key, body, cache_control, ehc.lease_for(marks, payload))
-        return body, cache_control
+        extra_headers = {
+            name: val
+            for name in ("X-History-Served-Range", "X-History-Range-Fallback")
+            if (val := sub.headers.get(name))
+        }
+        lease = ehc.lease_for(marks, payload)
+        if publish and lease > 0:
+            target_key = finished_key if marks.finished else key
+            ehc.write(target_key, body, cache_control, lease)
+        return body, cache_control, extra_headers
 
     # #10090 R3: coalesced per (event, hours, range) by the #9296 barrier, and
     # still never published. A fresh history read is the other half of the
     # recovery pair, so the same broadcast that makes every open page re-read
     # detail makes every one of them re-read this.
     if fresh:
-        body, cache_control = await _coalesced_fresh_build(
+        body, cache_control, extra_headers = await _coalesced_fresh_build(
             _HISTORY_FRESH_BUILDS, key, time.time(), lambda: _build(publish=False)
         )
-        return _respond(body, cache_control, "bypass")
+        return _respond(body, cache_control, "bypass", extra_headers)
 
     flight_key = f"event_history:{key[0]}:{key[1]}:{key[2]}"
     while True:
-        hit = ehc.read(key)
+        hit = ehc.read(finished_key) or ehc.read(key)
         if hit is not None:
             return _respond(hit[0], hit[1], "hit")
 
@@ -34243,14 +34864,14 @@ async def get_event_odds_history_cached(
             # second build beside it. The leader resolves the future on every
             # exit, and its wait is never longer than building our own would be.
             try:
-                body, cache_control = await _asyncio.shield(fut)
+                body, cache_control, extra_headers = await _asyncio.shield(fut)
             except _asyncio.CancelledError:
                 raise
             except Exception:
                 # The leader exited without a body (failed, 404, or its reader
                 # went away). It is no longer running: re-check and claim.
                 continue
-            return _respond(body, cache_control, "coalesced")
+            return _respond(body, cache_control, "coalesced", extra_headers)
 
         try:
             built = await _build(publish=True)
@@ -34267,7 +34888,7 @@ async def get_event_odds_history_cached(
                 fut.exception()
             raise
         _rc.finish_build(flight_key, fut, result=built)
-        return _respond(built[0], built[1], "miss")
+        return _respond(built[0], built[1], "miss", built[2])
 
 
 async def get_event_odds_history(
@@ -34295,13 +34916,32 @@ async def get_event_odds_history(
     Each data point represents the consensus across all bookmakers at that time.
     """
     # Read-error and finished marks for the cache policy in front of this build
-    # (`get_event_odds_history_cached`); no-ops when called any other way.
+    # (`get_event_odds_history_cached`); fall back to a per-call completeness flag
+    # when `get_event_odds_history` is invoked directly so durable read-through
+    # still tracks partial reads cleanly without altering `ehc.build_is_complete()`.
     from app.utils.event_history_cache import (
-        build_is_complete as history_build_is_complete,
+        build_is_complete as _ehc_build_is_complete,
+        has_active_marks as _ehc_has_active_marks,
         mark_finished as _history_mark_finished,
-        mark_partial as _history_mark_partial,
+        mark_partial as _ehc_mark_partial,
+        mark_skip_cache as _history_mark_skip_cache,
     )
     from app.utils.history_coverage import served_history_coverage
+
+    _local_partial = False
+
+    if not isinstance(chart_range, str):
+        chart_range = EVENT_HISTORY_RANGE_ALL
+
+    def _history_mark_partial() -> None:
+        nonlocal _local_partial
+        _local_partial = True
+        _ehc_mark_partial()
+
+    def history_build_is_complete() -> bool:
+        if _ehc_has_active_marks():
+            return _ehc_build_is_complete()
+        return not _local_partial
 
     # Verify event exists
     event_result = await db.execute(
@@ -34511,6 +35151,11 @@ async def get_event_odds_history(
     prefetched_wp_snapshots = None
     prefetched_espn_snapshots = None
     _series_single_id = oriented_series_ids[0] if len(oriented_series_ids) == 1 else None
+    _finished_durable_active = False
+    _finished_fp = None
+    _finished_write_fn = None
+    _finished_write_source = None
+    _cold_miss_since_start_fallback = False
     if is_stale_open:
         # No cutoff and no end cap — see `_event_started_long_ago_unsettled` on
         # why `commence_time` cannot be trusted to bound this cohort.
@@ -34549,6 +35194,102 @@ async def get_event_odds_history(
         end_cap = _finished_event_end_cap(
             event.completed_at, event.commence_time, commence_cap
         )
+
+        # #13606 Part 1: once past end_cap (completed_at + 30m), serve complete
+        # finished game charts from `durable_state_snapshots` after verifying
+        # the in-memory `Event` state + 5 small indexed tables fingerprint.
+        _past_end_cap = end_cap is not None and now >= end_cap
+        if not fresh and _past_end_cap:
+            from app.services.finished_event_history import (
+                COLD_MISS_SINCE_START_FALLBACK,
+                FINISHED_HISTORY_READ_THROUGH_SOURCE,
+                build_fingerprint as _build_finished_fp,
+                claim_cold_materialization as _claim_finished_materialize,
+                cold_miss_mode as _finished_cold_miss_mode,
+                compute_small_tables_fingerprint as _compute_small_tables_fp,
+                derive_since_start_payload as _derive_finished_since_start,
+                durable_enabled as _finished_durable_enabled,
+                is_durable_bypassed as _finished_durable_bypassed,
+                read_finished_event_history_with_status as _read_finished_durable_status,
+                session_supports_durable as _session_supports_finished_durable,
+                write_finished_event_history as _write_finished_durable,
+            )
+
+            if (
+                not _finished_durable_bypassed()
+                and _finished_durable_enabled()
+                and _session_supports_finished_durable(db)
+            ):
+                _finished_durable_active = True
+                _finished_write_fn = _write_finished_durable
+                _finished_write_source = FINISHED_HISTORY_READ_THROUGH_SOURCE
+                _durable_status = "unavailable"
+                _tables_fp = await _compute_small_tables_fp(
+                    db, event_id, series_event_ids
+                )
+                if _tables_fp is not None:
+                    _finished_fp = _build_finished_fp(
+                        event, absorbed, series_event_ids, _tables_fp
+                    )
+                    _durable_status, _stored = await _read_finished_durable_status(
+                        db, event_id
+                    )
+                    if (
+                        _durable_status == "hit"
+                        and _stored is not None
+                        and _stored.get("fingerprint") == _finished_fp
+                        and isinstance(_stored.get("payload"), dict)
+                    ):
+                        _stored_payload = _stored["payload"]
+                        if chart_range == EVENT_HISTORY_RANGE_SINCE_START:
+                            return _derive_finished_since_start(
+                                _stored_payload,
+                                commence_time=event.commence_time,
+                                omit_fn=_omit_pre_kickoff_points,
+                                withhold_fn=_withhold_undrawable_source_series,
+                            )
+                        import copy as _copy
+
+                        return _copy.deepcopy(_stored_payload)
+
+                if _durable_status != "unavailable":
+                    _miss_mode = _finished_cold_miss_mode()
+                    if (
+                        chart_range == EVENT_HISTORY_RANGE_SINCE_START
+                        or _miss_mode == COLD_MISS_SINCE_START_FALLBACK
+                    ) and _claim_finished_materialize(event_id):
+                        try:
+                            from app.tasks import materialize_finished_event_charts
+
+                            materialize_finished_event_charts.apply_async(
+                                kwargs={"event_ids": [event_id]},
+                                queue="background",
+                                retry=False,
+                                ignore_result=True,
+                            )
+                        except Exception as _exc:  # noqa: BLE001
+                            logger.warning(
+                                "finished_event_history: cold enqueue failed for %s: %s",
+                                event_id, _exc,
+                            )
+                    if (
+                        chart_range != EVENT_HISTORY_RANGE_SINCE_START
+                        and _miss_mode == COLD_MISS_SINCE_START_FALLBACK
+                        and event.commence_time is not None
+                        and not _commence_time_is_venue_expiration(event)
+                        and _series_single_id is not None
+                    ):
+                        chart_range = EVENT_HISTORY_RANGE_SINCE_START
+                        _cold_miss_since_start_fallback = True
+                        _history_mark_skip_cache()
+                        if response is not None:
+                            response.headers["Cache-Control"] = "no-store"
+                            response.headers["X-History-Served-Range"] = (
+                                EVENT_HISTORY_RANGE_SINCE_START
+                            )
+                            response.headers["X-History-Range-Fallback"] = (
+                                EVENT_HISTORY_RANGE_SINCE_START
+                            )
 
         query = select(OddsSnapshot).where(
             OddsSnapshot.event_id.in_(oriented_series_ids)
@@ -36597,6 +37338,11 @@ async def get_event_odds_history(
     # reads routes — so a task that dispatches a task can grow a result consumer
     # nobody declared and leave its status poll hanging forever. The planner
     # decides and wins the claim; this line spends it.
+    from app.services.finished_event_history import (
+        in_materializer_context as _in_finished_materializer,
+        is_on_demand_refill_pending as _is_refill_pending,
+    )
+
     on_demand_backfill = None
     try:
         from app.tasks.event_chart_backfill import (
@@ -36630,7 +37376,10 @@ async def get_event_odds_history(
                 limit=THIN_MAX_EXPECTED_POINTS - _in_or_near_venue,
             )
         on_demand_backfill = await plan_on_demand_fill(
-            db, event, served_points=venue_points
+            db,
+            event,
+            served_points=venue_points,
+            allow_claim=not _in_finished_materializer(),
         )
         if on_demand_backfill and on_demand_backfill.get("enqueue"):
             from app.tasks import backfill_event_chart_history
@@ -36681,6 +37430,7 @@ async def get_event_odds_history(
             # could reach. Trimming to it would delete the contest, not the
             # pre-match half.
             start_is_kickoff=not _commence_time_is_venue_expiration(event),
+            preserve_range_all_counts=_cold_miss_since_start_fallback,
             history=history,
             bookmaker_history=bookmaker_history,
             win_prob_history=win_prob_history,
@@ -36696,7 +37446,7 @@ async def get_event_odds_history(
     # either range, and the rule is about the plot, not about the caller.
     _withhold_undrawable_source_series(win_prob_history, win_prob_sources_meta)
 
-    return {
+    payload = {
         "event_id": event_id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
@@ -36751,6 +37501,12 @@ async def get_event_odds_history(
         # a second request without it would tell this caller more. False on
         # every payload served today, including every `range=all` one.
         "pre_window_omitted": pre_window_omitted,
+        "served_range": chart_range,
+        "range_fallback": (
+            EVENT_HISTORY_RANGE_SINCE_START
+            if _cold_miss_since_start_fallback
+            else None
+        ),
         # #7878: false iff `commence_time` above is Kalshi's expected EXPIRATION
         # rather than a start — the venue's `occurrence_datetime`, which is
         # byte-identical to `expected_expiration_time` and is when the contract
@@ -36785,6 +37541,26 @@ async def get_event_odds_history(
         # you need side by side when this rail looks idle (gotcha #53).
         "on_demand_backfill": on_demand_backfill,
     }
+    _refill_pending = _is_refill_pending(on_demand_backfill)
+    if (
+        _finished_durable_active
+        and _finished_write_fn is not None
+        and _finished_write_source is not None
+        and chart_range != EVENT_HISTORY_RANGE_SINCE_START
+        and _finished_fp is not None
+        and history_build_is_complete()
+        and not _refill_pending
+    ):
+        await _finished_write_fn(
+            db,
+            event_id,
+            payload=payload,
+            fingerprint=_finished_fp,
+            source=_finished_write_source,
+            encoded_size_fn=_encode_history_payload,
+            commit=True,
+        )
+    return payload
 
 
 _LINE_MOVEMENT_DISAGREEMENT_BASIS = "admitted-source-pair-v2"

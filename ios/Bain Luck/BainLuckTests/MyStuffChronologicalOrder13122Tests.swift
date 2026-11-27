@@ -96,12 +96,35 @@ final class MyStuffChronologicalOrder13122Tests: XCTestCase {
 
     private func ocrStrings(in image: UIImage) throws -> [String] {
         let cgImage = try XCTUnwrap(image.cgImage)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        try handler.perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        let bandHeightPx = max(1, Int((500 * image.scale).rounded()))
+        let stepPx = max(1, Int((350 * image.scale).rounded()))
+        var strings: [String] = []
+        var seen = Set<String>()
+        var y = 0
+        while y < cgImage.height {
+            let h = min(bandHeightPx, cgImage.height - y)
+            if let crop = cgImage.cropping(to: CGRect(x: 0, y: y, width: cgImage.width, height: h)) {
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = false
+                request.minimumTextHeight = 0.0
+                let handler = VNImageRequestHandler(cgImage: crop, options: [:])
+                try handler.perform([request])
+                for obs in request.results ?? [] {
+                    if let top = obs.topCandidates(1).first?.string {
+                        // Bucket by full-image Y so overlapping bands dedup safely without cross-line misses.
+                        let absMidY = Int(((1.0 - obs.boundingBox.midY) * CGFloat(h) + CGFloat(y)) / 12.0)
+                        let key = "\(absMidY)|\(top)"
+                        if seen.insert(key).inserted {
+                            strings.append(top)
+                        }
+                    }
+                }
+            }
+            if y + h >= cgImage.height { break }
+            y += stepPx
+        }
+        return strings
     }
 
     func testUpcomingSortsSoonestFirstAndJustHappenedMostRecentFirst() async throws {

@@ -74,6 +74,9 @@ export interface PageViewParams {
     | 'calibration'
     | 'evals'
     | 'competition_hub'
+    // /guess, the unlisted guessing game (425: C). Its own value, so its
+    // visits are never counted with another page's.
+    | 'guess'
     | 'sports'
     | 'scorecard'
     | 'bug_reports'
@@ -273,6 +276,9 @@ export interface ScrollDepthParams {
     | 'calibration'
     | 'evals'
     | 'competition_hub'
+    // /guess, the unlisted guessing game (425: C). Its own value, so its
+    // visits are never counted with another page's.
+    | 'guess'
     | 'sports'
     | 'scorecard'
     | 'bug_reports'
@@ -310,6 +316,9 @@ export interface TimeOnPageParams {
     | 'calibration'
     | 'evals'
     | 'competition_hub'
+    // /guess, the unlisted guessing game (425: C). Its own value, so its
+    // visits are never counted with another page's.
+    | 'guess'
     | 'sports'
     | 'scorecard'
     | 'bug_reports'
@@ -637,7 +646,7 @@ export interface PredictionSubmitParams extends FunnelDimensions {
 }
 
 export interface FeedCardImpressionParams extends FunnelDimensions {
-  content_type: 'event' | 'futures' | 'grid';
+  content_type: 'event' | 'futures' | 'grid' | 'bundle';
   item_id: number | string;
   category: string;
   position: number;
@@ -652,7 +661,7 @@ export interface FeedCardImpressionParams extends FunnelDimensions {
 
 export interface FeedCardActionParams {
   action: 'detail_click' | 'dismiss' | 'like' | 'unlike' | 'share' | 'group_expand' | 'context_expand' | 'context_collapse' | 'challenge_start' | 'challenge_complete';
-  content_type: 'event' | 'futures' | 'grid';
+  content_type: 'event' | 'futures' | 'grid' | 'bundle';
   item_id: number | string;
   category: string;
   position?: number;
@@ -712,7 +721,7 @@ export interface FeedCardSuppressedParams {
  * story grouping + position. Registered so the sanitation boundary keeps it.
  */
 export interface ThemeBundleExpandParams {
-  content_type?: 'event' | 'futures' | 'grid';
+  content_type?: 'event' | 'futures' | 'grid' | 'bundle';
   item_id?: number | string;
   category?: string;
   item_name?: string;
@@ -1080,6 +1089,22 @@ export interface AnalyticsEventMap {
   session_open: SessionOpenParams;
   feed_exit: FeedExitParams;
   search_no_results: SearchNoResultsParams;
+
+  // Follow & Pin (#13261 row 5)
+  follow_team: FollowTeamParams;
+  pin_item: PinItemParams;
+}
+
+export interface FollowTeamParams {
+  action: 'follow' | 'unfollow';
+  sport?: string;
+  relation_type?: 'follow' | 'local' | 'alma_mater' | 'rival';
+  surface?: 'onboarding' | 'preferences';
+}
+
+export interface PinItemParams {
+  item_type: 'event' | 'future';
+  action: 'pin' | 'unpin';
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;

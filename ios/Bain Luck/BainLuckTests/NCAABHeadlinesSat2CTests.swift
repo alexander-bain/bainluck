@@ -312,11 +312,12 @@ final class NCAABHeadlinesSat2CTests: XCTestCase {
                 model.pregameColumnHeaders,
                 EventSportHeadlines12472.PregameColumnHeaders(projected: "Proj.", chance: "Chance")
             )
+            // 240: A (#13029) — basketball projections print as whole numbers (75.5 -> 76, 78.5 -> 79).
             XCTAssertEqual(model.away.shortName, "Kansas")
-            XCTAssertEqual(model.away.pregameProjectedNumberText, "75.5")
+            XCTAssertEqual(model.away.pregameProjectedNumberText, "76")
             XCTAssertEqual(model.away.winChanceText, "42%")
             XCTAssertEqual(model.home.shortName, "Duke")
-            XCTAssertEqual(model.home.pregameProjectedNumberText, "78.5")
+            XCTAssertEqual(model.home.pregameProjectedNumberText, "79")
             XCTAssertEqual(model.home.winChanceText, "58%")
         }
 
@@ -355,18 +356,22 @@ final class NCAABHeadlinesSat2CTests: XCTestCase {
         XCTAssertEqual(liveModel.liveBadgeText, "LIVE · 2H 7:42")
         XCTAssertEqual(
             liveModel.liveColumnHeaders,
-            EventSportHeadlines12472.LiveColumnHeaders(score: "Score", pregame: "Pregame", now: "Now")
+            EventSportHeadlines12472.LiveColumnHeaders(score: "Score", projected: "Proj.", pregame: nil, now: "Now")
         )
         XCTAssertEqual(liveModel.away.shortName, "Gonzaga")
-        XCTAssertEqual(liveModel.away.projectedText, "Proj. 81.5")
+        XCTAssertNil(liveModel.away.projectedText)
+        XCTAssertEqual(liveModel.away.liveProjectedNumberText, "82")
         XCTAssertEqual(liveModel.away.liveScore, 66)
-        XCTAssertEqual(liveModel.away.pregameChanceText, "48%")
+        XCTAssertNil(liveModel.away.pregameChanceText)
         XCTAssertEqual(liveModel.away.winChanceText, "65.8%")
         XCTAssertEqual(liveModel.home.shortName, "Purdue")
-        XCTAssertEqual(liveModel.home.projectedText, "Proj. 77.5")
+        XCTAssertNil(liveModel.home.projectedText)
+        XCTAssertEqual(liveModel.home.liveProjectedNumberText, "78")
         XCTAssertEqual(liveModel.home.liveScore, 61)
-        XCTAssertEqual(liveModel.home.pregameChanceText, "52%")
+        XCTAssertNil(liveModel.home.pregameChanceText)
         XCTAssertEqual(liveModel.home.winChanceText, "34.2%")
+        XCTAssertEqual(liveModel.livePregameSummary?.leadWord, "Pregame")
+        XCTAssertEqual(liveModel.livePregameSummary?.bodyText, "Purdue 52%")
 
         let after = try ncaabAfterFixture()
         XCTAssertEqual(EventSportHeadlines12472.kind(for: after, now: fixedNow), .ncaabAfterGame)
@@ -390,12 +395,13 @@ final class NCAABHeadlinesSat2CTests: XCTestCase {
         XCTAssertEqual(finalModel.away.won, true)
         XCTAssertEqual(finalModel.away.pregameChanceText, "46%")
         XCTAssertEqual(finalModel.away.finalResultText, "76")
-        XCTAssertEqual(finalModel.away.secondarySublineText, "3-0 · Proj. 71")
+        // Direction 199 (#12771): after-game rows keep [Pregame, Final] clean without secondarySublineText.
+        XCTAssertNil(finalModel.away.secondarySublineText)
         XCTAssertEqual(finalModel.home.shortName, "Houston")
         XCTAssertEqual(finalModel.home.won, false)
         XCTAssertEqual(finalModel.home.pregameChanceText, "54%")
         XCTAssertEqual(finalModel.home.finalResultText, "71")
-        XCTAssertEqual(finalModel.home.secondarySublineText, "2-1 · Proj. 73")
+        XCTAssertNil(finalModel.home.secondarySublineText)
 
         let wncaabAfter = try ncaabAfterFixture(sport: "basketball_wncaab")
         let wncaabFinalModel = try XCTUnwrap(
