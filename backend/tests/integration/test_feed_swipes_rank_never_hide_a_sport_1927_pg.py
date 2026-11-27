@@ -725,17 +725,18 @@ async def test_eight_baseball_dismisses_plus_a_stored_nah_still_serve_baseball(s
     reasons = mlb[0]["personalization_reasons"]
     assert not any(r.startswith("discover_dismiss") for r in reasons), reasons
     assert any(r.startswith("sport_nah") for r in reasons), reasons
-    # order: every MLB card sits below the loved sport's game and its future
+    # order: every MLB live card sits below the loved sport's live game
+    # (Ruling 256: B puts all live games ahead of the futures shelf).
     order = [(it["type"], _sport_of(it)) for it in full]
     first_mlb = next(i for i, (t, sk) in enumerate(order) if t == "event" and sk == NAH_SPORT)
     assert first_mlb > order.index(("event", "basketball_nba")), order
-    # page inclusion: a two-card page does not reach them, and that is a finite
+    # page inclusion: a one-card page does not reach them, and that is a finite
     # page, not an exclusion — the next pages do.
-    page1 = await _feed(pg, user, session_id=SESSION_A, mode="sports", limit=2)
+    page1 = await _feed(pg, user, session_id=SESSION_A, mode="sports", limit=1)
     assert not _mlb_events(page1)
     seen = []
-    for offset in range(0, len(full) + 2, 2):
-        seen += [_matchup(e) for e in _mlb_events(await _feed(pg, user, session_id=SESSION_A, mode="sports", limit=2, offset=offset))]
+    for offset in range(0, len(full) + 1, 1):
+        seen += [_matchup(e) for e in _mlb_events(await _feed(pg, user, session_id=SESSION_A, mode="sports", limit=1, offset=offset))]
     assert sorted(seen) == MLB_SLATE, seen
 
 

@@ -6697,6 +6697,41 @@ async def get_feed(
         if _capture is not None:
             _capture.record_chain_exit(feed_items, _chain_meta)
 
+        # #13013 (Rulings 256: B & 267: A): Sports "All" four-block order
+        # (live -> starting within 6h -> recent finals -> futures shelf) and
+        # approved major/minor league classification (`sports_all_tucked: True`
+        # on minor-league event cards for Builder C's "and more" control).
+        # Applies ONLY to Sports "All" (mode=sports, no sport/category/tag
+        # filter, not My Stuff).
+        if (
+            _is_sports_mode
+            and not sport
+            and not category
+            and not tags
+            and not my_teams_only
+        ):
+            from app.utils.sports_all_order import order_sports_all_feed
+
+            _followed_ids = (
+                {
+                    tid
+                    for tid, rels in ctx.team_relations.items()
+                    if "follow" in rels or "local" in rels or "alma_mater" in rels
+                }
+                if ctx.team_relations
+                else None
+            )
+            feed_items = order_sports_all_feed(
+                feed_items,
+                now=now,
+                followed_team_ids=_followed_ids or None,
+                pinned_event_ids=(
+                    set(ctx.pinned_event_ids) if ctx.pinned_event_ids else None
+                ),
+            )
+            if _capture is not None:
+                _capture.abandon("sports_all_order")
+
         # #12091 (Decide 32-A): movement orders the concept cards. Dark unless
         # DISCOVER_CONCEPT_MOVEMENT is on; Discover deck only. A permutation of
         # the theme-bundle seats on the full deck, before collections, round-ups
