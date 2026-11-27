@@ -37,6 +37,7 @@ TWO_WAY_POINTS = 10
 FOUR_WAY_POINTS = 15
 DUO_BASE = 101
 MAX_CARD_SECONDS = 120
+MAX_OUTCOME_AGE = timedelta(hours=24)
 
 SIDE_GAP = 8
 VERSUS_GAP = 8
@@ -391,14 +392,23 @@ def _read_outcome_percent(
     market_id: int,
     outcome_name: str,
     reference_time: datetime,
-) -> Optional[tuple[int, float, int, str]]:
-    """Return `(pct_1_99, raw_prob, outcome_id, representation)` from site detail."""
+    *,
+    refusal_reason_out: Optional[list[str]] = None,
+) -> Optional[tuple[int, float, int, str, str]]:
+    """Return `(pct_1_99, raw_prob, outcome_id, representation, last_updated_iso)` from site detail."""
+    def _reject(reason: str) -> None:
+        if refusal_reason_out is not None:
+            refusal_reason_out.append(reason)
+
+    ref_utc = reference_time if reference_time.tzinfo is not None else reference_time.replace(tzinfo=timezone.utc)
     detail = market_details.get(int(market_id))
-    if not isinstance(detail, Mapping) or not _detail_is_open(detail, reference_time):
+    if not isinstance(detail, Mapping) or not _detail_is_open(detail, ref_utc):
+        _reject(f"market_not_playable:{market_id}")
         return None
 
     target_norm = _norm_outcome_name(outcome_name)
     if not target_norm:
+        _reject(f"missing_outcome_name:{market_id}")
         return None
 
     for outcome in detail.get("outcomes") or ():
@@ -406,17 +416,32 @@ def _read_outcome_percent(
             continue
         if _norm_outcome_name(outcome.get("name")) != target_norm:
             continue
+        oid_label = outcome.get("id") or outcome_name
         if outcome.get("is_winner") is True or outcome.get("is_out") is True:
+            _reject(f"outcome_settled:{market_id}:{oid_label}")
             return None
         if outcome.get("status") in _NON_PLAYABLE_OUTCOME_STATUSES:
+            _reject(f"outcome_inactive:{market_id}:{oid_label}")
             return None
         if outcome.get("kalshi_no_bid"):
+            _reject(f"kalshi_no_bid:{market_id}:{oid_label}")
             return None
         source_mark = outcome.get("source_mark")
         if isinstance(source_mark, Mapping) and source_mark.get("state") in {
             "unsupported",
             "settled",
         }:
+            _reject(f"source_mark_unsupported:{market_id}:{oid_label}")
+            return None
+
+        lu_dt = _parse_utc_datetime(outcome.get("last_updated"))
+        if lu_dt is None:
+            _reject(f"missing_or_invalid_last_updated:{market_id}:{oid_label}")
+            return None
+        age = ref_utc - lu_dt
+        if age > MAX_OUTCOME_AGE:
+            age_hours = round(age.total_seconds() / 3600.0, 2)
+            _reject(f"stale_last_updated:{market_id}:{oid_label}:{age_hours}h")
             return None
 
         raw_p = outcome.get("probability")
@@ -426,13 +451,16 @@ def _read_outcome_percent(
             or not isinstance(raw_p, (int, float, Decimal))
             or not math.isfinite(float(raw_p))
         ):
+            _reject(f"invalid_probability:{market_id}:{oid_label}")
             return None
         prob = float(raw_p)
         if not (0.0 < prob < 1.0):
+            _reject(f"probability_out_of_range:{market_id}:{oid_label}")
             return None
 
         rp = outcome.get("rendered_percent")
         if isinstance(rp, str) and rp.strip() in {"<1%", ">99%"}:
+            _reject(f"extreme_percent:{market_id}:{oid_label}")
             return None
         if isinstance(rp, int) and not isinstance(rp, bool):
             pct: Optional[int] = rp
@@ -441,12 +469,15 @@ def _read_outcome_percent(
         elif rp is None:
             pct = site_rendered_percent(prob)
         else:
+            _reject(f"invalid_rendered_percent:{market_id}:{oid_label}")
             return None
 
         if pct is None or pct <= 0 or pct >= 100:
+            _reject(f"extreme_percent:{market_id}:{oid_label}")
             return None
         rep = str(detail.get("representation") or "source")
-        return pct, prob, int(outcome.get("id") or 0), rep
+        return pct, prob, int(outcome.get("id") or 0), rep, lu_dt.isoformat()
+    _reject(f"outcome_not_found:{market_id}:{outcome_name}")
     return None
 
 
@@ -525,8 +556,13 @@ def resolve_card_from_markets(
     *,
     day_seed: str,
     answer_slot_override: Optional[int] = None,
+    refusal_reasons_out: Optional[list[str]] = None,
 ) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
     """Resolve one scheduled card template against live site-printed market details."""
+    def _reject_card(reason: str) -> None:
+        if refusal_reasons_out is not None:
+            refusal_reasons_out.append(reason)
+
     kind = str(template["kind"])
     card = _base_card_dict(template)
     provenance: list[dict[str, Any]] = []
@@ -534,15 +570,21 @@ def resolve_card_from_markets(
     if kind == "side":
         extras = list(template.get("extras") or [])
         if len(extras) != 2:
+            _reject_card(f"invalid_extras:{card['id']}")
             return None
         src = template["source"]
         resolved = _read_outcome_percent(
-            market_details, int(src["market_id"]), str(src["outcome_name"]), reference_time
+            market_details,
+            int(src["market_id"]),
+            str(src["outcome_name"]),
+            reference_time,
+            refusal_reason_out=refusal_reasons_out,
         )
         if resolved is None:
             return None
-        pct, raw_prob, outcome_id, rep = resolved
+        pct, raw_prob, outcome_id, rep, lu_iso = resolved
         if abs(pct - 50) < SIDE_GAP:
+            _reject_card(f"side_gap:{card['id']}")
             return None
         card["extras"] = [str(e) for e in extras]
         card["answer"] = pct
@@ -555,6 +597,7 @@ def resolve_card_from_markets(
                 "probability": raw_prob,
                 "percent": pct,
                 "representation": rep,
+                "last_updated": lu_iso,
             }
         )
         return card, provenance
@@ -562,15 +605,20 @@ def resolve_card_from_markets(
     if kind == "versus":
         raw_opts = template.get("options") or []
         if len(raw_opts) != 2:
+            _reject_card(f"invalid_options:{card['id']}")
             return None
         built_opts: list[dict[str, Any]] = []
         for opt in raw_opts:
             resolved = _read_outcome_percent(
-                market_details, int(opt["market_id"]), str(opt["outcome_name"]), reference_time
+                market_details,
+                int(opt["market_id"]),
+                str(opt["outcome_name"]),
+                reference_time,
+                refusal_reason_out=refusal_reasons_out,
             )
             if resolved is None:
                 return None
-            pct, raw_prob, outcome_id, rep = resolved
+            pct, raw_prob, outcome_id, rep, lu_iso = resolved
             built_opts.append(
                 {
                     "label": str(opt["label"]),
@@ -588,9 +636,11 @@ def resolve_card_from_markets(
                     "probability": raw_prob,
                     "percent": pct,
                     "representation": rep,
+                    "last_updated": lu_iso,
                 }
             )
         if abs(built_opts[0]["percent"] - built_opts[1]["percent"]) < VERSUS_GAP:
+            _reject_card(f"versus_gap:{card['id']}")
             return None
         card["options"] = built_opts
         return card, provenance
@@ -598,17 +648,23 @@ def resolve_card_from_markets(
     if kind == "four":
         extras = list(template.get("extras") or [])
         if len(extras) != 2:
+            _reject_card(f"invalid_extras:{card['id']}")
             return None
         src = template["source"]
         resolved = _read_outcome_percent(
-            market_details, int(src["market_id"]), str(src["outcome_name"]), reference_time
+            market_details,
+            int(src["market_id"]),
+            str(src["outcome_name"]),
+            reference_time,
+            refusal_reason_out=refusal_reasons_out,
         )
         if resolved is None:
             return None
-        pct, raw_prob, outcome_id, rep = resolved
+        pct, raw_prob, outcome_id, rep, lu_iso = resolved
         slot = answer_slot_override if answer_slot_override is not None else template.get("answer_slot")
         four_opts = _build_four_options(pct, f"{day_seed}:{card['id']}", answer_slot=slot)
         if four_opts is None:
+            _reject_card(f"four_options:{card['id']}")
             return None
         card["extras"] = [str(e) for e in extras]
         card["answer"] = pct
@@ -622,6 +678,7 @@ def resolve_card_from_markets(
                 "probability": raw_prob,
                 "percent": pct,
                 "representation": rep,
+                "last_updated": lu_iso,
             }
         )
         return card, provenance
@@ -630,15 +687,20 @@ def resolve_card_from_markets(
         market_id = int(template["market_id"])
         raw_opts = template.get("options") or []
         if len(raw_opts) != 4:
+            _reject_card(f"invalid_options:{card['id']}")
             return None
         built_opts = []
         for opt in raw_opts:
             resolved = _read_outcome_percent(
-                market_details, market_id, str(opt["outcome_name"]), reference_time
+                market_details,
+                market_id,
+                str(opt["outcome_name"]),
+                reference_time,
+                refusal_reason_out=refusal_reasons_out,
             )
             if resolved is None:
                 return None
-            pct, raw_prob, outcome_id, rep = resolved
+            pct, raw_prob, outcome_id, rep, lu_iso = resolved
             built_opts.append(
                 {
                     "label": str(opt["label"]),
@@ -656,15 +718,19 @@ def resolve_card_from_markets(
                     "probability": raw_prob,
                     "percent": pct,
                     "representation": rep,
+                    "last_updated": lu_iso,
                 }
             )
         if len({o["label"] for o in built_opts}) != 4:
+            _reject_card(f"leader_duplicate_labels:{card['id']}")
             return None
         independent = bool(template.get("independent", False))
         if not independent and sum(o["percent"] for o in built_opts) > 100:
+            _reject_card(f"leader_sum_over_100:{card['id']}")
             return None
         top_two = sorted((o["percent"] for o in built_opts), reverse=True)[:2]
         if top_two[0] - top_two[1] < LEAD_GAP:
+            _reject_card(f"leader_gap:{card['id']}")
             return None
         card["independent"] = independent
         card["options"] = built_opts
@@ -673,23 +739,31 @@ def resolve_card_from_markets(
     if kind == "chance":
         extras = list(template.get("extras") or [])
         if len(extras) != 2:
+            _reject_card(f"invalid_extras:{card['id']}")
             return None
         src = template["source"]
         resolved = _read_outcome_percent(
-            market_details, int(src["market_id"]), str(src["outcome_name"]), reference_time
+            market_details,
+            int(src["market_id"]),
+            str(src["outcome_name"]),
+            reference_time,
+            refusal_reason_out=refusal_reasons_out,
         )
         if resolved is None:
             return None
-        pct, raw_prob, outcome_id, rep = resolved
+        pct, raw_prob, outcome_id, rep, lu_iso = resolved
         if abs(pct - 50) < CHANCE_MID_GAP:
+            _reject_card(f"chance_mid_gap:{card['id']}")
             return None
         want_high = pct + EARNED_MISS <= 100
         want_low = pct - EARNED_MISS >= 0
         raw_high = str(template.get("roastHigh") or "").strip()
         raw_low = str(template.get("roastLow") or "").strip()
         if want_high and (not raw_high or len(raw_high) > LONGEST_LINE):
+            _reject_card(f"roast_high_invalid:{card['id']}")
             return None
         if want_low and (not raw_low or len(raw_low) > LONGEST_LINE):
+            _reject_card(f"roast_low_invalid:{card['id']}")
             return None
         card["extras"] = [str(e) for e in extras]
         card["answer"] = pct
@@ -706,10 +780,12 @@ def resolve_card_from_markets(
                 "probability": raw_prob,
                 "percent": pct,
                 "representation": rep,
+                "last_updated": lu_iso,
             }
         )
         return card, provenance
 
+    _reject_card(f"unknown_kind:{card['id']}")
     return None
 
 
@@ -755,6 +831,7 @@ def _resolve_with_step_fit(
     step_key: str,
     kept_in_step: Sequence[Mapping[str, Any]],
     prev_global_card: Optional[Mapping[str, Any]],
+    refusal_reasons_out: Optional[list[str]] = None,
 ) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
     kind = str(template.get("kind") or "")
     if step_key == "easy" and kind not in {"side", "versus"}:
@@ -781,13 +858,18 @@ def _resolve_with_step_fit(
                 frozen_at,
                 day_seed=day_seed,
                 answer_slot_override=candidate_slot,
+                refusal_reasons_out=refusal_reasons_out,
             )
             if outcome is not None:
                 return outcome
         return None
 
     outcome = resolve_card_from_markets(
-        template, market_details, frozen_at, day_seed=day_seed
+        template,
+        market_details,
+        frozen_at,
+        day_seed=day_seed,
+        refusal_reasons_out=refusal_reasons_out,
     )
     if outcome is None:
         return None
@@ -848,6 +930,7 @@ def build_daily_pack(
 
         for primary_idx, tmpl in enumerate(primaries):
             prev_card = kept_in_step[-1] if kept_in_step else (resolved_cards[-1] if resolved_cards else None)
+            primary_refusals: list[str] = []
             outcome = _resolve_with_step_fit(
                 tmpl,
                 market_details,
@@ -856,6 +939,7 @@ def build_daily_pack(
                 step_key=step_key,
                 kept_in_step=kept_in_step,
                 prev_global_card=prev_card,
+                refusal_reasons_out=primary_refusals,
             )
             if outcome is not None:
                 card, prov = outcome
@@ -865,6 +949,7 @@ def build_daily_pack(
                 continue
 
             swapped = False
+            swap_reason = primary_refusals[0] if primary_refusals else "step_fit_rejected"
             for s_idx, candidate in enumerate(spare_pool):
                 if s_idx in consumed_spares:
                     continue
@@ -885,6 +970,7 @@ def build_daily_pack(
                     card["id"] = f"{card['id']}_{step_idx}_{primary_idx}"
                 for p in prov:
                     p["swapped_from_slot"] = str(tmpl.get("id") or "")
+                    p["swapped_reason"] = swap_reason
                 kept_in_step.append(card)
                 provenance.extend(prov)
                 used_ids.add(card["id"])
