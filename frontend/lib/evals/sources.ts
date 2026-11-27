@@ -11,6 +11,7 @@
 export type EvalsSectionId =
   | "exam"
   | "confusion"
+  | "market-understanding"
   | "timeline"
   | "forward-record"
   | "test-library"
@@ -259,6 +260,13 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
     date: "2026-11-03",
     href: `${REPO}/pull/11951`,
     usedBy: ["gaps"],
+  },
+  {
+    id: "cu-scorecard-record",
+    label: "Market understanding scorecard, from the scoring script",
+    date: "2026-11-27",
+    href: `${REPO}/issues/13901`,
+    usedBy: ["market-understanding"],
   },
   {
     id: "calibration-audit",

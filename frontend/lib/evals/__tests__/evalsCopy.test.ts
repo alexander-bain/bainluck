@@ -11,6 +11,7 @@
 
 import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy, type CopyBan } from "@/lib/copyBans";
 import * as copy from "@/lib/evals/copy";
+import { CU_FIELD_WORDS, CU_SLICE_GROUP_WORDS, CU_SLICE_WORDS } from "@/lib/evals/contentUnderstanding";
 import { EVALS_COPY_RULES } from "@/lib/evals/copyRules";
 import { GAPS } from "@/lib/evals/gaps";
 import { loadReviewerResults } from "@/lib/evals/reviewerResults";
@@ -49,6 +50,9 @@ function readerStrings(): string[] {
     ...Object.values(GATE_WORDS).flatMap((g) => [g.name, g.checks, ...Object.values(g.units)]),
     ...Object.values(RELATION_WORDS),
     ...(loadWatchers()?.watchers ?? []).flatMap((w) => [w.name, w.checks, w.verdict?.receipt.label ?? ""]),
+    ...Object.values(CU_FIELD_WORDS),
+    ...Object.values(CU_SLICE_WORDS),
+    ...Object.values(CU_SLICE_GROUP_WORDS),
     ...Object.values(RESULT_WORD),
     ageLabel(0),
     ageLabel(1),

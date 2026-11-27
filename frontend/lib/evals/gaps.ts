@@ -103,4 +103,55 @@ export const GAPS: readonly Gap[] = [
     text: "Nothing measures how often a test fails by bad luck rather than a real problem.",
     ...targetFor("chance-failures"),
   },
+  {
+    id: "cu-sealed-set",
+    text: "Market understanding does not yet have its sealed test set locked from all fixes.",
+    ...targetFor("cu-sealed-set"),
+  },
+  {
+    id: "cu-run-repeatability",
+    text: "We have not yet measured how often the AI market reader changes its mind across two runs on the same day.",
+    ...targetFor("cu-run-repeatability"),
+  },
+  {
+    id: "cu-fact-labels",
+    text: "Two people have not yet labeled the facts about markets so we can check agreement on every field.",
+    ...targetFor("cu-fact-labels"),
+  },
+  {
+    id: "cu-scorecard-numbers",
+    text: "Each market-understanding field does not yet have sealed numbers and run costs shown here.",
+    ...targetFor("cu-scorecard-numbers"),
+    planned: { waitingOn: "the sealed test set and two-person labels", ref: issueRef(13900) },
+  },
+  {
+    id: "cu-signal-list",
+    text: "Each market-understanding field is still being tied to what reads it and what it changes for a reader.",
+    ...targetFor("cu-signal-list"),
+  },
+  {
+    id: "cu-entity-linking",
+    text: "Market subjects are still matched mainly by alias text rather than picking a verified person, place or team from candidates.",
+    ...targetFor("cu-entity-linking"),
+  },
+  {
+    id: "cu-confirm-once",
+    text: "Unmatched names in markets and searches do not yet go into a confirm-once review queue.",
+    ...targetFor("cu-confirm-once"),
+  },
+  {
+    id: "cu-same-claim-key",
+    text: "Markets making the same numerical claim across sources do not yet share one structured claim key.",
+    ...targetFor("cu-same-claim-key"),
+  },
+  {
+    id: "cu-market-relations",
+    text: "Related markets do not yet record whether they make the same claim, imply another market or sit in one set of rungs.",
+    ...targetFor("cu-market-relations"),
+  },
+  {
+    id: "cu-taste-judge",
+    text: "An AI taste reader has not yet been graded against held-back reader ratings for Discover order.",
+    ...targetFor("cu-taste-judge"),
+  },
 ];

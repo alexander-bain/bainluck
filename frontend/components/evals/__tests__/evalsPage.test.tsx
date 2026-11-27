@@ -175,6 +175,7 @@ describe("/evals S1 renders the shell", () => {
       "forward-record",
       "exam",
       "confusion",
+      "market-understanding",
       "timeline",
       "tests-for-tests",
       "test-library",
@@ -200,7 +201,7 @@ describe("/evals S1 renders the shell", () => {
       const targetEl = row.querySelector("[data-gap-target]");
       if (entry.target) {
         expect(targetEl?.getAttribute("data-gap-target")).toBe(entry.target);
-        expect(targetEl?.textContent).toMatch(/Expected (November|December) 2026/);
+        expect(targetEl?.textContent).toMatch(/Expected ((November|December) 2026|January 2027)/);
         expect(targetEl?.querySelector("time")?.getAttribute("dateTime")).toBe(entry.target.slice(0, 7));
       } else {
         expect(targetEl?.getAttribute("data-gap-target")).toBe("unscheduled");
@@ -241,7 +242,7 @@ describe("/evals S1 renders the shell", () => {
     const listed = Array.from(page.querySelectorAll("[data-source-id]")).map((s) =>
       s.getAttribute("data-source-id")
     );
-    const onPage = ["exam", "confusion", "timeline", "forward-record", "test-library", "tests-for-tests", "watchers", "gaps"];
+    const onPage = ["exam", "confusion", "market-understanding", "timeline", "forward-record", "test-library", "tests-for-tests", "watchers", "gaps"];
     expect(listed).toEqual(
       EVALS_SOURCES.filter((s) => s.usedBy.some((id) => onPage.includes(id))).map((s) => s.id)
     );
@@ -253,6 +254,15 @@ describe("/evals S1 renders the shell", () => {
     const text = (page.textContent ?? "").replace(/\s+/g, " ");
     const hits = findBannedCopy(text, [...ALL_COPY_BANS, ...SUPPLIER_PROSE_BANS, ...EVALS_COPY_RULES]);
     expect(hits.map((h) => `${h.ban.id}: ${h.context}`)).toEqual([]);
+  });
+
+  it("renders the Content Understanding block inside the full record as Not measured yet with date (#13901)", async () => {
+    const page = await mountPage();
+    const cuSection = page.querySelector('[data-evals-section="market-understanding"]');
+    expect(cuSection).not.toBeNull();
+    expect(cuSection?.closest('details[data-evals-fold="record"]')).not.toBeNull();
+    expect(cuSection?.textContent).toContain("Not measured yet as of Nov 27");
+    expect(cuSection?.querySelectorAll("[data-evals-figure]")).toHaveLength(0);
   });
 });
 
