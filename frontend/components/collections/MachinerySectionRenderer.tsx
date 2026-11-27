@@ -12,6 +12,9 @@ import type {
   MachineryVisualBlock,
 } from "@/lib/collections";
 import type { Event } from "@/lib/types";
+import {
+  describeMachineryOutcomeDisplay,
+} from "@/lib/machineryOutcomeDisplay";
 import { formatGroupedProbability } from "@/lib/probabilityDisplay";
 import { renderedPercent } from "@/lib/renderedPercent";
 
@@ -366,10 +369,10 @@ function DuelBarVisual({
   const left = nonDraw[0];
   const right = nonDraw[1];
   const draw = drawIdx >= 0 ? outcomes[drawIdx] : undefined;
-  const drawPct = draw ? Math.max(2, Math.min(40, draw.rendered_percent)) : 0;
+  const drawPct = draw ? Math.max(2, Math.min(40, draw.rendered_percent ?? 0)) : 0;
   const leftPct = draw
-    ? Math.max(6, Math.min(92 - drawPct, left.rendered_percent))
-    : Math.max(6, Math.min(94, left.rendered_percent));
+    ? Math.max(6, Math.min(92 - drawPct, left.rendered_percent ?? 0))
+    : Math.max(6, Math.min(94, left.rendered_percent ?? 0));
   const anyDuelArt = Boolean(left.art?.url || right.art?.url);
   const avatarSize = compact ? "h-8 w-8" : "h-10 w-10";
   const pctClass = compact ? "text-base font-extrabold tabular-nums text-text-primary" : "text-xl font-extrabold tabular-nums text-text-primary";
@@ -530,7 +533,7 @@ function ContenderSpotlightBlock({
                   <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
                     <div
                       className={`h-full rounded-full ${isFav ? "bg-accent-brand" : "bg-slate-400"}`}
-                      style={{ width: `${Math.max(3, Math.min(100, o.rendered_percent))}%` }}
+                      style={{ width: `${Math.max(3, Math.min(100, o.rendered_percent ?? 0))}%` }}
                     />
                   </div>
                 </div>
@@ -590,7 +593,7 @@ function ContenderSpotlightBlock({
                 <div
                   className="h-full rounded-full bg-accent-brand"
                   style={{
-                    width: `${Math.max(6, Math.min(100, o.rendered_percent))}%`,
+                    width: `${Math.max(6, Math.min(100, o.rendered_percent ?? 0))}%`,
                     backgroundColor: o.art?.accent_color || undefined,
                   }}
                 />
@@ -610,7 +613,7 @@ function ContenderSpotlightBlock({
             >
               <div
                 className="pointer-events-none absolute inset-y-0 left-0 bg-surface-elevated/80"
-                style={{ width: `${Math.max(4, Math.min(100, o.rendered_percent))}%` }}
+                style={{ width: `${Math.max(4, Math.min(100, o.rendered_percent ?? 0))}%` }}
               />
               <div className="relative flex min-w-0 items-center gap-2.5">
                 {chasersHaveAnyArt && (
@@ -684,44 +687,81 @@ function SiblingFieldsGridBlock({
               <div className="space-y-2">
                 {outcomes.map((o) => {
                   const isPoster = o.art?.kind === "tmdb_poster";
-                  const isFav = !scaleOrdered || (leaderOid > 0 && o.outcome_id === leaderOid);
+                  const display = describeMachineryOutcomeDisplay(o);
+                  const isFav = !scaleOrdered
+                    ? display.state === "live"
+                    : (leaderOid > 0 && o.outcome_id === leaderOid);
+                  const avatarTone =
+                    display.state === "eliminated" || display.state === "no_recent_probability"
+                      ? "shrink-0 opacity-45 grayscale"
+                      : display.state === "sub_one_percent"
+                        ? "shrink-0 opacity-75"
+                        : "shrink-0";
                   return (
-                    <div key={o.outcome_id} className="flex items-center gap-2.5">
+                    <div
+                      key={`${o.outcome_id}:${o.name}`}
+                      data-outcome-state={display.state}
+                      className="flex items-center gap-2.5"
+                    >
                       {marketHasAnyArt && (
-                        <SubjectAvatar
-                          art={o.art}
-                          label={o.name}
-                          sizeClass={isPoster ? "h-9 w-7" : "h-7 w-7"}
-                          widthClass="w-7 h-1"
-                          poster={isPoster}
-                          reserveSlotWhenMissing
-                        />
+                        <div className={avatarTone}>
+                          <SubjectAvatar
+                            art={o.art}
+                            label={o.name}
+                            sizeClass={isPoster ? "h-9 w-7" : "h-7 w-7"}
+                            widthClass="w-7 h-1"
+                            poster={isPoster}
+                            reserveSlotWhenMissing
+                          />
+                        </div>
                       )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline justify-between gap-2">
                           <span
                             className={`break-words text-xs leading-snug ${
-                              isFav ? "font-semibold text-text-primary" : "font-medium text-text-secondary"
+                              display.muted
+                                ? "font-medium text-text-muted"
+                                : isFav
+                                  ? "font-semibold text-text-primary"
+                                  : "font-medium text-text-secondary"
                             }`}
                           >
                             {o.name}
                           </span>
                           <span
-                            className={`text-xs tabular-nums ${
-                              isFav ? "font-bold text-text-primary" : "font-semibold text-text-secondary"
+                            className={`shrink-0 whitespace-nowrap text-xs tabular-nums ${
+                              display.muted
+                                ? "font-medium text-text-muted"
+                                : isFav
+                                  ? "font-bold text-text-primary"
+                                  : "font-semibold text-text-secondary"
                             }`}
                           >
-                            {formatGroupedProbability(o)}
+                            {display.label}
                           </span>
                         </div>
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
-                          <div
-                            className={`h-full rounded-full ${isFav ? "bg-accent-brand" : "bg-slate-400"}`}
-                            style={{
-                              width: `${Math.max(4, Math.min(100, o.rendered_percent))}%`,
-                              backgroundColor: !scaleOrdered ? o.art?.accent_color || undefined : undefined,
-                            }}
-                          />
+                          {display.barWidthPercent > 0 ? (
+                            <div
+                              className={`h-full rounded-full ${
+                                display.state === "sub_one_percent"
+                                  ? "bg-slate-300"
+                                  : isFav
+                                    ? "bg-accent-brand"
+                                    : "bg-slate-400"
+                              }`}
+                              style={{
+                                width: `${display.barWidthPercent}%`,
+                                minWidth: display.state === "sub_one_percent" ? "4px" : undefined,
+                                backgroundColor:
+                                  display.state === "sub_one_percent"
+                                    ? undefined
+                                    : !scaleOrdered
+                                      ? o.art?.accent_color || undefined
+                                      : undefined,
+                              }}
+                            />
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -1220,47 +1260,86 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
           : card.rows.map((r) => {
               const oid = Number(r.outcome_id ?? 0);
               const name = String(r.name ?? "");
-              const probability = Number(r.probability ?? NaN);
+              const probability = r.probability == null ? NaN : Number(r.probability);
               const allocation = r.rendered_percent == null ? null : Number(r.rendered_percent);
-              const pct = allocation ?? renderedPercent(probability) ?? 0;
+              const pct = allocation ?? renderedPercent(Number.isFinite(probability) ? probability : null) ?? 0;
               const art = r.art as MachinerySubjectArt | undefined;
-              const isFav = !card.scale_ordered || pct === maxPct;
+              const display = describeMachineryOutcomeDisplay(r);
+              const isFav = !card.scale_ordered ? display.state === "live" : pct === maxPct;
+              const avatarTone =
+                display.state === "eliminated" || display.state === "no_recent_probability"
+                  ? "shrink-0 opacity-45 grayscale"
+                  : display.state === "sub_one_percent"
+                    ? "shrink-0 opacity-75"
+                    : "shrink-0";
+              const labelSizeClass =
+                display.state === "eliminated" || display.state === "no_recent_probability"
+                  ? "text-xs"
+                  : "text-sm";
               return (
-                <div key={oid} className="flex items-center gap-2.5 py-2">
+                <div
+                  key={`${oid}:${name}`}
+                  data-outcome-state={display.state}
+                  className="flex items-center gap-2.5 py-2"
+                >
                   {anyCardOutcomeArt && (
-                    <SubjectAvatar
-                      art={art}
-                      label={name}
-                      sizeClass="h-8 w-8"
-                      widthClass="w-8 h-1"
-                      reserveSlotWhenMissing
-                    />
+                    <div className={avatarTone}>
+                      <SubjectAvatar
+                        art={art}
+                        label={name}
+                        sizeClass="h-8 w-8"
+                        widthClass="w-8 h-1"
+                        reserveSlotWhenMissing
+                      />
+                    </div>
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
                       <span
                         className={`break-words text-sm leading-snug ${
-                          isFav ? "font-semibold text-text-primary" : "font-medium text-text-secondary"
+                          display.muted
+                            ? "font-medium text-text-muted"
+                            : isFav
+                              ? "font-semibold text-text-primary"
+                              : "font-medium text-text-secondary"
                         }`}
                       >
                         {name}
                       </span>
                       <span
-                        className={`text-sm tabular-nums ${
-                          isFav ? "font-bold text-text-primary" : "font-semibold text-text-secondary"
+                        className={`shrink-0 whitespace-nowrap tabular-nums ${labelSizeClass} ${
+                          display.muted
+                            ? "font-medium text-text-muted"
+                            : isFav
+                              ? "font-bold text-text-primary"
+                              : "font-semibold text-text-secondary"
                         }`}
                       >
-                        {formatGroupedProbability(r)}
+                        {display.label}
                       </span>
                     </div>
                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
-                      <div
-                        className={`h-full rounded-full ${isFav ? "bg-accent-brand" : "bg-slate-400"}`}
-                        style={{
-                          width: `${Math.max(4, Math.min(100, pct))}%`,
-                          backgroundColor: !card.scale_ordered ? art?.accent_color || undefined : undefined,
-                        }}
-                      />
+                      {display.barWidthPercent > 0 ? (
+                        <div
+                          className={`h-full rounded-full ${
+                            display.state === "sub_one_percent"
+                              ? "bg-slate-300"
+                              : isFav
+                                ? "bg-accent-brand"
+                                : "bg-slate-400"
+                          }`}
+                          style={{
+                            width: `${display.barWidthPercent}%`,
+                            minWidth: display.state === "sub_one_percent" ? "4px" : undefined,
+                            backgroundColor:
+                              display.state === "sub_one_percent"
+                                ? undefined
+                                : !card.scale_ordered
+                                  ? art?.accent_color || undefined
+                                  : undefined,
+                          }}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 </div>
