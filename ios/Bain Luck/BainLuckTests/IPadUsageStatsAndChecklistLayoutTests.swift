@@ -117,27 +117,58 @@ final class IPadUsageStatsAndChecklistLayoutTests: XCTestCase {
         }
     }
 
-    func testPromptAndChecklistColumnsCapAtReadableWidth() throws {
+    private func readRepoSource(_ relativePath: String) throws -> String {
         let testFile = URL(fileURLWithPath: #filePath)
         let repoRoot = testFile
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+        return try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
+    }
 
-        let promptSrc = try String(
-            contentsOf: repoRoot.appendingPathComponent("ios/Bain Luck/Bain Luck/Components/TelemetryConsentPrompt.swift"),
-            encoding: .utf8
-        )
-        let checklistSrc = try String(
-            contentsOf: repoRoot.appendingPathComponent("ios/Bain Luck/Bain Luck/Views/FirstRunChecklistView364A.swift"),
-            encoding: .utf8
-        )
+    func testPromptAndChecklistColumnsCapAtReadableWidth() throws {
+        let promptSrc = try readRepoSource("ios/Bain Luck/Bain Luck/Components/TelemetryConsentPrompt.swift")
+        let checklistSrc = try readRepoSource("ios/Bain Luck/Bain Luck/Views/FirstRunChecklistView364A.swift")
         XCTAssertTrue(promptSrc.contains("DS.cardBg"))
         XCTAssertTrue(promptSrc.contains("DS.surface"))
         XCTAssertTrue(promptSrc.contains("frame(maxWidth: 460)"))
         XCTAssertTrue(checklistSrc.contains("ChecklistColumn364A"))
         XCTAssertTrue(checklistSrc.contains("checklistReadableColumn364A"))
+    }
+
+    func testTelemetryConsentPromptUsesDesignTokenWithReadableContrast() throws {
+        let promptSrc = try readRepoSource("ios/Bain Luck/Bain Luck/Components/TelemetryConsentPrompt.swift")
+        XCTAssertFalse(promptSrc.lowercased().contains("0f172a"))
+        XCTAssertFalse(promptSrc.contains("Color(hex:"))
+        XCTAssertTrue(promptSrc.contains("DS.textOnAccent"))
+
+        #if canImport(UIKit)
+        func contrast(_ style: UIUserInterfaceStyle) -> Double {
+            let traits = UITraitCollection(userInterfaceStyle: style)
+            let fg = UIColor(DS.textOnAccent).resolvedColor(with: traits)
+            let bg = UIColor(DS.blueReadable).resolvedColor(with: traits)
+            func luminance(_ c: UIColor) -> Double {
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                c.getRed(&r, green: &g, blue: &b, alpha: &a)
+                func linearize(_ v: CGFloat) -> Double {
+                    let d = Double(v)
+                    return d <= 0.03928 ? d / 12.92 : pow((d + 0.055) / 1.055, 2.4)
+                }
+                return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+            }
+            let l1 = luminance(fg)
+            let l2 = luminance(bg)
+            return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+        }
+
+        let lightRatio = contrast(.light)
+        let darkRatio = contrast(.dark)
+        XCTAssertGreaterThanOrEqual(lightRatio, 4.5)
+        XCTAssertGreaterThanOrEqual(darkRatio, 4.5)
+        XCTAssertGreaterThanOrEqual(lightRatio, 6.0)
+        XCTAssertGreaterThanOrEqual(darkRatio, 6.5)
+        #endif
     }
 
     #if canImport(UIKit)

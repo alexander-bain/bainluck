@@ -906,10 +906,25 @@ class TestSameKeyQuestionsNeverJoin:
         assert "canonical_market_key" not in sql
         assert "'KXSB-27'" in sql
         assert "'americanfootball_nfl_super_bowl_winner'" in sql
-        assert "LIKE 'pro-football-2027-champion%%'" in sql or \
-            "LIKE 'pro-football-2027-champion%'" in sql
+        assert "LIKE" not in sql
+        assert 'COLLATE "C"' in sql
+        assert ">= 'pro-football-2027-champion'" in sql
+        assert "< 'pro-football-2027-champioo'" in sql
         assert "status = 'open'" in sql
         assert "polymarket_event_slug" in sql
+
+    def test_slug_prefix_upper_bound_matches_bytewise_prefix(self):
+        stem = NFL_TITLE.polymarket_slug_stem("2027")
+        upper = futures_routes._slug_prefix_upper_bound(stem)
+        assert upper == "pro-football-2027-champioo"
+        for matching in (stem, f"{stem}-2", f"{stem}-99"):
+            assert stem <= matching < upper
+        for non_matching in ("pro-football-2026-champion", "pro-football-2027-champio", upper, f"{stem}a"):
+            if non_matching.startswith(stem):
+                continue
+            assert not (stem <= non_matching < upper)
+        with pytest.raises(ValueError, match="non-empty"):
+            futures_routes._slug_prefix_upper_bound("")
 
 
 # ── 3. the sportsbook anchor ─────────────────────────────────────────────────
