@@ -1,0 +1,84 @@
+:root {
+  /* === Scoreboard Dark Design System === */
+
+  /* Surfaces */
+  --surface-deep: #F5F5F7;
+  --surface-card: #FFFFFF;
+  --surface-elevated: #F0F0F2;
+  --surface-border: #E5E7EB;
+
+  /* Text */
+  --text-primary: #111827;
+  --text-secondary: #6B7280;
+  /* #10357 (Alex, 2026-10-06): the round-up tag's ink. 6.64:1 on
+     --surface-elevated, where --text-secondary is 4.25:1. */
+  --text-secondary-strong: #4B5563;
+  --text-muted: #9CA3AF;
+  --text-inverse: #F8FAFC;
+
+  /* Accents */
+  --accent-live: #22C55E;
+  --accent-brand: #10B981;
+  --accent-futures: #8B5CF6;
+  --accent-warning: #F59E0B;
+  --accent-danger: #EF4444;
+
+  /* Political identity, distinct from live/movement status. */
+  --party-democratic: #2563EB;
+  --party-republican: #DC2626;
+
+  /* Contender chart series (UX-P132).
+     Identity colours, deliberately NOT the semantic accents: green and red
+     already mean "moved up" and "moved down" on this page, so reusing them to
+     mean "which player" would make a falling line read as a losing one.
+     Three WAS the whole palette because the chart drew exactly three lines.
+     UX-P137 gave the reader a picker (Alex's ruling 6, DataGolf's interactive
+     legend as the reference), so the default is still three and the ceiling is
+     six. Six because that is where a 320px-wide chart stops being readable,
+     not because six colours were hard to find. 4-6 keep clear of the semantic
+     accents for the same reason 1-3 do. */
+  --series-1: #2563EB;
+  --series-2: #F59E0B;
+  --series-3: #94A3B8;
+  --series-4: #7C3AED;
+  --series-5: #0891B2;
+  --series-6: #DB2777;
+
+  /* Legacy color aliases (keep old code working) */
+  --color-snow: #F5F5F7;
+  --color-white: #FFFFFF;
+  --color-graphite: #111827;
+  --color-slate: #6B7280;
+  --color-silver: #9CA3AF;
+  --color-mist: #E5E7EB;
+  --color-ink: #111827;
+  --color-charcoal: #6B7280;
+  --color-fog: #F0F0F2;
+  --color-forest: #22C55E;
+  --color-rust: #EF4444;
+  --color-emerald: #10B981;
+  --color-amber: #F59E0B;
+
+  /* Typography */
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, 'Inter', "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), monospace;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease-in-out;
+  --transition-base: 200ms ease-out;
+  --transition-slow: 300ms ease-out;
+  --transition-probability: 400ms ease-out;
+}
+
