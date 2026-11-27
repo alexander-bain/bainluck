@@ -18,13 +18,13 @@ THE CONTRACT, which is what makes a second copy safe to read:
   ``reader_floor`` (the watermark of the pass BEFORE the latest, so one whole
   pass of slack for a row committed late) are matched on ``futures_outcomes``
   directly, by primary-key range, beside the copy.
-* **Name predicates only.** :func:`on_open_outcomes` moves a predicate onto the
-  copy only when it reads nothing of ``futures_outcomes`` but ``name``; anything
-  else (a price floor, a team anchor) keeps the original lookup, or verifies its
-  candidates on the real rows (:func:`outcome_ids_named`).
-* **Markets are re-checked as before.** The copy only nominates market ids; every
-  caller's own ``futures_markets`` predicates (open, not past, not played) still
-  decide, so a market that closed since the last pass never shows.
+* **Search moves only name predicates.** :func:`on_open_outcomes` leaves a
+  price floor or a team anchor on the original rows. The price poll requires a
+  completed fill of the copy's admission fields and verifies writes against
+  the real rows.
+* **Markets are re-checked as before.** Every caller applies its own
+  ``futures_markets`` predicates (open, not past, not played), so a market
+  that closed since the last pass never shows.
 
 What the copy can lag, by at most one rotation of the task (an hour): an outcome
 RENAMED in place, or a market that REOPENED with outcomes it already had.
@@ -45,8 +45,13 @@ from app.models.models import FuturesOutcome, OpenFuturesOutcome
 
 logger = logging.getLogger(__name__)
 
-#: The maintainer's state: ``{"watermark", "reader_floor", "pass_at", "cycle_complete"}``.
+#: The maintainer's state, including the highest fully populated copy version
+#: once ``cycle_complete`` is true.
 STATE_KEY = "bainluck:open_futures_outcomes:state"
+
+#: Version 2 includes the price poll's three admission fields. Older states
+#: remain usable for name lookups.
+OUTCOME_COPY_VERSION = 2
 
 #: A copy whose last pass is older than this is not read. Three missed 5-minute
 #: passes; the key is also written with this TTL, so a stopped maintainer
@@ -101,15 +106,18 @@ def state_is_servable(state: dict | None, *, now: float | None = None) -> bool:
     return ((time.time() if now is None else now) - pass_at) < STALE_AFTER_SECONDS
 
 
-def open_outcomes_floor() -> int | None:
+def open_outcomes_floor(*, require_poll_fields: bool = False) -> int | None:
     """The outcome id above which ``futures_outcomes`` is read directly, or ``None``.
 
-    ``None`` means: do not read the copy; build the original lookup.
+    ``None`` selects the original lookup. Poll callers require a completed
+    fill of the current copy version.
     """
     if not read_enabled():
         return None
     state = _state()
     if not state_is_servable(state):
+        return None
+    if require_poll_fields and state.get("version") != OUTCOME_COPY_VERSION:
         return None
     return int(state["reader_floor"])
 
@@ -126,7 +134,8 @@ def on_open_outcomes(expr):
     """``expr`` with ``futures_outcomes.name`` read from the copy, or ``None``.
 
     ``None`` when the predicate reads any other ``futures_outcomes`` column: the
-    copy carries names only, and a price or a team anchor is never guessed.
+    search uses the copy only for names. Price and team data come from the
+    authoritative rows.
     """
     if _futures_outcome_columns(expr) - {"name"}:
         return None

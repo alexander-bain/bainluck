@@ -3776,7 +3776,7 @@ class ClientTimingEvent(Base):
 
 
 class OpenFuturesOutcome(Base):
-    """#4437 Decide 89-A: the outcome NAMES of open markets, and nothing else.
+    """Outcome names and poll admission fields for open markets.
 
     The dropdown's and Search's outcome-name lookups ran a pg_trgm match over
     ``futures_outcomes`` — 9.4 GB, 8.8 M rows, about 95% on closed markets — so a
@@ -3789,7 +3789,8 @@ class OpenFuturesOutcome(Base):
     (``app.utils.open_futures_outcomes``), read outcomes newer than its watermark
     from ``futures_outcomes`` directly, and re-check every market against
     ``futures_markets`` as before. Stale, empty or gone, they fall back to the
-    original lookup.
+    original lookup. The price poll also waits for the three admission fields
+    to be filled and checks the real outcome before writing a price.
     """
 
     __tablename__ = "open_futures_outcomes"
@@ -3797,6 +3798,9 @@ class OpenFuturesOutcome(Base):
     outcome_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     market_id: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(String(300), nullable=False)
+    external_id: Mapped[Optional[str]] = mapped_column(String(200))
+    is_winner: Mapped[Optional[bool]] = mapped_column(Boolean)
+    resolution_source: Mapped[Optional[str]] = mapped_column(String(30))
 
     # The pg_trgm GIN on `name` (`ix_open_futures_outcomes_name_trgm`) lives in
     # the migration only, like `ix_futures_outcomes_name_trgm` on the original:

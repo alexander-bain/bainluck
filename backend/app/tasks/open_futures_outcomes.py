@@ -1,4 +1,4 @@
-"""#4437 Decide 89-A: keep ``open_futures_outcomes`` equal to open markets' outcome names.
+"""Maintain the names and price poll fields in ``open_futures_outcomes``.
 
 THE SHIP. The dropdown and the Search page match outcome names over this copy
 (~262 k rows) instead of ``futures_outcomes`` (8.8 M), so a first keystroke like
@@ -20,10 +20,10 @@ ONE PASS, every 5 minutes, each step its own short transaction:
    pass), ``reader_floor`` (the previous pass's watermark), ``pass_at``,
    ``cycle_complete`` and the slice cursor.
 
-A FIRST FILL (no state, or a state that expired) runs every slice in the pass,
-budget permitting, and sets ``cycle_complete`` only once all twelve are done —
-readers keep today's lookup until then. A pass that runs out of budget resumes
-at its cursor on the next run.
+A FIRST FILL (no state, an expired state, or new copy columns) runs each
+slice in the pass, budget permitting, and sets ``cycle_complete`` only once
+all twelve are done. A pass that runs out of budget resumes at its cursor on
+the next run.
 
 COST, measured on production 2026-11-08 06:15 PT with read-only EXPLAIN ANALYZE:
 one slice's read is ~21.9 k outcome rows in 2.4 s (1,805 blocks read); the open
@@ -41,7 +41,7 @@ from typing import Any
 
 from sqlalchemy import func, select, text
 
-from app.utils.open_futures_outcomes import STALE_AFTER_SECONDS, STATE_KEY
+from app.utils.open_futures_outcomes import OUTCOME_COPY_VERSION, STALE_AFTER_SECONDS, STATE_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -61,15 +61,20 @@ LOCK_SECONDS = 170
 
 _UPSERT_TAIL = """
 ON CONFLICT (outcome_id) DO UPDATE
-   SET name = EXCLUDED.name, market_id = EXCLUDED.market_id
- WHERE (open_futures_outcomes.name, open_futures_outcomes.market_id)
-       IS DISTINCT FROM (EXCLUDED.name, EXCLUDED.market_id)
+   SET name = EXCLUDED.name, market_id = EXCLUDED.market_id,
+       external_id = EXCLUDED.external_id, is_winner = EXCLUDED.is_winner,
+       resolution_source = EXCLUDED.resolution_source
+ WHERE (open_futures_outcomes.name, open_futures_outcomes.market_id,
+        open_futures_outcomes.external_id, open_futures_outcomes.is_winner,
+        open_futures_outcomes.resolution_source)
+       IS DISTINCT FROM (EXCLUDED.name, EXCLUDED.market_id,
+                         EXCLUDED.external_id, EXCLUDED.is_winner, EXCLUDED.resolution_source)
 """
 
 DELTA_SQL = text(
     """
-INSERT INTO open_futures_outcomes (outcome_id, market_id, name)
-SELECT o.id, o.market_id, o.name
+INSERT INTO open_futures_outcomes (outcome_id, market_id, name, external_id, is_winner, resolution_source)
+SELECT o.id, o.market_id, o.name, o.external_id, o.is_winner, o.resolution_source
   FROM futures_outcomes o
   JOIN futures_markets m ON m.id = o.market_id
  WHERE o.id > :floor AND m.status = 'open'
@@ -88,13 +93,13 @@ DELETE FROM open_futures_outcomes t
 SLICE_SQL = text(
     """
 WITH src AS (
-    SELECT o.id, o.market_id, o.name
+    SELECT o.id, o.market_id, o.name, o.external_id, o.is_winner, o.resolution_source
       FROM futures_outcomes o
       JOIN futures_markets m ON m.id = o.market_id
      WHERE m.status = 'open' AND m.id % :slices = :slice
 ), up AS (
-    INSERT INTO open_futures_outcomes (outcome_id, market_id, name)
-    SELECT id, market_id, name FROM src
+    INSERT INTO open_futures_outcomes (outcome_id, market_id, name, external_id, is_winner, resolution_source)
+    SELECT id, market_id, name, external_id, is_winner, resolution_source FROM src
 """
     + _UPSERT_TAIL
     + """
@@ -136,9 +141,12 @@ async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECON
     summary: dict[str, Any] = {"slices": [], "delta": 0, "closed": 0}
     try:
         state = _load_state(rc)
-        filling = not state.get("cycle_complete")
-        cursor = int(state.get("slice_cursor") or 0) % SLICES
-        filled = int(state.get("filled_slices") or 0) if filling else SLICES
+        same_version = state.get("version") == OUTCOME_COPY_VERSION
+        filling = not same_version or not state.get("cycle_complete")
+        cursor = int(state.get("slice_cursor") or 0) % SLICES if same_version else 0
+        filled = int(state.get("filled_slices") or 0) if same_version else 0
+        if not filling:
+            filled = SLICES
 
         # A fresh engine per pass, disposed on exit (Fable, #12358): the task runs
         # under `asyncio.run`, a new loop each invocation, and one prefork child
@@ -177,12 +185,13 @@ async def _refresh_open_futures_outcomes(budget_seconds: int = PASS_BUDGET_SECON
         complete = filled >= SLICES
         previous_watermark = state.get("watermark")
         new_state = {
+            "version": OUTCOME_COPY_VERSION,
             "watermark": watermark,
             # Readers match ids above this on `futures_outcomes` directly: the
             # previous pass's watermark, so a row committed late is still seen.
             "reader_floor": (
                 previous_watermark
-                if isinstance(previous_watermark, int) and not filling
+                if isinstance(previous_watermark, int)
                 else watermark
             ),
             "pass_at": time.time(),

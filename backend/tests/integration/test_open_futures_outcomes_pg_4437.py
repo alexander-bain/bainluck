@@ -253,6 +253,182 @@ async def test_a_partial_first_fill_is_not_read_and_resumes(rig):
     assert out["cycle_complete"] is True and open_outcomes_floor() is not None
 
 
+async def test_an_upgrade_refills_the_poll_fields_before_they_are_servable(rig):
+    import json
+
+    from sqlalchemy import select, update
+
+    from app.models.models import FuturesOutcome, OpenFuturesOutcome
+    from app.tasks.open_futures_outcomes import SLICES
+    from app.utils.open_futures_outcomes import STATE_KEY, open_outcomes_floor
+
+    await _pass(rig)
+    state = json.loads(rig["redis"].data[STATE_KEY])
+    del state["version"]
+    rig["redis"].data[STATE_KEY] = json.dumps(state)
+    rig["fresh"]()
+    async with rig["maker"]() as session:
+        await session.execute(
+            update(OpenFuturesOutcome).values(
+                external_id=None, is_winner=None, resolution_source=None
+            )
+        )
+        await session.execute(
+            update(FuturesOutcome)
+            .where(FuturesOutcome.name == "Chiara Rossi")
+            .values(is_winner=True, resolution_source="api_settlement")
+        )
+        await session.commit()
+
+    assert open_outcomes_floor() is not None
+    assert open_outcomes_floor(require_poll_fields=True) is None
+    assert (await _pass(rig, budget_seconds=0))["cycle_complete"] is False
+    assert open_outcomes_floor(require_poll_fields=True) is None
+    assert len((await _pass(rig))["slices"]) == SLICES
+    assert open_outcomes_floor(require_poll_fields=True) is not None
+
+    async with rig["maker"]() as session:
+        row = (await session.execute(
+            select(
+                OpenFuturesOutcome.external_id,
+                OpenFuturesOutcome.is_winner,
+                OpenFuturesOutcome.resolution_source,
+            ).where(OpenFuturesOutcome.name == "Chiara Rossi")
+        )).one()
+    assert tuple(row) == ("K-Rookie of the Year:0", True, "api_settlement")
+
+
+@pytest.mark.parametrize("venue", ["kalshi", "polymarket"])
+async def test_poll_reads_new_legs_once_even_after_the_maintainer_copies_them(rig, venue):
+    from sqlalchemy import select, text, update
+
+    from app.models.models import FuturesMarket, FuturesOutcome, OpenFuturesOutcome
+    from app.tasks import venue_poll_30s as poll
+    from app.utils.open_futures_outcomes import open_outcomes_floor
+
+    market_id = rig["ids"]["award"]
+    if venue == "polymarket":
+        async with rig["maker"]() as session:
+            await session.execute(
+                update(FuturesMarket)
+                .where(FuturesMarket.id == market_id)
+                .values(source=venue, market_metadata={"polymarket_event_id": "900"})
+            )
+            await session.commit()
+    await _pass(rig)
+    async with rig["maker"]() as session:
+        new_leg = FuturesOutcome(market_id=market_id, external_id="new-leg", name="New contender")
+        session.add(new_leg)
+        await session.commit()
+        assert await session.get(OpenFuturesOutcome, new_leg.id) is None
+
+    builder = poll.kalshi_population_sql if venue == "kalshi" else poll.polymarket_population_sql
+    for copied in (False, True):
+        if copied:
+            await _pass(rig)
+        floor = open_outcomes_floor(require_poll_fields=True)
+        assert floor is not None and new_leg.id > floor
+
+        async with rig["maker"]() as session:
+            assert (await session.get(OpenFuturesOutcome, new_leg.id) is not None) is copied
+            if copied:
+                copied_external_id = await session.scalar(
+                    select(OpenFuturesOutcome.external_id)
+                    .where(OpenFuturesOutcome.outcome_id == new_leg.id)
+                )
+                assert copied_external_id == "new-leg"
+            binds = poll.population_binds([])
+            legacy = (await session.execute(text(builder(True)), binds)).all()
+            fast = (await session.execute(
+                text(builder(True, use_outcome_copy=True)), {**binds, "reader_floor": floor}
+            )).all()
+
+        assert fast == legacy
+        assert sum(row[-2] == new_leg.id for row in fast) == 1
+
+
+@pytest.mark.parametrize("settle_after_lookup", [False, True])
+async def test_poll_cannot_reprice_a_settled_leg_from_a_stale_copy(
+    rig, monkeypatch, settle_after_lookup
+):
+    from sqlalchemy import select, text
+
+    from app.models.models import FuturesOddsSnapshot, FuturesOutcome, OpenFuturesOutcome
+    from app.tasks import venue_poll_30s as poll
+    from app.tasks.futures_price_refresh import ELIGIBLE_OUTCOMES_SQL
+
+    await _pass(rig)
+    market_id = rig["ids"]["award"]
+    monkeypatch.setattr(poll, "_POPULATION", {})
+    monkeypatch.setattr(poll, "_kalshi_open_arm", lambda: False)
+    monkeypatch.setattr(poll, "shown_market_ids", lambda: [])
+    async with rig["maker"]() as session:
+        outcome_ids = list((await session.scalars(
+            select(FuturesOutcome.id).where(FuturesOutcome.market_id == market_id)
+            .order_by(FuturesOutcome.id)
+        )).all())
+        settled_id, live_id = outcome_ids
+        await session.commit()
+
+    async def settle():
+        # This grade deliberately leaves the quote timestamps alone so the
+        # price writer must consult settlement as well as its freshness fence.
+        async with rig["maker"]() as session:
+            await session.execute(text(
+                "UPDATE futures_outcomes "
+                "SET current_probability = 0, is_winner = false, resolution_source = 'api_settlement' "
+                "WHERE id = :id"
+            ), {"id": settled_id})
+            await session.commit()
+
+    if not settle_after_lookup:
+        await settle()
+
+    stats = {"unknown_outcomes": 0}
+    async with rig["maker"]() as session:
+        units = await poll.load_population(session, "kalshi", now_mono=1, stats=stats)
+        assert stats["population_outcome_source"] == "open_futures_outcomes"
+        unit = next(unit for unit in units if unit.key == str(market_id))
+        legs = dict(unit.legs[market_id])
+        assert set(legs) == {settled_id, live_id}
+        copied_leg = await session.get(OpenFuturesOutcome, settled_id)
+        assert copied_leg.resolution_source is None and copied_leg.is_winner is not True
+        stored = await poll.load_state(session, outcome_ids)
+        fetched_at = await poll.db_clock(session)
+        await session.commit()
+
+        if settle_after_lookup:
+            execute = session.execute
+
+            async def settle_between_read_and_write(stmt, *args, **kwargs):
+                result = await execute(stmt, *args, **kwargs)
+                if str(stmt) == ELIGIBLE_OUTCOMES_SQL:
+                    await settle()
+                return result
+
+            monkeypatch.setattr(session, "execute", settle_between_read_and_write)
+
+        await poll.write_market(
+            session, venue="kalshi", market_id=market_id,
+            priced=[
+                {"external_id": external_id, "probability": 0.61, "yes_bid": 0.6, "yes_ask": 0.62}
+                for external_id in legs.values()
+            ],
+            poll=poll.PollWrite(fetched_at, fetched_at, stored, frozenset(legs)),
+            deferred=poll.DeferredPoints(),
+            stats=stats,
+        )
+
+    async with rig["maker"]() as session:
+        settled = await session.get(FuturesOutcome, settled_id)
+        live = await session.get(FuturesOutcome, live_id)
+        points = (await session.scalars(select(FuturesOddsSnapshot.outcome_id))).all()
+    assert settled.current_probability == 0
+    assert settled.resolution_source == "api_settlement"
+    assert float(live.current_probability) == pytest.approx(0.61)
+    assert points == [live_id]
+
+
 async def test_both_routes_answer_the_same_with_the_copy(rig):
     """The ship's own check: what a reader sees is unchanged, only how it is read."""
     from httpx import ASGITransport, AsyncClient
