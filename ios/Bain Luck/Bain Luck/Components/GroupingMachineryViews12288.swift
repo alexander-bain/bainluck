@@ -2005,6 +2005,8 @@ struct MachineryDiscoverCardView: View {
                 eventRowsBody
             } else if !card.isDivisionRaceCard441A, card.formId == .duelBar, card.outcomeRows.count >= 2 {
                 duelBarBody
+            } else if card.formId == .contenderSpotlight, !card.scaleOrdered, card.outcomeRows.count >= 2 {
+                contenderSpotlightBody
             } else {
                 outcomeRowsBody
             }
@@ -2431,5 +2433,198 @@ struct MachineryDiscoverCardView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Pile 4 (`contender_spotlight` three cells side-by-side on Discover cards)
+
+    private var spotlightTileBgColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.05) : DS.surface
+    }
+
+    private var spotlightDetailInk: Color {
+        colorScheme == .dark ? Color(white: 0.82) : Color(red: 0.24, green: 0.27, blue: 0.33)
+    }
+
+    private func spotlightDetailDisplayText(_ raw: String) -> String {
+        raw.replacingOccurrences(of: " · ", with: "\u{00A0}·\u{00A0}")
+    }
+
+    @ViewBuilder
+    private var contenderSpotlightBody: some View {
+        let topThree = Array(card.outcomeRows.prefix(3))
+        let topHasArt = topThree.contains { $0.art?.verifiedURL != nil }
+        let topUsesPoster = topThree.contains { $0.art?.verifiedURL != nil && $0.art?.isPoster == true }
+        if dynamicTypeSize >= .xxxLarge {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(topThree.enumerated()), id: \.element.id) { idx, outcome in
+                    contenderStackedTile(
+                        rank: idx + 1,
+                        outcome: outcome,
+                        reservesArtSlot: topHasArt,
+                        listUsesPoster: topUsesPoster
+                    )
+                }
+            }
+        } else {
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(Array(topThree.enumerated()), id: \.element.id) { idx, outcome in
+                    contenderColumnTile(
+                        rank: idx + 1,
+                        outcome: outcome,
+                        reservesArtSlot: topHasArt,
+                        listUsesPoster: topUsesPoster
+                    )
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func contenderColumnTile(
+        rank: Int,
+        outcome: MachineryOutcomeVisual,
+        reservesArtSlot: Bool,
+        listUsesPoster: Bool
+    ) -> some View {
+        let barColor = MachineryColorContrast12288.singleAccent(outcome.art?.accentColor, scheme: colorScheme)
+        let rowIsPoster = outcome.art?.isPoster ?? listUsesPoster
+        return VStack(spacing: 6) {
+            HStack(spacing: 2) {
+                Text("#\(rank)")
+                    .font(.system(size: min(kickerSize, 14), weight: .semibold))
+                    .foregroundStyle(secondaryInk)
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(outcome.probabilityLabel)
+                        .font(.system(size: min(rowSize, 19), weight: .heavy).monospacedDigit())
+                        .foregroundStyle(primaryInk)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    if let m = SourceMarkButton(
+                        outcome.sourceMark,
+                        number: outcome.probability,
+                        subject: outcome.name,
+                        subtitle: card.title,
+                        numberSize: 13,
+                        compactRow: true
+                    ) {
+                        m
+                    }
+                }
+            }
+
+            if reservesArtSlot {
+                MachinerySubjectArtView(
+                    art: outcome.art,
+                    width: listUsesPoster ? 40 : 44,
+                    height: rowIsPoster ? 56 : 44,
+                    reservesWidthWhenEmpty: true,
+                    emptySlotIsPoster: listUsesPoster,
+                    subjectName: outcome.name
+                )
+            }
+
+            Text(outcome.name)
+                .font(.system(size: min(subSize, 16), weight: .semibold))
+                .foregroundStyle(primaryInk)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.84)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let detail = outcome.art?.detail, !detail.isEmpty {
+                Text(spotlightDetailDisplayText(detail))
+                    .font(.system(size: min(max(kickerSize, 12.5), 14), weight: .medium))
+                    .foregroundStyle(spotlightDetailInk)
+                    .multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.85)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            GeometryReader { geo in
+                let frac = CGFloat(min(100, max(6, outcome.renderedPercent))) / 100.0
+                ZStack(alignment: .leading) {
+                    Capsule().fill(trackBgColor)
+                    Capsule()
+                        .fill(barColor)
+                        .frame(width: max(4, geo.size.width * frac))
+                }
+            }
+            .frame(height: 5.5)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(spotlightTileBgColor)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(borderColor, lineWidth: 1))
+    }
+
+    private func contenderStackedTile(
+        rank: Int,
+        outcome: MachineryOutcomeVisual,
+        reservesArtSlot: Bool,
+        listUsesPoster: Bool
+    ) -> some View {
+        let barColor = MachineryColorContrast12288.singleAccent(outcome.art?.accentColor, scheme: colorScheme)
+        let rowIsPoster = outcome.art?.isPoster ?? listUsesPoster
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 10) {
+                if reservesArtSlot {
+                    MachinerySubjectArtView(
+                        art: outcome.art,
+                        width: listUsesPoster ? 40 : 44,
+                        height: rowIsPoster ? 56 : 44,
+                        reservesWidthWhenEmpty: true,
+                        emptySlotIsPoster: listUsesPoster,
+                        subjectName: outcome.name
+                    )
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("#\(rank) · \(outcome.name)")
+                        .font(.system(size: min(rowSize, 22), weight: .semibold))
+                        .foregroundStyle(primaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let detail = outcome.art?.detail, !detail.isEmpty {
+                        Text(spotlightDetailDisplayText(detail))
+                            .font(.system(size: min(subSize, 18), weight: .medium))
+                            .foregroundStyle(spotlightDetailInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 6)
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text(outcome.probabilityLabel)
+                        .font(.system(size: min(rowSize, 22), weight: .heavy).monospacedDigit())
+                        .foregroundStyle(primaryInk)
+                    if let m = SourceMarkButton(
+                        outcome.sourceMark,
+                        number: outcome.probability,
+                        subject: outcome.name,
+                        subtitle: card.title,
+                        numberSize: min(rowSize, 18),
+                        compactRow: true
+                    ) {
+                        m
+                    }
+                }
+            }
+            GeometryReader { geo in
+                let frac = CGFloat(min(100, max(6, outcome.renderedPercent))) / 100.0
+                ZStack(alignment: .leading) {
+                    Capsule().fill(trackBgColor)
+                    Capsule()
+                        .fill(barColor)
+                        .frame(width: max(4, geo.size.width * frac))
+                }
+            }
+            .frame(height: 6)
+        }
+        .padding(10)
+        .background(spotlightTileBgColor)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(borderColor, lineWidth: 1))
     }
 }
