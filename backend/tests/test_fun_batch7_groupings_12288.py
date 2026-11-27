@@ -268,11 +268,33 @@ async def test_batch7_eight_sets_cover_all_eight_visual_forms_and_clean_copy() -
             )
             assert card["mini_chart"]["title"] == "OpenAI's IPO valuation"
             assert len(card["rows"]) == 3
-        elif card["form_id"] == "duel_bar":
-            assert card["title"].startswith("Denver leads Kansas City")
-            assert card["title"].endswith("in the AFC West race")
-            assert len(card["rows"]) == 2
-            assert min(r["rendered_percent"] for r in card["rows"]) >= 20
+        elif card["slug"] == "machinery-afc-west-duel":
+            # 441: A (#13777): division race cards carry priced rows in `rows`/`outcomes`
+            # and unpriced/eliminated teams in sibling `unpriced_outcomes` (four teams total).
+            assert card["form_id"] == "sibling_fields_grid"
+            assert card["title"].startswith("Denver leads AFC West at 55%")
+            assert [r["name"] for r in card["rows"]] == [
+                "Denver",
+                "Kansas City",
+                "Las Vegas",
+            ]
+            assert [u["name"] for u in card["unpriced_outcomes"]] == [
+                "Los Angeles Chargers",
+            ]
+            chargers = card["unpriced_outcomes"][0]
+            assert chargers["probability"] is None
+            assert chargers["rendered_percent"] is None
+            assert chargers["settled_out"] is False
+            for sec in container["sections"]:
+                for it in (sec.get("visual_block") or {}).get("items") or ():
+                    assert (
+                        len(it["outcomes"]) + len(it.get("unpriced_outcomes") or ())
+                        == 4
+                    ), (slug, sec["class"], it["title"])
+                    assert all(
+                        o.get("probability") is not None and o.get("rendered_percent") is not None
+                        for o in it["outcomes"]
+                    )
         elif card["slug"] == "machinery-extreme-earth-2026":
             assert card["title"] == (
                 "2026 is at 91% to be the hottest year on record, and 2°C of warming before 2050 is at 69%"
@@ -284,7 +306,7 @@ async def test_batch7_eight_sets_cover_all_eight_visual_forms_and_clean_copy() -
             assert "75%+" not in card["title"]
             assert "75% or better" in card["title"]
 
-    assert seen_forms == set(MACHINERY_FORM_IDS)
+    assert seen_forms == set(MACHINERY_FORM_IDS) - {"duel_bar"}
 
 
 @pytest.mark.asyncio

@@ -18,12 +18,6 @@ struct TelemetryConsentPrompt: View {
     /// Called once a choice is recorded, with the resulting durability.
     var onChoice: (ConsentPersistence) -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var allowButtonForeground: Color {
-        colorScheme == .dark ? Color(hex: "#0F172A") : .white
-    }
-
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
@@ -64,7 +58,7 @@ struct TelemetryConsentPrompt: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 14)
                                     .background(DS.blueReadable)
-                                    .foregroundStyle(allowButtonForeground)
+                                    .foregroundStyle(DS.textOnAccent)
                                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             }
                             .buttonStyle(.plain)

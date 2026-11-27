@@ -34,6 +34,8 @@ from app.models.models import (
     EventProviderAnchor,
     MarketMatchReceipt,
     RetiredTeamRedirect,
+    GuessDailyEdition,
+    GuessGroupEntry,
 )
 
 from app.models.activitykit import ActivityKitRegistration
@@ -52,6 +54,8 @@ __all__ = [
     "EventProviderAnchor",
     "MarketMatchReceipt",
     "RetiredTeamRedirect",
+    "GuessDailyEdition",
+    "GuessGroupEntry",
     "Team",
     "Event",
     "OddsSnapshot",

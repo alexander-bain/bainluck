@@ -5053,6 +5053,13 @@ async def _load_current_2027_super_bowl(db: AsyncSession) -> FuturesMarket | Non
     return market if market is not None and _is_current_2027_super_bowl(market) else None
 
 
+def _slug_prefix_upper_bound(stem: str) -> str:
+    """Return the smallest bytewise-greater string not starting with ``stem``."""
+    if not stem:
+        raise ValueError("slug prefix stem must be non-empty")
+    return stem[:-1] + chr(ord(stem[-1]) + 1)
+
+
 def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
     """Every row a venue's OWN identity could make a member — never a key join.
 
@@ -5061,7 +5068,9 @@ def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
     (it also keys MVP, coach and qualifier markets, and the sportsbook row's key
     carries no season).
     """
-    slug = FuturesMarket.market_metadata["polymarket_event_slug"].astext
+    slug_c = FuturesMarket.market_metadata["polymarket_event_slug"].astext.collate("C")
+    stem = spec.polymarket_slug_stem(edition)
+    slug_upper = _slug_prefix_upper_bound(stem)
     return select(
         FuturesMarket.id,
         FuturesMarket.source,
@@ -5084,7 +5093,8 @@ def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
             ),
             and_(
                 FuturesMarket.source == "polymarket",
-                slug.like(spec.polymarket_slug_stem(edition) + "%"),
+                slug_c >= stem,
+                slug_c < slug_upper,
             ),
         ),
     )

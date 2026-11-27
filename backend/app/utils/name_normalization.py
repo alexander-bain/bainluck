@@ -178,6 +178,7 @@ _CLUB_NAME_ALIASES: dict[str, str] = {
     "ferencvarosi": "ferencvaros tc",
     "qairat fk": "fc kairat",
     "heart of midlothian": "hearts",
+    "heart of midlothian fc": "hearts",
     "fc kobenhavn": "fc copenhagen",
     "crvena zvezda": "red star belgrade",
     "kuopion ps": "kups kuopio",
