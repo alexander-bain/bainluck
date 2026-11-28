@@ -6,16 +6,23 @@ per-source readings in force at each bucket close pass through the shared
 ``_build_one_tournament`` pipeline (placeholder filter, legacy >1.5 rescale,
 DataGolf invitee gate, equal-weighted source mean, and full-field normalization).
 
+Timestamp & bucket convention (matches ``/api/futures/{id}/probability-timeline``):
+- Each emitted point is stamped with its bucket's **start** (``bucket_at.isoformat()``)
+  in UTC and carries the blended, field-normalized probability computed from the
+  latest reading in force for each outcome strictly before bucket close
+  (``captured_at < eval_at``).
+
 Production safeguards:
 - Pure-Python worker function accepts only detached dataclasses/dicts so it runs
   safely off the asyncio event loop via ``asyncio.to_thread``.
-- Even ``range=full`` enforces a bounded SQL lookback floor
-  (``GOLF_TIMELINE_FULL_MAX_DAYS = 90``) and adapts ``bucket_seconds`` so a
-  multi-month major never evaluates more than ``GOLF_TIMELINE_MAX_BUCKETS = 240``
-  buckets.
+- Both ``hours`` and ``range=full`` enforce a single 90-day SQL/window ceiling
+  (``GOLF_TIMELINE_FULL_MAX_DAYS = 90`` / ``GOLF_TIMELINE_FULL_MAX_HOURS = 2160``)
+  anchored to the tournament's own readings (not the wall clock on completed events).
+- Once play starts, buckets during play stay at 15-minute resolution (``900s``);
+  coarsening applies only to pre-tee history.
 - Responses are cached per ``(slug, top, hours, range)`` in a bounded in-process
-  LRU + shared Redis (``request_cache.get_shared_async_redis``) with shorter TTLs
-  during live play.
+  LRU + shared Redis, and closed historical buckets are memoized in-process across
+  live refreshes so each 2-minute tick evaluates only newly touched buckets.
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ import hashlib
 import json
 import logging
 import math
+import struct
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -39,11 +47,16 @@ logger = logging.getLogger(__name__)
 GOLF_TIMELINE_FULL_MAX_DAYS = 90
 GOLF_TIMELINE_FULL_MAX_HOURS = GOLF_TIMELINE_FULL_MAX_DAYS * 24  # 2160h
 GOLF_TIMELINE_MAX_BUCKETS = 240
+GOLF_TIMELINE_PLAY_BUCKET_SECONDS = 900
+GOLF_TIMELINE_PRE_TEE_MAX_BUCKETS = 120
+GOLF_TIMELINE_MAX_PLAY_DAYS = 7
 
-GOLF_TIMELINE_CACHE_PREFIX = "bainluck:golf:prob-timeline:v1:"
+GOLF_TIMELINE_CACHE_PREFIX = "bainluck:golf:prob-timeline:v2:"
 GOLF_TIMELINE_CACHE_TTL_LIVE_S = 120
 GOLF_TIMELINE_CACHE_TTL_IDLE_S = 600
 GOLF_TIMELINE_L0_MAX_ENTRIES = 16
+GOLF_TIMELINE_CLOSED_BUCKETS_MAX_TOURNAMENTS = 4
+GOLF_TIMELINE_CLOSED_BUCKETS_TTL_S = 3600
 
 
 @dataclass(frozen=True)
@@ -152,9 +165,10 @@ def history_fetch_floor(
     max_reading_age: timedelta,
     full_max_days: int = GOLF_TIMELINE_FULL_MAX_DAYS,
 ) -> datetime:
-    """Hard SQL lower bound on snapshot reads (bounds even ``range=full``)."""
+    """Hard SQL lower bound on snapshot reads (one 90-day ceiling for both paths)."""
     ref_now = _ensure_utc(now)
-    lookback = timedelta(days=full_max_days) if full_range else timedelta(hours=max(1, hours))
+    clamped_hours = max(1, min(int(hours), full_max_days * 24))
+    lookback = timedelta(days=full_max_days) if full_range else timedelta(hours=clamped_hours)
     return ref_now - lookback - max_reading_age
 
 
@@ -183,17 +197,91 @@ def _timeline_cache_key(
     history_range: str | None,
 ) -> str:
     range_norm = (history_range or "").strip().lower() or "hours"
+    clamped_hours = max(1, min(int(hours), GOLF_TIMELINE_FULL_MAX_HOURS))
     digest = hashlib.sha256(
-        f"{slug.strip().lower()}|top={int(top)}|hours={int(hours)}|range={range_norm}".encode("utf-8")
+        f"{slug.strip().lower()}|top={int(top)}|hours={clamped_hours}|range={range_norm}".encode("utf-8")
     ).hexdigest()[:24]
     return f"{GOLF_TIMELINE_CACHE_PREFIX}{digest}"
 
 
+ClosedBucketEntry = tuple[bytes, tuple[tuple[str, float], ...] | None, float, int]
+
 _l0_timeline_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
+_l0_closed_buckets_cache: "OrderedDict[str, tuple[float, dict[tuple[int, int], ClosedBucketEntry]]]" = OrderedDict()
 
 
 def reset_timeline_cache_for_tests() -> None:
     _l0_timeline_cache.clear()
+    _l0_closed_buckets_cache.clear()
+
+
+def closed_bucket_cache_key(
+    slug: str,
+    market_ids: Sequence[int],
+    current_normalized: bool,
+) -> str:
+    ids_part = ",".join(str(int(mid)) for mid in sorted(market_ids))
+    digest = hashlib.sha256(
+        f"{slug.strip().lower()}|norm={int(bool(current_normalized))}|mkts={ids_part}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"closed:{digest}"
+
+
+def get_closed_bucket_cache(
+    cache_key: str,
+) -> dict[tuple[int, int], ClosedBucketEntry]:
+    hit = _l0_closed_buckets_cache.get(cache_key)
+    if hit is None:
+        return {}
+    expires_mono, entries = hit
+    if time.monotonic() >= expires_mono:
+        _l0_closed_buckets_cache.pop(cache_key, None)
+        return {}
+    _l0_closed_buckets_cache.move_to_end(cache_key)
+    return dict(entries)
+
+
+def put_closed_bucket_cache(
+    cache_key: str,
+    entries: Mapping[tuple[int, int], ClosedBucketEntry],
+    *,
+    ttl_s: int = GOLF_TIMELINE_CLOSED_BUCKETS_TTL_S,
+) -> None:
+    if not entries:
+        return
+    if cache_key in _l0_closed_buckets_cache:
+        _l0_closed_buckets_cache.pop(cache_key, None)
+    while len(_l0_closed_buckets_cache) >= GOLF_TIMELINE_CLOSED_BUCKETS_MAX_TOURNAMENTS:
+        _l0_closed_buckets_cache.popitem(last=False)
+    _l0_closed_buckets_cache[cache_key] = (
+        time.monotonic() + ttl_s,
+        dict(entries),
+    )
+
+
+def _snaps_signature(
+    snaps_as_of: Mapping[int, tuple[float | None, float | None, float | None]],
+) -> bytes:
+    """Fast content digest of ``snaps_as_of`` so unchanged/cached buckets skip rebuild."""
+    h = hashlib.blake2b(digest_size=16)
+    packer = struct.Struct("!qBddd")
+    for oid in sorted(snaps_as_of):
+        prob, bid, ask = snaps_as_of[oid]
+        flags = (
+            (1 if prob is not None else 0)
+            | (2 if bid is not None else 0)
+            | (4 if ask is not None else 0)
+        )
+        h.update(
+            packer.pack(
+                int(oid),
+                flags,
+                0.0 if prob is None else float(prob),
+                0.0 if bid is None else float(bid),
+                0.0 if ask is None else float(ask),
+            )
+        )
+    return h.digest()
 
 
 def _l0_get(key: str) -> dict | None:
@@ -288,6 +376,117 @@ async def get_or_build_cached_timeline(
         raise
 
 
+def _extract_bucket_pairs(
+    hist_entry: dict | None,
+    *,
+    current_normalized: bool,
+    match_key_fn: Callable[[str], str],
+) -> tuple[tuple[tuple[str, float], ...] | None, float, int]:
+    """Extract compact match-key pairs and Field overflow from one bucket evaluation."""
+    if not hist_entry:
+        return None, 0.0, 0
+    if current_normalized and not _is_field_normalized(hist_entry):
+        return None, 0.0, 0
+    hist_golfers = hist_entry.get("_all_golfers") or hist_entry.get("golfers") or []
+    pairs = tuple(
+        (match_key_fn(g.get("name") or ""), float(g["probability"]))
+        for g in hist_golfers
+        if g.get("probability") is not None
+    )
+    overflow = sum(
+        float(ov["probability"])
+        for ov in (hist_entry.get("overflow_outcomes") or [])
+        if ov.get("probability") is not None
+    )
+    return pairs, overflow, len(hist_golfers)
+
+
+def _plan_eval_points(
+    window_snaps: Sequence[SnapshotReading],
+    *,
+    cutoff: datetime,
+    series_end: datetime,
+    commence_time: datetime | None,
+    is_live: bool,
+    pre_tee_max_buckets: int,
+    max_buckets: int,
+) -> tuple[list[tuple[datetime, datetime]], int]:
+    """Build ordered ``(bucket_at, eval_at)`` half-open intervals.
+
+    Once play starts, buckets during play remain fixed at 15-minute resolution
+    (``900s``); coarsening applies strictly to pre-tee history.
+    """
+    play_start: datetime | None = None
+    if commence_time is not None and _ensure_utc(commence_time) <= series_end:
+        play_start = max(
+            _ensure_utc(commence_time),
+            series_end - timedelta(days=GOLF_TIMELINE_MAX_PLAY_DAYS),
+        )
+    elif is_live and window_snaps:
+        play_start = max(cutoff, series_end - timedelta(days=4))
+
+    if play_start is None:
+        effective_start = max(cutoff, window_snaps[0].captured_at) if window_snaps else cutoff
+        span_seconds = max(0.0, (series_end - effective_start).total_seconds())
+        bucket_seconds = choose_bucket_seconds(
+            span_seconds, started=False, max_buckets=max_buckets
+        )
+        ordered_bks = sorted(
+            {(int(s.captured_at.timestamp()) // bucket_seconds) * bucket_seconds for s in window_snaps}
+        )
+        if len(ordered_bks) > max_buckets:
+            ordered_bks = ordered_bks[-max_buckets:]
+        eval_points = [
+            (
+                datetime.fromtimestamp(bk, tz=timezone.utc),
+                datetime.fromtimestamp(bk + bucket_seconds, tz=timezone.utc),
+            )
+            for bk in ordered_bks
+        ]
+        return eval_points, bucket_seconds
+
+    pre_snaps = [s for s in window_snaps if s.captured_at < play_start]
+    play_snaps = [s for s in window_snaps if s.captured_at >= play_start]
+
+    play_bks = sorted(
+        {
+            (int(s.captured_at.timestamp()) // GOLF_TIMELINE_PLAY_BUCKET_SECONDS)
+            * GOLF_TIMELINE_PLAY_BUCKET_SECONDS
+            for s in play_snaps
+        }
+    )
+    play_points = [
+        (
+            datetime.fromtimestamp(bk, tz=timezone.utc),
+            datetime.fromtimestamp(bk + GOLF_TIMELINE_PLAY_BUCKET_SECONDS, tz=timezone.utc),
+        )
+        for bk in play_bks
+    ]
+    first_play_bucket_at = play_points[0][0] if play_points else play_start
+
+    pre_points: list[tuple[datetime, datetime]] = []
+    pre_step = 3600
+    if pre_snaps:
+        pre_span = max(0.0, (play_start - pre_snaps[0].captured_at).total_seconds())
+        pre_step = choose_bucket_seconds(
+            pre_span, started=False, max_buckets=pre_tee_max_buckets
+        )
+        pre_bks = sorted({(int(s.captured_at.timestamp()) // pre_step) * pre_step for s in pre_snaps})
+        for bk in pre_bks:
+            b_at = datetime.fromtimestamp(bk, tz=timezone.utc)
+            if b_at >= first_play_bucket_at:
+                continue
+            e_at = min(
+                b_at + timedelta(seconds=pre_step),
+                first_play_bucket_at,
+                play_start,
+            )
+            pre_points.append((b_at, e_at))
+
+    bucket_seconds = GOLF_TIMELINE_PLAY_BUCKET_SECONDS if (play_points or is_live) else pre_step
+    return pre_points + play_points, bucket_seconds
+
+
 def build_golf_blended_timeline(
     tourn_key: str,
     winner_markets: Sequence[DetachedMarket | Any],
@@ -304,18 +503,27 @@ def build_golf_blended_timeline(
     max_reading_age: timedelta = timedelta(hours=48),
     full_max_days: int = GOLF_TIMELINE_FULL_MAX_DAYS,
     max_buckets: int = GOLF_TIMELINE_MAX_BUCKETS,
+    pre_tee_max_buckets: int = GOLF_TIMELINE_PRE_TEE_MAX_BUCKETS,
+    closed_bucket_cache: dict[tuple[int, int], ClosedBucketEntry] | None = None,
+    build_stats: dict[str, int] | None = None,
     now: datetime | None = None,
 ) -> dict:
     """Build a ``ProbabilityTimelineResponse``-shaped blended golf history.
 
     Pure Python over detached data — safe to run inside ``asyncio.to_thread``.
+
+    Timestamp convention (matching ``/api/futures/{id}/probability-timeline``):
+    each point in ``timeline`` is stamped with its bucket's **start**
+    (``bucket_at.isoformat()``) and carries the blended, field-normalized
+    probabilities of the latest in-force readings strictly before bucket close
+    (``[bucket_at, eval_at)``).
+
+    Window bounds and bucket widths anchor to the tournament's own readings
+    (``series_end = valid_snaps[-1].captured_at`` when snapshots exist), so a
+    finished tournament returns the exact same timeline regardless of how many
+    days later it is opened.
     """
     ref_now = _ensure_utc(now or datetime.now(timezone.utc))
-    started = is_live or (
-        commence_time is not None and _ensure_utc(commence_time) <= ref_now
-    )
-    full_floor = ref_now - timedelta(days=full_max_days)
-
     valid_snaps = sorted(
         (
             SnapshotReading(
@@ -327,30 +535,38 @@ def build_golf_blended_timeline(
                 yes_ask=float(s.yes_ask) if s.yes_ask is not None else None,
             )
             for s in snapshots
-            if s.probability is not None
+            if s.probability is not None and _ensure_utc(s.captured_at) <= ref_now
         ),
         key=lambda s: s.captured_at,
     )
 
-    in_window_snaps = [s for s in valid_snaps if full_floor <= s.captured_at <= ref_now]
+    series_end = valid_snaps[-1].captured_at if valid_snaps else ref_now
+    effective_hours = max(1, min(int(hours), full_max_days * 24))
+    full_floor = series_end - timedelta(days=full_max_days)
+
     if full_range:
+        in_window_snaps = [s for s in valid_snaps if full_floor <= s.captured_at <= series_end]
         if in_window_snaps:
-            earliest = in_window_snaps[0].captured_at
-            cutoff = max(full_floor, earliest)
-            actual_hours = max(1, min(full_max_days * 24, int((ref_now - cutoff).total_seconds() // 3600) + 1))
+            cutoff = max(full_floor, in_window_snaps[0].captured_at)
+            actual_hours = max(
+                1,
+                min(full_max_days * 24, int((series_end - cutoff).total_seconds() // 3600) + 1),
+            )
         else:
             cutoff = full_floor
-            actual_hours = min(full_max_days * 24, max(1, hours))
+            actual_hours = effective_hours
     else:
-        actual_hours = hours
-        cutoff = ref_now - timedelta(hours=hours)
+        actual_hours = effective_hours
+        cutoff = series_end - timedelta(hours=effective_hours)
 
-    window_snaps = [s for s in valid_snaps if cutoff <= s.captured_at <= ref_now]
-    effective_start = max(cutoff, window_snaps[0].captured_at) if window_snaps else cutoff
-    span_seconds = max(0.0, (ref_now - effective_start).total_seconds())
-    bucket_seconds = choose_bucket_seconds(
-        span_seconds,
-        started=started,
+    window_snaps = [s for s in valid_snaps if cutoff <= s.captured_at <= series_end]
+    eval_points, bucket_seconds = _plan_eval_points(
+        window_snaps,
+        cutoff=cutoff,
+        series_end=series_end,
+        commence_time=commence_time,
+        is_live=is_live,
+        pre_tee_max_buckets=pre_tee_max_buckets,
         max_buckets=max_buckets,
     )
 
@@ -364,32 +580,21 @@ def build_golf_blended_timeline(
 
     current_normalized = _is_field_normalized(dict(current_entry))
 
-    bucket_keys: set[int] = set()
-    for s in valid_snaps:
-        if s.captured_at < cutoff or s.captured_at > ref_now:
-            continue
-        bk = (int(s.captured_at.timestamp()) // bucket_seconds) * bucket_seconds
-        bucket_keys.add(bk)
-
-    ordered_bks = sorted(bucket_keys)
-    if len(ordered_bks) > max_buckets:
-        ordered_bks = ordered_bks[-max_buckets:]
-
     timeline: list[dict] = []
-    if winner_markets and ordered_bks and current_golfers:
+    evaluated_count = 0
+    reused_count = 0
+    if winner_markets and eval_points and current_golfers:
         active: dict[int, tuple[tuple[float | None, float | None, float | None], datetime]] = {}
         snap_idx = 0
         total_snaps = len(valid_snaps)
-
-        eval_points: list[tuple[datetime, datetime]] = []
-        for bk in ordered_bks:
-            bucket_at = datetime.fromtimestamp(bk, tz=timezone.utc)
-            bucket_end = min(ref_now, bucket_at + timedelta(seconds=bucket_seconds))
-            eval_points.append((bucket_at, bucket_end))
-
         market_list = list(winner_markets)
+        prev_sig: bytes | None = None
+        prev_pairs: tuple[tuple[str, float], ...] | None = None
+        prev_overflow = 0.0
+        prev_hist_count = 0
+
         for bucket_at, eval_at in eval_points:
-            while snap_idx < total_snaps and valid_snaps[snap_idx].captured_at <= eval_at:
+            while snap_idx < total_snaps and valid_snaps[snap_idx].captured_at < eval_at:
                 s = valid_snaps[snap_idx]
                 fresh_until = s.valid_until or s.captured_at
                 active[s.outcome_id] = (
@@ -407,31 +612,44 @@ def build_golf_blended_timeline(
             if not snaps_as_of:
                 continue
 
-            hist_entry = build_entry(tourn_key, market_list, snaps_as_of)
-            if not hist_entry:
-                continue
-            if current_normalized and not _is_field_normalized(hist_entry):
+            sig = _snaps_signature(snaps_as_of)
+            cache_slot = (int(bucket_at.timestamp()), int(eval_at.timestamp()))
+            cached = closed_bucket_cache.get(cache_slot) if closed_bucket_cache is not None else None
+            if cached is not None and cached[0] == sig:
+                pairs, overflow, hist_count = cached[1], cached[2], cached[3]
+                reused_count += 1
+            elif prev_sig is not None and sig == prev_sig:
+                pairs, overflow, hist_count = prev_pairs, prev_overflow, prev_hist_count
+                reused_count += 1
+            else:
+                hist_entry = build_entry(tourn_key, market_list, snaps_as_of)
+                evaluated_count += 1
+                pairs, overflow, hist_count = _extract_bucket_pairs(
+                    hist_entry,
+                    current_normalized=current_normalized,
+                    match_key_fn=match_key_fn,
+                )
+
+            prev_sig = sig
+            prev_pairs = pairs
+            prev_overflow = overflow
+            prev_hist_count = hist_count
+            if closed_bucket_cache is not None and eval_at <= ref_now:
+                closed_bucket_cache[cache_slot] = (sig, pairs, overflow, hist_count)
+
+            if pairs is None:
                 continue
 
             outcomes_map: dict[str, float] = {}
-            field_prob = 0.0
-            hist_golfers = hist_entry.get("_all_golfers") or hist_entry.get("golfers") or []
-            for g in hist_golfers:
-                prob = g.get("probability")
-                if prob is None:
-                    continue
-                mk = match_key_fn(g.get("name") or "")
+            field_prob = overflow
+            for mk, prob in pairs:
                 canonical = top_name_by_key.get(mk)
                 if canonical is not None:
-                    outcomes_map[canonical] = round(float(prob), 6)
+                    outcomes_map[canonical] = round(prob, 6)
                 else:
-                    field_prob += float(prob)
-            for ov in hist_entry.get("overflow_outcomes") or []:
-                prob = ov.get("probability")
-                if prob is not None:
-                    field_prob += float(prob)
+                    field_prob += prob
 
-            if len(current_golfers) > top and (field_prob > 0 or len(top_name_by_key) < len(hist_golfers)):
+            if len(current_golfers) > top and (field_prob > 0 or len(top_name_by_key) < hist_count):
                 outcomes_map["Field"] = round(min(field_prob, 1.0), 6)
 
             if outcomes_map:
@@ -439,6 +657,11 @@ def build_golf_blended_timeline(
                     "timestamp": bucket_at.isoformat(),
                     "outcomes": outcomes_map,
                 })
+
+    if build_stats is not None:
+        build_stats["evaluated"] = evaluated_count
+        build_stats["reused"] = reused_count
+        build_stats["total_buckets"] = len(eval_points)
 
     outcomes_meta: list[dict] = []
     for idx, g in enumerate(top_golfers, start=1):
@@ -475,7 +698,7 @@ def build_golf_blended_timeline(
         "sport_category": "golf",
         "source": "blend" if len(sources) > 1 else (sources[0] if sources else "blend"),
         "sources": sources,
-        "hours": hours,
+        "hours": effective_hours,
         "actual_hours": actual_hours,
         "top": top,
         "bucket_seconds": bucket_seconds,

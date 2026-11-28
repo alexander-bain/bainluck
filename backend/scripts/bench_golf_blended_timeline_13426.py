@@ -19,6 +19,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Sequence
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -26,6 +27,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.routes import golf as golf_route  # noqa: E402
 from app.utils.golf_blended_timeline import (  # noqa: E402
+    ClosedBucketEntry,
     SnapshotReading,
     build_golf_blended_timeline,
     detach_winner_market,
@@ -33,18 +35,24 @@ from app.utils.golf_blended_timeline import (  # noqa: E402
 )
 
 
-def _run_synthetic_case(
+def _synthetic_markets_and_snaps(
     *,
-    label: str,
     n_golfers: int,
     n_sources: int,
-    span_days: int,
-    snap_step_hours: int,
-    is_live: bool,
+    pre_tee_days: int,
+    pre_step_hours: int,
+    play_days: int,
+    play_step_minutes: int,
     full_range: bool,
-) -> dict:
-    now = datetime(2031, 6, 15, 16, 0, tzinfo=timezone.utc)
-    commence = now - timedelta(days=2) if is_live else now + timedelta(days=14)
+    now: datetime,
+):
+    commence = now - timedelta(days=play_days)
+    floor_dt = history_fetch_floor(
+        now,
+        hours=168,
+        full_range=full_range,
+        max_reading_age=golf_route.PREGAME_READING_MAX_AGE,
+    )
 
     markets = []
     snapshots: list[SnapshotReading] = []
@@ -53,7 +61,6 @@ def _run_synthetic_case(
         src = "datagolf" if s_idx == 0 else "kalshi"
         outcomes = []
         for g_idx in range(n_golfers):
-            # Concentrated power-law weights summing near 1.0
             base_prob = round(max(0.002, 0.25 / ((g_idx + 1) ** 0.85)), 4)
             outcomes.append(
                 SimpleNamespace(
@@ -78,7 +85,7 @@ def _run_synthetic_case(
                 external_id=f"{src}:pga:synthetic:win" if src == "datagolf" else "KXSYNTH-26",
                 outcomes=outcomes,
                 commence_time=commence,
-                resolution_date=commence + timedelta(days=4),
+                resolution_date=commence + timedelta(days=play_days),
                 status="open",
                 llm_sport_category="golf",
                 market_tier=1,
@@ -87,38 +94,59 @@ def _run_synthetic_case(
             )
         )
 
-    total_hours = span_days * 24
-    floor_dt = history_fetch_floor(
-        now,
-        hours=168,
-        full_range=full_range,
-        max_reading_age=golf_route.PREGAME_READING_MAX_AGE,
-    )
-    rows_generated = 0
-    rows_inside_floor = 0
-    for h in range(0, total_hours + 1, snap_step_hours):
-        ts = now - timedelta(hours=h)
-        rows_generated += sum(len(m.outcomes) for m in markets)
-        if ts < floor_dt:
+    timestamps: list[tuple[datetime, int]] = []
+    total_pre_hours = pre_tee_days * 24
+    for h in range(total_pre_hours, 0, -pre_step_hours):
+        timestamps.append((commence - timedelta(hours=h), pre_step_hours * 3600))
+    total_play_min = play_days * 24 * 60
+    for m_off in range(0, total_play_min + 1, play_step_minutes):
+        timestamps.append((commence + timedelta(minutes=m_off), play_step_minutes * 60))
+
+    rows_total = len(timestamps) * sum(len(m.outcomes) for m in markets)
+    rows_read = 0
+    for step_idx, (ts, step_s) in enumerate(timestamps):
+        if ts < floor_dt or ts > now:
             continue
+        delta = (((step_idx % 5) - 2) * 0.001)
+        valid_h = max(2, (step_s // 3600) + 1)
         for m in markets:
-            for o in m.outcomes:
+            for g_idx, o in enumerate(m.outcomes):
+                p = o.current_probability
+                if g_idx == 0:
+                    p = min(0.99, max(0.001, round(p + delta, 4)))
                 snapshots.append(
                     SnapshotReading(
                         outcome_id=o.id,
                         captured_at=ts,
-                        valid_until=ts + timedelta(hours=max(2, snap_step_hours)),
-                        probability=o.current_probability,
-                        yes_bid=o.current_yes_bid,
-                        yes_ask=o.current_yes_ask,
+                        valid_until=ts + timedelta(hours=valid_h),
+                        probability=p,
+                        yes_bid=max(0.001, round(p - 0.003, 4)),
+                        yes_ask=min(0.999, round(p + 0.003, 4)),
                     )
                 )
-                rows_inside_floor += 1
+                rows_read += 1
 
     current_entry = golf_route._build_one_tournament("synthetic", markets, {})
     assert current_entry is not None
     detached = [detach_winner_market(m) for m in markets]
+    return markets, detached, current_entry, snapshots, commence, rows_total, rows_read
 
+
+def _time_build(
+    *,
+    label: str,
+    detached,
+    current_entry,
+    snapshots: Sequence[SnapshotReading],
+    commence: datetime,
+    full_range: bool,
+    is_live: bool,
+    now: datetime,
+    rows_total: int,
+    rows_read: int,
+    closed_cache: dict[tuple[int, int], ClosedBucketEntry],
+) -> dict:
+    stats: dict[str, int] = {}
     t0 = time.perf_counter()
     payload = build_golf_blended_timeline(
         "synthetic",
@@ -135,44 +163,111 @@ def _run_synthetic_case(
         commence_time=commence,
         is_live=is_live,
         max_reading_age=golf_route.PREGAME_READING_MAX_AGE,
+        closed_bucket_cache=closed_cache,
+        build_stats=stats,
         now=now,
     )
     elapsed = time.perf_counter() - t0
+    pts = payload["timeline"]
+    play_pts = sum(1 for pt in pts if datetime.fromisoformat(pt["timestamp"]) >= commence)
     return {
         "case": label,
-        "golfers": n_golfers,
-        "sources": n_sources,
-        "span_days": span_days,
         "full_range": full_range,
-        "rows_total_in_table": rows_generated,
-        "rows_read": rows_inside_floor,
-        "timeline_points": len(payload["timeline"]),
+        "rows_total_in_table": rows_total,
+        "rows_read": rows_read,
+        "timeline_points": len(pts),
+        "pre_tee_points": len(pts) - play_pts,
+        "play_points": play_pts,
         "bucket_seconds": payload["bucket_seconds"],
+        "evaluated": stats.get("evaluated", 0),
+        "reused": stats.get("reused", 0),
         "seconds": round(elapsed, 4),
     }
 
 
 def run_synthetic() -> list[dict]:
-    return [
-        _run_synthetic_case(
-            label="live_full_field_156_golfers_4d_15m",
+    now = datetime(2031, 6, 15, 16, 0, tzinfo=timezone.utc)
+    markets, detached, current_entry, snapshots, commence, rows_total, rows_read = (
+        _synthetic_markets_and_snaps(
             n_golfers=156,
             n_sources=2,
-            span_days=4,
-            snap_step_hours=1,
-            is_live=True,
-            full_range=False,
-        ),
-        _run_synthetic_case(
-            label="multi_month_major_120_golfers_150d_full_capped_90d",
-            n_golfers=120,
-            n_sources=2,
-            span_days=150,
-            snap_step_hours=4,
-            is_live=False,
+            pre_tee_days=10,
+            pre_step_hours=1,
+            play_days=4,
+            play_step_minutes=15,
             full_range=True,
-        ),
-    ]
+            now=now,
+        )
+    )
+    closed_cache: dict[tuple[int, int], ClosedBucketEntry] = {}
+    cold_156 = _time_build(
+        label="worst_case_full_build_156_golfers_14d_with_4d_play_15m",
+        detached=detached,
+        current_entry=current_entry,
+        snapshots=snapshots,
+        commence=commence,
+        full_range=True,
+        is_live=True,
+        now=now,
+        rows_total=rows_total,
+        rows_read=rows_read,
+        closed_cache=closed_cache,
+    )
+
+    # Simulate a live poll 15 minutes later with 1 new tick appended.
+    next_ts = now + timedelta(minutes=15)
+    new_snaps = list(snapshots)
+    for m in markets:
+        for g_idx, o in enumerate(m.outcomes):
+            p = min(0.99, max(0.001, round(o.current_probability + (0.002 if g_idx == 0 else 0.0), 4)))
+            new_snaps.append(
+                SnapshotReading(
+                    outcome_id=o.id,
+                    captured_at=next_ts,
+                    valid_until=next_ts + timedelta(hours=2),
+                    probability=p,
+                    yes_bid=max(0.001, round(p - 0.003, 4)),
+                    yes_ask=min(0.999, round(p + 0.003, 4)),
+                )
+            )
+    warm_156 = _time_build(
+        label="live_refresh_during_play_156_golfers_4d_15m",
+        detached=detached,
+        current_entry=current_entry,
+        snapshots=new_snaps,
+        commence=commence,
+        full_range=True,
+        is_live=True,
+        now=next_ts,
+        rows_total=rows_total + len(detached) * 156,
+        rows_read=rows_read + len(detached) * 156,
+        closed_cache=closed_cache,
+    )
+
+    _, det_m, cur_m, snaps_m, comm_m, rows_tot_m, rows_read_m = _synthetic_markets_and_snaps(
+        n_golfers=120,
+        n_sources=2,
+        pre_tee_days=296,
+        pre_step_hours=4,
+        play_days=4,
+        play_step_minutes=15,
+        full_range=True,
+        now=now,
+    )
+    major_300d = _time_build(
+        label="major_300d_with_4d_play_15m_full_capped_90d",
+        detached=det_m,
+        current_entry=cur_m,
+        snapshots=snaps_m,
+        commence=comm_m,
+        full_range=True,
+        is_live=True,
+        now=now,
+        rows_total=rows_tot_m,
+        rows_read=rows_read_m,
+        closed_cache={},
+    )
+    return [cold_156, warm_156, major_300d]
 
 
 async def run_live_db() -> list[dict]:
