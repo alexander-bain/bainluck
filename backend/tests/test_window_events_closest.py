@@ -769,9 +769,25 @@ async def test_shortlist_preselects_closest_12_before_hydrating_20_plus_slate(
 
         # Ineligible / unblended games that must NOT consume the 12-game shortlist:
         # 701: unblended (no win_probability_sources)
-        # 702: pro_minor league excluded by _is_eligible
+        # 702: pro_minor league (has crests + 0.501 blend; excluded solely by pro_minor check)
         # 703: completed game excluded by status filter
-        s.add(Sport(id=43, key="basketball_nba_gleague", name="NBA G League", group="Basketball"))
+        from app.utils.league_classification import get_league_class
+
+        assert get_league_class("basketball_nbl") == "pro_minor"
+        s.add(Sport(id=43, key="basketball_nbl", name="NBL", group="Basketball"))
+        for nm, abbr in (("HomeTeam702", "H702"), ("AwayTeam702", "A702")):
+            s.add(
+                Team(
+                    id=next_team_id,
+                    sport_id=43,
+                    name=nm,
+                    abbreviation=abbr,
+                    primary_color="#112233",
+                    logo_url=f"https://cdn.example/{abbr.lower()}.png",
+                    logo_url_small=f"https://cdn.example/{abbr.lower()}-sm.png",
+                )
+            )
+            next_team_id += 1
         for extra_id, sp_id, st, src, c_time in (
             (701, sport_id, "scheduled", {}, tipoff),
             (

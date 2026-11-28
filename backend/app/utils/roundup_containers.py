@@ -996,6 +996,11 @@ _roundup_read_failures: deque[tuple[float, str, str, str]] = deque(maxlen=5000)
 _roundup_nothing_to_show_local: dict[tuple[str, Any], tuple[float, Optional[str]]] = {}
 #: Local companion marker for fixed-member settled round-ups retired from Discover (#13718).
 _roundup_settled_retired_local: dict[tuple[str, Any], float] = {}
+#: Local per-key cooldown timestamp recorded on producer timeout (#11259).
+#: Kept separate from ``_roundup_local_cache`` so an expired valid local copy
+#: remains intact while still throttling repeat Postgres attempts on this dyno
+#: for ``ROUNDUP_CACHE_TTL_S`` unless a newer valid copy lands in shared Redis.
+_roundup_timeout_cooldown_local: dict[tuple[str, Any], float] = {}
 
 
 def _prune_roundup_read_failures(now_ts: float) -> None:
@@ -1126,6 +1131,7 @@ def reset_roundup_cache_for_tests() -> None:
     _roundup_local_cache.clear()
     _roundup_nothing_to_show_local.clear()
     _roundup_settled_retired_local.clear()
+    _roundup_timeout_cooldown_local.clear()
     _roundup_read_failures.clear()
     _reset_roundup_swr_state_for_tests()
 
@@ -1824,6 +1830,7 @@ async def _store_roundup_cache_entry(
         copy.deepcopy(feed_item),
         copy.deepcopy(container_payload),
     )
+    _roundup_timeout_cooldown_local.pop(cache_key, None)
     is_nts_flag = bool(
         feed_item is None and nothing_to_show and (container_payload is None or settled_retired)
     )
@@ -1962,10 +1969,11 @@ async def _cache_roundup_timeout_refusal(
         producer.slug,
         "live" if isinstance(db, AsyncSession) else id(db),
     )
+    effective_ts = time.time() if ts is None else float(ts)
+    _roundup_timeout_cooldown_local[cache_key] = effective_ts
     prev = _roundup_local_cache.get(cache_key)
     if prev is not None and prev[1] is not None and prev[2] is not None:
         return
-    effective_ts = time.time() if ts is None else float(ts)
     _roundup_local_cache[cache_key] = (effective_ts, None, None)
     _roundup_nothing_to_show_local.pop(cache_key, None)
     _roundup_settled_retired_local.pop(cache_key, None)
@@ -2655,6 +2663,19 @@ async def evaluate_roundup_producer(
                 )
             ):
                 local_swr_fallback = (cached[0], cached[1], cached[2])
+        cooldown_ts = _roundup_timeout_cooldown_local.get(cache_key)
+        if cooldown_ts is not None:
+            if (ts - float(cooldown_ts)) < ROUNDUP_CACHE_TTL_S:
+                if isinstance(db, AsyncSession):
+                    if (
+                        local_timeout_cooldown is None
+                        or float(cooldown_ts) > float(local_timeout_cooldown[0])
+                    ):
+                        local_timeout_cooldown = (float(cooldown_ts), None, None)
+                else:
+                    return None, None
+            else:
+                _roundup_timeout_cooldown_local.pop(cache_key, None)
         if isinstance(db, AsyncSession):
             try:
                 raw_val: Any = None
@@ -2704,6 +2725,7 @@ async def evaluate_roundup_producer(
                         )
                         if age_s < raw_ttl and cooldown_superseded:
                             _roundup_local_cache[cache_key] = (built_at, fi, cp)
+                            _roundup_timeout_cooldown_local.pop(cache_key, None)
                             if is_sr and fi is None:
                                 _roundup_nothing_to_show_local[cache_key] = (built_at, sr_reason)
                                 is_sr_long = bool(
@@ -2748,6 +2770,7 @@ async def evaluate_roundup_producer(
                                     or built_at >= local_stale_fallback[0]
                                 ):
                                     _roundup_local_cache[cache_key] = (built_at, fi, cp)
+                                    _roundup_timeout_cooldown_local.pop(cache_key, None)
                                     if is_sr and fi is None:
                                         _roundup_nothing_to_show_local[cache_key] = (built_at, sr_reason)
                                     _record_roundup_live_origin(
@@ -2772,6 +2795,7 @@ async def evaluate_roundup_producer(
                                 or built_at >= local_swr_fallback[0]
                             ):
                                 _roundup_local_cache[cache_key] = (built_at, fi, cp)
+                                _roundup_timeout_cooldown_local.pop(cache_key, None)
                                 if is_sr and fi is None:
                                     _roundup_nothing_to_show_local[cache_key] = (built_at, sr_reason)
                                 chosen_swr = (built_at, fi, cp)

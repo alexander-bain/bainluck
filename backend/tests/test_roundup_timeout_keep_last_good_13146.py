@@ -1433,3 +1433,114 @@ class TestTimeoutRefusalDoesNotPoisonSharedRedisAndReChecksLive:
         assert _roundup_slugs_in(placed_20) == [producer.slug]
         assert "worker-v2" in (_roundup_title_for(placed_20, producer.slug) or "")
         assert produce_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_expired_local_copy_still_records_cooldown_and_throttles_repeat_builds(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Even when the dyno already holds an expired valid copy locally, a timeout
+        records the per-key cooldown so repeat builds inside the cooldown window make
+        one attempt (not one per request) while keeping shared Redis clean and keeping
+        the old copy intact until a newer shared copy lands.
+        """
+        from app.utils.roundup_containers import (
+            _roundup_local_cache,
+            _roundup_timeout_cooldown_local,
+        )
+
+        reset_roundup_cache_for_tests()
+        monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ROUNDUP_PRODUCER_TIMEOUT_SECONDS", 0.05
+        )
+
+        t0 = datetime(2026, 11, 20, 10, 0, 0, tzinfo=timezone.utc)
+        clock = [t0.timestamp()]
+        fake_redis = _ExpiringFakeRedis(clock)
+        _wire_fake_redis(monkeypatch, fake_redis)
+
+        mode = "warm"
+        produce_calls = 0
+
+        async def _produce(_db: Any) -> Any:
+            nonlocal produce_calls
+            produce_calls += 1
+            if mode == "hang":
+                await asyncio.sleep(0.25)
+                return None
+            return _make_standing_members("initial-copy", live_event=True)
+
+        producer = RoundupProducer(
+            slug="roundup-closest-games-tonight",
+            name="The closest games tonight",
+            kind="roundup",
+            category="sports",
+            section_title="The 4 closest games",
+            footer="4 games",
+            produce=_produce,
+        )
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ROUNDUP_PRODUCERS",
+            {producer.slug: producer},
+        )
+
+        fake_session = MagicMock(spec=AsyncSession)
+        fake_session.rollback = AsyncMock()
+
+        # 1. Dyno builds a valid live copy at t0.
+        placed_0 = await add_roundup_feed_items(fake_session, _ordinary_deck(), now=t0)
+        assert _roundup_slugs_in(placed_0) == [producer.slug]
+        assert produce_calls == 1
+        assert _roundup_local_cache[(producer.slug, "live")][1] is not None
+
+        # 2. Twenty minutes later (well past 300s live keep-time), shared Redis is empty
+        #    and the producer hangs. Five Discover builds 1s apart make ONLY 1 attempt.
+        mode = "hang"
+        produce_calls = 0
+        fake_redis._store.clear()
+        t1 = t0 + timedelta(seconds=1200)
+        for offset_s in range(5):
+            t_cur = t1 + timedelta(seconds=offset_s)
+            clock[0] = t_cur.timestamp()
+            placed_cur = await add_roundup_feed_items(
+                fake_session, _ordinary_deck(), now=t_cur
+            )
+            assert _roundup_slugs_in(placed_cur) == []
+
+        assert produce_calls == 1
+        assert _redis_cache_key(producer.slug) not in fake_redis._store
+        assert _roundup_local_cache[(producer.slug, "live")][1] is not None
+        assert _roundup_timeout_cooldown_local[(producer.slug, "live")] == t1.timestamp()
+
+        # 3. Inside the cooldown window, another worker publishes a newer valid copy to
+        #    shared Redis; the dyno immediately supersedes its cooldown and clears it.
+        t_worker = t1 + timedelta(seconds=15)
+        clock[0] = t_worker.timestamp()
+        saved_local = _roundup_local_cache.pop((producer.slug, "live"), None)
+        saved_cd = _roundup_timeout_cooldown_local.pop((producer.slug, "live"), None)
+        p_worker = RoundupProducer(
+            slug=producer.slug,
+            name=producer.name,
+            kind=producer.kind,
+            category=producer.category,
+            section_title=producer.section_title,
+            footer=producer.footer,
+            produce=lambda _db: _make_standing_members("worker-v3", live_event=True),
+        )
+        await evaluate_roundup_producer(
+            p_worker, fake_session, now=t_worker, force_refresh=True
+        )
+        assert saved_local is not None and saved_cd is not None
+        _roundup_local_cache[(producer.slug, "live")] = saved_local
+        _roundup_timeout_cooldown_local[(producer.slug, "live")] = saved_cd
+
+        t_recover = t1 + timedelta(seconds=20)
+        clock[0] = t_recover.timestamp()
+        placed_recover = await add_roundup_feed_items(
+            fake_session, _ordinary_deck(), now=t_recover
+        )
+        assert _roundup_slugs_in(placed_recover) == [producer.slug]
+        assert "worker-v3" in (_roundup_title_for(placed_recover, producer.slug) or "")
+        assert (producer.slug, "live") not in _roundup_timeout_cooldown_local
+        assert produce_calls == 1
