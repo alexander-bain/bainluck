@@ -352,19 +352,7 @@ nonisolated struct DiscoverRoundupRowModel: Equatable, Identifiable, Sendable {
     }
 
     var spokenPercentText: String {
-        if let divisionDisplay {
-            if divisionDisplay.state == .subOnePercent {
-                return "under 1%"
-            }
-            if divisionDisplay.state == .eliminated || divisionDisplay.state == .noRecentProbability {
-                return divisionDisplay.label
-            }
-        }
-        switch marker {
-        case "<": return "under \(digits)%"
-        case ">": return "over \(digits)%"
-        default: return "\(digits)%"
-        }
+        spokenProbabilityText(formattedPercentText)
     }
 }
 

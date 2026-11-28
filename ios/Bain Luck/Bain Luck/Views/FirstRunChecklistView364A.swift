@@ -66,6 +66,7 @@ struct ChecklistThumbnail364A: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(DS.border, lineWidth: 1)
         )
+        .accessibilityHidden(true)
     }
 
     private var fallbackIcon: some View {
@@ -128,6 +129,7 @@ struct FirstRunChecklistView364A: View {
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         #endif
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("checklist364A.root")
     }
 
@@ -242,6 +244,7 @@ struct FirstRunChecklistView364A: View {
             .overlay(Capsule().stroke(DS.border, lineWidth: 1))
             .buttonStyle(.plain)
             .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("Skip")
             .accessibilityIdentifier("checklist364A.skipButton")
     }
 
@@ -251,6 +254,7 @@ struct FirstRunChecklistView364A: View {
                 .font(.title2.weight(.bold))
                 .foregroundStyle(DS.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
 
             if dynamicTypeSize < .accessibility4 {
                 Text(FirstRunChecklistContent364A.butlerQuote)
@@ -422,6 +426,7 @@ struct FirstRunChecklistView364A: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityValue(isDone ? "Completed" : "Not started")
         .accessibilityIdentifier(row.accessibilityIdentifier)
     }
 
@@ -431,10 +436,12 @@ struct FirstRunChecklistView364A: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(DS.greenReadable)
+                .accessibilityHidden(true)
         } else {
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(enabled ? DS.textSecondaryReadable : DS.textMuted)
+                .accessibilityHidden(true)
         }
     }
 
@@ -455,10 +462,11 @@ struct FirstRunChecklistView364A: View {
                     .background(DS.blueReadable, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Go to Discover")
+            .accessibilityIdentifier("checklist364A.goToDiscoverButton")
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
             .checklistReadableColumn364A(alignment: .center, maxWidth: columnMaxWidth)
-            .accessibilityIdentifier("checklist364A.goToDiscoverButton")
         }
         .background(DS.surface)
     }
@@ -485,6 +493,8 @@ struct MyStuffChecklistBanner364A: View {
                         .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.85)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityLabel("Getting started, \(state.progressText)")
                     Spacer(minLength: 4)
                     Button {
                         state.dismissedFromMyStuff = true
@@ -495,6 +505,7 @@ struct MyStuffChecklistBanner364A: View {
                             .foregroundStyle(DS.textSecondaryReadable)
                             .frame(width: 28, height: 28)
                             .background(DS.trackBg, in: Circle())
+                            .accessibilityHidden(true)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Dismiss checklist")
@@ -512,6 +523,7 @@ struct MyStuffChecklistBanner364A: View {
                                 Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(isDone ? DS.greenReadable : (lit ? DS.blueReadable : DS.textMuted))
+                                    .accessibilityHidden(true)
                                 Text(row.title)
                                     .font(.footnote.weight(isDone ? .medium : .semibold))
                                     .foregroundStyle(isDone ? DS.textSecondaryReadable : (lit ? DS.textPrimary : DS.textMuted))
@@ -524,12 +536,14 @@ struct MyStuffChecklistBanner364A: View {
                                     Image(systemName: "chevron.right")
                                         .font(.caption2.weight(.semibold))
                                         .foregroundStyle(DS.textSecondaryReadable)
+                                        .accessibilityHidden(true)
                                 }
                             }
                             .padding(.vertical, 4)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityValue(isDone ? "Completed" : "Not started")
                         .accessibilityIdentifier("checklist364A.myStuffRow.\(row.rawValue)")
                     }
                 }
@@ -538,6 +552,7 @@ struct MyStuffChecklistBanner364A: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(DS.border, lineWidth: 1))
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("checklist364A.myStuffBanner")
         }
     }
@@ -617,6 +632,7 @@ struct FirstRunLookupStepView364A: View {
                         Image(systemName: "magnifyingglass")
                             .font(.subheadline)
                             .foregroundStyle(DS.textSecondaryReadable)
+                            .accessibilityHidden(true)
                         TextField("Search anything", text: $query)
                             .textFieldStyle(.plain)
                             .submitLabel(.search)
@@ -628,6 +644,7 @@ struct FirstRunLookupStepView364A: View {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.subheadline)
                                     .foregroundStyle(DS.textSecondaryReadable)
+                                    .accessibilityHidden(true)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Clear search")
@@ -665,11 +682,13 @@ struct FirstRunLookupStepView364A: View {
                                                 .foregroundStyle(DS.textPrimary)
                                                 .multilineTextAlignment(.leading)
                                                 .fixedSize(horizontal: false, vertical: true)
+                                                .accessibilityLabel(ex.percent.map { "\(ex.title) \(spokenProbabilityText("\($0)%"))" } ?? ex.title)
                                         }
                                         Spacer(minLength: 8)
                                         Image(systemName: "chevron.right")
                                             .font(.caption.weight(.semibold))
                                             .foregroundStyle(DS.textSecondaryReadable)
+                                            .accessibilityHidden(true)
                                     }
                                     .padding(10)
                                     .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -824,6 +843,7 @@ struct FirstRunLookupStepView364A: View {
                 .font(.headline.weight(.bold).monospacedDigit())
                 .foregroundStyle(DS.blueReadable)
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(spokenProbabilityText("\(row.percent)%"))
         }
     }
 }
@@ -891,12 +911,14 @@ struct FirstRunFollowStepView364A: View {
                                         Image(systemName: "xmark")
                                             .font(.caption2.weight(.bold))
                                             .foregroundStyle(solidButtonForeground.opacity(0.8))
+                                            .accessibilityHidden(true)
                                     }
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 6)
                                     .background(DS.textPrimary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Remove \(picked.chipDisplayText)")
                             }
                         }
                     }
@@ -905,6 +927,7 @@ struct FirstRunFollowStepView364A: View {
                         Image(systemName: "magnifyingglass")
                             .font(.subheadline)
                             .foregroundStyle(DS.textSecondaryReadable)
+                            .accessibilityHidden(true)
                         TextField("Type a city, school, team, or topic", text: $vm.searchQuery, axis: .vertical)
                             .textFieldStyle(.plain)
                             .lineLimit(1...3)
@@ -981,6 +1004,7 @@ struct FirstRunFollowStepView364A: View {
                                         HStack(spacing: 4) {
                                             Image(systemName: picked ? "checkmark" : "plus")
                                                 .font(.caption2.weight(.bold))
+                                                .accessibilityHidden(true)
                                             Text(picked ? "Following" : "Follow")
                                                 .font(.caption.weight(.bold))
                                         }
@@ -994,6 +1018,7 @@ struct FirstRunFollowStepView364A: View {
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityAddTraits(picked ? .isSelected : [])
                                 if idx < picturedSuggestions.count - 1 {
                                     Divider().padding(.leading, 54)
                                 }
@@ -1081,12 +1106,14 @@ struct FirstRunFollowStepView364A: View {
                 Image(systemName: selected ? "checkmark" : "plus")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(selected ? solidButtonForeground : DS.blueReadable)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(selected ? DS.textPrimary : DS.trackBg, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -1171,6 +1198,8 @@ struct FirstRunExploreSetsStepView364A: View {
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("\(selected ? "Unpick" : "Pick") \(choice.machineryCard.title)")
+                                .accessibilityAddTraits(selected ? .isSelected : [])
 
                                 MachineryDiscoverEntryCardView(
                                     card: choice.machineryCard,
@@ -1251,6 +1280,7 @@ struct FirstRunSignInStepView364A: View {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.title3.weight(.semibold))
                                     .foregroundStyle(DS.greenReadable)
+                                    .accessibilityHidden(true)
                                 Text("Signed in and syncing across your devices")
                                     .font(.headline.weight(.bold))
                                     .foregroundStyle(DS.textPrimary)
@@ -1475,6 +1505,7 @@ struct FirstRunAlertsStepView364A: View {
                 .foregroundStyle(tint)
                 .frame(width: 28, height: 28)
                 .background(tint.opacity(colorScheme == .dark ? 0.18 : 0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
@@ -1487,6 +1518,7 @@ struct FirstRunAlertsStepView364A: View {
             Spacer(minLength: 4)
         }
         .padding(12)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -1501,10 +1533,12 @@ struct FirstRunLeaveToDiscoverPreview364A: View {
                 Text("Discover")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(DS.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 8)
                 Image(systemName: "magnifyingglass")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(DS.textSecondaryReadable)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -1528,6 +1562,7 @@ struct FirstRunLeaveToDiscoverPreview364A: View {
             }
         }
         .background(DS.surface)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("checklist364A.discoverDefaultLanding")
     }
 }
@@ -1546,6 +1581,7 @@ private struct StepTopBar364A: View {
                     .foregroundStyle(DS.blueReadable)
                     .frame(width: 28, height: 28, alignment: .leading)
                     .contentShape(Rectangle())
+                    .accessibilityHidden(true)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
@@ -1554,6 +1590,7 @@ private struct StepTopBar364A: View {
                 .foregroundStyle(DS.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
+                .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
             if let actionTitle {
                 Button(actionTitle, action: onAction)

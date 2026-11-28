@@ -128,6 +128,8 @@ struct AppIconPickerView423A: View {
         .buttonStyle(.plain)
         .disabled(applyingChoice != nil)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(choice.displayName)
+        .accessibilityValue(isApplying ? "Updating app icon" : "")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier("appIconPicker.option.\(choice.rawValue)")
     }
@@ -141,6 +143,7 @@ struct AppIconPickerView423A: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.title3)
                 .foregroundStyle(Color.accentColor)
+                .accessibilityHidden(true)
         }
     }
 

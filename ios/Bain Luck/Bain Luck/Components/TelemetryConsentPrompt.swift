@@ -35,6 +35,7 @@ struct TelemetryConsentPrompt: View {
                             .foregroundStyle(DS.textPrimary)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
 
                         Text(
                             "We can collect anonymous usage stats \u{2014} which screens are slow, "

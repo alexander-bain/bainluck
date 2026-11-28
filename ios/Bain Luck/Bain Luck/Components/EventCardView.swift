@@ -1831,7 +1831,7 @@ struct EventCardView: View {
             let homeText = formatProbability(reading.homeProbability, renderedPercent: reading.percents[1])
             return (
                 visible: "Pregame \(awayText)\u{2013}\(homeText)",
-                spoken: "Pregame \(event.awayTeam) \(awayText), \(event.homeTeam) \(homeText)"
+                spoken: "Pregame \(event.awayTeam) \(spokenProbabilityText(awayText)), \(event.homeTeam) \(spokenProbabilityText(homeText))"
             )
         }
         guard let opened = DrawPricedWinner.printablePair(
@@ -1844,7 +1844,7 @@ struct EventCardView: View {
             let homeText = formatProbability(opened.home, renderedPercent: reading.percents[1])
             return (
                 visible: "Pregame \(awayText)\u{2013}\(homeText)",
-                spoken: "Pregame \(event.awayTeam) \(awayText), \(event.homeTeam) \(homeText)"
+                spoken: "Pregame \(event.awayTeam) \(spokenProbabilityText(awayText)), \(event.homeTeam) \(spokenProbabilityText(homeText))"
             )
         }
         let named = TeamShortName.shortPair(
@@ -1854,7 +1854,7 @@ struct EventCardView: View {
         let homeText = formatProbability(opened.home)
         return (
             visible: "Pregame \(named.home) \(homeText)",
-            spoken: "Pregame \(event.homeTeam) \(homeText)"
+            spoken: "Pregame \(event.homeTeam) \(spokenProbabilityText(homeText))"
         )
     }
 
@@ -1910,12 +1910,15 @@ struct EventCardView: View {
                     .foregroundStyle(color)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityLabel(spokenProbabilityText(tenths))
             } else {
-                Text(formatProbability(prob, renderedPercent: side == .home ? livePercents[1] : livePercents[0]))
+                let label = formatProbability(prob, renderedPercent: side == .home ? livePercents[1] : livePercents[0])
+                Text(label)
                     .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityLabel(spokenProbabilityText(label))
             }
         }
     }
@@ -1960,6 +1963,7 @@ struct EventCardView: View {
                         .font(.caption)
                         .fontWeight(.semibold)
                         .monospacedDigit()
+                        .accessibilityLabel(spokenProbabilityText(text))
                 }
                 .foregroundStyle(DS.textSecondaryReadable)
                 VStack(alignment: .leading, spacing: 0) {
@@ -1976,11 +1980,13 @@ struct EventCardView: View {
                     .foregroundStyle(DS.textSecondaryReadable)
                     .lineLimit(1)
                     .fixedSize()
+                    .accessibilityLabel(spokenProbabilityText(text))
             } else {
                 Text(text)
                     .font(HeadlineStyleTable199.secondNumbers(.card, prominent: false, scaledSize: min(compactPregameSize, 18)))
                     .foregroundStyle(.secondary.opacity(0.7))
                     .lineLimit(1)
+                    .accessibilityLabel(spokenProbabilityText(text))
             }
         }
     }
@@ -2032,6 +2038,7 @@ struct EventCardView: View {
                 glowing: isLive,
                 notchProb: currentAwayIsWithheld ? nil : notch
             )
+            .accessibilityHidden(true)
         }
     }
 }
