@@ -355,7 +355,7 @@ enum SavedWidgetReadingRules10875 {
         if startIsTbd {
             return "Starts " + commenceTime.formatted(.dateTime.month(.abbreviated).day()) + " · time TBD"
         }
-        return "Starts " + commenceTime.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        return "Starts " + commenceTime.formatted(.dateTime.month(.abbreviated).day()) + ", " + commenceTime.formatted(.dateTime.hour().minute())
     }
 
     // MARK: - Markets

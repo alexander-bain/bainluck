@@ -669,7 +669,7 @@ class TestExternalAppleSurfacesUseUnifiedProbabilityRule:
         # Planted Item 3 regression mutants: dropping the pre-start check on an external
         # surface or swapping `"No probability yet"` back to `"No recent probability"`.
         unwired_small_widget = (
-            'Text(reading.phase == .noResult ? "No result recorded" : '
+            'Text(reading.phase == .noResult ? "No result reported" : '
             'ExternalSurfaceProbabilityFormat.missingProbabilityText)'
         )
         assert "reading.unavailableProbabilityText" not in unwired_small_widget
@@ -752,8 +752,10 @@ class TestExternalAppleSurfacesUseUnifiedProbabilityRule:
 
         saved_widget = (WIDGET_ROOT / "SavedItemWidget10875.swift").read_text()
         assert saved_widget.count("reading.unavailableProbabilityText") == 3
+        assert "No result recorded" not in saved_widget
         saved_looks = (WIDGET_ROOT / "SavedWidgetLooks12466.swift").read_text()
         assert "model.reading.unavailableProbabilityText" in saved_looks
+        assert "No result recorded" not in saved_looks
 
         lock_matchup = (WIDGET_ROOT / "SavedLockScreenMatchup13432.swift").read_text()
         assert "ExternalSurfaceProbabilityFormat.missingProbabilityText(\n            hasStarted: hasStarted,\n            hadPriorNumber: hadPriorNumber" in lock_matchup

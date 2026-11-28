@@ -347,7 +347,7 @@ struct SavedSmall10875: View {
                     .lineLimit(1)
                 SavedValue10875(row: headline, size: 30)
             } else {
-                Text(reading.phase == .noResult ? "No result recorded" : reading.unavailableProbabilityText)
+                Text(reading.phase == .noResult ? "No result reported" : reading.unavailableProbabilityText)
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -357,7 +357,8 @@ struct SavedSmall10875: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.65)
+                .allowsTightening(true)
                 .padding(.trailing, entry.isRefreshable12305 ? 24 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -380,16 +381,35 @@ struct SavedMedium10875: View {
         let clearsRefresh = caption == nil && !showsUnavailableLine && entry.isRefreshable12305
         let tightVertical = dynamicTypeSize >= .xxLarge || (showsUnavailableLine && reading.rows.count >= 3)
         VStack(alignment: .leading, spacing: tightVertical ? 3 : 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(reading.subject)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.85)
-                Spacer(minLength: 4)
-                Text(reading.status)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            if dynamicTypeSize >= .xxLarge && reading.rows.count <= 2 {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(reading.subject)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .allowsTightening(true)
+                    Text(reading.status)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .allowsTightening(true)
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(reading.subject)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                        .allowsTightening(true)
+                    Spacer(minLength: 4)
+                    Text(reading.status)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .allowsTightening(true)
+                }
             }
             Spacer(minLength: 0)
             ForEach(Array(reading.rows.enumerated()), id: \.offset) { _, row in
@@ -422,7 +442,7 @@ struct SavedMedium10875: View {
                     .minimumScaleFactor(0.8)
                     .padding(.trailing, entry.isRefreshable12305 ? 24 : 0)
             } else if showsUnavailableLine {
-                Text(reading.phase == .noResult ? "No result recorded" : reading.unavailableProbabilityText)
+                Text(reading.phase == .noResult ? "No result reported" : reading.unavailableProbabilityText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -510,7 +530,7 @@ struct SavedRectangular10875: View {
                         .font(.body.weight(.semibold).monospacedDigit())
                 }
             } else {
-                Text(reading.phase == .noResult ? "No result recorded" : reading.unavailableProbabilityText)
+                Text(reading.phase == .noResult ? "No result reported" : reading.unavailableProbabilityText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
             }

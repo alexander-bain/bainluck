@@ -252,7 +252,7 @@ struct SavedLookPlain12466: View {
                     .lineLimit(2)
                     .minimumScaleFactor(0.6)
             } else {
-                Text(model.reading.phase == .noResult ? "No result recorded" : model.reading.unavailableProbabilityText)
+                Text(model.reading.phase == .noResult ? "No result reported" : model.reading.unavailableProbabilityText)
                     .font(.subheadline.weight(.semibold))
                     .opacity(0.8)
                     .lineLimit(2)
@@ -262,7 +262,8 @@ struct SavedLookPlain12466: View {
                 .font(.caption2)
                 .opacity(0.75)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.65)
+                .allowsTightening(true)
                 .padding(.trailing, model.entry.isRefreshable12305 ? 24 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)

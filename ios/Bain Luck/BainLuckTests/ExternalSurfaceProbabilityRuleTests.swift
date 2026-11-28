@@ -1607,7 +1607,7 @@ final class ExternalSurfaceProbabilityRuleTests: XCTestCase {
         renderer.scale = 2.0
         let image = try XCTUnwrap(renderer.uiImage)
         let png = try XCTUnwrap(image.pngData())
-        let outURL = URL(fileURLWithPath: "/tmp/item3-real-widgets-v2-sheet.png")
+        let outURL = URL(fileURLWithPath: "/tmp/item3-real-widgets-v3-sheet.png")
         try png.write(to: outURL)
         print("EXPORTED_ITEM3_SHEET=\(outURL.path) bytes=\(png.count)")
     }
