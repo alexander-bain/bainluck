@@ -8418,8 +8418,15 @@ def _total_threshold_in_sport_range(
 
 
 _event_detail_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
+_event_detail_live_signatures: dict[int, tuple[float, tuple]] = {}  # event_id → (timestamp, price signature)
+_event_detail_live_check_backoff_until: dict[int, float] = {}  # event_id → monotonic/wall backoff deadline
 _EVENT_DETAIL_LIVE_TTL = 30
 _EVENT_DETAIL_DEFAULT_TTL = 300
+_EVENT_DETAIL_LIVE_CHECK_TIMEOUT_S = 0.25
+_EVENT_DETAIL_LIVE_CHECK_BACKOFF_S = 3.0
+_SEARCH_LIVE_REFRESH_TIMEOUT_S = 0.40
+LIVE_FRESHNESS_CHECK_HEADER = "X-Live-Freshness-Check"
+LIVE_SEARCH_REFRESH_HEADER = "X-Live-Search-Refresh"
 #: The ceiling on the settled-row shortcut below — lane1/132.
 #:
 #: A `completed`/`closed` entry used to be served with NO expiry at all, on the
@@ -10612,6 +10619,11 @@ async def search_events(
             # instead of a promise about a callee.
             _record_search_query(_hit, q=q, request=request, current_user=current_user)
             response.headers[SEARCH_CACHE_HEADER] = "hit"
+            # #13514: cached search bodies live up to 180s (or 600s head-warm),
+            # so any live (or past-kickoff scheduled) game card is overlaid from
+            # current DB state while keeping non-live cache hits at 0 DB reads.
+            _hit, _live_refresh_status = await _refresh_live_search_results(db, _hit)
+            response.headers[LIVE_SEARCH_REFRESH_HEADER] = _live_refresh_status
             # #9653: publication is live authority, so the hubs this page's games
             # belong to are read on every serve, never from the cached body.
             return await attach_search_collections(db, _hit)
@@ -14336,6 +14348,200 @@ def _publish_shed_search_answer(key: str, payload: dict, ttl: int) -> None:
             _get_rc().setex(key, ttl, json.dumps(payload, default=str))
     except Exception:  # noqa: BLE001 — a cache write never breaks a response
         pass
+
+
+def _search_hit_live_event_ids(results: list, now: datetime) -> list[int]:
+    """Return deduped event IDs in cached search results needing live refresh."""
+    live_ids: list[int] = []
+    seen_ids: set[int] = set()
+    for card in results:
+        if not isinstance(card, dict):
+            continue
+        eid = card.get("id")
+        if not isinstance(eid, int) or isinstance(eid, bool) or eid in seen_ids:
+            continue
+        status = str(card.get("status") or "").lower()
+        needs_refresh = status == "live"
+        if not needs_refresh and status == "scheduled":
+            raw_commence = card.get("commence_time")
+            if isinstance(raw_commence, str) and raw_commence:
+                try:
+                    commence = datetime.fromisoformat(raw_commence.replace("Z", "+00:00"))
+                    if commence.tzinfo is None:
+                        commence = commence.replace(tzinfo=timezone.utc)
+                    if commence <= now:
+                        needs_refresh = True
+                except ValueError:
+                    continue
+        if needs_refresh:
+            seen_ids.add(eid)
+            live_ids.append(eid)
+    return live_ids
+
+
+async def _run_live_search_refresh(
+    db: AsyncSession,
+    payload: dict,
+    results: list,
+    live_ids: list[int],
+    now: datetime,
+) -> dict:
+    live_rows = (
+        await db.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(Event.id.in_(live_ids))
+        )
+    ).scalars().all()
+    if not live_rows:
+        return payload
+
+    from app.utils.unified_game_read import load_unified_game_reads
+
+    unified_live = await load_unified_game_reads(
+        db,
+        live_rows,
+        collapse_in_page=False,
+        include_same_league_external=True,
+        include_odds=True,
+        include_live_projections=True,
+        include_recent_projections=True,
+        fold_fn=fold_twin_events,
+        fold_card_fn=folded_card_numbers_batch,
+        odds_query_fn=latest_odds_per_bookmaker_query,
+        fault_tolerant_external=True,
+        fault_tolerant_odds=True,
+        now=now,
+    )
+    gei_percentiles = await _load_gei_percentiles(db)
+    refreshed_events = unified_live.events
+    refreshed_cards: list[dict] = []
+    for ev in refreshed_events:
+        read = unified_live.by_id.get(ev.id)
+        card = _format_event_with_aggregated_odds(
+            ev,
+            read.odds_data if read is not None else None,
+            gei_percentiles,
+            folded_sources=read.folded_sources if read is not None else None,
+            folded_opening=read.folded_opening if read is not None else None,
+            three_way_books=read.three_way_books if read is not None else None,
+        )
+        odds_entry = unified_live.odds_map.get(ev.id)
+        if odds_entry and isinstance(card.get("current_odds"), dict):
+            try:
+                attach_card_projected_pair(
+                    card["current_odds"],
+                    {
+                        LIVE_PROJECTION_KEY: event_live_projection(
+                            odds_entry["all_snapshots"],
+                            ev,
+                            served_status=card.get("status"),
+                            sport_key=loaded_sport_key(ev),
+                        )
+                    },
+                )
+            except Exception:  # noqa: BLE001 — gotcha #42: one row, not the page
+                logger.exception("live search hit projection failed for event %s", ev.id)
+        refreshed_cards.append(card)
+
+    try:
+        await attach_venue_settlement(db, refreshed_events, refreshed_cards, now)
+    except Exception:  # noqa: BLE001
+        logger.warning("live search hit venue settlement attach failed", exc_info=True)
+
+    if any(is_finished_status(c.get("status")) for c in refreshed_cards):
+        try:
+            absorbed_ids = {
+                eid: list(read.absorbed_ids)
+                for eid, read in unified_live.by_id.items()
+                if read.absorbed_ids
+            }
+            await attach_settled_prematch_odds(
+                db,
+                refreshed_events,
+                refreshed_cards,
+                unified_live.folded_card_map,
+                absorbed_ids=absorbed_ids,
+                timeout_ms=card_projection_read_timeout_ms(None),
+                surface="search live hit overlay",
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("live search hit settled prematch attach failed", exc_info=True)
+
+    refreshed_by_id = {
+        c["id"]: c for c in refreshed_cards if isinstance(c.get("id"), int)
+    }
+    if not refreshed_by_id:
+        return payload
+
+    updated_results: list = []
+    for orig in results:
+        eid = orig.get("id") if isinstance(orig, dict) else None
+        fresh_card = (
+            refreshed_by_id.get(eid)
+            if isinstance(eid, int) and not isinstance(eid, bool)
+            else None
+        )
+        if fresh_card is None:
+            updated_results.append(orig)
+            continue
+        merged_card = dict(fresh_card)
+        for preserve_key in ("home_team_data", "away_team_data", "pregame_projection"):
+            if preserve_key in orig and preserve_key not in merged_card:
+                merged_card[preserve_key] = orig[preserve_key]
+        updated_results.append(merged_card)
+    return {**payload, "results": updated_results}
+
+
+async def _refresh_live_search_results(
+    db: Optional[AsyncSession],
+    payload: dict,
+    *,
+    timeout_s: Optional[float] = None,
+) -> tuple[dict, str]:
+    """Refresh live (or past-kickoff scheduled) event cards inside a search hit.
+
+    Bounded by ``timeout_s`` starting before connection acquire; when the limit
+    elapses or DB fails, falls back to the cached payload and reports status
+    for ``X-Live-Search-Refresh``.
+    """
+    import asyncio as _live_freshness_asyncio
+
+    effective_timeout = (
+        _SEARCH_LIVE_REFRESH_TIMEOUT_S if timeout_s is None else timeout_s
+    )
+    if db is None or not isinstance(payload, dict):
+        return payload, "skipped-no-live"
+    results = payload.get("results")
+    if not isinstance(results, list) or not results:
+        return payload, "skipped-no-live"
+
+    now = datetime.now(timezone.utc)
+    live_ids = _search_hit_live_event_ids(results, now)
+    if not live_ids:
+        return payload, "skipped-no-live"
+
+    try:
+        refreshed = await _live_freshness_asyncio.wait_for(
+            _run_live_search_refresh(db, payload, results, live_ids, now),
+            timeout=effective_timeout,
+        )
+        return refreshed, "ran"
+    except _live_freshness_asyncio.TimeoutError:
+        logger.warning(
+            "live search hit overlay timed out after %.0fms for %d live ids; serving cached payload",
+            effective_timeout * 1000,
+            len(live_ids),
+        )
+        try:
+            if hasattr(db, "rollback"):
+                await _live_freshness_asyncio.wait_for(db.rollback(), timeout=0.05)
+        except Exception:  # noqa: BLE001
+            logger.debug("live search hit rollback skipped after timeout", exc_info=True)
+        return payload, "timeout"
+    except Exception:  # noqa: BLE001 — gotcha #42: a cache overlay never drops a hit
+        logger.warning("live search hit overlay failed; serving cached payload", exc_info=True)
+        return payload, "error"
 
 
 # L2-88: extra query synonyms per hub slug so "ufc"→mma, "pga"→golf, etc. resolve
@@ -20451,9 +20657,161 @@ async def _settled_prematch_odds(
     )
 
 
+def _normalize_sig_num(val: object) -> object:
+    if isinstance(val, bool) or val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return round(float(val), 8)
+    return val
+
+
+def _live_sources_price_signature(sources: object) -> tuple:
+    """Return an order-independent price signature ignoring timestamp fields."""
+    if not isinstance(sources, dict):
+        return ()
+    items = []
+    for key in sorted(sources.keys(), key=str):
+        entry = sources[key]
+        if isinstance(entry, dict):
+            items.append(
+                (
+                    str(key),
+                    _normalize_sig_num(entry.get("value")),
+                    _normalize_sig_num(entry.get("away_value")),
+                    _normalize_sig_num(entry.get("draw_value")),
+                    _normalize_sig_num(entry.get("three_way_home_value")),
+                )
+            )
+        else:
+            items.append((str(key), _normalize_sig_num(entry), None, None, None))
+    return tuple(items)
+
+
+async def _cached_live_detail_is_stale(
+    db: AsyncSession,
+    cached_resp: dict,
+    *,
+    event_id: int,
+    cached_at: Optional[float] = None,
+    timeout_s: Optional[float] = None,
+) -> tuple[bool, str]:
+    """Return ``(is_stale, check_status)`` for a cached ``live`` detail payload.
+
+    Executes one PK lookup against ``Event.win_probability_sources_rev``,
+    ``Event.status``, and ``Event.win_probability_sources`` bounded by
+    ``timeout_s`` starting before connection acquire. On timeout or error,
+    arms per-worker backoff and serves the cached page without stalling.
+    """
+    import asyncio as _live_freshness_asyncio
+
+    effective_timeout = (
+        _EVENT_DETAIL_LIVE_CHECK_TIMEOUT_S if timeout_s is None else timeout_s
+    )
+    cached_rev = cached_resp.get("blend_fold_revision")
+    if not isinstance(cached_rev, dict) or not cached_rev:
+        return False, "skipped-no-rev"
+    rev_targets: dict[int, int] = {}
+    for raw_id, raw_rev in cached_rev.items():
+        if isinstance(raw_rev, bool) or not isinstance(raw_rev, int):
+            return False, "skipped-no-rev"
+        try:
+            eid = int(raw_id)
+        except (TypeError, ValueError):
+            return False, "skipped-no-rev"
+        if eid <= 0:
+            return False, "skipped-no-rev"
+        rev_targets[eid] = raw_rev
+    if not rev_targets:
+        return False, "skipped-no-rev"
+
+    served_id = cached_resp.get("id")
+    try:
+        async def _query():
+            res = await db.execute(
+                select(
+                    Event.id,
+                    Event.win_probability_sources_rev,
+                    Event.status,
+                    Event.win_probability_sources,
+                ).where(Event.id.in_(list(rev_targets)))
+            )
+            return res.all()
+
+        rows = await _live_freshness_asyncio.wait_for(_query(), timeout=effective_timeout)
+    except _live_freshness_asyncio.TimeoutError:
+        safe_event_id = str(event_id).replace("\r", "").replace("\n", "")
+        logger.warning(
+            "cached live detail check timed out after %.0fms for event %s; serving cached page",
+            effective_timeout * 1000,
+            safe_event_id,
+        )
+        _event_detail_live_check_backoff_until[event_id] = (
+            time.time() + _EVENT_DETAIL_LIVE_CHECK_BACKOFF_S
+        )
+        return False, "timeout"
+    except Exception:  # noqa: BLE001
+        _event_detail_live_check_backoff_until[event_id] = (
+            time.time() + _EVENT_DETAIL_LIVE_CHECK_BACKOFF_S
+        )
+        return False, "error"
+    if not rows:
+        return False, "ran"
+
+    db_state: dict[int, tuple[int, object, object]] = {}
+    for row in rows:
+        try:
+            if len(row) != 4:
+                return False, "skipped-no-rev"
+            rid, r_rev, r_status, r_sources = row
+        except (TypeError, ValueError):
+            return False, "skipped-no-rev"
+        if (
+            not isinstance(rid, int)
+            or isinstance(rid, bool)
+            or not isinstance(r_rev, int)
+            or isinstance(r_rev, bool)
+        ):
+            return False, "skipped-no-rev"
+        db_state[rid] = (r_rev, r_status, r_sources)
+
+    if len(db_state) != len(rev_targets) or set(db_state) != set(rev_targets):
+        return True, "rebuilt"
+
+    moved_ids: list[int] = []
+    for rid, expected_rev in rev_targets.items():
+        actual_rev, actual_status, _actual_sources = db_state[rid]
+        if rid == served_id and actual_status != "live":
+            return True, "rebuilt"
+        if actual_rev != expected_rev:
+            moved_ids.append(rid)
+
+    if not moved_ids:
+        return False, "ran"
+    if len(rev_targets) > 1:
+        return True, "rebuilt"
+
+    only_id = next(iter(rev_targets))
+    r_sources = db_state[only_id][2]
+    sig_entry = _event_detail_live_signatures.get(event_id)
+    if sig_entry is not None and (cached_at is None or sig_entry[0] == cached_at):
+        is_moved = _live_sources_price_signature(r_sources) != sig_entry[1]
+        return is_moved, ("rebuilt" if is_moved else "ran")
+
+    cached_sources = cached_resp.get("win_probability_sources")
+    if isinstance(cached_sources, dict) and isinstance(r_sources, dict):
+        is_moved = _live_sources_price_signature(r_sources) != _live_sources_price_signature(
+            cached_sources
+        )
+        return is_moved, ("rebuilt" if is_moved else "ran")
+    return True, "rebuilt"
+
+
 @router.get("/{event_id}")
 async def get_event(
-    event_id: int, db: AsyncSession = Depends(get_db), fresh: bool = False,
+    event_id: int,
+    db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+    response: Response = None,
 ):
     """Get event details with aggregated odds from all bookmakers."""
     import time as _time
@@ -20468,8 +20826,32 @@ async def get_event(
         return await _coalesced_fresh_detail(
             event_id, _now, lambda: get_event(event_id, db=db, fresh=True)
         )
+    _cached_entry = None if fresh else _event_detail_cache.get(event_id)
     _cached_resp = None if fresh else _cached_detail_payload(event_id, _now)
     if _cached_resp is not None:
+        if _cached_resp.get("status") != "live":
+            if response is not None:
+                response.headers[LIVE_FRESHNESS_CHECK_HEADER] = "skipped-non-live"
+            return _cached_resp
+        if db is not None and not _detail_fresh_leader.get():
+            if _event_detail_live_check_backoff_until.get(event_id, 0.0) > _now:
+                if response is not None:
+                    response.headers[LIVE_FRESHNESS_CHECK_HEADER] = "skipped-backoff"
+                return _cached_resp
+            is_stale, check_status = await _cached_live_detail_is_stale(
+                db,
+                _cached_resp,
+                event_id=event_id,
+                cached_at=_cached_entry[0] if _cached_entry is not None else None,
+            )
+            if is_stale:
+                if response is not None:
+                    response.headers[LIVE_FRESHNESS_CHECK_HEADER] = "rebuilt"
+                return await _coalesced_fresh_detail(
+                    event_id, _now, lambda: get_event(event_id, db=db, fresh=True)
+                )
+            if response is not None:
+                response.headers[LIVE_FRESHNESS_CHECK_HEADER] = check_status
         return _cached_resp
     request_started_at = datetime.now(timezone.utc)
 
@@ -21326,13 +21708,24 @@ async def get_event(
                     old = _event_detail_cache.get(key)
                     if old is not None and old[0] <= _now:
                         del _event_detail_cache[key]
+                        _event_detail_live_signatures.pop(key, None)
                 return _with_state_read_fresh(response, True)
         _published = _with_state_read_fresh(response, False)
+        _live_sig = (
+            _live_sources_price_signature(event.win_probability_sources)
+            if event.status == "live"
+            else None
+        )
         for _cache_key in {requested_event_id, event_id}:
             if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
                 oldest = min(_event_detail_cache, key=lambda k: _event_detail_cache[k][0])
                 del _event_detail_cache[oldest]
+                _event_detail_live_signatures.pop(oldest, None)
             _event_detail_cache[_cache_key] = (_now, event.status, _published)
+            if _live_sig is not None:
+                _event_detail_live_signatures[_cache_key] = (_now, _live_sig)
+            else:
+                _event_detail_live_signatures.pop(_cache_key, None)
 
     return _with_state_read_fresh(response, True)
 
