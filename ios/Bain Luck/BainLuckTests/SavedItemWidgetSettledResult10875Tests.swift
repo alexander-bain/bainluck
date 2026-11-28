@@ -93,7 +93,7 @@ final class SavedItemWidgetSettledResult10875Tests: XCTestCase {
                                "the last price lost its own clock (\(mode))")
                 XCTAssertFalse(r.spoken.localizedCaseInsensitiveContains("lost"), "VoiceOver said lost (\(mode))")
                 XCTAssertTrue(r.spoken.contains("unknown"), "VoiceOver did not say unknown (\(mode))")
-                XCTAssertTrue(r.spoken.contains("last recorded chance was 50%"), "VoiceOver did not name the last price (\(mode))")
+                XCTAssertTrue(r.spoken.contains("last recorded chance was 50 percent"), "VoiceOver did not name the last price (\(mode))")
             }
             // No outcome chosen: the hero leg is followed, and it is unknown too.
             let hero = SavedWidgetReadingRules10875.market(m, outcomeID: nil, now: t0)

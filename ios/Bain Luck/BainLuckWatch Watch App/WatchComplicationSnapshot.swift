@@ -141,7 +141,7 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
                 value: fitted,
                 gaugeShare: share,
                 isGame: true,
-                accessibilityText: "\(out.ownerName) \(fitted). \(reading.stateLabel). Open your game in Bain Luck."
+                accessibilityText: spokenTextExpandingProbabilitySymbols("\(out.ownerName) \(fitted). \(reading.stateLabel). Open your game in Bain Luck.")
             )
         case .futureForecast:
             guard let homePct = reading.homePercent,
@@ -165,7 +165,7 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
                 value: fitted,
                 gaugeShare: share,
                 isGame: false,
-                accessibilityText: "\(reading.homeName). \(outcome) \(fitted). Open in Bain Luck."
+                accessibilityText: spokenTextExpandingProbabilitySymbols("\(reading.homeName). \(outcome) \(fitted). Open in Bain Luck.")
             )
         case .finalResult:
             guard now.timeIntervalSince(reading.observedAt) < WatchMatchupReading217.finalHoldSeconds,
@@ -608,7 +608,7 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
                 guard let ascore = awayScore, let hs = homeScore else { return "" }
                 return " Score \(awayName) \(ascore), \(homeName) \(hs)."
             }()
-            let pct = formattedHomePercent ?? "unavailable"
+            let pct = formattedHomePercent.map { spokenProbabilityText($0) } ?? "unavailable"
             if isAgedLive(at: now) {
                 let clockText = Self.asOfClock(observedAt, timeZone: timeZone)
                 return "\(awayName) at \(homeName).\(scorePart) \(homeName) \(pct). As of \(clockText). Open your game in Bain Luck."
@@ -616,7 +616,7 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
             let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
             return "\(awayName) at \(homeName).\(scorePart) \(homeName) \(pct). Live, \(age). Open your game in Bain Luck."
         case .scheduledForecast:
-            let pct = formattedHomePercent ?? "unavailable"
+            let pct = formattedHomePercent.map { spokenProbabilityText($0) } ?? "unavailable"
             if let start = commenceTime {
                 if now >= start {
                     return "\(awayName) at \(homeName). \(homeName) \(pct). Open to update. Open your game in Bain Luck."
@@ -627,7 +627,7 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
             let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
             return "\(awayName) at \(homeName). \(homeName) \(pct). \(stateLabel), \(age). Open your game in Bain Luck."
         case .futureForecast:
-            let pct = formattedHomePercent ?? "unavailable"
+            let pct = formattedHomePercent.map { spokenProbabilityText($0) } ?? "unavailable"
             if isAgedFuture(at: now) {
                 let clockText = Self.asOfClock(observedAt, timeZone: timeZone)
                 return "\(homeName). \(awayName) \(pct). As of \(clockText). Open in Bain Luck."

@@ -256,3 +256,53 @@ nonisolated func spokenTextExpandingProbabilitySymbols(_ text: String) -> String
     }
     return out
 }
+
+/// Spoken VoiceOver summary for a live-games home widget game row (`LiveGamesWidget`).
+nonisolated func liveGamesWidgetGameVoiceOverSummary(
+    sport: String,
+    periodSpoken: String,
+    awayTeam: String,
+    awayScore: Int?,
+    awayProb: Int?,
+    awayProbText: String? = nil,
+    homeTeam: String,
+    homeScore: Int?,
+    homeProb: Int,
+    homeProbText: String? = nil
+) -> String {
+    let awayScorePart = awayScore.map { " \($0)" } ?? ""
+    let homeScorePart = homeScore.map { " \($0)" } ?? ""
+    let resolvedHomeText = homeProbText
+        ?? ExternalSurfaceProbabilityFormat.openWholePercent(homeProb)
+        ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+    let homeProbSpoken = spokenProbabilityText(resolvedHomeText)
+    if let awayProb {
+        let resolvedAwayText = awayProbText
+            ?? ExternalSurfaceProbabilityFormat.openWholePercent(awayProb)
+            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+        let awayProbSpoken = spokenProbabilityText(resolvedAwayText)
+        return "\(sport), \(periodSpoken). \(awayTeam)\(awayScorePart), \(awayProbSpoken). \(homeTeam)\(homeScorePart), \(homeProbSpoken)."
+    }
+    return "\(sport), \(periodSpoken). \(awayTeam)\(awayScorePart). \(homeTeam)\(homeScorePart), \(homeProbSpoken)."
+}
+
+/// Spoken VoiceOver summary for a trending-market row in `LiveGamesWidget`.
+nonisolated func liveGamesWidgetDiscoverVoiceOverSummary(
+    category: String,
+    name: String,
+    leader: String,
+    probability: Int,
+    probabilityText: String? = nil,
+    movement: Int?
+) -> String {
+    let resolvedText = probabilityText
+        ?? ExternalSurfaceProbabilityFormat.openWholePercent(probability)
+        ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+    let probSpoken = spokenProbabilityText(resolvedText)
+    let movePart: String = {
+        guard let movement, movement != 0 else { return "" }
+        let pts = abs(movement) == 1 ? "1 point" : "\(abs(movement)) points"
+        return movement > 0 ? ", up \(pts)" : ", down \(pts)"
+    }()
+    return "\(category). \(name). \(leader) \(probSpoken)\(movePart)."
+}

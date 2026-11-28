@@ -67,8 +67,8 @@ final class LiveActivityWholePercents395Tests: XCTestCase {
         XCTAssertNil(chiefsReading.rowSpoken(.home).range(of: decimalPercentPattern, options: .regularExpression))
         XCTAssertNil(chiefsReading.rowSpoken(.away).range(of: decimalPercentPattern, options: .regularExpression))
         XCTAssertNil(chiefsReading.chanceSpoken.range(of: decimalPercentPattern, options: .regularExpression))
-        XCTAssertTrue(chiefsReading.chanceSpoken.contains("34%"))
-        XCTAssertTrue(chiefsReading.chanceSpoken.contains("66%"))
+        XCTAssertTrue(chiefsReading.chanceSpoken.contains("34 percent"))
+        XCTAssertTrue(chiefsReading.chanceSpoken.contains("66 percent"))
 
         let houston = try makeHoustonWVUSnapshot()
         let houstonReading = GameActivityReading(snapshot: houston, eventID: houston.eventID)
@@ -76,7 +76,7 @@ final class LiveActivityWholePercents395Tests: XCTestCase {
         XCTAssertEqual(houstonReading.nowText(.home), "43%")
         XCTAssertEqual(houstonReading.minimalNowText(.away), "57%")
         XCTAssertNil(houstonReading.compactSpoken.range(of: decimalPercentPattern, options: .regularExpression))
-        XCTAssertTrue(houstonReading.compactSpoken.contains("57%"))
+        XCTAssertTrue(houstonReading.compactSpoken.contains("57 percent"))
 
         let liveActivitySource = try String(
             contentsOf: URL(fileURLWithPath: #filePath)

@@ -343,20 +343,24 @@ struct GameActivityReading {
     func rowSpoken(_ side: Side) -> String {
         var parts = [name(side)]
         if showsScore { parts.append(score(side).map { "\($0)" } ?? "score unavailable") }
-        if let now = nowText(side) { parts.append("\(now) chance to win") }
-        if let pregame = pregameText(side) { parts.append("\(pregame) chance before the game") }
+        if let now = nowText(side) { parts.append("\(spokenProbabilityText(now)) chance to win") }
+        if let pregame = pregameText(side) { parts.append("\(spokenProbabilityText(pregame)) chance before the game") }
         if let verdict = verdict(side) { parts.append(verdict) }
-        return parts.joined(separator: ", ")
+        return spokenTextExpandingProbabilitySymbols(parts.joined(separator: ", "))
     }
     var chanceSpoken: String {
-        guard let pair else { return singleChanceLabel ?? ExternalSurfaceProbabilityFormat.missingProbabilityText }
-        return "\(name(.away)) \(nowText(.away) ?? percentText(pair.away)), \(name(.home)) \(nowText(.home) ?? percentText(pair.home)) chance to win"
+        guard let pair else {
+            return spokenTextExpandingProbabilitySymbols(singleChanceLabel ?? ExternalSurfaceProbabilityFormat.missingProbabilityText)
+        }
+        let awayNow = nowText(.away) ?? percentText(pair.away)
+        let homeNow = nowText(.home) ?? percentText(pair.home)
+        return "\(name(.away)) \(spokenProbabilityText(awayNow)), \(name(.home)) \(spokenProbabilityText(homeNow)) chance to win"
     }
     /// The Dynamic Island's compact and minimal views speak the whole reading.
     var compactSpoken: String {
         guard matches else { return "Game reading unavailable" }
         var parts = [statusSpoken, "\(rowSpoken(.away)). \(rowSpoken(.home))"]
-        if let single = singleChanceLabel { parts.append(single) }
+        if let single = singleChanceLabel { parts.append(spokenTextExpandingProbabilitySymbols(single)) }
         if showsScore {
             parts.append(Self.ageSpoken("Score", age: snapshot.scoreAge(at: Date())))
         }
@@ -365,7 +369,7 @@ struct GameActivityReading {
         }
         parts.append(isStale ? "Earlier reading. Open on iPhone to refresh."
                              : "Reported reading. Open on iPhone for current details.")
-        return parts.joined(separator: ". ")
+        return spokenTextExpandingProbabilitySymbols(parts.joined(separator: ". "))
     }
 
     private static func ageSpoken(_ name: String, age: TimeInterval?) -> String {
@@ -827,7 +831,7 @@ struct GameActivityChanceLine: View {
             .font(HeadlineStyleTable199.secondNumbers(.island))
             .foregroundStyle(.secondary)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Before the game: \(reading.name(.away)) \(awayPregame), \(reading.name(.home)) \(homePregame)")
+            .accessibilityLabel("Before the game: \(reading.name(.away)) \(spokenProbabilityText(awayPregame)), \(reading.name(.home)) \(spokenProbabilityText(homePregame))")
         } else if !reading.snapshot.isTerminal && reading.singleChanceLabel == nil {
             Text(ExternalSurfaceProbabilityFormat.missingProbabilityText)
                 .font(HeadlineStyleTable199.quietText(.island))
@@ -1061,6 +1065,7 @@ struct GameActivitySmallView: View {
                 .monospacedDigit()
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel("\(reading.name(reading.lead)) \(spokenProbabilityText(now))")
         } else if let single = reading.singleChance {
             let text = reading.snapshot.probabilityText ?? reading.percentText(single)
             Text("\(reading.badge(.home)) \(text)")
@@ -1068,6 +1073,7 @@ struct GameActivitySmallView: View {
                 .monospacedDigit()
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel("\(reading.name(.home)) \(spokenProbabilityText(text))")
         }
     }
 

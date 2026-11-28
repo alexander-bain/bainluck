@@ -83,6 +83,7 @@ struct WatchHomeView: View {
                     .foregroundStyle(story.accentColor)
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
+                    .accessibilityLabel(spokenProbabilityText(story.bigNumberText))
             }
 
             if let split = story.split {

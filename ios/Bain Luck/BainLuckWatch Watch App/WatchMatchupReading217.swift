@@ -490,9 +490,9 @@ extension WatchMatchupReading217 {
             let smallLine = when
             let speech: String = {
                 if let tw = out.threeWay {
-                    return "\(matchup). \(r.homeName) \(tw.homeText), Draw \(tw.drawText), \(r.awayName) \(tw.awayText). \(when). Open your game in Bain Luck."
+                    return spokenTextExpandingProbabilitySymbols("\(matchup). \(r.homeName) \(tw.homeText), Draw \(tw.drawText), \(r.awayName) \(tw.awayText). \(when). Open your game in Bain Luck.")
                 }
-                return "\(matchup). \(out.ownerName) \(out.bigText) to win. \(when). Open your game in Bain Luck."
+                return spokenTextExpandingProbabilitySymbols("\(matchup). \(out.ownerName) \(out.bigText) to win. \(when). Open your game in Bain Luck.")
             }()
             return WatchMatchupReading217(
                 stage: .before,
@@ -533,9 +533,9 @@ extension WatchMatchupReading217 {
             }()
             let speech: String = {
                 if let tw = out.threeWay {
-                    return "\(matchup).\(score) \(r.homeName) \(tw.homeText), Draw \(tw.drawText), \(r.awayName) \(tw.awayText). \(when). Open your game in Bain Luck."
+                    return spokenTextExpandingProbabilitySymbols("\(matchup).\(score) \(r.homeName) \(tw.homeText), Draw \(tw.drawText), \(r.awayName) \(tw.awayText). \(when). Open your game in Bain Luck.")
                 }
-                return "\(matchup).\(score) \(out.ownerName) \(out.bigText) to win now. \(when). Open your game in Bain Luck."
+                return spokenTextExpandingProbabilitySymbols("\(matchup).\(score) \(out.ownerName) \(out.bigText) to win now. \(when). Open your game in Bain Luck.")
             }()
             return WatchMatchupReading217(
                 stage: .during,
@@ -558,7 +558,7 @@ extension WatchMatchupReading217 {
                     away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: a, winner: false),
                     home: side(homeID, facts.homePrimary, facts.homeSecondary, score: h, winner: false),
                     bigText: drawText, bigOwnerLabel: "Draw", bigIsHome: true, smallLine: "Pregame · Final",
-                    accessibilityText: "Final. \(r.awayName) \(a), \(r.homeName) \(h). Draw had \(drawText) before the game. Open your game in Bain Luck.")
+                    accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(r.awayName) \(a), \(r.homeName) \(h). Draw had \(drawText) before the game. Open your game in Bain Luck."))
             }
             let homeWon = h > a
             guard let pct = homeWon ? facts.pregameHomePercent : facts.pregameAwayPercent,
@@ -576,7 +576,7 @@ extension WatchMatchupReading217 {
                 away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: a, winner: !homeWon),
                 home: side(homeID, facts.homePrimary, facts.homeSecondary, score: h, winner: homeWon),
                 bigText: pregameText, bigOwnerLabel: abbr, bigIsHome: homeWon, smallLine: "Pregame · Final",
-                accessibilityText: "Final. \(name) \(max(h, a)), \(loser) \(min(h, a)). \(name) had \(pregameText) before the game. Open your game in Bain Luck.")
+                accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(name) \(max(h, a)), \(loser) \(min(h, a)). \(name) had \(pregameText) before the game. Open your game in Bain Luck."))
         case .futureForecast:
             return nil
         }

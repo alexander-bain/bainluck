@@ -97,7 +97,7 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                         bigOwnerLabel: "Draw",
                         bigIsHome: true,
                         smallLine: "Pregame · Final",
-                        accessibilityText: "Final. \(matchup), \(awayScore)–\(homeScore). Draw had \(drawText) pregame. Open your game in Bain Luck."
+                        accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(matchup), \(awayScore)–\(homeScore). Draw had \(drawText) pregame. Open your game in Bain Luck.")
                     )
                 )
             }
@@ -123,7 +123,7 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                     bigOwnerLabel: winnerAbbr,
                     bigIsHome: homeWon,
                     smallLine: "Pregame · Final",
-                    accessibilityText: "Final. \(winnerName) \(max(homeScore, awayScore)), \(loserName) \(min(homeScore, awayScore)). \(winnerName) had \(pregameText) pregame. Open your game in Bain Luck."
+                    accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(winnerName) \(max(homeScore, awayScore)), \(loserName) \(min(homeScore, awayScore)). \(winnerName) had \(pregameText) pregame. Open your game in Bain Luck.")
                 )
             )
         }
@@ -281,9 +281,9 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
         let scorePart = validScores.map { " \(event.awayTeam) \($0.away), \(event.homeTeam) \($0.home)." } ?? ""
         let speech: String = {
             if let tw = threeWay {
-                return "\(matchup).\(scorePart) \(event.homeTeam) \(tw.homeText), Draw \(tw.drawText), \(event.awayTeam) \(tw.awayText). \(when). Open your game in Bain Luck."
+                return spokenTextExpandingProbabilitySymbols("\(matchup).\(scorePart) \(event.homeTeam) \(tw.homeText), Draw \(tw.drawText), \(event.awayTeam) \(tw.awayText). \(when). Open your game in Bain Luck.")
             }
-            return "\(matchup).\(scorePart) \(ownerName) \(bigText) to win. \(when). Open your game in Bain Luck."
+            return spokenTextExpandingProbabilitySymbols("\(matchup).\(scorePart) \(ownerName) \(bigText) to win. \(when). Open your game in Bain Luck.")
         }()
 
         return .matchup(

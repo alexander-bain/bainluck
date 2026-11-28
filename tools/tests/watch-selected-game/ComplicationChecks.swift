@@ -387,7 +387,7 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     precondition(rectLiveScore.metadataLine(at: oneMinuteAfter, timeZone: pacific) == "Live · 1m ago")
     precondition(rectLiveScore.metadataLine(at: now, timeZone: pacific) == "Live · 2m ago" && !rectLiveScore.isAgedLive(at: now))
     let liveSpoken = rectLiveScore.accessibilityDescription(at: oneMinuteAfter, timeZone: pacific)
-    precondition(liveSpoken == "Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64%. Live, 1 minute ago. Open your game in Bain Luck.",
+    precondition(liveSpoken == "Los Angeles Dodgers at San Francisco Giants. Score Los Angeles Dodgers 2, San Francisco Giants 3. San Francisco Giants 64 percent. Live, 1 minute ago. Open your game in Bain Luck.",
                  "Unexpected live spoken copy: \(liveSpoken)")
     let liveDates = WatchRectangularReading.timelineDates(for: snapLiveScore, now: now)
     let ageSwitch = rectLiveScore.observedAt.addingTimeInterval(121)
@@ -585,6 +585,8 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     let rectSubOne = snapSubOne.validatedRectangularReading(now: now)!
     precondition(rectSubOne.subOnePercent == true && rectSubOne.aboveNinetyNinePercent == nil && rectSubOne.homePercent == 1)
     precondition(rectSubOne.primaryLine(at: now) == "Longshot <1%")
+    let subOneSpoken = rectSubOne.accessibilityDescription(at: now, timeZone: pacific)
+    precondition(subOneSpoken.contains("less than 1 percent") && !subOneSpoken.contains("<1%"))
 
     let snapAbove99 = WatchComplicationProjection.futureSnapshot(
         marketID: 90212,
@@ -597,6 +599,8 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     let rectAbove99 = snapAbove99.validatedRectangularReading(now: now)!
     precondition(rectAbove99.aboveNinetyNinePercent == true && rectAbove99.subOnePercent == nil && rectAbove99.homePercent == 99)
     precondition(rectAbove99.primaryLine(at: now) == "Frontrunner >99%")
+    let above99Spoken = rectAbove99.accessibilityDescription(at: now, timeZone: pacific)
+    precondition(above99Spoken.contains("more than 99 percent") && !above99Spoken.contains(">99%"))
 
     for invalidProb in [0.0, 1.0, -0.1, 1.1, Double.nan, Double.infinity] {
         precondition(

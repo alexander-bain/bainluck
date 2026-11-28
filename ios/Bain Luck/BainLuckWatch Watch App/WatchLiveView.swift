@@ -93,6 +93,7 @@ struct WatchLiveView: View {
                         Text(probText)
                             .font(.system(size: 18, weight: .bold, design: .rounded))
                             .foregroundStyle(Color(hex: game.awayColor ?? "#888"))
+                            .accessibilityLabel(spokenProbabilityText(probText))
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -114,6 +115,7 @@ struct WatchLiveView: View {
                         Text(probText)
                             .font(.system(size: 18, weight: .bold, design: .rounded))
                             .foregroundStyle(Color(hex: game.homeColor ?? "#888"))
+                            .accessibilityLabel(spokenProbabilityText(probText))
                     }
                 }
                 .frame(maxWidth: .infinity)

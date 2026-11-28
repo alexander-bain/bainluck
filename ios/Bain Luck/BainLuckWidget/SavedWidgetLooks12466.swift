@@ -215,7 +215,7 @@ struct SavedSideValue12466: View {
                 Text("—")
                     .font(HeadlineStyleTable199.secondNumbers(.widget, scaledSize: size * 0.7))
                     .opacity(0.5)
-                    .accessibilityLabel("No number")
+                    .accessibilityLabel("No recent probability")
             }
             if let verdict = row.verdict {
                 // #12466 (Fable, Nov 11): "LOST" is quieter than "WON", not faint:
