@@ -5,8 +5,8 @@ import SwiftUI
 /// Reader's liked Discover cards, scoped per signed-in account (#13769, 420: D).
 ///
 /// Survives scrolling offscreen/back within a session and across launches for the
-/// same account. Tapping a filled `"Liked"` heart removes it locally here without
-/// ever emitting `.unlike` (which teaches "less like this" on the server).
+/// same account. Tapping a filled `"Liked"` heart removes it locally here and emits
+/// neutral `"like_undo"` (#13829) — never `.unlike` (which teaches "less like this").
 @MainActor
 final class DiscoverLikedStore420D: ObservableObject {
     static let storageKeyPrefix = "discover_liked_items_420d"
@@ -51,7 +51,7 @@ final class DiscoverLikedStore420D: ObservableObject {
         return true
     }
 
-    /// Removes the local like without emitting `.unlike` (#13769).
+    /// Removes the local like; callers emit neutral `like_undo` (never `.unlike`).
     func unmarkLiked(_ itemKey: String) {
         guard likedKeys.remove(itemKey) != nil else { return }
         persist()
@@ -127,11 +127,11 @@ nonisolated enum DiscoverLikeFeedbackRule420D {
 
     static func resolveHeartTap(wasLiked: Bool) -> Resolution {
         if wasLiked {
-            // Undo removes the heart locally and NEVER sends `unlike`.
+            // Undo removes the heart locally and sends neutral `like_undo` (#13829), NEVER `unlike`.
             return Resolution(
                 shouldHideCard: false,
                 nextLikedState: false,
-                emittedAction: nil
+                emittedAction: "like_undo"
             )
         } else {
             return Resolution(
