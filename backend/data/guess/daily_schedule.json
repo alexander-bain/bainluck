@@ -1,0 +1,850 @@
+{
+  "version": 1,
+  "days": {
+    "2026-11-28": {
+      "steps": [
+        {
+          "name": "Easy",
+          "how": "Above or below 50%? Which is more likely? One tap each."
+        },
+        {
+          "name": "Medium",
+          "how": "Pick one of four."
+        },
+        {
+          "name": "Hard",
+          "how": "Slide to the number. Closest wins."
+        }
+      ],
+      "topics": [
+        "Sports",
+        "Stars",
+        "Odd stuff"
+      ],
+      "step_cards": {
+        "easy": [
+          {
+            "id": "e1",
+            "kind": "side",
+            "topic": "Sports",
+            "emoji": "🦈",
+            "extras": [
+              "🏒",
+              "🥅"
+            ],
+            "prompt": "The San Jose Sharks make the playoffs this season",
+            "short": "Sharks make the playoffs",
+            "context": "Sixteen of the NHL’s 32 teams reach the playoffs. The regular season ends in April.",
+            "source": {
+              "market_id": 63119270,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "e2",
+            "kind": "versus",
+            "topic": "Sports",
+            "emoji": "🌉",
+            "prompt": "Which is more likely?",
+            "short": "The 49ers in the NFC title game, or the Warriors in the playoffs",
+            "context": "The NFC title game is one win from the Super Bowl. Sixteen NBA teams make the playoffs.",
+            "options": [
+              {
+                "market_id": 61380791,
+                "outcome_name": "Yes",
+                "label": "The 49ers reach the NFC Championship Game",
+                "short": "49ers in the title game",
+                "emoji": "🏈"
+              },
+              {
+                "market_id": 70732994,
+                "outcome_name": "Yes",
+                "label": "The Warriors make the 2027 playoffs",
+                "short": "Warriors in the playoffs",
+                "emoji": "🏀"
+              }
+            ]
+          },
+          {
+            "id": "e3",
+            "kind": "side",
+            "topic": "Odd stuff",
+            "emoji": "📱",
+            "extras": [
+              "🍎",
+              "📦"
+            ],
+            "prompt": "Apple releases the plain iPhone 18 by the end of February",
+            "short": "iPhone 18 by February",
+            "context": "Apple usually brings out new iPhones in September. This card is about the plain iPhone 18, not the Pro.",
+            "source": {
+              "market_id": 61425489,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "e4",
+            "kind": "versus",
+            "topic": "Stars",
+            "emoji": "🎬",
+            "prompt": "Which is more likely?",
+            "short": "A Spider-Verse delay, or a Stranger Things search surge",
+            "context": "Beyond the Spider-Verse is due in June 2027. Google names the year’s most-searched shows in December.",
+            "options": [
+              {
+                "market_id": 56867559,
+                "outcome_name": "Yes",
+                "label": "Spider-Man: Beyond the Spider-Verse is delayed",
+                "short": "Spider-Verse delayed",
+                "emoji": "🕸️"
+              },
+              {
+                "market_id": 61384784,
+                "outcome_name": "Yes",
+                "label": "Stranger Things is one of 2026’s five most-searched TV shows",
+                "short": "Stranger Things top five",
+                "emoji": "🚲"
+              }
+            ]
+          },
+          {
+            "id": "e5",
+            "kind": "side",
+            "topic": "Stars",
+            "emoji": "🚀",
+            "extras": [
+              "🎞️",
+              "🏆"
+            ],
+            "prompt": "Project Hail Mary is nominated for the Oscar for best picture",
+            "short": "Project Hail Mary gets a nomination",
+            "context": "Oscar nominations come out in January. Ten films are nominated for best picture.",
+            "source": {
+              "market_id": 27988779,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "m1",
+            "kind": "four",
+            "topic": "Sports",
+            "emoji": "🏈",
+            "extras": [
+              "🏆",
+              "🌰"
+            ],
+            "prompt": "Jeremiah Smith wins the Heisman Trophy",
+            "short": "Jeremiah Smith wins the Heisman",
+            "context": "Smith plays receiver for Ohio State. The trophy is handed out in December.",
+            "source": {
+              "market_id": 189,
+              "outcome_name": "Jeremiah Smith"
+            },
+            "answer_slot": 3
+          },
+          {
+            "id": "m2",
+            "kind": "leader",
+            "topic": "Stars",
+            "emoji": "🏜️",
+            "independent": false,
+            "market_id": 68365233,
+            "prompt": "How big is Dune: Part Three’s opening weekend?",
+            "short": "Dune: Part Three’s opening",
+            "context": "Dune: Part Three opens in December, on the same weekend as Avengers: Doomsday.",
+            "options": [
+              {
+                "outcome_name": "110m-130m",
+                "label": "$110 to $130 million",
+                "short": "$110–130 million",
+                "emoji": "💰"
+              },
+              {
+                "outcome_name": "70m-90m",
+                "label": "$70 to $90 million",
+                "short": "$70–90 million",
+                "emoji": "🪙"
+              },
+              {
+                "outcome_name": "90m-110m",
+                "label": "$90 to $110 million",
+                "short": "$90–110 million",
+                "emoji": "💵"
+              },
+              {
+                "outcome_name": "130m+",
+                "label": "$130 million or more",
+                "short": "$130 million up",
+                "emoji": "🤑"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "kind": "four",
+            "topic": "Odd stuff",
+            "emoji": "🥢",
+            "extras": [
+              "🚀",
+              "🗼"
+            ],
+            "prompt": "The launch tower’s “chopsticks” catch the Starship on Flight Test 16",
+            "short": "Chopsticks catch Starship",
+            "context": "The chopsticks are two giant arms on the launch tower. They have caught a booster before.",
+            "source": {
+              "market_id": 72219926,
+              "outcome_name": "Yes"
+            },
+            "answer_slot": 2
+          },
+          {
+            "id": "m4",
+            "kind": "leader",
+            "topic": "Sports",
+            "emoji": "⚽",
+            "independent": false,
+            "market_id": 59156924,
+            "prompt": "Who finishes as the Premier League’s top scorer?",
+            "short": "Premier League top scorer",
+            "context": "The season runs until May. The top scorer wins the Golden Boot.",
+            "options": [
+              {
+                "outcome_name": "Alexander Isak",
+                "label": "Alexander Isak",
+                "short": "Isak",
+                "emoji": "🇸🇪"
+              },
+              {
+                "outcome_name": "Erling Haaland",
+                "label": "Erling Haaland",
+                "short": "Haaland",
+                "emoji": "🇳🇴"
+              },
+              {
+                "outcome_name": "João Pedro",
+                "label": "João Pedro",
+                "short": "João Pedro",
+                "emoji": "🇧🇷"
+              },
+              {
+                "outcome_name": "Dominic Calvert-Lewin",
+                "label": "Dominic Calvert-Lewin",
+                "short": "Calvert-Lewin",
+                "emoji": "🏴󠁧󠁢󠁥󠁮󠁧󠁿"
+              }
+            ]
+          },
+          {
+            "id": "m5",
+            "kind": "four",
+            "topic": "Stars",
+            "emoji": "🎤",
+            "extras": [
+              "📺",
+              "🎶"
+            ],
+            "prompt": "Joe Henley wins this season of The Voice",
+            "short": "Joe Henley wins The Voice",
+            "context": "The Voice is in its 30th season. The winner is named in December.",
+            "source": {
+              "market_id": 70088620,
+              "outcome_name": "Joe Henley"
+            },
+            "answer_slot": 1
+          }
+        ],
+        "hard": [
+          {
+            "id": "h1",
+            "kind": "chance",
+            "topic": "Sports",
+            "emoji": "⛳",
+            "extras": [
+              "🧥",
+              "🌺"
+            ],
+            "prompt": "Rory McIlroy wins the 2027 Masters",
+            "short": "McIlroy wins the Masters",
+            "context": "The Masters is played at Augusta National in April. McIlroy won it in 2025.",
+            "roastHigh": "{n} said {g}%. {n} {has} already sized Rory for another green jacket. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} think{s} Rory skips Augusta this time. The world says {w}%.",
+            "source": {
+              "market_id": 61056094,
+              "outcome_name": "Rory McIlroy"
+            }
+          },
+          {
+            "id": "h2",
+            "kind": "chance",
+            "topic": "Stars",
+            "emoji": "🎄",
+            "extras": [
+              "🎶",
+              "🔔"
+            ],
+            "prompt": "Mariah Carey has a Billboard number-one song this year",
+            "short": "Mariah Carey gets a number one",
+            "context": "“All I Want for Christmas Is You” first reached number one in 2019, 25 years after it came out.",
+            "roastHigh": "{n} said {g}%. Even Mariah thinks that is a lot. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} {has} never been inside a store in December. The world says {w}%.",
+            "source": {
+              "market_id": 114303,
+              "outcome_name": "Mariah Carey"
+            }
+          },
+          {
+            "id": "h3",
+            "kind": "chance",
+            "topic": "Odd stuff",
+            "emoji": "🥇",
+            "extras": [
+              "⚗️",
+              "☢️"
+            ],
+            "prompt": "Marathon Fusion’s recipe for making gold is confirmed by the end of June",
+            "short": "A recipe for gold is confirmed",
+            "context": "Marathon Fusion says a fusion reactor could turn mercury into gold. Nobody has done it yet.",
+            "roastHigh": "{n} said {g}%. {n} {is} already shopping for a gold bike. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} think{s} gold only comes from pirates. The world says {w}%.",
+            "source": {
+              "market_id": 67074171,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "h4",
+            "kind": "chance",
+            "topic": "Sports",
+            "emoji": "🐐",
+            "extras": [
+              "🏟️",
+              "🎙️"
+            ],
+            "prompt": "Tom Brady goes to Super Bowl LXI",
+            "short": "Brady at the Super Bowl",
+            "context": "Brady played in ten Super Bowls and won seven. This one is in Los Angeles in February.",
+            "roastHigh": "{n} said {g}%. {n} {has} him suited up and throwing. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} think{s} Tom Brady has other plans that Sunday. The world says {w}%.",
+            "source": {
+              "market_id": 69907680,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "h5",
+            "kind": "chance",
+            "topic": "Sports",
+            "emoji": "🗽",
+            "extras": [
+              "🏈",
+              "❄️"
+            ],
+            "prompt": "The New York Giants make the playoffs",
+            "short": "Giants make the playoffs",
+            "context": "Fourteen of the NFL’s 32 teams make the playoffs. The regular season ends in early January.",
+            "roastHigh": "{n} said {g}%. {n} {has} already planned the parade. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} {has} watched the Giants before. The world says {w}%.",
+            "source": {
+              "market_id": 16630466,
+              "outcome_name": "Yes"
+            }
+          }
+        ]
+      },
+      "spares": {
+        "easy": [
+          {
+            "id": "se1",
+            "kind": "side",
+            "topic": "Odd stuff",
+            "emoji": "🧱",
+            "extras": [
+              "🎮",
+              "💼"
+            ],
+            "prompt": "Roblox is worth more than Epic Games on December 31",
+            "short": "Roblox worth more than Epic",
+            "context": "Epic Games makes Fortnite. Roblox is a public company and Epic is not.",
+            "source": {
+              "market_id": 23449653,
+              "outcome_name": "Roblox"
+            }
+          },
+          {
+            "id": "se2",
+            "kind": "side",
+            "topic": "Odd stuff",
+            "emoji": "❄️",
+            "extras": [
+              "🎅",
+              "🦬"
+            ],
+            "prompt": "It snows in Buffalo on Christmas Day",
+            "short": "Snow in Buffalo on Christmas",
+            "context": "Buffalo sits on Lake Erie and is one of the snowiest big cities in the country.",
+            "source": {
+              "market_id": 72427739,
+              "outcome_name": "Buffalo"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "sm1",
+            "kind": "four",
+            "topic": "Odd stuff",
+            "emoji": "🍿",
+            "extras": [
+              "🎟️",
+              "📊"
+            ],
+            "prompt": "2026 ends as the seventh, eighth or ninth biggest year ever at the US box office",
+            "short": "2026’s place at the box office",
+            "context": "The biggest year on record is 2018, when US theaters sold $11.9 billion in tickets.",
+            "source": {
+              "market_id": 58610625,
+              "outcome_name": "7th-9th"
+            }
+          }
+        ],
+        "hard": [
+          {
+            "id": "sh1",
+            "kind": "chance",
+            "topic": "Odd stuff",
+            "emoji": "🌕",
+            "extras": [
+              "👩‍🚀",
+              "🚩"
+            ],
+            "prompt": "A person lands on the moon in 2026",
+            "short": "A moon landing this year",
+            "context": "The last people on the moon left in December 1972.",
+            "roastHigh": "{n} said {g}%. {n} {has} a rocket nobody told NASA about. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} {is} right that the calendar is short. The world says {w}%.",
+            "source": {
+              "market_id": 114306,
+              "outcome_name": "Yes"
+            }
+          }
+        ]
+      }
+    },
+    "2026-11-29": {
+      "steps": [
+        {
+          "name": "Easy",
+          "how": "Above or below 50%? Which is more likely? One tap each."
+        },
+        {
+          "name": "Medium",
+          "how": "Pick one of four."
+        },
+        {
+          "name": "Hard",
+          "how": "Slide to the number. Closest wins."
+        }
+      ],
+      "topics": [
+        "Sports",
+        "Stars",
+        "Odd stuff"
+      ],
+      "step_cards": {
+        "easy": [
+          {
+            "id": "e1",
+            "kind": "side",
+            "topic": "Stars",
+            "emoji": "🦸",
+            "extras": [
+              "🍿",
+              "💥"
+            ],
+            "prompt": "Avengers: Doomsday has a $400 million opening weekend",
+            "short": "Doomsday opens at $400 million",
+            "context": "The film opens in December, on the same weekend as Dune: Part Three.",
+            "source": {
+              "market_id": 68365230,
+              "outcome_name": "400m+"
+            }
+          },
+          {
+            "id": "e2",
+            "kind": "versus",
+            "topic": "Sports",
+            "emoji": "🏟️",
+            "prompt": "Which is more likely?",
+            "short": "Ohtani at the Super Bowl, or a Sabres playoff win",
+            "context": "Ohtani plays baseball for the Dodgers, and this Super Bowl is in Los Angeles.",
+            "options": [
+              {
+                "market_id": 69907688,
+                "outcome_name": "Yes",
+                "label": "Shohei Ohtani goes to Super Bowl LXI",
+                "short": "Ohtani at the Super Bowl",
+                "emoji": "⚾"
+              },
+              {
+                "market_id": 61380675,
+                "outcome_name": "Yes",
+                "label": "The Buffalo Sabres reach the second round of the playoffs",
+                "short": "Sabres win a round",
+                "emoji": "🏒"
+              }
+            ]
+          },
+          {
+            "id": "e3",
+            "kind": "side",
+            "topic": "Odd stuff",
+            "emoji": "🌡️",
+            "extras": [
+              "🌍",
+              "☀️"
+            ],
+            "prompt": "2026 goes down as the hottest year on record",
+            "short": "2026 the hottest year",
+            "context": "2024 holds the record now. The final ranking comes out early next year.",
+            "source": {
+              "market_id": 113358,
+              "outcome_name": "1"
+            }
+          },
+          {
+            "id": "e4",
+            "kind": "versus",
+            "topic": "Stars",
+            "emoji": "🎞️",
+            "prompt": "Which is more likely?",
+            "short": "An Oscar nod for Dune: Part Three, or one for Toy Story 5’s song",
+            "context": "Oscar nominations come out in January. Ten films and five songs make those two lists.",
+            "options": [
+              {
+                "market_id": 27988778,
+                "outcome_name": "Yes",
+                "label": "Dune: Part Three gets a best picture nomination",
+                "short": "Dune: Part Three",
+                "emoji": "🏜️"
+              },
+              {
+                "market_id": 66135184,
+                "outcome_name": "Yes",
+                "label": "Toy Story 5’s song gets an Oscar nomination",
+                "short": "Toy Story 5’s song",
+                "emoji": "🤠"
+              }
+            ]
+          },
+          {
+            "id": "e5",
+            "kind": "side",
+            "topic": "Sports",
+            "emoji": "🤼",
+            "extras": [
+              "🏆",
+              "📹"
+            ],
+            "prompt": "Logan Paul holds a WWE championship belt at some point in 2026",
+            "short": "Logan Paul wins WWE gold",
+            "context": "Logan Paul started on YouTube and wrestles in WWE now. The year has about a month left.",
+            "source": {
+              "market_id": 58945765,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "m1",
+            "kind": "four",
+            "topic": "Stars",
+            "emoji": "🎬",
+            "extras": [
+              "🏆",
+              "🌊"
+            ],
+            "prompt": "Christopher Nolan wins the Golden Globe for best director",
+            "short": "Nolan wins best director",
+            "context": "Nolan directed The Odyssey. The Golden Globes are handed out in January.",
+            "source": {
+              "market_id": 70239575,
+              "outcome_name": "Christopher Nolan"
+            },
+            "answer_slot": 2
+          },
+          {
+            "id": "m2",
+            "kind": "leader",
+            "topic": "Stars",
+            "emoji": "🐺",
+            "independent": false,
+            "market_id": 70239581,
+            "prompt": "Which film wins the Golden Globe for best animated movie?",
+            "short": "Best animated movie",
+            "context": "Wildwood comes from Laika, the studio that made Coraline. Hoppers is Pixar’s.",
+            "options": [
+              {
+                "outcome_name": "Hoppers",
+                "label": "Hoppers",
+                "short": "Hoppers",
+                "emoji": "🦫"
+              },
+              {
+                "outcome_name": "Hexed",
+                "label": "Hexed",
+                "short": "Hexed",
+                "emoji": "🧙"
+              },
+              {
+                "outcome_name": "Wildwood",
+                "label": "Wildwood",
+                "short": "Wildwood",
+                "emoji": "🌲"
+              },
+              {
+                "outcome_name": "Forgotten Island",
+                "label": "Forgotten Island",
+                "short": "Forgotten Island",
+                "emoji": "🏝️"
+              }
+            ]
+          },
+          {
+            "id": "m3",
+            "kind": "four",
+            "topic": "Sports",
+            "emoji": "🧢",
+            "extras": [
+              "🏈",
+              "📋"
+            ],
+            "prompt": "John Harbaugh is named NFL Coach of the Year",
+            "short": "Harbaugh is Coach of the Year",
+            "context": "Harbaugh took over the New York Giants this season after 18 years with the Ravens.",
+            "source": {
+              "market_id": 56933329,
+              "outcome_name": "John Harbaugh"
+            },
+            "answer_slot": 1
+          },
+          {
+            "id": "m4",
+            "kind": "leader",
+            "topic": "Odd stuff",
+            "emoji": "🎮",
+            "independent": false,
+            "market_id": 71652308,
+            "prompt": "Which video game’s music wins the Grammy?",
+            "short": "Grammy for video game music",
+            "context": "The Grammys have had an award for video game music since 2023.",
+            "options": [
+              {
+                "outcome_name": "Star Wars: Zero Company",
+                "label": "Star Wars: Zero Company",
+                "short": "Star Wars",
+                "emoji": "⭐"
+              },
+              {
+                "outcome_name": "Marvel's Wolverine",
+                "label": "Marvel’s Wolverine",
+                "short": "Wolverine",
+                "emoji": "🐾"
+              },
+              {
+                "outcome_name": "007: First Light",
+                "label": "007: First Light",
+                "short": "007",
+                "emoji": "🕶️"
+              },
+              {
+                "outcome_name": "Ghost of Yotei",
+                "label": "Ghost of Yotei",
+                "short": "Ghost of Yotei",
+                "emoji": "🗻"
+              }
+            ]
+          },
+          {
+            "id": "m5",
+            "kind": "four",
+            "topic": "Odd stuff",
+            "emoji": "🚀",
+            "extras": [
+              "🌌",
+              "🔢"
+            ],
+            "prompt": "Fewer than five Starship flights reach space in 2026",
+            "short": "Under five Starship flights",
+            "context": "Starship is the biggest rocket ever flown.",
+            "source": {
+              "market_id": 113766,
+              "outcome_name": "<5"
+            },
+            "answer_slot": 3
+          }
+        ],
+        "hard": [
+          {
+            "id": "h1",
+            "kind": "chance",
+            "topic": "Sports",
+            "emoji": "🐅",
+            "extras": [
+              "⛳",
+              "📅"
+            ],
+            "prompt": "Tiger Woods plays a PGA Tour event before the year ends",
+            "short": "Tiger plays this year",
+            "context": "The year has about a month left, and the PGA Tour is nearly done until January.",
+            "roastHigh": "{n} said {g}%. {n} {has} not looked at a calendar. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} {is} right that it is close to zero. The world says {w}%.",
+            "source": {
+              "market_id": 16631596,
+              "outcome_name": "Yes"
+            }
+          },
+          {
+            "id": "h2",
+            "kind": "chance",
+            "topic": "Stars",
+            "emoji": "🤠",
+            "extras": [
+              "🎸",
+              "🏆"
+            ],
+            "prompt": "Ella Langley’s Dandelion wins the Grammy for best contemporary country album",
+            "short": "Dandelion wins a Grammy",
+            "context": "The Grammys now give two country album awards. This one is for the modern sound.",
+            "roastHigh": "{n} said {g}%. {n} {has} it on repeat. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} {has} not turned on a country station this year. The world says {w}%.",
+            "source": {
+              "market_id": 62368119,
+              "outcome_name": "Dandelion"
+            }
+          },
+          {
+            "id": "h3",
+            "kind": "chance",
+            "topic": "Odd stuff",
+            "emoji": "♟️",
+            "extras": [
+              "👑",
+              "🧠"
+            ],
+            "prompt": "Javokhir Sindarov wins the World Chess Championship",
+            "short": "Sindarov wins the chess crown",
+            "context": "Sindarov, from Uzbekistan, is the challenger. Gukesh, from India, holds the title.",
+            "roastHigh": "{n} said {g}%. {n} {has} already crowned a new champion. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} think{s} the champion keeps his crown easily. The world says {w}%.",
+            "source": {
+              "market_id": 20569231,
+              "outcome_name": "Javokhir Sindarov"
+            }
+          },
+          {
+            "id": "h4",
+            "kind": "chance",
+            "topic": "Sports",
+            "emoji": "🔎",
+            "extras": [
+              "⚽",
+              "🌐"
+            ],
+            "prompt": "Erling Haaland is the most-searched athlete of 2026",
+            "short": "Haaland tops athlete searches",
+            "context": "Google publishes its Year in Search each December. 2026 was a World Cup year.",
+            "roastHigh": "{n} said {g}%. {n} {has} a Haaland poster. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} {has} never typed “Haaland” and assume{s} nobody has. The world says {w}%.",
+            "source": {
+              "market_id": 56775631,
+              "outcome_name": "Erling Haaland"
+            }
+          },
+          {
+            "id": "h5",
+            "kind": "chance",
+            "topic": "Sports",
+            "emoji": "🐐",
+            "extras": [
+              "⚽",
+              "👋"
+            ],
+            "prompt": "Lionel Messi retires before July 2027",
+            "short": "Messi retires",
+            "context": "Messi turns 40 in June 2027.",
+            "roastHigh": "{n} said {g}%. {n} {is} ready to say goodbye. Messi is not. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} think{s} he plays until he is 50. The world says {w}%.",
+            "source": {
+              "market_id": 61384561,
+              "outcome_name": "Yes"
+            }
+          }
+        ]
+      },
+      "spares": {
+        "easy": [
+          {
+            "id": "se1",
+            "kind": "side",
+            "topic": "Odd stuff",
+            "emoji": "🛸",
+            "extras": [
+              "🇯🇵",
+              "📁"
+            ],
+            "prompt": "Japan releases new UFO files in 2026",
+            "short": "Japan’s UFO files",
+            "context": "The year has about a month left.",
+            "source": {
+              "market_id": 20887550,
+              "outcome_name": "Yes"
+            }
+          }
+        ],
+        "medium": [
+          {
+            "id": "sm1",
+            "kind": "four",
+            "topic": "Odd stuff",
+            "emoji": "☔",
+            "extras": [
+              "🌴",
+              "🌧️"
+            ],
+            "prompt": "Los Angeles gets more than three inches of rain in December",
+            "short": "Three inches of rain in LA",
+            "context": "December is one of the wettest months of the year in Los Angeles.",
+            "source": {
+              "market_id": 72422656,
+              "outcome_name": "Above 3 inches"
+            }
+          }
+        ],
+        "hard": [
+          {
+            "id": "sh1",
+            "kind": "chance",
+            "topic": "Odd stuff",
+            "emoji": "👽",
+            "extras": [
+              "🛸",
+              "🏛️"
+            ],
+            "prompt": "The US confirms that aliens exist before 2027",
+            "short": "The US confirms aliens",
+            "context": "The year has about a month left.",
+            "roastHigh": "{n} said {g}%. {n} {has} seen something in the backyard. The world says {w}%.",
+            "roastLow": "{n} said {g}%. {n} {is} right that nobody is landing this month. The world says {w}%.",
+            "source": {
+              "market_id": 13792362,
+              "outcome_name": "Yes"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

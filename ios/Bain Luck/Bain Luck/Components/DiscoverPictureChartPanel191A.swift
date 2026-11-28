@@ -66,6 +66,27 @@ enum DiscoverPictureChart191A {
             }
             return "Win chance chart for \(plottedTeamShortName): \(leftEndLabel), \(rightEndLabel)"
         }
+
+        var hasMovingSeries: Bool {
+            if threeWayPoints.count >= 2 {
+                return DiscoverCardChartRules13773.hasMovingThreeWaySpread(threeWayPoints)
+            }
+            return DiscoverCardChartRules13773.hasMovingSpread(points.map(\.probability))
+        }
+
+        var dateRange: (start: Date, end: Date)? {
+            if threeWayPoints.count >= 2,
+               let first = threeWayPoints.first?.date,
+               let last = threeWayPoints.last?.date {
+                return (first, last)
+            }
+            if points.count >= 2,
+               let first = points.first?.date,
+               let last = points.last?.date {
+                return (first, last)
+            }
+            return nil
+        }
     }
 
     /// #13092 — When a finished two-way `/api/feed` event omits `prematch_odds`
@@ -144,7 +165,8 @@ enum DiscoverPictureChart191A {
     nonisolated static func build(
         event: FeedEventData,
         prematch: PrematchReading?,
-        history: EventHistoryResponse?
+        history: EventHistoryResponse?,
+        showsLiveTenths: Bool = false
     ) -> Model {
         let isFinished = EventState.isFinished(event.status)
         let isLive = event.status == "live"
@@ -244,20 +266,33 @@ enum DiscoverPictureChart191A {
                 return ("Final", false)
             }
 
-            guard let curP = currentSideProb,
-                  let tenthsText = CompactGameCard12616.formatSingleLiveTenths(curP) else {
+            guard let curP = currentSideProb else {
                 return ("Current win chance unavailable", false)
             }
-
-            if let preP = pregameSideProb {
-                let deltaPts = (curP - preP) * 100.0
-                if abs(deltaPts) >= 0.05 {
-                    let sign = deltaPts >= 0 ? "+" : "-"
-                    let formattedDelta = String(format: "%@%.1f pts", sign, abs(deltaPts))
-                    return ("Now \(tenthsText) \(plottedTeamCode) (\(formattedDelta))", true)
+            if showsLiveTenths {
+                guard let tenthsText = CompactGameCard12616.formatSingleLiveTenths(curP) else {
+                    return ("Current win chance unavailable", false)
                 }
+                if let preP = pregameSideProb {
+                    let deltaPts = (curP - preP) * 100.0
+                    if abs(deltaPts) >= 0.05 {
+                        let sign = deltaPts >= 0 ? "+" : "-"
+                        let formattedDelta = String(format: "%@%.1f pts", sign, abs(deltaPts))
+                        return ("Now \(tenthsText) \(plottedTeamCode) (\(formattedDelta))", true)
+                    }
+                }
+                return ("Now \(tenthsText) \(plottedTeamCode)", true)
+            } else {
+                let wholeText = formatProbability(curP, renderedPercent: nil)
+                if let preP = pregameSideProb {
+                    let deltaRounded = Int(((curP - preP) * 100.0).rounded())
+                    if abs(deltaRounded) >= 1 {
+                        let sign = deltaRounded >= 0 ? "+" : "-"
+                        return ("Now \(wholeText) \(plottedTeamCode) (\(sign)\(abs(deltaRounded)) pts)", true)
+                    }
+                }
+                return ("Now \(wholeText) \(plottedTeamCode)", true)
             }
-            return ("Now \(tenthsText) \(plottedTeamCode)", true)
         }()
 
         let threeWayPoints = SoccerThreeLineChart211A.extractCardPoints(
@@ -500,7 +535,14 @@ final class DiscoverEventChartHistoryCache191A {
             return await existing.value
         }
         let task = Task<EventHistoryResponse?, Never> {
-            try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168)
+            guard let initial = try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168, range: "since_start") else {
+                return nil
+            }
+            if !isLive, initial.preWindowOmitted == true,
+               let full = try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168, range: "all") {
+                return full
+            }
+            return initial
         }
         inflight[eventId] = task
         let result = await task.value
@@ -512,7 +554,7 @@ final class DiscoverEventChartHistoryCache191A {
         return entries[eventId]?.response
     }
 
-    private func store(_ response: EventHistoryResponse, for eventId: Int) {
+    func store(_ response: EventHistoryResponse, for eventId: Int) {
         entries[eventId] = Entry(response: response, fetchedAt: Date())
         order.removeAll { $0 == eventId }
         order.append(eventId)
@@ -520,6 +562,11 @@ final class DiscoverEventChartHistoryCache191A {
             let evicted = order.removeFirst()
             entries.removeValue(forKey: evicted)
         }
+    }
+
+    func remove(eventId: Int) {
+        entries.removeValue(forKey: eventId)
+        order.removeAll { $0 == eventId }
     }
 }
 
@@ -545,6 +592,8 @@ struct DiscoverPictureChartPanel191AView: View {
     var onHistoryResolved: ((EventHistoryResponse) -> Void)? = nil
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.liveOddsRefreshActive) private var liveOddsRefreshActive
+    @Environment(\.timeZone) private var timeZone
     @ScaledMetric(relativeTo: .body) private var rawPlotHeight: CGFloat = 126
     @ScaledMetric(relativeTo: .caption2) private var yAxisFontSize: CGFloat = 9.5
 
@@ -564,12 +613,13 @@ struct DiscoverPictureChartPanel191AView: View {
         DiscoverPictureChart191A.build(
             event: event,
             prematch: prematch,
-            history: effectiveHistory
+            history: effectiveHistory,
+            showsLiveTenths: liveOddsRefreshActive
         )
     }
 
     private var isLoadingHistory: Bool {
-        let waiting = isLoadingOverrideForTesting ?? !didFinishLoad
+        let waiting = isLoadingOverrideForTesting ?? (preloadedHistory == nil && !didFinishLoad)
         return waiting && model.points.isEmpty && model.threeWayPoints.isEmpty
     }
 
@@ -672,9 +722,41 @@ struct DiscoverPictureChartPanel191AView: View {
         }
     }
 
+    private var xAxisDatePlaceholder: some View {
+        Text(" ")
+            .font(.system(size: min(yAxisFontSize, 10.5), weight: .medium).monospacedDigit())
+            .lineLimit(1)
+            .hidden()
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var xAxisDateRow: some View {
+        if let range = model.dateRange,
+           let labels = DiscoverCardChartRules13773.axisEndLabels(
+               start: range.start,
+               end: range.end,
+               timeZone: timeZone
+           ) {
+            HStack(spacing: 8) {
+                Text(labels.start)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 6)
+                Text(labels.end)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .font(.system(size: min(yAxisFontSize, 10.5), weight: .medium).monospacedDigit())
+            .foregroundStyle(DS.textSecondaryReadable)
+            .padding(.leading, dynamicTypeSize.isAccessibilitySize ? 0 : 38)
+            .accessibilityIdentifier("discover-card-191a-chart-xaxis")
+        }
+    }
+
     var body: some View {
         Group {
-            if isLoadingHistory || !model.points.isEmpty || !model.threeWayPoints.isEmpty {
+            if isLoadingHistory || model.hasMovingSeries {
                 VStack(alignment: .leading, spacing: 6) {
                     chartHeaderRow
                     if model.showsPregameLabel && !isLoadingHistory {
@@ -685,8 +767,10 @@ struct DiscoverPictureChartPanel191AView: View {
                     }
                     if isLoadingHistory {
                         loadingPlotPlaceholder.frame(height: plotHeight)
+                        xAxisDatePlaceholder
                     } else {
                         plotCanvas.frame(height: plotHeight)
+                        xAxisDateRow
                     }
                 }
                 .padding(.horizontal, 10)

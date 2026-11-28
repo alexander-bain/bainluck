@@ -243,6 +243,7 @@ from app.utils.futures_quote_freshness import (
     price_refresh_due_sql,
     registered_price_refresh_market_ids,
 )
+from app.utils.kalshi_empty_book import ASK_ONLY_TRUSTED_MAX, ask_with_zero_bid
 from app.utils.kalshi_resolution_window import derive_resolution_window  # #8871
 from app.utils.kalshi_threshold_label import (  # #9543
     THRESHOLD_LABEL_KEY,
@@ -1536,6 +1537,18 @@ def _mark_label_attempted(market_ids: list[int]) -> None:
 
 # --- writing -----------------------------------------------------------------
 
+SNAPSHOT_INSERT_BATCH_SIZE = 100
+
+
+def _snapshot_row_batches(
+    rows: list[dict],
+    *,
+    batch_size: int = SNAPSHOT_INSERT_BATCH_SIZE,
+):
+    """Yield ``FuturesOddsSnapshot`` row chunks bounded by ``batch_size`` (#13673)."""
+    for idx in range(0, len(rows), batch_size):
+        yield rows[idx : idx + batch_size]
+
 
 async def _write_prices(
     session,
@@ -1711,12 +1724,15 @@ async def _write_prices(
 
     now = datetime.now(timezone.utc)
     written = 0
+    snapshot_rows: list[dict] = []
     # #7582. Partitioned rather than handled in place, because the clear below
     # is conditional on `written` and therefore cannot run until every quote on
     # this board has been written. Held as items (not ids) so `_legs` resolves
     # them under the same three id conventions as a priced item — a Polymarket
     # decomposed pair would otherwise clear its yes leg and leave the no leg.
     unpriced: list[dict] = []
+    ask_ceilings: dict[str, float | None] = {}
+    high_asks: dict[str, float | None] = {}
     #: #9220. A mixed Kalshi event's legs the venue has SETTLED, each carrying
     #: its verdict. Graded below, never priced.
     answered: list[dict] = []
@@ -1725,6 +1741,17 @@ async def _write_prices(
             answered.append(item)
             continue
         if item.get("venue_quotes_no_price"):
+            ask = ask_with_zero_bid(item.get("yes_bid"), item.get("yes_ask"))
+            if bookmaker == "kalshi" and ask is not None:
+                if poll is not None:
+                    outcome_id = existing.get(item["external_id"])
+                    if outcome_id is not None and poll.admit(outcome_id, None, 0, ask, stats):
+                        ask_ceilings[item["external_id"]] = ask
+                    continue
+                if ask <= ASK_ONLY_TRUSTED_MAX:
+                    ask_ceilings[item["external_id"]] = ask
+                    continue
+                high_asks[item["external_id"]] = ask
             unpriced.append(item)
             continue
         # #12658: a refused current quote still carries its condition to the
@@ -1878,6 +1905,15 @@ async def _write_prices(
                         FuturesOutcome.price_changed_at < poll.fetched_at,
                     )
                 )
+                # A copy can nominate a settled leg. The eligible-outcomes
+                # read checks the real row, and these predicates also cover a
+                # grade that lands between that read and the UPDATE.
+                fresher.extend(
+                    (
+                        FuturesOutcome.is_winner.isnot(True),
+                        FuturesOutcome.resolution_source.is_distinct_from(SETTLED_SOURCE),
+                    )
+                )
                 # FOR NO KEY UPDATE SKIP LOCKED: a row another transaction holds
                 # is being written by a newer writer, so the poll leaves it to
                 # the next pass instead of waiting on it while holding this
@@ -1984,19 +2020,36 @@ async def _write_prices(
                 poll.moved.append((outcome_id, side))
                 written += 1
                 continue
-            await session.execute(
-                pg_insert(FuturesOddsSnapshot).values(
-                    outcome_id=outcome_id,
-                    bookmaker=bookmaker,
-                    probability=side_prob,
-                    american_odds=american,
-                    yes_bid=side.get("yes_bid"),
-                    yes_ask=side.get("yes_ask"),
-                    last_price=side.get("last_price"),
-                    captured_at=now,
-                )
+            snapshot_rows.append(
+                {
+                    "outcome_id": outcome_id,
+                    "bookmaker": bookmaker,
+                    "probability": side_prob,
+                    "american_odds": american,
+                    "yes_bid": side.get("yes_bid"),
+                    "yes_ask": side.get("yes_ask"),
+                    "last_price": side.get("last_price"),
+                    "captured_at": now,
+                }
             )
             written += 1
+
+    for chunk in _snapshot_row_batches(snapshot_rows):
+        if len(chunk) == 1:
+            row = chunk[0]
+            stmt = pg_insert(FuturesOddsSnapshot).values(
+                outcome_id=row["outcome_id"],
+                bookmaker=row["bookmaker"],
+                probability=row["probability"],
+                american_odds=row["american_odds"],
+                yes_bid=row["yes_bid"],
+                yes_ask=row["yes_ask"],
+                last_price=row["last_price"],
+                captured_at=row["captured_at"],
+            )
+        else:
+            stmt = pg_insert(FuturesOddsSnapshot).values(chunk)
+        await session.execute(stmt)
 
     # ── #7582: stop publishing a price the venue stopped quoting ─────────────
     #
@@ -2031,10 +2084,27 @@ async def _write_prices(
     # So a leg the venue stops quoting keeps its last price for a week. That is
     # deliberate: a quiet book is the normal state of a season future, and one
     # unpriced pass is not evidence of anything.
+    if ask_ceilings or high_asks:
+        from app.tasks.kalshi import record_kalshi_ask_ceilings
+
+        if poll is None:
+            await record_kalshi_ask_ceilings(
+                session, market_id, ask_ceilings, observed_at=now
+            )
+            await record_kalshi_ask_ceilings(
+                session, market_id, high_asks,
+                observed_at=now, preserve_previous_price=True,
+            )
+        else:
+            poll.withdrawn.update(await record_kalshi_ask_ceilings(
+                session, market_id, ask_ceilings, observed_at=now,
+                poll_fetched_at=poll.fetched_at,
+            ))
+
     if written and unpriced:
         stale_before = now - timedelta(days=OBSERVATION_LAG_DAYS)
         for item in unpriced:
-            for outcome_id, _side in _legs(item):
+            for outcome_id, side in _legs(item):
                 cleared = await session.execute(
                     sa_update(FuturesOutcome)
                     .where(
@@ -2067,8 +2137,8 @@ async def _write_prices(
                     .values(
                         current_probability=None,
                         current_american_odds=None,
-                        current_yes_bid=None,
-                        current_yes_ask=None,
+                        current_yes_bid=0 if item["external_id"] in high_asks else None,
+                        current_yes_ask=side.get("yes_ask") if item["external_id"] in high_asks else None,
                         # A 24h delta describing a price that no longer exists is
                         # not a delta — the sibling clear's #2024 finding.
                         probability_change_24h=None,

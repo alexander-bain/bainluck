@@ -538,6 +538,7 @@ def _audit_live_api(
             card=card,
             container=container,
             definition=defn,
+            feed_item=feed_item,
             slug=slug,
         )
         pic_res = audit_picture_policy_for_definition(defn, card=card)

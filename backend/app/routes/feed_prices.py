@@ -22,7 +22,6 @@ from app.utils.game_state import normalize_live_game_state
 from app.utils.hero_probability import resolve_hero
 from app.utils.personalization import PersonalizationContext
 from app.utils.proven_duplicates import (
-    FoldedBlendView,
     folded_probability_sources_with_revision,
 )
 from app.utils.settled_feed_price_card import settled_feed_price_card
@@ -83,24 +82,41 @@ def _public(item):
 
 async def _event_cards(db, ids, now):
     from app.routes.feed import _score_events, enrich_event_team_data
+    from app.utils.unified_game_read import load_unified_game_reads
 
     rows = (await db.execute(
         select(Event).options(selectinload(Event.sport)).where(Event.id.in_(ids))
     )).scalars().all()
     dispositions = {f"event-{eid}": "missing" for eid in ids}
+    unified_batch = await load_unified_game_reads(
+        db,
+        rows,
+        collapse_in_page=False,
+        include_same_league_external=True,
+        include_odds=True,
+        include_fold_revision=True,
+        fold_revision_fn=folded_probability_sources_with_revision,
+        fault_tolerant_external=True,
+        fault_tolerant_odds=True,
+        now=now,
+    )
     views, revisions = [], {}
     for event in rows:
         dispositions[f"event-{event.id}"] = "unresolved"
-        sources, revision = await folded_probability_sources_with_revision(db, event)
-        # A partial fold cannot order or cover a stream invalidation.
-        if revision is None:
+        uread = unified_batch.by_id.get(int(event.id))
+        if uread is None or uread.blend_fold_revision is None:
             continue
-        views.append(FoldedBlendView(event, sources))
-        revisions[event.id] = revision
+        views.append(uread.blend_view)
+        revisions[event.id] = uread.blend_fold_revision
     if not views:
         return [], dispositions
     items = await _score_events(
-        db, now, None, PersonalizationContext(), price_refresh_events=views
+        db,
+        now,
+        None,
+        PersonalizationContext(),
+        price_refresh_events=views,
+        precomputed_unified_reads=unified_batch,
     )
     by_id = {view.id: view for view in views}
     rows_by_id = {event.id: event for event in rows}
@@ -194,10 +210,18 @@ async def _market_cards(db, ids, now):
         for outcome in data.get("top_outcomes") or []:
             outcome["price_revision_at"] = clocks.get(str(outcome["id"]))
             outcome["price_observed_at"] = outcome["price_revision_at"]  # Legacy ordering only.
-        dispositions[f"futures-{market.id}"] = "updated"
+        dispositions[f"futures-{market.id}"] = (
+            "withheld" if data.get("field_price_coverage_incomplete") else "updated"
+        )
     from app.routes.title_feed_projection import project_super_bowl_card
+    from app.utils.futures_verified_title import SUPER_BOWL_2027_BOARD_ID
 
-    return terminal_items + await project_super_bowl_card(items, db), dispositions
+    # A cached projection has the clocks of the earlier reading. It can fill
+    # a fresh Sports page, but must not inherit these newer row revisions.
+    projected = await project_super_bowl_card(items, db, allow_shared=False)
+    if len(projected) < len(items):
+        dispositions[f"futures-{SUPER_BOWL_2027_BOARD_ID}"] = "unresolved"
+    return terminal_items + projected, dispositions
 
 
 @router.get("/outcome-prices")

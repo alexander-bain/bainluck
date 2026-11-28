@@ -175,6 +175,7 @@ describe("/evals S1 renders the shell", () => {
       "forward-record",
       "exam",
       "confusion",
+      "market-understanding",
       "timeline",
       "tests-for-tests",
       "test-library",
@@ -188,7 +189,9 @@ describe("/evals S1 renders the shell", () => {
     const page = await mountPage();
     const rows = Array.from(page.querySelectorAll("[data-gap-id]"));
     expect(rows.map((r) => r.getAttribute("data-gap-id"))).toEqual(GAPS.map((g) => g.id));
+    expect(rows).toHaveLength(11);
     expect(Object.keys(GAP_TARGETS.gaps).sort()).toEqual(GAPS.map((g) => g.id).sort());
+    expect(page.querySelector('[data-gap-id="cu-entity-linking"]')?.textContent).toContain("#13897");
     for (const row of rows) {
       const id = row.getAttribute("data-gap-id")!;
       const entry = GAP_TARGETS.gaps[id];
@@ -200,7 +203,7 @@ describe("/evals S1 renders the shell", () => {
       const targetEl = row.querySelector("[data-gap-target]");
       if (entry.target) {
         expect(targetEl?.getAttribute("data-gap-target")).toBe(entry.target);
-        expect(targetEl?.textContent).toMatch(/Expected (November|December) 2026/);
+        expect(targetEl?.textContent).toMatch(/Expected ((November|December) 2026|(January|February) 2027)/);
         expect(targetEl?.querySelector("time")?.getAttribute("dateTime")).toBe(entry.target.slice(0, 7));
       } else {
         expect(targetEl?.getAttribute("data-gap-target")).toBe("unscheduled");
@@ -241,7 +244,7 @@ describe("/evals S1 renders the shell", () => {
     const listed = Array.from(page.querySelectorAll("[data-source-id]")).map((s) =>
       s.getAttribute("data-source-id")
     );
-    const onPage = ["exam", "confusion", "timeline", "forward-record", "test-library", "tests-for-tests", "watchers", "gaps"];
+    const onPage = ["exam", "confusion", "market-understanding", "timeline", "forward-record", "test-library", "tests-for-tests", "watchers", "gaps"];
     expect(listed).toEqual(
       EVALS_SOURCES.filter((s) => s.usedBy.some((id) => onPage.includes(id))).map((s) => s.id)
     );
@@ -253,6 +256,26 @@ describe("/evals S1 renders the shell", () => {
     const text = (page.textContent ?? "").replace(/\s+/g, " ");
     const hits = findBannedCopy(text, [...ALL_COPY_BANS, ...SUPPLIER_PROSE_BANS, ...EVALS_COPY_RULES]);
     expect(hits.map((h) => `${h.ban.id}: ${h.context}`)).toEqual([]);
+  });
+
+  it("renders the Content Understanding block inside the full record with repeatability numbers and Not measured yet (#13901, #13899)", async () => {
+    const page = await mountPage();
+    const cuSection = page.querySelector('[data-evals-section="market-understanding"]');
+    expect(cuSection).not.toBeNull();
+    expect(cuSection?.closest('details[data-evals-fold="record"]')).not.toBeNull();
+
+    const rep = cuSection?.querySelector('[data-testid="evals-cu-repeatability"]');
+    expect(rep?.textContent).toContain(
+      "Asked the same thing twice, the AI changed at least one answer on 70 of 200 markets. Measured Nov 27; the two runs cost 19 cents."
+    );
+    expect(
+      Array.from(rep?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent)
+    ).toEqual(["70", "200", "19"]);
+    expect(rep?.querySelector("a[href*='/issues/13899#issuecomment-7229828764']")).not.toBeNull();
+
+    const unmeasured = cuSection?.querySelector('[data-testid="evals-cu-unmeasured"]');
+    expect(unmeasured?.textContent).toContain("Not measured yet as of Nov 27");
+    expect(unmeasured?.querySelectorAll("[data-evals-figure]")).toHaveLength(0);
   });
 });
 

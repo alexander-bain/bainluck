@@ -32,6 +32,8 @@ from signals import LANE_UPDATE_WINDOW, commands_from, crew_posts_from, is_test_
 
 REPO = "alexander-bain/bainluck"
 RELEASE = "factory-data"
+NOW_LINES_ISSUE_FILE = ".github/now-lines-issue.txt"
+NOW_LINES_CUTOVER = instant("2026-11-24T05:00:00Z")  # Nov 23 at 9:00 PM Pacific.
 READ_FAILURES = (OSError, HTTPException, ValueError)
 FABLE_ACCEPT_SHA = re.compile(
     r"^\*\*Fable(?: look)?(?:\*\*)?[ :—–-]+(?:\*\*)?ACCEPT(?:ED)?\s+at\s+`?([a-f0-9]{7,40})\b",
@@ -471,6 +473,18 @@ def git(*args):
     return subprocess.check_output(["git", *args], text=True).strip()
 
 
+def read_now_lines_issue() -> int:
+    path = Path(__file__).resolve().parents[2] / NOW_LINES_ISSUE_FILE
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        # The Factory workflow's sparse checkout omits the shared issue file.
+        raw = git("show", f"HEAD:{NOW_LINES_ISSUE_FILE}")
+    if not re.fullmatch(r"[1-9][0-9]*", raw):
+        raise ValueError(f"Invalid issue number in {NOW_LINES_ISSUE_FILE}")
+    return int(raw)
+
+
 def contains(commit, ancestor):
     result = subprocess.run(
         ["git", "merge-base", "--is-ancestor", ancestor, commit], capture_output=True
@@ -653,6 +667,7 @@ def master_checks(api, runs, completed, pulls):
 
 def collect(api, previous=None, cache=None, open_summaries=None):
     previous, cache = previous or {}, cache or {}
+    now_lines_issue = read_now_lines_issue()
     now = datetime.now(timezone.utc)
     midnight = now.astimezone(PACIFIC).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -729,10 +744,15 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     last_read = (
         previous.get("generated_at") if previous.get("injury_clock") else injury_since
     )
-    comments_since = min(floor, instant(last_read), now - LANE_UPDATE_WINDOW)
-    comments = api.pages(f"issues/12779/comments?since={iso(comments_since)}")
+    command_since = floor
+    # Retain the cutover window until a snapshot from this issue is published.
+    if previous.get("signals", {}).get("now_lines_issue") != now_lines_issue:
+        command_since = min(command_since, NOW_LINES_CUTOVER)
+    comments_since = min(command_since, instant(last_read), now - LANE_UPDATE_WINDOW)
+    comments = api.pages(f"issues/{now_lines_issue}/comments?since={iso(comments_since)}")
     commands = commands_from(
-        c for c in comments if instant(c.get("updated_at", c["created_at"])) >= floor
+        comment for comment in comments
+        if instant(comment.get("updated_at", comment["created_at"])) >= command_since
     )
     positions = {
         sha: i
@@ -789,6 +809,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     )["workflow_runs"]
     master = {
         **master_checks(api, runs, completed, pulls),
+        "now_lines_issue": now_lines_issue,
         "testflight": latest.get("Apps", {}).get("state", "unknown"),
         "successful_runs": [
             {"started_at": run["run_started_at"], "finished_at": run["updated_at"]}
@@ -1054,7 +1075,13 @@ def main():
         )
         if args.publish and release:
             assets = list(release.get("assets", []))
-            if DAILY_PICTURE_ENABLED:
+            today = budget.now.astimezone(PACIFIC).date().isoformat()
+            today_asset = asset_name({"day": today})
+            if DAILY_PICTURE_ENABLED and any(
+                asset.get("name") == today_asset and asset.get("state") == "uploaded" for asset in assets
+            ):
+                picture_stats = {"status": "already-published"}
+            elif DAILY_PICTURE_ENABLED:
                 picture, picture_stats = metered_picture(result, budget, key)
                 if picture:
                     try:

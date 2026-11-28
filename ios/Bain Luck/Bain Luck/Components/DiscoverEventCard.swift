@@ -51,9 +51,7 @@ struct NativeEventDiscoverCard: View {
         chartHistory: EventHistoryResponse? = nil
     ) {
         var reading = event
-        reading.currentOdds = OpeningLineHero.currentOddsForCard(
-            event.currentOdds, heroSource: event.heroProbabilitySource
-        )
+        reading.currentOdds = CompactGameCard12616.currentOddsForCard(event)
         self.event = reading
         self.feedContext = feedContext
         self.expandedContext = expandedContext
@@ -71,6 +69,8 @@ struct NativeEventDiscoverCard: View {
     /// decision rather than decoration. See `GameCardStatusColumn`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
+    @ScaledMetric(relativeTo: .subheadline) private var shareIconSizeAX: CGFloat = 15
     @ObservedObject var clock = MinuteClock.shared
     @State private var heroContentWidth: Double = 0
 
@@ -401,24 +401,38 @@ struct NativeEventDiscoverCard: View {
 
     @ViewBuilder
     private var discoverFooterRow: some View {
-        // Context text + footer (#10373 — share button rides the caption row).
-        if let contextText {
-            if dynamicTypeSize.isAccessibilitySize {
-                contextCaption(contextText)
+        VStack(alignment: .leading, spacing: 8) {
+            GameCardTeamFollowBar295A(event: event)
+
+            // Context text + footer (#10373 — share button rides the caption row).
+            if let contextText {
+                if dynamicTypeSize.isAccessibilitySize {
+                    contextCaption(contextText)
+                    HStack {
+                        Spacer()
+                        footerMarks
+                    }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .center, spacing: 8) {
+                            contextCaption(contextText)
+                            Spacer(minLength: 4)
+                            footerMarks
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            contextCaption(contextText)
+                            HStack {
+                                Spacer()
+                                footerMarks
+                            }
+                        }
+                    }
+                }
+            } else {
                 HStack {
                     Spacer()
                     footerMarks
                 }
-            } else {
-                HStack(alignment: .center, spacing: 8) {
-                    contextCaption(contextText)
-                    footerMarks
-                }
-            }
-        } else {
-            HStack {
-                Spacer()
-                footerMarks
             }
         }
     }
@@ -620,10 +634,29 @@ struct NativeEventDiscoverCard: View {
     }
 
     /// Ruling 182-A — game cards remove signal bars; `footerMarks` holds the
-    /// bookmark pin and share buttons and still rides the caption's row (#10373).
+    /// Like heart (#13769), bookmark pin and share buttons and still rides the caption's row (#10373).
     private var footerMarks: some View {
-        HStack(spacing: 2) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+                if let likeAction {
+                    DiscoverLikeButton420D(isLiked: likeAction.isLiked, action: likeAction.onToggle)
+                }
+                eventPinShareControls
+            }
+
+            VStack(alignment: .trailing, spacing: 6) {
+                if let likeAction {
+                    DiscoverLikeButton420D(isLiked: likeAction.isLiked, action: likeAction.onToggle)
+                }
+                eventPinShareControls
+            }
+        }
+    }
+
+    private var eventPinShareControls: some View {
+        HStack(spacing: 4) {
             PinButton(type: "event", id: event.id)
+                .fixedSize(horizontal: true, vertical: false)
 
             ShareLink(
                 item: shareURL,
@@ -631,7 +664,11 @@ struct NativeEventDiscoverCard: View {
                 message: Text(shareMessage)
             ) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.subheadline.weight(.medium))
+                    .font(
+                        dynamicTypeSize.isAccessibilitySize
+                            ? .system(size: min(shareIconSizeAX, 22), weight: .medium)
+                            : .subheadline.weight(.medium)
+                    )
                     .foregroundStyle(DS.textSecondaryReadable)
                     .padding(8)
                     .background(Color.secondary.opacity(0.10), in: Circle())

@@ -69,25 +69,9 @@ final class TheEventPageGivesTheChartTheRoom10830Tests: XCTestCase {
         XCTAssertTrue(chart.contains("guardsizeClass==.regularelse{returnSelf.phoneChartHeight}"))
     }
 
-    // MARK: - The headline card fits its content
-
-    func testStackedTheCaptionRidesThePaddingAndOtherwiseKeepsItsSlot() throws {
-        let page = try code("Views", "EventDetailView.swift")
-        XCTAssertTrue(page.contains(
-            "letcaptionRidesPadding=stacked&&!dynamicTypeSize.isAccessibilitySize"),
-            "accessibility sizes outgrow the padding; a row never had the band")
-        XCTAssertTrue(page.contains(
-            "probabilityDetails(confidenceTier:confidenceTier,"
-            + "ekgDrawn:heroEkgDrawn(event,isOpeningLine:shown.isOpeningLine)).overlay(alignment:.bottom){"
-            + "ifpriceStreamingEligible&&captionRidesPadding{"
-            + "movementCaptionSlot(event,colors:colors).alignmentGuide(.bottom){$0[.top]}"),
-            "the stacked caption reserves a band under Live updates again")
-        XCTAssertTrue(page.contains(
-            "ifpriceStreamingEligible&&!shown.isOpeningLine&&!captionRidesPadding{"
-            + "movementCaptionSlot(event,colors:colors)}"),
-            "the caption lost its slot where it cannot ride the padding")
-        XCTAssertEqual(page.components(separatedBy: "LivePriceMovementCaption(").count - 1, 1)
-    }
+    // Direction 199 retired `LivePriceMovementCaption` from the event hero in favor
+    // of `EventSportHeadlineCard12472.ekgButton`, whose padding-riding 44 pt target
+    // is guarded in `RecognizableNFLPage9483Tests`.
 
     // MARK: - The popup is compact and says what the hero reads
 
@@ -138,10 +122,16 @@ final class TheEventPageGivesTheChartTheRoom10830Tests: XCTestCase {
     }
 
     func testTheHeroStillComputesItsTierFromSourcesAndMovementOnly() throws {
-        let page = try code("Views", "EventDetailView.swift")
-        XCTAssertTrue(page.contains(
-            "letconfidenceTier=Confidence.fromSources(sourceCount:event.winProbabilitySources?.count,"
-            + "hasMovement:event.openingOdds?.homeProbability"),
+        let headlines = try code("Utilities", "EventSportHeadlines12472.swift")
+        XCTAssertEqual(headlines.components(separatedBy: "Confidence.fromSources(").count - 1, 5,
+                       "the hero's confidence tier calls changed; re-verify all resolve branches")
+        XCTAssertEqual(
+            headlines.components(separatedBy: "Confidence.fromSources(sourceCount:event.winProbabilitySources?.count,"
+                + "hasMovement:event.openingOdds?.homeProbability").count - 1,
+            4,
             "the hero's inputs changed; re-word Confidence.heroBasis with them")
+        XCTAssertEqual(
+            headlines.components(separatedBy: "Confidence.fromSources(sourceCount:event.winProbabilitySources?.count,hasMovement:false)").count - 1,
+            1)
     }
 }

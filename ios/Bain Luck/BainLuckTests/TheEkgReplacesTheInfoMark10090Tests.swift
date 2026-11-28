@@ -183,11 +183,21 @@ final class TheEkgReplacesTheInfoMark10090Tests: XCTestCase {
         let popover = try XCTUnwrap(control.range(of: ".popover(isPresented:$showProbabilityDetails"))
         XCTAssertNotNil(control.range(of: ".accessibilityHidden(\(collapse))", range: control.startIndex..<popover.lowerBound))
 
-        XCTAssertTrue(text.contains("probabilityDetails(confidenceTier:confidenceTier,"
-            + "ekgDrawn:heroEkgDrawn(event,isOpeningLine:shown.isOpeningLine))"), "the legacy hero's control")
-        XCTAssertTrue(text.contains("statusInDetails:true,ekgDrawn:heroEkgDrawn(event,isOpeningLine:false))"),
-                      "the paired page's control")
-        XCTAssertTrue(text.contains("ifpriceStreamingEligible{probabilityDetails(confidenceTier:nil)}"),
-                      "an unpriced 'vs' hero draws no EKG, so it keeps its (i)")
+        let cardUrl = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Components/EventSportHeadlineCard12472.swift")
+        let cardText = try String(contentsOf: cardUrl, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                guard let s = line.range(of: "//") else { return String(line) }
+                return String(line[..<s.lowerBound])
+            }
+            .joined(separator: "\n")
+            .filter { !$0.isWhitespace }
+        XCTAssertTrue(cardText.contains("ifshowsActiveEkgControl{ekgButton"),
+                      "unified hero renders EKG when active")
+        XCTAssertTrue(cardText.contains("statusInDetails:true,ekgDrawn:true)"),
+                      "interrupted EKG control passes statusInDetails + ekgDrawn")
+        XCTAssertTrue(cardText.contains("ifletmarkButton=resolvedHeadlineSourceMark{"),
+                      "unified hero still keeps source mark alongside trailing controls")
     }
 }

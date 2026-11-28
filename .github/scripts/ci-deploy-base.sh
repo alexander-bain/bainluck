@@ -42,25 +42,31 @@ HEAD_SHA="${2:-}"
 # this logic.
 HEALTH_URL="${CI_DEPLOYED_SHA_URL:-https://api.bainluck.com/api/health}"
 CURL_MAX_TIME="${CI_DEPLOYED_SHA_TIMEOUT:-10}"
+STATUS_FILE="${CI_DEPLOY_BASE_STATUS_FILE:-}"
 
 say () { echo "$*" >&2; }
-emit () { echo "$1"; say "BASE: $1 ($2)"; exit 0; }
+write_status () {
+  if [ -n "$STATUS_FILE" ]; then
+    printf '%s\n' "$1" > "$STATUS_FILE" 2>/dev/null || true
+  fi
+}
+emit_status () { write_status "$1"; echo "$2"; say "BASE: $2 ($3)"; exit 0; }
 
-# Every failure path below emits the FALLBACK, which is exactly today's
-# behaviour — this script can only ever improve the base or leave it alone.
-[ -n "$FALLBACK" ] || emit "$FALLBACK" "no fallback base given — nothing to improve on"
-[ -n "$HEAD_SHA" ] || emit "$FALLBACK" "no head commit given — cannot validate a deployed sha"
+# Every failure path below emits the FALLBACK (status=unresolved), which preserves
+# existing behaviour while letting downstream Ruling 394 checks fail closed.
+[ -n "$FALLBACK" ] || emit_status "unresolved" "$FALLBACK" "no fallback base given — nothing to improve on"
+[ -n "$HEAD_SHA" ] || emit_status "unresolved" "$FALLBACK" "no head commit given — cannot validate a deployed sha"
 
 case "$FALLBACK" in
   0000000000000000000000000000000000000000)
     # A branch's first push. The siblings both read this as "no usable base" and
     # fail toward full/true; substituting a real sha would NARROW that to a
     # diffable range and could turn a `full` into a `frontend`.
-    emit "$FALLBACK" "fallback is the null sha — the gates' own fail-safe must keep it" ;;
+    emit_status "unresolved" "$FALLBACK" "fallback is the null sha — the gates' own fail-safe must keep it" ;;
 esac
 
 BODY="$(curl -fsS --max-time "$CURL_MAX_TIME" "$HEALTH_URL" 2>/dev/null)" \
-  || emit "$FALLBACK" "could not read $HEALTH_URL — keeping the fallback base"
+  || emit_status "unresolved" "$FALLBACK" "could not read $HEALTH_URL — keeping the fallback base"
 
 # Deliberately not `jq`: this runs before any tooling step, and a missing
 # interpreter here would be a deploy-path failure for a string extraction. The
@@ -70,23 +76,23 @@ DEPLOYED="$(printf '%s' "$BODY" \
   | tr ',{}' '\n\n\n' \
   | sed -n 's/.*"commit"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F]\{7,40\}\)".*/\1/p' \
   | head -1)"
-[ -n "$DEPLOYED" ] || emit "$FALLBACK" "no usable commit field at $HEALTH_URL — keeping the fallback base"
+[ -n "$DEPLOYED" ] || emit_status "unresolved" "$FALLBACK" "no usable commit field at $HEALTH_URL — keeping the fallback base"
 
 # An abbreviation is only usable if THIS checkout can resolve it unambiguously.
 FULL="$(git rev-parse --verify --quiet "${DEPLOYED}^{commit}" 2>/dev/null)" \
   || FULL=""
-[ -n "$FULL" ] || emit "$FALLBACK" "deployed sha ${DEPLOYED} is not resolvable here — keeping the fallback base"
+[ -n "$FULL" ] || emit_status "unresolved" "$FALLBACK" "deployed sha ${DEPLOYED} is not resolvable here — keeping the fallback base"
 
 # THE INVARIANT, ENFORCED. The deployed sha is used only when it sits at or
 # below the fallback. If production were somehow AHEAD of `event.before` — a
 # force-push, a rebased master, a deploy from another ref — using it would
 # SHRINK the range and could hide a backend path. That case keeps the fallback.
 if ! git merge-base --is-ancestor "$FULL" "$FALLBACK" 2>/dev/null; then
-  emit "$FALLBACK" "deployed ${FULL} is not an ancestor of the fallback — using it could only narrow the range"
+  emit_status "unresolved" "$FALLBACK" "deployed ${FULL} is not an ancestor of the fallback — using it could only narrow the range"
 fi
 
 if [ "$FULL" = "$(git rev-parse --verify --quiet "${FALLBACK}^{commit}" 2>/dev/null)" ]; then
-  emit "$FALLBACK" "production already serves the fallback base — nothing stranded"
+  emit_status "resolved" "$FALLBACK" "production already serves the fallback base — nothing stranded"
 fi
 
-emit "$FULL" "production serves ${DEPLOYED}, which is below the fallback — widening the range to include what never released"
+emit_status "resolved" "$FULL" "production serves ${DEPLOYED}, which is below the fallback — widening the range to include what never released"

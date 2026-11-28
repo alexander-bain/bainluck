@@ -173,7 +173,7 @@ describe("#2789 — the card ranks the favourite first", () => {
     expect(labels).not.toContain("Richard Sterne");
   });
 
-  it("never makes an unpriced row the leader", () => {
+  it("omits the unpriced row and retains the supported leader", () => {
     const labels = renderedLabels(
       render(
         market("Omega European Masters - Make the Cut", [
@@ -182,7 +182,7 @@ describe("#2789 — the card ranks the favourite first", () => {
         ]),
       ),
     );
-    expect(labels).toEqual(["Marco Penge", "Oliver Lindell"]);
+    expect(labels).toEqual(["Marco Penge"]);
   });
 });
 

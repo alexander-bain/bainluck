@@ -11,12 +11,13 @@ import logging
 import asyncio
 import re
 import json
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
 import httpx
-from sqlalchemy import DateTime, Integer, String, column as sa_column, select, table as sa_table, update, func
+from sqlalchemy import DateTime, Integer, String, bindparam, case, column as sa_column, select, table as sa_table, update, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.services.llm_models import resolve_model
@@ -24,15 +25,22 @@ from app.services.llm_request import JobBudget, LLMCallRefused, complete_chat, c
 from app.tasks.base import get_task_session
 from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 from app.utils.image_dimensions import delivered_dimensions
+from app.utils.cu_event_facts import (
+    cu_event_facts,
+    cu_model_geography,
+    cu_unlinked_event_date,
+)
 from app.utils.cu_frame import (
     DROP_ABSENT as CU_FRAME_DROP_ABSENT,
     DROP_UNIT_NOT_IN_TITLE as CU_FRAME_DROP_UNIT_NOT_IN_TITLE,
     DROP_VALUE_NOT_IN_TITLE as CU_FRAME_DROP_VALUE_NOT_IN_TITLE,
+    MEASURES as CU_FRAME_MEASURES,
     clean_entity_mentions,
     ground_subjects,
     is_resolved_ref,
     sanitize_cu_frame,
 )
+from app.utils.cu_junk_flags import cu_junk_flags
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +69,12 @@ DISCOVER_LLM_SCHEMA_VERSION = 1
 #: A rev bump is REQUIRED alongside any prompt change: `_cu_v2_needs_retag`
 #: gates on it, so without the bump a re-run reports `skipped_fresh` and
 #: generates nothing (CU-NEXT's named tell).
-CU_WRITER_REV = 6
+# rev 7 (#12273): numeric values, canonical measure names, window dates and
+# persisted validation reasons. Unclassified markets still face the volume/tier bar.
+# rev 8 (#1809): grounded aliases must be unique and compatible with the mention.
+# rev 9 (#1809): use schedule-backed local game dates, state districts, and drop payout-date copies.
+# rev 10 (#1809): ground election days and fixture geography, and reject settlement-day copies in sports too.
+CU_WRITER_REV = 10
 CU_V2_SCHEMA_VERSION = 2
 #: Per-run spend ceiling for ``enrich_cu_v2_profiles`` (USD).
 CU_V2_COST_CAP_USD = 30.0
@@ -347,7 +360,11 @@ def _v2_profile_as_v1_shape(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _get_discover_llm_view(market_metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+def _get_discover_llm_view(
+    market_metadata: dict[str, Any] | None,
+    *,
+    outcome_names: Iterable[str | None] = (),
+) -> dict[str, Any] | None:
     """The ONE decision about what a feed consumer reads out of `discover_llm`.
 
     Two writers own this key (v1 `enrich_discover_llm_metadata`, v2
@@ -371,7 +388,10 @@ def _get_discover_llm_view(market_metadata: dict[str, Any] | None) -> dict[str, 
     if version == DISCOVER_LLM_SCHEMA_VERSION:
         return metadata
     if version == CU_V2_SCHEMA_VERSION:
-        return _v2_profile_as_v1_shape(metadata)
+        view = _v2_profile_as_v1_shape(metadata)
+        # Existing profiles get the flags from the outcomes already loaded for ranking.
+        view["junk_flags"] = cu_junk_flags(outcome_names, view["junk_flags"])
+        return view
     return None
 
 
@@ -1288,19 +1308,19 @@ async def enrich_discover_llm_metadata(limit: int = 100):
 _CU_V2_PROMPT = """You are classifying a prediction-market card for a casual audience's Discover feed. Return ONLY valid JSON matching the schema below — no extra keys, no prose.
 
 Market: {name}
-Category: {category}
+Category hint: {category}
 Source: {source}
-Resolution date: {resolution_date}
+Venue resolution date (settlement metadata): {resolution_date}
 Outcomes:
 {outcomes}
 
 CLASSIFICATION RULES (apply exactly — these are corrected from graded errors):
 1. temporal: recurring institutional decisions and scheduled measurements are "periodic" (Fed decisions, daily high-temperature markets, weekly tweet counts). Any "by [date]?" phrasing is "deadline" even when an event underlies it (ceasefires, IPOs). Reserve "event_tied" for a singular real-world event with its own date (a match, an election, a tournament). Do NOT over-use event_tied.
-2. topic boundaries: armed-conflict / international-relations markets are "geopolitics" regardless of the countries involved (Russia–Ukraine included). "esports" means VIDEO-GAME competitions ONLY (Counter-Strike/CS2, Dota, League of Legends, Valorant, Overwatch, Rocket League, Call of Duty, StarCraft, etc.) — matches AND tournament winners (e.g. IEM Cologne) are "esports". A "X vs Y" matchup is NOT automatically esports: traditional/physical sports played by humans (tennis, table tennis, badminton, snooker, darts, cricket, soccer, basketball, etc.) are "sports" even when phrased as "Tournament: Player A vs Player B" (e.g. an ATP tennis match is "sports", never "esports"). Celebrity-business stunts (e.g. Musk/OnlyFans) are "entertainment", not economics.
+2. topic boundaries: armed-conflict / international-relations markets are "geopolitics" regardless of the countries involved (Russia–Ukraine included). "esports" means VIDEO-GAME competitions ONLY (Counter-Strike/CS2, Dota, League of Legends, Valorant, Overwatch, Rocket League, Call of Duty, StarCraft, etc.) — matches AND tournament winners (e.g. IEM Cologne) are "esports". A "X vs Y" matchup is NOT automatically esports: traditional/physical sports played by humans (tennis, table tennis, badminton, snooker, darts, cricket, soccer, basketball, etc.) are "sports" even when phrased as "Tournament: Player A vs Player B" (e.g. an ATP tennis match is "sports", never "esports"). Celebrity-business stunts (e.g. Musk/OnlyFans) are "entertainment", not economics. The category is a hint. Use the sport identified by the market and its outcomes when the category conflicts.
 3. stakes = magnitude of the real-world consequence, NOT market volume: ceasefires/peace deals 4–5, pandemics 3+, an esports match 1, a celebrity tweet count 1.
 4. breadth = how many ORDINARY people know/care about THIS market's specific subject — not the topic's global fame: an esports match is 1 (regardless of how popular the game is), an esports tournament winner 2, the World Cup 5.
 5. oddity baseline is 1. Ordinary markets — including dramatic ones — are 1. Reserve 3+ for genuine weirdness (clavicular pregnancy 5, Musk-buys-OnlyFans 5); a 2 must be justified.
-6. frame: fill it ONLY from what the title itself states, and copy `value` and `unit` CHARACTER-FOR-CHARACTER out of the title. The check applied to your answer is mechanical: the exact string you write must appear in the title as a STANDALONE token. Before emitting a frame, look for your `value` string in the title; if you cannot see it there, emit "frame": null instead. One wrong character discards the entire frame, so copying is always safer than reasoning.
+6. frame: use only what the title says. Choose a measure from {measure_vocabulary}. Use price_high for a high within a stated window and price_record_high for an all-time record. Use null for the frame when no listed measure fits. Copy a numeric threshold and its unit out of the title as standalone tokens. Copy a stated deadline into window_date, including exactly the year, month and day the title gives. A deadline year or phrase is never a threshold.
    ACCEPTED — the string is present in the title, verbatim:
      "Will X reach 13M subscribers?"   -> value "13M", unit "M"
      "Will it hit 70%?"                -> value "70",  unit "%"
@@ -1314,8 +1334,12 @@ CLASSIFICATION RULES (apply exactly — these are corrected from graded errors):
      2025       for a title saying "2026"   — never a nearby or remembered number
      any value you calculated, converted, rounded, summed or inferred
    A number embedded inside a longer word does NOT count as present: "7M" is not standalone in "W7M", so that title yields "frame": null.
-   If the title names no number at all, return "frame": null — that is a CORRECT answer and is expected for most titles, not a failure. A title can also carry a measure with no number ("Who wins the scoring title?" -> measure "points", value null).
-7. event_date sanity: the event_date must be plausible relative to the resolution date above. It should NOT be in the distant past for a market that has not yet resolved (e.g. a 2023 date on a 2026 market is wrong), and for an in-progress series/season an event_tied date more than 13 months in the future is almost certainly wrong. If your derived date falls outside roughly [a few weeks before the resolution date, ~13 months after today], re-derive it or return null rather than guessing a wild year.
+   A known measure can have value null ("Who wins the scoring title?" -> measure "points", value null). Leave window_date null when the title gives no explicit date. For a title ending "by December 31, 2027", copy "December 31, 2027" into window_date. Do not infer a date from the venue close.
+7. event_date: use the real-world event's own day when supported. The venue resolution date is settlement metadata. An event can take place months before settlement, including an already-held election. A year, season or year-long measure gives no single day. Return null in those cases and when the event day is uncertain. Never use January 1 as a placeholder. For an inferred date in the distant past or more than 13 months beyond an in-progress season, require explicit evidence or return null.
+8. Election scope: a state legislative district or any race below state level is local, stakes 1 and breadth 1. A U.S. House district is us, stakes 2 and breadth 2, including vote-share markets on that seat.
+9. Geography: use us for U.S. subjects except the local races above. Do not encode an American state as a country. A domestic league match takes its league's country code (us for a U.S. league). Use global for a genuinely international subject.
+10. Junk flags: use ladder for options that differ only by thresholds on one measure, including a single threshold market that is one rung of a series. Use dated_bucket when the options differ by dates alone. An event date on its own does not make a market a dated bucket.
+11. Entities: include the named people, teams, works and events identified in the title, even if a separate subject cannot be grounded. Name a legislative district as a place. An outcome marked "no price" supplies no probability evidence.
 
 CALIBRATED EXAMPLES (market -> topic / temporal / stakes,breadth,oddity):
 - "CS: NaVi vs Legacy (BO3)" -> esports / event_tied / S1 B1 O1
@@ -1325,6 +1349,13 @@ CALIBRATED EXAMPLES (market -> topic / temporal / stakes,breadth,oddity):
 - "Love Island USA: Winning Couple" -> entertainment / event_tied / S5 B3 O2
 - "Clavicular pregnancy in 2026?" -> health / deadline / S1 B1 O5
 - "Highest temp in Seoul, June 12" -> weather / periodic / S1 B3 O1
+- "Ohio House District 14 winner (2028)" -> politics / local / S1 B1, entity "ohio house district 14" of type place
+- "Winner of California's 12th U.S. House district" -> politics / us / S2 B2
+- "Bologna vs Parma (Serie A)" -> sports / country:IT
+- "How many 2027 vehicle deliveries?" with threshold outcomes -> ladder; event_date null
+- "Permit approval by October 31 or December 31?" with those dates as outcomes -> dated_bucket
+- "Cup final on 14 July 2027" with a 31 July venue resolution -> event_date "2027-07-14"
+- "Will the song 'Blue Lantern' be performed?" -> entity "blue lantern" of type work
 
 JSON schema:
 {{
@@ -1333,7 +1364,7 @@ JSON schema:
   "entities": [{{"name": "<lowercase>", "type": "team|person|org|place|work|event"}}],
   "geography": "us|global|local|country:<XX>",
   "story_key": "story:<slug>",
-  "series_key": "series:<slug>|null",
+  "series_key": <"series:<slug>" for an actual recurring family, or JSON null>,
   "temporal": "event_tied|deadline|evergreen|periodic",
   "event_date": "<YYYY-MM-DD or null — the real-world moment, NOT resolution_date>",
   "recurrence": "one_off|annual|weekly|daily|null",
@@ -1341,11 +1372,28 @@ JSON schema:
   "breadth": <1-5, reach of THIS market's subject per rule 4>,
   "oddity": <1-5, baseline 1 per rule 5>,
   "arc": "race|comeback|collapse|milestone|upset_watch|none",
-  "frame": {{"measure": "<lowercase snake, e.g. points, high_temperature, rt_score, fed_funds_rate>", "comparator": "gte|gt|lte|lt|eq|ne|range|null", "value": "<number EXACTLY as the title writes it, or null>", "unit": "<unit token EXACTLY as the title writes it, or null>", "horizon_kind": "intraday|daily|weekly|monthly|quarterly|annual|multi_year|open_ended|null"}} or null,
+  "frame": {{"measure": "<one of the listed measures>", "comparator": "gte|gt|lte|lt|eq|ne|range|null", "value": "<numeric threshold EXACTLY as the title writes it, or null>", "unit": "<unit as written, or null>", "horizon_kind": "intraday|daily|weekly|monthly|quarterly|annual|multi_year|open_ended|null", "window_date": "<explicit date as written, or null>"}} or null,
   "hook_facts": [{{"type": "stat|context|comparison", "text": "<one falsifiable claim>"}}],
   "junk_flags": ["<ladder|dated_bucket|social_count|duplicate_phrasing — empty array if none>"],
   "confidence": <0.0-1.0, your confidence in this classification>
 }}"""
+
+
+def _cu_prompt_outcome(outcome: dict[str, Any]) -> str:
+    name = outcome.get("name", "?")
+    probability = outcome.get("prob")
+    if probability is None:
+        return f"- {name}: no price"
+    move = float(outcome.get("move") or 0)
+    move_text = f", 24h {move * 100:+.1f}pp" if abs(move) >= 0.01 else ""
+    return f"- {name}: {int(float(probability) * 100)}%{move_text}"
+
+
+def _cu_series_key(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    key = value.strip()
+    return key if key and key.casefold() not in {"null", "none"} else None
 
 
 def _cu_v2_needs_retag(
@@ -1400,7 +1448,9 @@ def _compute_liveness(outcome_probs: list[float] | None, status: str | None) -> 
     return "active"
 
 
-async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str, Any]]:
+async def _resolve_entity_refs(
+    session, names: list[str], *, mention_types: dict[str, str] | None = None
+) -> dict[str, dict[str, Any]]:
     """Resolve free-text entity mentions to registry refs — string/alias match ONLY.
 
     No LLM call anywhere in this path (#1809): grounding uses what the registry
@@ -1432,8 +1482,14 @@ async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str,
     if not wanted:
         return out
 
-    entities = await resolve_aliases(session, wanted)
+    mention_types = mention_types or {}
+    ambiguous_names: set[str] = set()
+    entities = await resolve_aliases(session, wanted, ambiguous_names=ambiguous_names)
     for name, entity in entities.items():
+        mention_type = mention_types.get(name)
+        compatible_event = mention_type == "event" and entity.kind in {"competition", "event_concept"}
+        if mention_type and entity.kind != mention_type and not compatible_event:
+            continue
         out[name] = {
             "ref": f"entity:{int(entity.id)}",
             "entity_id": int(entity.id),
@@ -1441,7 +1497,11 @@ async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str,
             "source": "registry_alias",
         }
 
-    missing = [n for n in wanted if n not in out]
+    missing = [
+        name for name in wanted
+        if name not in entities and name not in ambiguous_names
+        and mention_types.get(name, "") in {"", "team"}
+    ]
     if not missing:
         return out
 
@@ -1555,6 +1615,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
             SELECT fm.id, fm.name, fm.source, fm.status,
                    COALESCE(fm.llm_sport_category, fm.category, 'other') AS category,
                    fm.resolution_date, fm.market_metadata,
+                   fm.event_id AS linked_game_id, e.commence_time AS linked_start,
+                   e.commence_time_source AS start_source, league.key AS linked_league,
+                   home_league.key AS linked_home_league, away_league.key AS linked_away_league,
                    (SELECT json_agg(json_build_object(
                        'name', fo.name,
                        'prob', fo.current_probability,
@@ -1565,8 +1628,14 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     LIMIT 8
                    ) AS outcomes
             FROM futures_markets fm
+            LEFT JOIN events e ON e.id = fm.event_id
+            LEFT JOIN sports league ON league.id = e.sport_id
+            LEFT JOIN teams home_team ON home_team.id = e.home_team_id
+            LEFT JOIN teams away_team ON away_team.id = e.away_team_id
+            LEFT JOIN sports home_league ON home_league.id = home_team.sport_id
+            LEFT JOIN sports away_league ON away_league.id = away_team.sport_id
             WHERE fm.status = 'open'
-              AND fm.llm_sport_category != 'crypto'
+              AND fm.llm_sport_category IS DISTINCT FROM 'crypto'
               AND (fm.llm_sport_category = ANY(:cats) OR fm.volume_24h >= 5000 OR fm.market_tier <= 3)
             ORDER BY fm.volume_24h DESC NULLS LAST, fm.updated_at DESC NULLS LAST
             LIMIT :lim
@@ -1586,33 +1655,39 @@ async def enrich_cu_v2_profiles(limit: int = 125):
             outcomes_raw = r["outcomes"] or []
             if isinstance(outcomes_raw, str):
                 outcomes_raw = json.loads(outcomes_raw)
-            outcome_lines = []
-            leader_prob = None
-            all_probs: list[float] = []
-            for i, o in enumerate(outcomes_raw[:8]):
-                prob = float(o.get("prob") or 0)
-                if i == 0:
-                    leader_prob = prob
-                move = float(o.get("move") or 0)
-                move_text = f", 24h {move * 100:+.1f}pp" if abs(move) >= 0.01 else ""
-                outcome_lines.append(f"- {o.get('name', '?')}: {int(prob * 100)}%{move_text}")
+            outcome_lines = [_cu_prompt_outcome(outcome) for outcome in outcomes_raw[:8]]
             # Liveness is computed from the full outcome set (not just the 8 shown
             # to the LLM) so bundled prop markets are classified correctly.
-            for o in outcomes_raw:
-                if o.get("prob") is not None:
-                    all_probs.append(float(o.get("prob")))
+            all_probs = [
+                float(outcome["prob"])
+                for outcome in outcomes_raw
+                if outcome.get("prob") is not None
+            ]
 
+            fixture_leagues = {
+                "linked_league": r.get("linked_league"),
+                "home_team_league": r.get("linked_home_league"),
+                "away_team_league": r.get("linked_away_league"),
+            }
             work_items.append({
                 "id": r["id"],
                 "name": r["name"],
                 "source": r["source"],
                 "status": r["status"],
                 "category": r["category"],
-                "resolution_date": r["resolution_date"].isoformat() if r["resolution_date"] else "unknown",
+                "resolution_date": r["resolution_date"],
                 "metadata": dict(meta),
                 "outcome_lines": outcome_lines,
-                "leader_prob": leader_prob,
+                "outcome_names": [outcome.get("name") for outcome in outcomes_raw],
                 "outcome_probs": all_probs,
+                "fixture_leagues": fixture_leagues,
+                "event_facts": cu_event_facts(
+                    r["name"] or "",
+                    linked_game_id=r.get("linked_game_id"),
+                    linked_start=r.get("linked_start"),
+                    start_source=r.get("start_source"),
+                    **fixture_leagues,
+                ),
             })
             if len(work_items) >= limit:
                 break
@@ -1645,13 +1720,18 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 logger.warning("CU v2: a response had no computable cost, stopping")
                 break
 
+            settlement_at = item["resolution_date"]
             prompt = _CU_V2_PROMPT.format(
                 name=item["name"] or "",
                 category=item["category"],
                 source=item["source"] or "",
-                resolution_date=item["resolution_date"],
+                resolution_date=settlement_at.isoformat() if settlement_at else "unknown",
                 outcomes="\n".join(item["outcome_lines"]) if item["outcome_lines"] else "- unknown",
+                measure_vocabulary=", ".join(sorted(CU_FRAME_MEASURES)),
             )
+            if item["event_facts"]:
+                supplied_fields = ", ".join(item["event_facts"])
+                prompt += f"\n\nOmit these fields. Bain Luck supplies them: {supplied_fields}."
 
             try:
                 result = complete_chat_detailed(
@@ -1681,8 +1761,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 # --- C1: the quantitative frame, verified against the title.
                 # A frame whose value/unit is not literally in the title is
                 # dropped WHOLE and the rest of the profile still written.
+                frame_slot_drops: dict[str, str] = {}
                 frame, frame_drop = sanitize_cu_frame(
-                    raw.get("frame"), title=item["name"] or ""
+                    raw.get("frame"), title=item["name"] or "", slot_drops=frame_slot_drops
                 )
                 if frame is not None:
                     stats["frames_written"] += 1
@@ -1704,7 +1785,8 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 mentions = clean_entity_mentions(raw.get("entities"))
                 try:
                     resolved_refs = await _resolve_entity_refs(
-                        resolve_session, [m["name"] for m in mentions]
+                        resolve_session, [m["name"] for m in mentions],
+                        mention_types={m["name"]: m["type"] for m in mentions},
                     )
                 except Exception as resolve_exc:
                     # An empty map here would be indistinguishable from "nothing
@@ -1747,32 +1829,38 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     "topic": raw.get("topic"),
                     "subtopic": raw.get("subtopic"),
                     "entities": raw.get("entities", []),
-                    "geography": raw.get("geography"),
+                    "geography": cu_model_geography(
+                        raw.get("geography"), **item["fixture_leagues"]
+                    ),
                     "story_key": raw.get("story_key"),
-                    "series_key": raw.get("series_key"),
+                    "series_key": _cu_series_key(raw.get("series_key")),
                     "temporal_class": raw.get("temporal"),
-                    "event_date": raw.get("event_date"),
+                    "event_date": cu_unlinked_event_date(
+                        raw.get("event_date"), settlement_at
+                    ),
                     "recurrence": raw.get("recurrence"),
                     "stakes": raw.get("stakes"),
                     "breadth": raw.get("breadth"),
                     "oddity": raw.get("oddity"),
                     "arc": raw.get("arc"),
                     "hook_facts": raw.get("hook_facts", []),
-                    "junk_flags": raw.get("junk_flags", []),
+                    "junk_flags": cu_junk_flags(
+                        item["outcome_names"], raw.get("junk_flags")
+                    ),
                     "confidence": raw.get("confidence"),
                     "liveness": liveness,
                     # #1809 additive slots. `frame` is explicitly null when the
                     # title states no number — an absent key would read as "this
                     # writer never ran" to a frame-first consumer.
                     "frame": frame,
+                    "frame_drop_reason": frame_drop,
+                    "frame_slot_drops": frame_slot_drops,
                     "subjects": subjects,
                     "subject_ref": subject_ref,
                     "subject_entity_id": subject_entity_id,
                     "subject_resolved": subject_resolved,
                 }
-
-                next_metadata = dict(item["metadata"])
-                next_metadata[DISCOVER_LLM_METADATA_KEY] = profile
+                profile.update(item["event_facts"])
 
                 # One statement: a second UPDATE of the row this transaction
                 # just wrote would run the `event_id` FK check (above).
@@ -1780,7 +1868,20 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 # through a table clause that names it.
                 # The table clause carries no `onupdate`, so the bump the ORM
                 # UPDATE made (`updated_at=now()`) is written here by name.
-                values = {"market_metadata": next_metadata, "updated_at": func.now()}
+                metadata = _FUTURES_MARKETS_CU_WRITE.c.market_metadata
+                base_metadata = case(
+                    (func.jsonb_typeof(metadata) == "object", metadata),
+                    (func.jsonb_typeof(metadata) == "string",
+                     bindparam("cu_legacy_metadata", item["metadata"], type_=JSONB)),
+                    else_=bindparam("cu_empty_metadata", {}, type_=JSONB),
+                )
+                profile_patch = bindparam(
+                    "cu_profile_patch", {DISCOVER_LLM_METADATA_KEY: profile}, type_=JSONB
+                )
+                values = {
+                    "market_metadata": base_metadata.op("||")(profile_patch),
+                    "updated_at": func.now(),
+                }
                 story_key = raw.get("story_key")
                 if story_key:
                     values["story_key"] = story_key

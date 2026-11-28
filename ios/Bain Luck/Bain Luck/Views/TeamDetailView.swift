@@ -1,4 +1,45 @@
+import Combine
 import SwiftUI
+
+/// Pure copy & state helper for `#13604` (`futures_unavailable` and `futures_partial` on `/api/teams/{slug}`).
+enum TeamFuturesAvailabilityCopy13604 {
+    static let unavailableTitle = "Couldn't load season futures"
+    static let unavailableDetail = "This team's futures didn't finish loading."
+
+    static func partialMessage(omittedCount: Int?) -> String {
+        if let count = omittedCount, count == 1 {
+            return "1 more future couldn't be loaded right now."
+        }
+        if let count = omittedCount, count > 1 {
+            return "\(count) more futures couldn't be loaded right now."
+        }
+        return "Some season futures couldn't be loaded right now."
+    }
+}
+
+@MainActor
+final class TeamFuturesRetryController13604: ObservableObject {
+    @Published var pageOverride: TeamPageResponse?
+    @Published var isRetrying = false
+    @Published var retryFailed = false
+
+    func retry(
+        fetcher: @Sendable () async throws -> TeamPageResponse
+    ) async -> TeamPageResponse? {
+        guard !isRetrying else { return nil }
+        isRetrying = true
+        retryFailed = false
+        defer { isRetrying = false }
+        do {
+            let reloaded = try await fetcher()
+            pageOverride = reloaded
+            return reloaded
+        } catch {
+            retryFailed = true
+            return nil
+        }
+    }
+}
 
 /// #7036, fourth arm — the team page's own 64pt identity tile, resolved through
 /// the contrast floor.
@@ -44,13 +85,17 @@ struct TeamDetailView: View {
     /// #12823 — outcome labels resolved from `/api/futures/{id}` for unquantified totals
     /// containers (`"Pro Football: 2026 Regular Season Win Totals"` -> `"O 9.5 — New England Patriots"` -> `"10+ wins"`).
     @State private var resolvedTotalsOutcomeNames: [Int: String] = [:]
+    @StateObject private var retryController: TeamFuturesRetryController13604
     private let skipNetworkLoad: Bool
     private let preloadedAvatarImages: [URL: Image]
+    private let retryTeamPageOverride: (@Sendable () async throws -> TeamPageResponse)?
 
     init(slug: String) {
         self.slug = slug
         self.skipNetworkLoad = false
         self.preloadedAvatarImages = [:]
+        self.retryTeamPageOverride = nil
+        self._retryController = StateObject(wrappedValue: TeamFuturesRetryController13604())
     }
 
     #if DEBUG
@@ -59,11 +104,15 @@ struct TeamDetailView: View {
         loadedPageForTest: TeamPageResponse,
         raceForTest: TeamDivisionRace.Race? = nil,
         preloadedAvatarImagesForTest: [URL: Image] = [:],
-        resolvedTotalsOutcomeNamesForTest: [Int: String] = [:]
+        resolvedTotalsOutcomeNamesForTest: [Int: String] = [:],
+        retryTeamPageForTest: (@Sendable () async throws -> TeamPageResponse)? = nil,
+        retryControllerForTest: TeamFuturesRetryController13604? = nil
     ) {
         self.slug = slug
         self.skipNetworkLoad = true
         self.preloadedAvatarImages = preloadedAvatarImagesForTest
+        self.retryTeamPageOverride = retryTeamPageForTest
+        self._retryController = StateObject(wrappedValue: retryControllerForTest ?? TeamFuturesRetryController13604())
         self._data = State(initialValue: loadedPageForTest)
         self._loading = State(initialValue: false)
         self._race = State(initialValue: raceForTest)
@@ -78,8 +127,9 @@ struct TeamDetailView: View {
                 ProgressView()
             } else if let error {
                 ContentUnavailableView("Team Not Found", systemImage: "person.crop.circle.badge.questionmark", description: Text(error))
-            } else if let data {
-                teamContent(data)
+                    .noteReviewPromptTrouble12304()
+            } else if let activeData = retryController.pageOverride ?? data {
+                teamContent(activeData)
             }
         }
         .onAppear { AnalyticsService.trackScreen(name: "team_\(slug)", type: "team") }
@@ -103,6 +153,19 @@ struct TeamDetailView: View {
         } catch {
             self.error = "Could not load team"
             loading = false
+        }
+    }
+
+    @MainActor
+    private func retryFuturesLoad() async {
+        let currentSlug = slug
+        let fetcher: @Sendable () async throws -> TeamPageResponse = retryTeamPageOverride ?? {
+            try await APIClient.shared.fetchTeamPage(slug: currentSlug, requiresNetwork: true)
+        }
+        if let reloaded = await retryController.retry(fetcher: fetcher) {
+            let resolvedLines = await Self.resolveMissingTotalsOutcomeNames(for: reloaded.futures)
+            resolvedTotalsOutcomeNames = resolvedLines
+            data = reloaded
         }
     }
 
@@ -138,43 +201,86 @@ struct TeamDetailView: View {
 
     static let readableDetailMaxWidth: CGFloat = 720
 
+    @ViewBuilder
+    private func teamHeroLogo(_ team: TeamPageTeam) -> some View {
+        if let logo = team.logoLarge ?? team.logoSmall, let url = URL(string: logo) {
+            if let preloaded = preloadedAvatarImages[url] {
+                preloaded
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 64, height: 64)
+            } else {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFit()
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(hex: TeamDetailTeamColour.logoTileHex(team.primaryColor)))
+                        // #4720 — the served abbreviation still wins; the
+                        // FALLBACK was one raw character ("1" for
+                        // "1. FC Heidenheim 1846") and is now the app's badge.
+                        .overlay(Text(team.abbreviation ?? TeamShortName.abbreviation(team.name)).font(.title2).bold().foregroundStyle(.white))
+                }
+                .frame(width: 64, height: 64)
+            }
+        }
+    }
+
+    private func teamHeroIdentity(_ team: TeamPageTeam, singleLineTitle: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(team.name)
+                .font(singleLineTitle ? .title3.bold() : .title2.bold())
+                .lineLimit(singleLineTitle ? 1 : nil)
+                .fixedSize(horizontal: singleLineTitle, vertical: true)
+            HStack(spacing: 8) {
+                if let record = team.record {
+                    Text(record).font(.subheadline).foregroundStyle(.secondary)
+                }
+                if let sport = team.sportName {
+                    Text(sport).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func teamHeroLogoCompact(_ team: TeamPageTeam) -> some View {
+        teamHeroLogo(team)
+            .scaleEffect(52.0 / 64.0)
+            .frame(width: 52, height: 52)
+    }
+
     private func teamContent(_ data: TeamPageResponse) -> some View {
         let team = data.team
+        let followSubject = FollowedSubject295A.team(
+            slug: team.slug,
+            teamId: team.id,
+            name: team.name,
+            sportKey: team.sportKey,
+            logoUrl: team.logoSmall ?? team.logoLarge,
+            primaryColor: team.primaryColor
+        )
+        let alertsContextId = "team-page:\(team.slug)"
         return List {
             // Hero
             Section {
-                HStack(spacing: 16) {
-                    if let logo = team.logoLarge ?? team.logoSmall, let url = URL(string: logo) {
-                        if let preloaded = preloadedAvatarImages[url] {
-                            preloaded
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 64, height: 64)
-                        } else {
-                            AsyncImage(url: url) { image in
-                                image.resizable().scaledToFit()
-                            } placeholder: {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color(hex: TeamDetailTeamColour.logoTileHex(team.primaryColor)))
-                                    // #4720 — the served abbreviation still wins; the
-                                    // FALLBACK was one raw character ("1" for
-                                    // "1. FC Heidenheim 1846") and is now the app's badge.
-                                    .overlay(Text(team.abbreviation ?? TeamShortName.abbreviation(team.name)).font(.title2).bold().foregroundStyle(.white))
+                VStack(alignment: .leading, spacing: 12) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            teamHeroLogoCompact(team)
+                            teamHeroIdentity(team, singleLineTitle: true)
+                            Spacer(minLength: 6)
+                            FollowButton295A(subject: followSubject, pageContextId: alertsContextId, compact: true)
+                        }
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 14) {
+                                teamHeroLogo(team)
+                                teamHeroIdentity(team, singleLineTitle: false)
                             }
-                            .frame(width: 64, height: 64)
+                            FollowButton295A(subject: followSubject, pageContextId: alertsContextId)
                         }
                     }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(team.name).font(.title2).bold()
-                        HStack(spacing: 8) {
-                            if let record = team.record {
-                                Text(record).font(.subheadline).foregroundStyle(.secondary)
-                            }
-                            if let sport = team.sportName {
-                                Text(sport).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+
+                    GameAlertsInlinePageSlot295A(contextId: alertsContextId)
                 }
                 .listRowBackground(Color.clear)
             }
@@ -272,7 +378,9 @@ struct TeamDetailView: View {
                 uniquingKeysWith: { first, _ in first }
             )
             let futures = seasonFutures.filter { rowsByOutcomeId[$0.outcomeId] != nil }
-            if !futures.isEmpty {
+            let isUnavailable = data.futuresUnavailable == true
+            let isPartial = data.futuresPartial == true
+            if !futures.isEmpty || isUnavailable || isPartial {
                 Section("Season Futures") {
                     ForEach(futures) { future in
                         // #9091 + #12823 (1.0.7 fast cut): circular player headshots
@@ -284,6 +392,78 @@ struct TeamDetailView: View {
                                 teamSeasonFutureRow12823(row)
                             }
                         }
+                    }
+
+                    if futures.isEmpty && (isUnavailable || isPartial) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityHidden(true)
+                                Text(isPartial
+                                     ? TeamFuturesAvailabilityCopy13604.partialMessage(omittedCount: data.futuresOmittedCount)
+                                     : TeamFuturesAvailabilityCopy13604.unavailableTitle)
+                                    .font(.subheadline.weight(.semibold))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if !isPartial {
+                                Text(TeamFuturesAvailabilityCopy13604.unavailableDetail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if retryController.retryFailed {
+                                Text("Still couldn't refresh futures. Try again shortly.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Button {
+                                Task { await retryFuturesLoad() }
+                            } label: {
+                                if retryController.isRetrying {
+                                    ProgressView()
+                                        .frame(minHeight: 36)
+                                } else {
+                                    Text("Try again")
+                                        .fontWeight(.semibold)
+                                        .frame(minHeight: 36)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(retryController.isRetrying)
+                            .accessibilityIdentifier("teamDetail.retryFutures")
+                        }
+                        .padding(.vertical, 6)
+                    } else if isPartial || isUnavailable {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(TeamFuturesAvailabilityCopy13604.partialMessage(omittedCount: data.futuresOmittedCount))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if retryController.retryFailed {
+                                Text("Still couldn't refresh all futures.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Button {
+                                Task { await retryFuturesLoad() }
+                            } label: {
+                                if retryController.isRetrying {
+                                    ProgressView()
+                                        .frame(minHeight: 32)
+                                } else {
+                                    Text("Try again")
+                                        .font(.caption.weight(.semibold))
+                                        .frame(minHeight: 32)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(retryController.isRetrying)
+                            .accessibilityIdentifier("teamDetail.retryFutures")
+                        }
+                        .padding(.vertical, 4)
                     }
                 }
             }
@@ -621,6 +801,6 @@ struct TeamDetailView: View {
     }
 
     private func formatPct(_ p: Double) -> String {
-        "\(Int(round(p * 100)))%"
+        formatProbability(p)
     }
 }

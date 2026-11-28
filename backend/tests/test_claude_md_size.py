@@ -12,6 +12,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
+NOW_LINES_ISSUE_FILE = REPO_ROOT / ".github" / "now-lines-issue.txt"
 OVERFLOW = REPO_ROOT / "docs" / "claude-md-overflow-2026-08-24.md"
 DAY0_ARCHIVE = REPO_ROOT / "docs" / "release-loop" / "claude-before-day0-20261101.md"
 DAY0_ARCHIVE_SHA256 = "d8da3faf040645fa1dac8ff09c288971edce57bed22dcd52b8c163c61891590a"
@@ -174,7 +175,7 @@ def test_day0_trim_keeps_product_rules_and_gates_at_the_entrypoint():
         "author window merges",
         "Tier C requires Alex's tap",
         "`live-path` is the two-minute lane",
-        "NOW #11852 is the priority list; status lines: #12779",
+        f"NOW #11852 is the priority list; status lines: #{NOW_LINES_ISSUE_FILE.read_text(encoding='utf-8').strip()}",
         "Build nothing a platform already provides.",
         "GitHub, Heroku, Vercel, Better Stack, Xcode Cloud",
         "no custom webhooks, relays, log pipelines, release locks or promotion systems",

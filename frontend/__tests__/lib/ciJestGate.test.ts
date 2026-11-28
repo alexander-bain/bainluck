@@ -146,7 +146,7 @@ describe("L2-233: the jest deploy gate is wired", () => {
   });
 
   it("deploy authority still depends on the job that runs it", () => {
-    const deploy = jobBlock(ci, "deploy");
+    const deploy = jobBlock(ci, "deploy-after-full");
     const needs = /needs:\s*\[([^\]]*)\]/.exec(deploy);
     expect(needs).not.toBeNull();
     expect(needs![1].split(",").map((s) => s.trim())).toContain("frontend-build");

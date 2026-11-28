@@ -227,11 +227,11 @@ final class FuturesShareImageMatchesItsCard_2874Tests: XCTestCase {
             "the share renderer rounds a probability in its own body again"
         )
         XCTAssertTrue(
-            code.contains("discoverFuturesCardPercentLabel(heroPercent)"),
+            code.contains("discoverFuturesCardPercentLabel(heroPercent, probability: outcomes.first?.probability)"),
             "the image's hero numeral no longer shares the card's one decision"
         )
         XCTAssertTrue(
-            code.contains("discoverFuturesCardPercentLabel(percent)"),
+            code.contains("discoverFuturesCardPercentLabel(percent, probability: probability)"),
             "the image's outcome row no longer prints the percent it was handed"
         )
         XCTAssertTrue(

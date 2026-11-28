@@ -62,6 +62,7 @@ from app.utils.event_twin_fold import (
     _group_is_id_anchored,
     cross_board_identity,
     fold_twin_events,
+    twin_identity_rank,
 )
 from app.utils.kalshi_occurrence_start import loaded_sport_key
 from app.utils.proven_duplicates import (
@@ -87,6 +88,10 @@ CANDIDATE_CAP = 200
 
 def _sport_prefix(key: str) -> str:
     return _catchall_sport_prefix(key) or key.split("_", 1)[0]
+
+
+def _norm_status(row: Any) -> str:
+    return str(getattr(row, "status", None) or "").strip().lower()
 
 
 async def _partition_foldable_sport_ids(db, sport_key: str) -> tuple[list[int], list[int]]:
@@ -276,7 +281,9 @@ async def serve_fold_absorbed_rows(db, event) -> list:
     return rows
 
 
-async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, bool]:
+async def serve_fold_absorbed_rows_with_completeness(
+    db, event, *, keep_page_survivor: bool = False
+) -> tuple[list, bool]:
     """``(rows, complete)``: the absorbed rows, and whether the fold ran whole.
 
     ``complete`` is False when the fold raised (the rows are then ``[]``, as
@@ -284,6 +291,17 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
     the cap could be missing. A caller that CERTIFIES its membership
     (#10090 `history_fold_revision`) must not certify either; every other
     caller reads only the rows.
+
+    When ``keep_page_survivor`` is True (used by single-event detail reads via
+    `load_unified_game_reads`), a page row that loses `_elect` to a non-retired
+    external twin sitting outside its `(sport_key, status)` slice
+    (`winner_sk != sport_key or winner_status != event_status`: same-league
+    different-status `#13768`, cross-board `#5774`, or `*_other` catch-all `#13508`)
+    retains the page and absorbs that winning twin's cluster so detail and list
+    endpoints agree, while same-league same-status losers keep `#3391` detail
+    behavior. Raw callers with ``keep_page_survivor=False`` keep `#3391`
+    semantics where only named-league rows losing to ``*_other`` mirror
+    `_keep_page_survivor`.
 
     ``event`` must carry `Event.sport` loaded (every event-page route loads it);
     a row whose sport is not in memory cannot be keyed by league and folds
@@ -305,8 +323,17 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
     sport_ids, own_league_sport_ids = await _partition_foldable_sport_ids(db, sport_key)
     if not sport_ids:
         return [], True
+    retired_filters: tuple[Any, ...] = (
+        (Event.status.notin_(list(RETIRED_STATUSES)),)
+        if keep_page_survivor
+        else ()
+    )
     near_candidates = await _read_candidates(
-        db, event.id, sport_ids, _commence_arms(commence)
+        db,
+        event.id,
+        sport_ids,
+        _commence_arms(commence),
+        extra_filters=retired_filters,
     )
     same_day_claims: list = []
     if (
@@ -319,6 +346,7 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
             event.id,
             own_league_sport_ids,
             _same_day_idless_claim_predicate(commence),
+            extra_filters=retired_filters,
         )
     if not near_candidates and not same_day_claims:
         return [], True
@@ -342,6 +370,54 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
         if survivor_id == event.id
     }
     flipped_ids = set(getattr(fold, "flipped_loser_ids", None) or ())
+    if not absorbed and (keep_page_survivor or not sport_key.endswith("_other")):
+        winner_id = fold.survivor_of.get(event.id)
+        winner = next((c for c in candidates if c.id == winner_id), None)
+        winner_sk = loaded_sport_key(winner) if winner is not None else None
+        event_status = _norm_status(event)
+        winner_status = _norm_status(winner) if winner is not None else ""
+        winner_outside_slice = (
+            winner_sk is not None
+            and (winner_sk != sport_key or winner_status != event_status)
+        )
+        if winner_sk and (
+            (keep_page_survivor and winner_outside_slice)
+            or (not sport_key.endswith("_other") and winner_sk.endswith("_other"))
+        ):
+            # Mirror `_keep_page_survivor`: list endpoints keep the page row
+            # and fold the winning cluster onto it when the winner sits outside
+            # the page's `(sport_key, status)` slice (same-league different
+            # status #13768, cross-board #5774, or `*_other` catch-all #13508),
+            # while same-league same-status losers yield to their in-slice
+            # survivor on lists and stay unfolded on direct detail reads.
+            by_id = {c.id: c for c in candidates}
+            other_losers = [
+                lid for lid, sid in fold.survivor_of.items()
+                if sid == winner_id and lid != event.id
+            ]
+            if keep_page_survivor:
+                same_slice_losers = [
+                    by_id[lid] for lid in other_losers
+                    if lid in by_id
+                    and loaded_sport_key(by_id[lid]) == sport_key
+                    and _norm_status(by_id[lid]) == event_status
+                ]
+            else:
+                same_slice_losers = [
+                    by_id[lid] for lid in other_losers
+                    if lid in by_id and loaded_sport_key(by_id[lid]) == sport_key
+                ]
+            allow_absorb = (
+                not same_slice_losers
+                or max([event, *same_slice_losers], key=twin_identity_rank).id == event.id
+            )
+            if allow_absorb:
+                other_members = [winner_id, *other_losers]
+                event_flipped = event.id in flipped_ids
+                absorbed = set(other_members)
+                flipped_ids = {
+                    mid for mid in other_members if (mid in flipped_ids) != event_flipped
+                }
     rows = sorted(
         (row for row in candidates if row.id in absorbed), key=lambda row: row.id
     )

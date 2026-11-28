@@ -546,49 +546,12 @@ struct SavedLockRectangle12466: View {
     }
 
     private var marketBody: some View {
-        ViewThatFits(in: .vertical) {
-            marketLockTier(subjectSize: 11.5, outcomeSize: 10.5, figureSize: 11.5, footerSize: 9.5, spacing: 1.5)
-            marketLockTier(subjectSize: 10, outcomeSize: 9.5, figureSize: 10.5, footerSize: 8.5, spacing: 1)
-            marketLockTier(subjectSize: 9, outcomeSize: 8.5, figureSize: 9.5, footerSize: 8, spacing: 0.5)
-            marketLockTier(subjectSize: 8, outcomeSize: 8, figureSize: 9, footerSize: 7.5, spacing: 0.5)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func marketLockTier(
-        subjectSize: CGFloat,
-        outcomeSize: CGFloat,
-        figureSize: CGFloat,
-        footerSize: CGFloat,
-        spacing: CGFloat
-    ) -> some View {
-        VStack(alignment: .leading, spacing: spacing) {
-            Text(model.reading.shortSubject)
-                .font(HeadlineStyleTable199.names(.widget, scaledSize: subjectSize))
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .widgetAccentable()
-            if let headline = model.reading.headline {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(headline.label)
-                        .font(HeadlineStyleTable199.names(.widget, scaledSize: outcomeSize))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(nil)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 2)
-                    Text(headline.verdict ?? headline.figure ?? "—")
-                        .font(HeadlineStyleTable199.secondNumbers(.widget, prominent: true, scaledSize: figureSize))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-            }
-            Text(model.footer)
-                .font(HeadlineStyleTable199.quietText(.widget, scaledSize: footerSize))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        SavedLockMarketBody13432(
+            shortSubject: model.reading.shortSubject,
+            outcomeLabel: model.reading.headline?.label,
+            valueText: model.reading.headline.map { $0.verdict ?? $0.figure ?? "—" },
+            footer: model.footer
+        )
     }
 }
 

@@ -105,3 +105,10 @@ export const HEADLINE_STYLE_199 = {
   defaultAwayHex: SLATE_TEAM_FALLBACK, // #64748B
   defaultHomeHex: "#2563EB", // blue-600
 } as const;
+
+export const NO_PROBABILITY_YET_250A = "No probability yet";
+export const NO_RECENT_PROBABILITY_250A = "No recent probability";
+
+export function isUnavailableProbabilityCellText250A(text: string): boolean {
+  return text === NO_PROBABILITY_YET_250A || text === NO_RECENT_PROBABILITY_250A;
+}

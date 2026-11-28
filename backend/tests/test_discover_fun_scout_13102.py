@@ -25,11 +25,15 @@ from app.services.llm_models import (
 )
 from app.services.llm_request import MemoryBudgetLedger
 from app.utils.discover_fun_scout import (
-    LICENCE_AUTO,
+    LICENCE_AWAITING_LOOK,
     LICENCE_SUSPENDED,
     SCOUT_ANTHROPIC_API_KEY_ENV,
+    SCOUT_AUTO_PROMOTE_TO_PUBLIC,
+    SCOUT_MAX_NEW_SETS_PER_DAY,
     SCOUT_MONTHLY_CAP_USD,
+    SCOUT_PUBLIC_PROMOTION_GATE,
     SCOUT_RUN_CAP_USD,
+    SCOUT_STAGED_SETS_DIR,
     FunScoutMissingKeyError,
     FunScoutSpendCapExceededError,
     ScoutLicenceState,
@@ -54,6 +58,7 @@ from app.utils.discover_fun_scout import (
     evaluate_scout_against_seed_sets,
     evaluate_tagging_pass_against_seed_sets,
     format_fun_scout_pre_run_spend_line,
+    normalize_retired_scout_sets,
     retire_scout_set,
     run_nightly_fun_scout,
     run_scout_set_writing_pass,
@@ -301,21 +306,51 @@ class TestRuleFilesLicenceAndEndToEnd:
             vsets[1], model_used=CLAUDE_SONNET_MODEL, created_at=FROZEN_NOW
         )
         assert validate_roundup_definition(faces_def)["rule"]["selector"] == {"fun_tag": "pop-stars-2025"}
+        assert faces_def["stage"] == "preview"
         assert faces_def["image_credit_required"] is True  # 195-A
         assert faces_def["novelty_seat"] is True  # 32-C
         assert faces_def["scout"]["requires_fable_look"] is True
+        assert faces_def["scout"]["auto_promote"] is False
+        assert faces_def["scout"]["requires_keep_to_publish"] is True
+        assert faces_def["scout"]["public_promotion_gate"] == "alex_keep"
 
-        # Max 2 new sets written per day
+        # Max 10 new staged sets written per day (Ruling 385: A)
+        extra_vsets = list(vsets)
+        for i in range(4, 13):
+            base = 100 + i * 3
+            extra_catalog = {
+                base: _mk(base, f"Extra set {i} row 1?"),
+                base + 1: _mk(base + 1, f"Extra set {i} row 2?"),
+                base + 2: _mk(base + 2, f"Extra set {i} row 3?"),
+            }
+            ev, eerr = validate_scout_proposed_set(
+                ScoutProposedSet(
+                    slug=f"extra-set-{i}",
+                    name=f"Extra Set {i}",
+                    kicker="FUN",
+                    category="culture",
+                    why_better_together="Better side by side.",
+                    look="bars",
+                    member_ids=(base, base + 1, base + 2),
+                ),
+                extra_catalog,
+                now=FROZEN_NOW,
+            )
+            assert eerr is None and ev is not None
+            extra_vsets.append(ev)
+
         lic = ScoutLicenceState()
         written = write_scout_rule_files(
-            vsets, tmp_path, model_used=CLAUDE_SONNET_MODEL, created_at=FROZEN_NOW, licence_state=lic
+            extra_vsets, tmp_path, model_used=CLAUDE_SONNET_MODEL, created_at=FROZEN_NOW, licence_state=lic
         )
-        assert len(written) == 2
+        assert SCOUT_MAX_NEW_SETS_PER_DAY == 10
+        assert len(written) == 10
 
-        # 7 clean days earn auto licence; 1 wrong card suspends immediately
+        # Clean days track count but never self-promote off preview; Keep is required (385: A).
         for day in range(1, 8):
             advance_scout_licence_clean_day(lic, f"2025-02-{day:02d}")
-        assert lic.status == LICENCE_AUTO
+        assert lic.clean_days == 7
+        assert lic.status == LICENCE_AWAITING_LOOK
         suspend_scout_licence_on_wrong_card(
             lic, slug="white-christmas", reason="served resolved row", at=FROZEN_NOW
         )
@@ -407,6 +442,7 @@ class TestRuleFilesLicenceAndEndToEnd:
             openai_client=_FakeOpenAI(),
             anthropic_client=_FakeAnthropic(),
             output_dir=tmp_path / "rules",
+            known_sets=(),
             now=FROZEN_NOW,
         )
 
@@ -613,8 +649,29 @@ class TestScoutDurabilityPreFlip13124:
 
         ok_r, err_r = scout_task.retire_scout_set_durable("old-retired-slug")
         assert ok_r is True and err_r is None
-        retired = scout_task._load_retired_sets_durable(tmp_path / "missing_retired.json")
-        assert "old-retired-slug" in retired
+        retired_file = tmp_path / "retired.json"
+        retired_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "slug": "file-retired",
+                        "name": "File Retired",
+                        "reason": "Alex dropped",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        retired = scout_task._load_retired_sets_durable(retired_file)
+        assert isinstance(retired, list)
+        by_slug = {r["slug"]: r for r in retired}
+        assert by_slug["file-retired"]["name"] == "File Retired"
+        assert by_slug["file-retired"]["reason"] == "Alex dropped"
+        assert by_slug["old-retired-slug"]["name"] == "old-retired-slug"
+
+        retired_missing = scout_task._load_retired_sets_durable(tmp_path / "missing_retired.json")
+        assert isinstance(retired_missing, list)
+        assert [r["slug"] for r in retired_missing] == ["old-retired-slug"]
 
         # If Redis fails, licence falls back safely to awaiting_look (0 clean days)
         # and retired sets fail closed (raise).
@@ -627,6 +684,274 @@ class TestScoutDurabilityPreFlip13124:
         assert fallback.clean_days == 0
         with pytest.raises(RuntimeError, match="redis down"):
             scout_task._load_retired_sets_durable(tmp_path / "missing_retired.json")
+
+    def test_task_call_path_handles_empty_populated_and_set_retired_sets(
+        self, tmp_path, monkeypatch
+    ):
+        """Regression test for the 2026-11-25 1:12 AM PT crash:
+        ``_load_retired_sets_durable`` returned ``set[str]`` where
+        ``run_scout_tagging_pass`` sliced ``retired_sets[:12]``.
+        Exercises the real ``discover_fun_scout`` -> ``_run_discover_fun_scout`` ->
+        ``run_nightly_fun_scout`` -> prompt + validation path without mocking
+        ``run_nightly_fun_scout``.
+        """
+        import asyncio
+        import importlib
+        from unittest.mock import AsyncMock
+
+        tasks_pkg = importlib.import_module("app.tasks")
+        scout_task = importlib.import_module("app.tasks.discover_fun_scout")
+        monkeypatch.delenv("LLM_MODEL", raising=False)
+        monkeypatch.delenv("LLM_MODEL_FUN_SCOUT_SETS", raising=False)
+        monkeypatch.delenv("LLM_MODEL_FUN_SCOUT_TAG", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(llm_request, "_get_ledger", lambda: MemoryBudgetLedger())
+
+        store: dict[str, Any] = {}
+
+        class _FakeRedis:
+            def get(self, key):
+                return store.get(key)
+
+            def set(self, key, val, ex=None):
+                store[key] = val
+
+            def incrbyfloat(self, key, delta):
+                cur = float(store.get(key) or 0.0)
+                nxt = cur + float(delta)
+                store[key] = str(nxt)
+                return nxt
+
+            def expire(self, key, ttl):
+                return True
+
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: _FakeRedis())
+        monkeypatch.setattr(scout_task, "_UNRECORDED_SPEND_MONTHS", set())
+
+        members = [
+            _mk(101, "Will GTA VI release before 2026?"),
+            _mk(102, "Will Winds of Winter release before 2026?"),
+            _mk(103, "Will Hollow Knight Silksong release before 2026?"),
+            _mk(104, "Will the U.S. confirm aliens exist?"),
+        ]
+        monkeypatch.setattr(
+            scout_task,
+            "fetch_open_non_sports_markets_for_scout",
+            AsyncMock(return_value=members),
+        )
+        monkeypatch.setattr(
+            scout_task,
+            "fetch_reader_dismissed_sets_for_scout",
+            AsyncMock(return_value={}),
+        )
+
+        openai_calls: list[dict[str, Any]] = []
+        anthropic_calls: list[dict[str, Any]] = []
+
+        class _FakeOpenAI:
+            class _Chat:
+                class _Completions:
+                    def create(self, **kwargs):
+                        openai_calls.append(kwargs)
+                        body = json.dumps(
+                            {
+                                "tagged": [
+                                    {
+                                        "market_id": 101,
+                                        "fun_group": "vaporware",
+                                        "is_fun_single": False,
+                                        "set_hint": "long-awaited-releases",
+                                        "reason": "long wait",
+                                    },
+                                    {
+                                        "market_id": 102,
+                                        "fun_group": "vaporware",
+                                        "is_fun_single": False,
+                                        "set_hint": "long-awaited-releases",
+                                        "reason": "long wait",
+                                    },
+                                    {
+                                        "market_id": 103,
+                                        "fun_group": "vaporware",
+                                        "is_fun_single": False,
+                                        "set_hint": "long-awaited-releases",
+                                        "reason": "long wait",
+                                    },
+                                    {
+                                        "market_id": 104,
+                                        "fun_group": "aliens",
+                                        "is_fun_single": True,
+                                        "set_hint": None,
+                                        "reason": "water cooler",
+                                    },
+                                ]
+                            }
+                        )
+                        return SimpleNamespace(
+                            choices=[SimpleNamespace(message=SimpleNamespace(content=body))],
+                            usage=SimpleNamespace(prompt_tokens=400, completion_tokens=120),
+                        )
+
+                completions = _Completions()
+
+            chat = _Chat()
+
+        class _FakeAnthropic:
+            def __init__(self, *, include_retired_proposal: bool = False):
+                self._include_retired_proposal = include_retired_proposal
+
+            @property
+            def messages(self):
+                outer = self
+
+                class _Messages:
+                    def create(self, **kwargs):
+                        anthropic_calls.append(kwargs)
+                        sets_out = [
+                            {
+                                "slug": "long-awaited-releases",
+                                "name": "Long-awaited releases",
+                                "kicker": "LONG WAIT",
+                                "category": "culture",
+                                "why_better_together": "Three famous delayed releases side by side.",
+                                "look": "bars",
+                                "selector_kind": "fun_tag",
+                                "member_ids": [101, 102, 103],
+                            }
+                        ]
+                        if outer._include_retired_proposal:
+                            sets_out.insert(
+                                0,
+                                {
+                                    "slug": "already-retired-set",
+                                    "name": "Already Retired Set",
+                                    "kicker": "REPEAT",
+                                    "category": "culture",
+                                    "why_better_together": "Three famous delayed releases side by side.",
+                                    "look": "bars",
+                                    "selector_kind": "fun_tag",
+                                    "member_ids": [101, 102, 103],
+                                },
+                            )
+                        return SimpleNamespace(
+                            content=[SimpleNamespace(text=json.dumps({"sets": sets_out}))],
+                            usage=SimpleNamespace(input_tokens=1200, output_tokens=250),
+                        )
+
+                return _Messages()
+
+        monkeypatch.setattr(scout_task, "build_scout_openai_client", lambda: _FakeOpenAI())
+        monkeypatch.setattr(
+            scout_task,
+            "build_scout_anthropic_client",
+            lambda: _FakeAnthropic(include_retired_proposal=False),
+        )
+        missing_retired = tmp_path / "missing_retired.json"
+        missing_licence = tmp_path / "missing_licence.json"
+        monkeypatch.setattr(scout_task, "SCOUT_RETIRED_SETS_PATH", missing_retired)
+        monkeypatch.setattr(scout_task, "SCOUT_LICENCE_STATE_PATH", missing_licence)
+
+        async def _no_known_sets(_catalog_by_id):
+            return []
+
+        monkeypatch.setattr(scout_task, "_load_known_sets_durable", _no_known_sets)
+
+        # 1. Exact reproduction of the 1:12 AM PT cold-start state: empty Redis + missing file
+        out_empty = asyncio.run(
+            scout_task._run_discover_fun_scout(
+                force=True,
+                output_dir=tmp_path / "staged_empty",
+                now=FROZEN_NOW,
+                publish_to_github=False,
+            )
+        )
+        assert out_empty["status"] == "completed"
+        assert out_empty["validated_set_count"] == 1
+        assert [s["slug"] for s in out_empty["staged_sets"]] == ["long-awaited-releases"]
+        assert (tmp_path / "staged_empty" / "long-awaited-releases.json").exists()
+        assert json.loads(store["bainluck:fun_scout:latest"])["staged_sets"][0]["slug"] == (
+            "long-awaited-releases"
+        )
+
+        # 2. Populated file (dict entries) + durable Redis slug: prompts include retired entries
+        #    and validation rejects a re-proposed retired set while keeping novel sets.
+        retired_file = tmp_path / "retired.json"
+        retired_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "slug": "file-retired-set",
+                        "name": "File Retired Set",
+                        "reason": "Too repetitive",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        ok_r, err_r = scout_task.retire_scout_set_durable("already-retired-set")
+        assert ok_r is True and err_r is None
+        monkeypatch.setattr(scout_task, "SCOUT_RETIRED_SETS_PATH", retired_file)
+        monkeypatch.setattr(
+            scout_task,
+            "build_scout_anthropic_client",
+            lambda: _FakeAnthropic(include_retired_proposal=True),
+        )
+
+        openai_calls.clear()
+        anthropic_calls.clear()
+        out_populated = asyncio.run(
+            scout_task._run_discover_fun_scout(
+                force=True,
+                output_dir=tmp_path / "staged_populated",
+                now=FROZEN_NOW,
+                publish_to_github=False,
+            )
+        )
+        assert out_populated["status"] == "completed"
+        assert out_populated["validated_set_count"] == 1
+        assert out_populated["rejected_set_count"] == 1
+        assert [s["slug"] for s in out_populated["staged_sets"]] == ["long-awaited-releases"]
+        tag_system_prompt = openai_calls[0]["messages"][0]["content"]
+        set_user_prompt = anthropic_calls[0]["messages"][0]["content"]
+        assert "File Retired Set" in tag_system_prompt
+        assert "already-retired-set" in tag_system_prompt
+        assert "File Retired Set" in set_user_prompt
+        assert "already-retired-set" in set_user_prompt
+
+        # 3. Full Celery task entry point (`discover_fun_scout.run`) reaches `_run_discover_fun_scout`
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return FROZEN_NOW if tz is not None else FROZEN_NOW.replace(tzinfo=None)
+
+        monkeypatch.setattr(scout_task, "datetime", _FrozenDatetime)
+        orig_run_scout = scout_task._run_discover_fun_scout
+        monkeypatch.setattr(
+            scout_task,
+            "_run_discover_fun_scout",
+            lambda **kw: orig_run_scout(output_dir=tmp_path / "staged_celery", **kw),
+        )
+        monkeypatch.setattr(tasks_pkg, "_tracked_run", lambda _name, coro: asyncio.run(coro))
+        celery_task = tasks_pkg.celery_app.tasks["app.tasks.discover_fun_scout"]
+        out_celery = celery_task.run(force=True)
+        assert out_celery["status"] == "completed"
+        assert [s["slug"] for s in out_celery["staged_sets"]] == ["long-awaited-releases"]
+        assert (tmp_path / "staged_celery" / "long-awaited-releases.json").exists()
+
+        # 4. Defense-in-depth: direct callers passing a raw Python `set` do not crash
+        direct_out = run_nightly_fun_scout(
+            members,
+            [ScoutUncoveredFamily("vaporware", "Will GTA VI release?", 6)],
+            openai_client=_FakeOpenAI(),
+            anthropic_client=_FakeAnthropic(include_retired_proposal=False),
+            retired_sets={"legacy-set-slug"},
+            known_sets=(),
+            output_dir=tmp_path / "staged_direct",
+            now=FROZEN_NOW,
+        )
+        assert [v.slug for v in direct_out["validated_sets"]] == ["long-awaited-releases"]
+        normalized_from_set = normalize_retired_scout_sets({"b-slug", "a-slug"})
+        assert [r["slug"] for r in normalized_from_set] == ["a-slug", "b-slug"]
 
     @pytest.mark.asyncio
     async def test_failed_monthly_ledger_write_marks_month_unknown_and_closes_next_run(
@@ -1042,6 +1367,9 @@ class TestFrozenBenchmarkInput:
 
             messages = _Messages()
 
+        from app.utils import discover_fun_scout as dfs_mod
+
+        monkeypatch.setattr(dfs_mod, "load_known_sets_for_scout", lambda **kw: [])
         monkeypatch.setattr(bench, "build_scout_openai_client", lambda: _FakeOpenAI())
         monkeypatch.setattr(bench, "build_scout_anthropic_client", lambda: _StrictAnthropicV2())
 
@@ -1324,7 +1652,7 @@ _RUN_3946_SETS_FIXTURES: tuple[tuple[str, ScoutProposedSet, str | None], ...] = 
             look="bars",
             member_ids=(27594646, 60473244, 62878194, 67717832, 61857942, 66639375),
         ),
-        None,
+        "mixed_ladder_missing_row_answer",
     ),
     (
         "opus",
@@ -1340,7 +1668,7 @@ _RUN_3946_SETS_FIXTURES: tuple[tuple[str, ScoutProposedSet, str | None], ...] = 
             look="bars",
             member_ids=(5398277, 68365230, 114149, 70733323, 59172754),
         ),
-        None,
+        "mixed_ladder_missing_row_answer",
     ),
     (
         "opus",
@@ -1436,7 +1764,7 @@ _RUN_3946_SETS_FIXTURES: tuple[tuple[str, ScoutProposedSet, str | None], ...] = 
             look="bars",
             member_ids=(59693617, 25924930, 109216, 109376, 70150728),
         ),
-        None,
+        "mixed_ladder_missing_row_answer",
     ),
     (
         "opus",
@@ -1452,7 +1780,7 @@ _RUN_3946_SETS_FIXTURES: tuple[tuple[str, ScoutProposedSet, str | None], ...] = 
             look="bars",
             member_ids=(52755889, 70534836, 2776130, 33282766),
         ),
-        None,
+        "mixed_ladder_missing_row_answer",
     ),
     (
         "opus",
@@ -1763,3 +2091,309 @@ class TestStep3SetRulesAndRun3946Fixtures:
             "City-by-city snow odds for Denver, NYC, Philadelphia and Seattle.",
             groups["white-christmas"],
         ) is None
+
+
+class TestScoutRecallAndPromptFixes13514:
+    def test_batch_size_45_keeps_4400_title_tag_cost_under_five_cents(self):
+        from app.utils import discover_fun_scout as dfs
+
+        assert dfs._TAG_BATCH_SIZE == 45
+        est = dfs.estimate_fun_scout_spend(4400)
+        assert est["tag_cost_usd"] < 0.05
+        assert est["estimated_run_cost_usd"] < 0.40
+
+    def test_blurb_leading_starters_allow_sentence_openers_near_proper_nouns(self):
+        from app.utils.discover_fun_scout import check_scout_blurb_matches_members
+
+        gtavi = _mk(27594646, "GTA VI released by...?", category="gaming")
+        avengers = _mk(68365230, '"Avengers: Doomsday" Opening Weekend Box Office', category="movies")
+        other = _mk(70733323, "Will Dune: Part Three be delayed?", category="movies")
+        assert (
+            check_scout_blurb_matches_members(
+                "When GTA VI ships and whether Avengers: Doomsday wins opening weekend; Add the Doomsday delay risk.",
+                [gtavi, avengers, other],
+            )
+            is None
+        )
+
+    def test_set_writing_prompt_includes_tagged_group_counts(self):
+        from unittest.mock import MagicMock
+
+        from app.utils.discover_fun_scout import ScoutTaggedMarket, run_scout_set_writing_pass
+
+        captured: dict[str, object] = {}
+
+        def _fake_create(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(text=json.dumps({"sets": []}))],
+                usage=SimpleNamespace(input_tokens=100, output_tokens=50),
+                stop_reason="end_turn",
+            )
+
+        client = MagicMock()
+        client.messages.create.side_effect = _fake_create
+        catalog = {
+            1: _mk(1, "Will Taylor Swift headline Super Bowl?", category="music"),
+            2: _mk(2, "Will James Bond be Aaron Taylor-Johnson?", category="movies"),
+        }
+        tagged = [
+            ScoutTaggedMarket(market_id=1, fun_group="taylor-swift", is_fun_single=False, set_hint=None, reason="match"),
+            ScoutTaggedMarket(market_id=2, fun_group="james-bond", is_fun_single=False, set_hint=None, reason="match"),
+        ]
+        run_scout_set_writing_pass(
+            tagged,
+            catalog,
+            [],
+            anthropic_client=client,
+            approved_examples=[],
+            now=FROZEN_NOW,
+        )
+        msgs = captured["messages"]
+        assert "Tagged group counts (2 themes):" in msgs[0]["content"]
+        assert '"james-bond": 1' in msgs[0]["content"]
+        assert '"taylor-swift": 1' in msgs[0]["content"]
+        assert "20 to 26 crisp, shareable sets" in captured["system"]
+        assert "prefer 4 to 6 `member_ids`" in captured["system"]
+
+    def test_blurb_acronyms_generic_phrases_and_unlisted_rejections(self):
+        from app.utils.discover_fun_scout import check_scout_blurb_matches_members
+
+        snl = _mk(62368061, "Who will host Saturday Night Live Season 52?", category="tv")
+        seattle = _mk(65536370, "Snow in Seattle in Dec 2026?", category="weather")
+        album = _mk(113335, "Which artists will release a new song in 2026?", category="music")
+        assert (
+            check_scout_blurb_matches_members(
+                "Tracking the SNL Season hosts, Pacific Northwest winter odds and Rap and R&B drops.",
+                [snl, seattle, album],
+            )
+            is None
+        )
+        assert (
+            check_scout_blurb_matches_members(
+                "Tracking Blake Lively rumors and SNL Season hosts.",
+                [snl, seattle, album],
+            )
+            == "blurb_mentions_unlisted_member:Blake Lively"
+        )
+        assert (
+            check_scout_blurb_matches_members(
+                "Tracking Winds of Winter alongside SNL Season hosts.",
+                [snl, seattle, album],
+            )
+            == "blurb_mentions_unlisted_member:Winds of Winter"
+        )
+
+    def test_set_writing_pass_dedupes_cross_venue_twins_before_prompt(self):
+        from unittest.mock import MagicMock
+
+        from app.utils.discover_fun_scout import ScoutTaggedMarket, run_scout_set_writing_pass
+
+        captured: dict[str, object] = {}
+
+        def _fake_create(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(text=json.dumps({"sets": []}))],
+                usage=SimpleNamespace(input_tokens=100, output_tokens=50),
+                stop_reason="end_turn",
+            )
+
+        client = MagicMock()
+        client.messages.create.side_effect = _fake_create
+        catalog = {
+            1: _mk(1, "Klay Thompson and Megan Thee Stallion: Engaged?", source="kalshi", volume=31_000, canonical="engage:klay"),
+            2: _mk(2, "Megan Thee Stallion and Klay Thompson engaged in 2026?", source="polymarket", volume=20_000, canonical="engage:klay"),
+            3: _mk(3, "Timothee Chalamet and Kylie Jenner: Engaged in 2026?", source="kalshi", volume=32_000),
+            4: _mk(4, "Katy Perry and Justin Trudeau: Engaged in 2026?", source="kalshi", volume=27_500),
+        }
+        tagged = [
+            ScoutTaggedMarket(market_id=mid, fun_group="engagements", is_fun_single=False, set_hint=None, reason="match")
+            for mid in (1, 2, 3, 4)
+        ]
+        run_scout_set_writing_pass(
+            tagged,
+            catalog,
+            [],
+            anthropic_client=client,
+            approved_examples=[],
+            now=FROZEN_NOW,
+        )
+        prompt_text = captured["messages"][0]["content"]
+        assert "1 | kalshi" in prompt_text
+        assert "2 | polymarket" not in prompt_text
+        assert '"engagements": 3' in prompt_text
+
+    def test_benchmark_reuse_tagged_and_dump_validated_json(self, tmp_path, monkeypatch):
+        from scripts import run_fun_scout_benchmark_13102 as bench
+
+        fixture_path = tmp_path / "fixture.json"
+        fixture_path.write_text(
+            json.dumps(
+                {
+                    "captured_at": FROZEN_NOW.isoformat(),
+                    "markets": [
+                        {"market_id": 101, "source": "kalshi", "title": "Will GTA VI release in 2026?", "status": "open", "volume": 50_000, "resolution_date": "2027-01-01T00:00:00Z"},
+                        {"market_id": 102, "source": "kalshi", "title": "Will Half-Life 3 launch?", "status": "open", "volume": 40_000, "resolution_date": "2027-01-01T00:00:00Z"},
+                        {"market_id": 103, "source": "polymarket", "title": "Will Elder Scrolls VI launch?", "status": "open", "volume": 35_000, "resolution_date": "2027-01-01T00:00:00Z"},
+                    ],
+                    "uncovered_families": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        tagged_path = tmp_path / "tagged.json"
+        tagged_path.write_text(
+            json.dumps(
+                [
+                    {"market_id": 101, "fun_group": "long-awaited", "is_fun_single": False, "set_hint": None, "reason": "wait"},
+                    {"market_id": 102, "fun_group": "long-awaited", "is_fun_single": False, "set_hint": None, "reason": "wait"},
+                    {"market_id": 103, "fun_group": "long-awaited", "is_fun_single": False, "set_hint": None, "reason": "wait"},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        validated_out = tmp_path / "validated.json"
+        fake_vset = SimpleNamespace(
+            slug="will-it-drop",
+            name="Will It Drop?",
+            kicker="LONG WAIT",
+            category="entertainment",
+            why_better_together="Three delayed titles on one board.",
+            look="bars",
+            members=(
+                _mk(101, "Will GTA VI release in 2026?"),
+                _mk(102, "Will Half-Life 3 launch?"),
+                _mk(103, "Will Elder Scrolls VI launch?"),
+            ),
+        )
+        monkeypatch.setattr(bench, "build_scout_openai_client", lambda: (_ for _ in ()).throw(AssertionError("should not build openai client")))
+        monkeypatch.setattr(bench, "build_scout_anthropic_client", lambda: object())
+        monkeypatch.setattr(
+            bench,
+            "run_nightly_fun_scout",
+            lambda *a, **kw: {
+                "spend_line": "[discover-fun-scout] ok",
+                "actual_set_cost_usd": 0.12,
+                "proposed_set_count": 1,
+                "validated_sets": [fake_vset],
+                "rejected_sets": [],
+                "verified_singles": [],
+            },
+        )
+        rc = bench.main(
+            [
+                "--execute",
+                "--fixture",
+                str(fixture_path),
+                "--models",
+                CLAUDE_SONNET_MODEL,
+                "--reuse-tagged-json",
+                str(tagged_path),
+                "--dump-validated-json",
+                str(validated_out),
+            ]
+        )
+        assert rc == 0
+        dumped = json.loads(validated_out.read_text(encoding="utf-8"))
+        assert len(dumped[CLAUDE_SONNET_MODEL]) == 1
+        assert dumped[CLAUDE_SONNET_MODEL][0]["slug"] == "will-it-drop"
+        assert len(dumped[CLAUDE_SONNET_MODEL][0]["members"]) == 3
+
+
+def test_ruling_385a_cap_is_ten_and_staged_sets_cannot_auto_publish(tmp_path):
+    import importlib
+
+    import pytest
+    from app.utils.roundup_containers import CONTAINERS_DATA_DIR, ROUNDUP_PRODUCERS
+
+    scout_task = importlib.import_module("app.tasks.discover_fun_scout")
+
+    assert SCOUT_MAX_NEW_SETS_PER_DAY == 10
+    assert SCOUT_AUTO_PROMOTE_TO_PUBLIC is False
+    assert SCOUT_PUBLIC_PROMOTION_GATE == "alex_keep"
+
+    staged_resolved = SCOUT_STAGED_SETS_DIR.resolve()
+    containers_resolved = CONTAINERS_DATA_DIR.resolve()
+    assert staged_resolved != containers_resolved
+    assert containers_resolved not in staged_resolved.parents
+
+    twelve_sets = []
+    for i in range(1, 13):
+        base = 5000 + i * 3
+        cat = {
+            base: _mk(base, f"Staged market {i}a?"),
+            base + 1: _mk(base + 1, f"Staged market {i}b?"),
+            base + 2: _mk(base + 2, f"Staged market {i}c?"),
+        }
+        vset, err = validate_scout_proposed_set(
+            ScoutProposedSet(
+                slug=f"staged-only-{i}",
+                name=f"Staged Only {i}",
+                kicker="FUN",
+                category="culture",
+                why_better_together="Staged for morning review.",
+                look="bars",
+                member_ids=(base, base + 1, base + 2),
+            ),
+            cat,
+            now=FROZEN_NOW,
+        )
+        assert err is None and vset is not None
+        twelve_sets.append(vset)
+
+    lic = ScoutLicenceState()
+    with pytest.raises(ValueError, match="public containers dir"):
+        write_scout_rule_files(
+            twelve_sets,
+            CONTAINERS_DATA_DIR,
+            model_used=CLAUDE_SONNET_MODEL,
+            created_at=FROZEN_NOW,
+            licence_state=lic,
+        )
+    with pytest.raises(ValueError, match="public containers dir"):
+        write_scout_rule_files(
+            twelve_sets,
+            CONTAINERS_DATA_DIR / "nested",
+            model_used=CLAUDE_SONNET_MODEL,
+            created_at=FROZEN_NOW,
+            licence_state=lic,
+        )
+
+    before_producers = set(ROUNDUP_PRODUCERS.keys())
+    written = write_scout_rule_files(
+        twelve_sets,
+        tmp_path / "scout_sets",
+        model_used=CLAUDE_SONNET_MODEL,
+        created_at=FROZEN_NOW,
+        licence_state=lic,
+    )
+    assert len(written) == 10
+    assert set(ROUNDUP_PRODUCERS.keys()) == before_producers
+    for p in written:
+        payload = json.loads(p.read_text(encoding="utf-8"))
+        assert payload["stage"] == "preview"
+        assert payload["scout"]["auto_promote"] is False
+        assert payload["scout"]["requires_keep_to_publish"] is True
+        assert payload["scout"]["public_promotion_gate"] == "alex_keep"
+
+    artifact = scout_task.build_scout_nightly_artifact(
+        {
+            "spend_line": "test",
+            "actual_total_cost_usd": 0.4,
+            "set_model": CLAUDE_SONNET_MODEL,
+            "tagged_count": 55,
+            "validated_sets": twelve_sets,
+            "rejected_sets": [],
+            "verified_singles": [],
+            "licence_state": lic.to_dict(),
+        },
+        run_now=FROZEN_NOW,
+    )
+    assert artifact["max_new_sets_per_day"] == 10
+    assert len(artifact["staged_sets"]) == 10
+    assert artifact["auto_promote_to_public"] is False
+    assert artifact["public_promotion_gate"] == "alex_keep"
+    assert all(s["rule_definition"]["stage"] == "preview" for s in artifact["staged_sets"])
+
+

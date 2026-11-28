@@ -284,6 +284,22 @@ def test_v2_junk_flags_map_one_to_one():
     ]
 
 
+def test_existing_v2_profile_gets_the_ladder_penalty_from_its_labels():
+    profile = _v2_profile(generated_at=NOW, junk_flags=["social_count"])
+    metadata = {DISCOVER_LLM_METADATA_KEY: profile}
+    previous_view = _get_discover_llm_view(metadata)
+    view = _get_discover_llm_view(
+        metadata, outcome_names=["Over 12 runs", "Over 18 runs"]
+    )
+
+    assert view == {**previous_view, "junk_flags": ["social_count", "ladder"]}
+    assert (
+        _discover_llm_score_adjustment(view)
+        == _discover_llm_score_adjustment(previous_view) - 6
+    )
+    assert profile["junk_flags"] == ["social_count"]
+
+
 def test_v2_salience_and_scope_mapping():
     def adapt(**kwargs):
         return _v2_profile_as_v1_shape(_v2_profile(generated_at=NOW, **kwargs))

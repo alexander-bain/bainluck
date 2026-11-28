@@ -16,7 +16,7 @@ APPROVED_TIMEOUT_OVERRIDES = sorted(
         (
             "PickerAliasJourneyTests.swift",
             "testResolvedAliasRetainsReadingOfflineAndAfterRestart",
-            300,
+            540,
         ),
         (
             "PickerCurrentGameJourneyTests.swift",

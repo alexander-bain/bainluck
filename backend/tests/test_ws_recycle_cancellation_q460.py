@@ -19,7 +19,9 @@ drives the REAL code of at least two layers; the fakes stop at the socket.
 """
 
 import asyncio
+import contextlib
 from itertools import cycle
+from typing import Callable
 
 import pytest
 import websockets
@@ -41,6 +43,9 @@ from tests._pm_slate_market_read_10663 import answer_slate_market_read
 class _QuietSocket:
     """Connects, accepts subscriptions, then never yields a message."""
 
+    def __init__(self, on_subscribed: Callable[[], None] | None = None):
+        self._on_subscribed = on_subscribed
+
     async def send(self, _payload):
         return None
 
@@ -48,13 +53,18 @@ class _QuietSocket:
         return self
 
     async def __anext__(self):
+        if self._on_subscribed is not None:
+            self._on_subscribed()
         await asyncio.sleep(3600)  # the recycle cancellation lands here
         raise StopAsyncIteration  # pragma: no cover
 
 
 class _QuietConnect:
+    def __init__(self, on_subscribed: Callable[[], None] | None = None):
+        self._on_subscribed = on_subscribed
+
     async def __aenter__(self):
-        return _QuietSocket()
+        return _QuietSocket(on_subscribed=self._on_subscribed)
 
     async def __aexit__(self, *_exc):
         return False
@@ -68,15 +78,23 @@ class _Stop(BaseException):
     """
 
 
-def _install_quiet_socket(monkeypatch, stop_after: int | None = None):
+def _install_quiet_socket(
+    monkeypatch,
+    stop_after: int | None = None,
+    *,
+    on_connect: Callable[[], None] | None = None,
+    on_subscribed: Callable[[], None] | None = None,
+):
     """Point both services' `websockets.connect` at a healthy, silent socket."""
     connects = {"n": 0}
 
     def _connect(*_a, **_kw):
         connects["n"] += 1
+        if on_connect is not None:
+            on_connect()
         if stop_after is not None and connects["n"] > stop_after:
             raise _Stop
-        return _QuietConnect()
+        return _QuietConnect(on_subscribed=on_subscribed)
 
     monkeypatch.setattr(websockets, "connect", _connect)
     # Kalshi signs its handshake; no key material in the test environment.
@@ -388,6 +406,41 @@ class TestRunnerPaysNoBackoffForARecycle:
 # ------------------------------------------------- all three, end to end ----
 
 
+class _RecycleWaitGateShim:
+    """`poly_task.asyncio` proxy that fires the recycle wait once subscribed."""
+
+    def __init__(self, subscribed: asyncio.Event, refresh_timeout: float):
+        self._subscribed = subscribed
+        self._refresh_timeout = refresh_timeout
+
+    def __getattr__(self, name):
+        return getattr(asyncio, name)
+
+    async def wait(self, fs, *, timeout=None, return_when=asyncio.ALL_COMPLETED):
+        if timeout != self._refresh_timeout:
+            return await asyncio.wait(fs, timeout=timeout, return_when=return_when)
+        fs_set = set(fs)
+        gate_task = asyncio.create_task(self._subscribed.wait())
+        try:
+            done, pending = await asyncio.wait(
+                fs_set | {gate_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            game_or_other_done = done - {gate_task}
+            if gate_task in done and not any(
+                getattr(t, "get_name", lambda: "")() == "polymarket-game-sockets"
+                for t in game_or_other_done
+            ):
+                self._subscribed.clear()
+                return set(), fs_set
+            return game_or_other_done, pending - {gate_task}
+        finally:
+            if not gate_task.done():
+                gate_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await gate_task
+
+
 class TestTheWholeStackRecyclesForFree:
     """The test the cert asked for. Real service + real consumer + real runner;
     only the socket and the slate query are faked. This is the one that would
@@ -417,14 +470,28 @@ class TestTheWholeStackRecyclesForFree:
     async def test_polymarket_recycles_repeatedly_without_a_single_backoff(
         self, monkeypatch
     ):
-        monkeypatch.setattr(poly_task, "SUBSCRIPTION_REFRESH_SECONDS", 0.05)
-        connects = _install_quiet_socket(monkeypatch, stop_after=3)
+        monkeypatch.setattr(poly_task, "SUBSCRIPTION_REFRESH_SECONDS", 600)
+        subscribed = asyncio.Event()
+        connects = _install_quiet_socket(
+            monkeypatch,
+            stop_after=3,
+            on_connect=subscribed.clear,
+            on_subscribed=subscribed.set,
+        )
         _install_slate(monkeypatch, POLY_SLATE)
+        monkeypatch.setattr(
+            poly_task,
+            "asyncio",
+            _RecycleWaitGateShim(subscribed, poly_task.SUBSCRIPTION_REFRESH_SECONDS),
+        )
         shim = _AsyncioShim()
         monkeypatch.setattr(run_kalshi_ws, "asyncio", shim)
 
         with pytest.raises(_Stop):
-            await run_kalshi_ws.run_polymarket()
+            # A TimeoutError here means `_RecycleWaitGateShim` stopped matching
+            # the consumer's recycle `asyncio.wait(..., timeout=...)` against
+            # `SUBSCRIPTION_REFRESH_SECONDS` (for example, if that timeout became computed).
+            await asyncio.wait_for(run_kalshi_ws.run_polymarket(), timeout=10)
 
         assert connects["n"] == 4
         assert shim.sleeps == [], (

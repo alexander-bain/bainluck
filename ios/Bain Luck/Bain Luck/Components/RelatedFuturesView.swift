@@ -2185,7 +2185,7 @@ private struct StatTrackerRow: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(DS.textSecondaryReadable)
                             if let prob = future.probability {
-                                Text("\(Int(prob * 100))%")
+                                Text(formatProbability(prob))
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundStyle(teamColor)
                             }
@@ -2410,9 +2410,14 @@ private struct PlayerHeadshotView: View {
             Circle()
                 .fill(teamColor.opacity(0.15))
             if player != nil {
-                Image(systemName: "person.fill")
-                    .font(.system(size: size * 0.4))
-                    .foregroundStyle(teamColor.opacity(0.6))
+                // Ruling 387: A — render the player's deterministic initials inside
+                // the same circle rather than a generic person silhouette.
+                Text(KitInitials366B.initials(for: name, subjectKind: "person"))
+                    .font(.system(size: size * 0.36, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.45)
+                    .frame(width: size * 0.82)
+                    .foregroundStyle(teamColor)
             } else {
                 // #4720 — was `String(name.prefix(1))`, one character of the raw
                 // name. Same defect and same cure as `TeamLogoView`: the app's own
@@ -2490,7 +2495,7 @@ private struct SeriesMarketsSection: View {
                                 .foregroundStyle(change > 0 ? .green : .red)
                             }
                             if let prob = outcome.probability {
-                                Text("\(Int((prob * 100).rounded()))%")
+                                Text(formatProbability(prob))
                                     .font(.caption)
                                     .fontWeight(.bold)
                                     .monospacedDigit()

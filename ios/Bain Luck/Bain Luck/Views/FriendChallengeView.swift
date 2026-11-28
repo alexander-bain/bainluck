@@ -22,6 +22,7 @@ struct FriendChallengeView: View {
                         .buttonStyle(.borderedProminent)
                 }
                 .padding()
+                .noteReviewPromptTrouble12304()
             } else if let challenge = viewModel.challenge {
                 challengeContent(challenge)
             }
@@ -42,7 +43,7 @@ struct FriendChallengeView: View {
                         .font(.headline)
                         .multilineTextAlignment(.center)
                     if let prob = c.currentProbability {
-                        Text("\(Int(prob * 100))%")
+                        Text(formatProbability(prob))
                             .font(.caption)
                             .fontWeight(.semibold)
                             .padding(.horizontal, 10)

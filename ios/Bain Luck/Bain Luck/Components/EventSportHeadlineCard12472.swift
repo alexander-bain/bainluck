@@ -20,6 +20,7 @@ struct EventSportHeadlineCard12472: View {
     let confirmedAt: Date?
     let revealForecast: LivePregameComparison11296.Headline?
 
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var measuredInnerWidth: CGFloat = 330
     @ScaledMetric(relativeTo: .title2) private var nowScaledSize: CGFloat = HeadlineStyleTable199.nowBaseSize(.page)
@@ -49,7 +50,8 @@ struct EventSportHeadlineCard12472: View {
             nowFontSize: nowScaledSize,
             secondProminentFontSize: secondProminentScaledSize,
             secondRegularFontSize: secondRegularScaledSize,
-            headerFontSize: headerScaledSize
+            headerFontSize: headerScaledSize,
+            quietFontSize: baseQuietSize
         )
     }
 
@@ -250,7 +252,20 @@ struct EventSportHeadlineCard12472: View {
                         cardStackBoundary12278 { livePregameSummaryRow(pregameSummary) }
                     }
                     if let scoreUnavailableNotice = model.scoreUnavailableNotice {
-                        cardStackBoundary12278 { scoreUnavailableNoticeRow(scoreUnavailableNotice) }
+                        cardStackBoundary12278 {
+                            headlineUnavailableNoticeRow(
+                                scoreUnavailableNotice,
+                                identifier: "headline-12472-no-live-score-notice"
+                            )
+                        }
+                    }
+                    if let probabilityUnavailableNotice = model.probabilityUnavailableNotice {
+                        cardStackBoundary12278 {
+                            headlineUnavailableNoticeRow(
+                                probabilityUnavailableNotice,
+                                identifier: "headline-12472-no-probability-notice"
+                            )
+                        }
                     }
                 }
                 .padding(.horizontal, 14)
@@ -431,9 +446,13 @@ struct EventSportHeadlineCard12472: View {
 
     // MARK: - Unified Column-Header + Competitor-Rows Table
 
+    private var hasVisibleColumns: Bool {
+        model.columns.contains { !$0.header.isEmpty }
+    }
+
     private var unifiedTableSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !model.columns.isEmpty {
+            if hasVisibleColumns {
                 columnHeaderRow
             }
             ForEach(Array(model.rows.enumerated()), id: \.offset) { index, row in
@@ -478,9 +497,11 @@ struct EventSportHeadlineCard12472: View {
                     rowBadge(row, tint: tint)
                     competitorIdentityStack(row)
                 }
-                HStack(alignment: .firstTextBaseline, spacing: columnSpacing) {
-                    Spacer(minLength: 0)
-                    rowCellsStrip(row, tint: tint)
+                if hasVisibleColumns {
+                    HStack(alignment: .firstTextBaseline, spacing: columnSpacing) {
+                        Spacer(minLength: 0)
+                        rowCellsStrip(row, tint: tint)
+                    }
                 }
             }
             .accessibilityElement(children: .combine)
@@ -489,9 +510,13 @@ struct EventSportHeadlineCard12472: View {
             HStack(alignment: .center, spacing: 6) {
                 rowBadge(row, tint: tint)
                 competitorIdentityStack(row)
-                Spacer(minLength: 4)
-                HStack(alignment: .firstTextBaseline, spacing: columnSpacing) {
-                    rowCellsStrip(row, tint: tint)
+                if hasVisibleColumns {
+                    Spacer(minLength: 4)
+                    HStack(alignment: .firstTextBaseline, spacing: columnSpacing) {
+                        rowCellsStrip(row, tint: tint)
+                    }
+                } else {
+                    Spacer(minLength: 0)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -599,6 +624,17 @@ struct EventSportHeadlineCard12472: View {
         case .now, .chance:
             if text.isEmpty {
                 Color.clear.frame(height: 1)
+            } else if row.quietNoticeColumns.contains(columnIndex) {
+                let quietSize = min(baseQuietSize, stacksRowsVertically ? 18 : 13)
+                let noticeInk = colorScheme == .dark ? DS.textSecondaryReadable : HeadlineStyleTable199.quietInk
+                Text(text)
+                    .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: false, scaledSize: quietSize))
+                    .foregroundStyle(noticeInk)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 0.90 : 0.85)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("\(column.header.isEmpty ? "Chance" : column.header) \(text)")
             } else {
                 Text(text)
                     .font(HeadlineStyleTable199.now(.page, scaledSize: effectiveNowSize))
@@ -732,6 +768,7 @@ struct EventSportHeadlineCard12472: View {
             colors: colors,
             scaledSize: cappedSummarySize,
             minScale: stacksRowsVertically ? 0.45 : 0.78,
+            allowsAccessibilityWrapping: false,
             accessibilityIdentifier: "headline-12472-pregame-summary"
         )
         .background(
@@ -741,14 +778,15 @@ struct EventSportHeadlineCard12472: View {
         )
     }
 
-    private func scoreUnavailableNoticeRow(_ text: String) -> some View {
+    private func headlineUnavailableNoticeRow(_ text: String, identifier: String) -> some View {
         let cappedNoticeSize = min(baseQuietSize, stacksRowsVertically ? 20 : 14)
+        let noticeInk = colorScheme == .dark ? DS.textSecondaryReadable : HeadlineStyleTable199.quietInk
         return Text(text)
             .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: false, scaledSize: cappedNoticeSize))
-            .foregroundStyle(HeadlineStyleTable199.quietInk)
+            .foregroundStyle(noticeInk)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("headline-12472-no-live-score-notice")
+            .accessibilityIdentifier(identifier)
     }
 
     // MARK: - Segmented Bottom Bar

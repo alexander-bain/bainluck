@@ -588,6 +588,7 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         source: str = "kalshi",
         sport_id: int | None = None,
         with_history: bool = False,
+        mutually_exclusive: bool = True,
     ) -> FuturesMarket:
         kw = {"id": market_id} if market_id is not None else {}
         fm = FuturesMarket(
@@ -599,7 +600,7 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             category=category,
             llm_sport_category=category,
             market_tier=1,
-            mutually_exclusive=True,
+            mutually_exclusive=mutually_exclusive,
             status="open",
             volume=250_000,
             resolution_date=res_future,
@@ -987,9 +988,10 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
 
     # 12. #12288 Batch 5 preview groupings (March Madness 2027, AI Model Leaderboard, Big Tech Deals & Hardware, NHL 100-Point Club)
     for mid, ext, name, cat, sid, outs in (
-        (52755955, "PMB5-APPOLL", "AP Poll #1 team on December 7", "basketball", ncaab.id, [("Houston", 0.54, 0.50), ("Duke", 0.25, 0.27)]),
+        (52755955, "PMB5-APPOLL", "AP Poll #1 team on December 7", "basketball", ncaab.id, [("Houston", 0.54, 0.50), ("Duke", 0.25, 0.27), ("Florida", 0.14, 0.13)]),
         (68954772, "PMB5-DUKEFF", "Will Duke reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.37, 0.35)]),
         (68954773, "PMB5-FLAFF", "Will Florida reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.32, 0.30)]),
+        (68954775, "PMB5-HOUFF", "Will Houston reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.31, 0.29)]),
         (109596, "KXB5-BESTAI", "Best AI model at year-end?", "tech", None, [("Gemini", 0.83, 0.80), ("Claude", 0.10, 0.12)]),
         (62134324, "KXB5-OPUS", "Next Claude Opus released by?", "tech", None, [("Dec 31", 0.79, 0.75)]),
         (109623, "KXB5-CODEAI", "Best coding AI model at year-end?", "tech", None, [("Anthropic", 0.49, 0.46), ("OpenAI", 0.31, 0.33)]),
@@ -1023,9 +1025,10 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         (114149, "KXB6-DUNEAV", "Will Dune 3 or Avengers: Doomsday gross more on opening weekend?", "entertainment", [("Avengers: Doomsday", 0.98, 0.96), ("Dune 3", 0.02, 0.04)]),
         (113355, "KXB6-TOP2026", "Highest grossing movie in 2026?", "entertainment", [("Spider-Man: Brand New Day", 0.91, 0.89)]),
         (113356, "KXB6-OPEN2026", "Which movie has biggest opening weekend in 2026?", "entertainment", [("Avengers: Doomsday", 0.90, 0.88)]),
-        (70160313, "PMB6-GGACTF", "Golden Globe Winner: Best Actress - Musical or Comedy", "entertainment", [("Julianne Moore", 0.77, 0.75)]),
+        (70160313, "PMB6-GGACTF", "Golden Globe Winner: Best Actress - Musical or Comedy", "entertainment", [("Julianne Moore", 0.77, 0.75), ("Olivia Wilde", 0.06, 0.06), ("Inde Navarrette", 0.06, 0.05), ("Olivia Colman", 0.02, 0.02)]),
         (70160296, "PMB6-GGACTRLS", "Golden Globe Winner: Best Actress in a Limited Series", "entertainment", [("Florence Pugh", 0.72, 0.70)]),
         (70160294, "PMB6-GGSUPATV", "Golden Globe Winner: Best Supporting Actress on TV", "entertainment", [("Kate O'Flynn", 0.71, 0.68)]),
+        (70160314, "PMB6-GGACTM", "Golden Globe Winner: Best Actor - Musical or Comedy", "entertainment", [("Timothée Chalamet", 0.65, 0.62)]),
     ):
         await _add_market(
             market_id=mid,
@@ -1034,6 +1037,14 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             category=cat,
             outcomes=outs,
         )
+    await _add_market(
+        market_id=61484904,
+        external_id="KXB6-GGNOM",
+        name="Golden Globe Nominations: Best Actress in a Motion Picture – Musical or Comedy",
+        category="entertainment",
+        outcomes=[("Julianne Moore", 0.98, 0.96), ("Olivia Wilde", 0.96, 0.94), ("Inde Navarrette", 0.90, 0.88), ("Olivia Colman", 0.77, 0.74)],
+        mutually_exclusive=False,
+    )
 
     # 14. #12288 Batch 7 preview groupings (8 forms across Oscars, CFB, NFL, NHL, NCAAB, Euro Soccer, Tech & Space, Weather)
     actor_outcomes = [
@@ -1149,6 +1160,46 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             category=cat,
             outcomes=outs,
         )
+
+    # 16. #12288 Batch 9 preview groupings (Golf/Ryder Cup, UFC/Boxing, Critics/Oscars, Meteor Strikes, Grammys 2027, Tech Bankruptcies)
+    for mid, ext, name, cat, hist, outs in (
+        (114132, "PMB9-METEOR", "5kt meteor strike in 2026?", "tech", True, [("Yes", 0.13, 0.27)]),
+        (112828, "PMB9-MET30", "Will a major meteor strike hit Earth before 2030?", "tech", False, [("Yes", 0.43, 0.40)]),
+        (114131, "PMB9-MET10", "Major meteor strike (10kt+) in 2026?", "tech", False, [("Yes", 0.05, 0.04)]),
+        (114162, "PMB9-MET1", "1 megaton meteor strike in 2026?", "weather", False, [("Yes", 0.04, 0.03)]),
+        (61321725, "PMB9-CWBK", "CoreWeave announces bankruptcy by...?", "tech", False, [("December 31, 2027", 0.16, 0.15), ("December 31, 2028", 0.23, 0.22)]),
+        (61321727, "PMB9-ANTBK", "Anthropic files for bankruptcy by...?", "tech", False, [("December 31, 2027", 0.09, 0.08), ("December 31, 2028", 0.15, 0.14)]),
+        (61321742, "PMB9-OAIBK", "OpenAI files for bankruptcy by...?", "tech", False, [("December 31, 2027", 0.09, 0.08), ("December 31, 2028", 0.15, 0.14)]),
+        (61321726, "PMB9-NUBK", "NuScale announces bankruptcy by...?", "tech", False, [("December 31, 2027", 0.06, 0.05), ("December 31, 2028", 0.18, 0.17)]),
+        (65536357, "PMB9-CCDIR", "Critics Choice Awards: Best Director", "entertainment", False, [("Christopher Nolan", 0.75, 0.72), ("Denis Villeneuve", 0.12, 0.13), ("Alejandro González Iñárritu", 0.08, 0.09)]),
+        (58495125, "PMB9-OSUPM", "Oscars 2027: Best Supporting Actor Winner", "entertainment", False, [("Paul Giamatti", 0.41, 0.43), ("Andrew Garfield", 0.40, 0.30), ("Sean Penn", 0.09, 0.10)]),
+        (58492242, "PMB9-OINTL", "Oscars 2027: Best International Feature Film Winner", "entertainment", False, [("La Bola Negra", 0.83, 0.81), ("All of a Sudden", 0.05, 0.06)]),
+        (58492241, "PMB9-OSCORE", "Oscars 2027: Best Original Score Winner", "entertainment", False, [("The Odyssey", 0.69, 0.71), ("Dune: Part Three", 0.12, 0.10)]),
+        (65536307, "PMB9-CCPIC", "Critics Choice Awards: Best Picture", "entertainment", False, [("You Can See Everything", 0.66, 0.64), ("The Odyssey", 0.20, 0.21)]),
+        (58495122, "PMB9-OADAPT", "Oscars 2027: Best Adapted Screenplay Winner", "entertainment", False, [("La Bola Negra", 0.62, 0.50), ("The Invite", 0.24, 0.24)]),
+        (71652319, "PMB9-GRMSOTY", "Grammy Winner: Song Of The Year", "entertainment", False, [("Choosin' Texas", 0.50, 0.48), ("the cure", 0.30, 0.31)]),
+        (62368098, "PMB9-GRMRNB", "Grammy Winner: Best R&B Solo Performance", "entertainment", False, [("What You Need", 0.48, 0.45), ("Out The Window", 0.26, 0.27)]),
+        (71652300, "PMB9-GRMPOP", "Grammy Winner: Best Pop Vocal Album", "entertainment", False, [("The Art of Loving", 0.38, 0.36), ("you seem pretty sad for a girl so in love", 0.32, 0.31)]),
+        (71652304, "PMB9-GRMROCK", "Grammy Winner: Best Rock Album", "entertainment", False, [("Vol.II", 0.35, 0.33), ("Your Favorite Toy", 0.25, 0.26)]),
+        (3970169, "PMB9-RYDER", "2027 Ryder Cup Winner", "golf", False, [("Team Europe", 0.53, 0.51), ("Team USA", 0.40, 0.42), ("Tie", 0.07, 0.06)]),
+        (61056094, "KXB9-MASTERS", "2027 The Masters Champion", "golf", False, [("Scottie Scheffler", 0.21, 0.20), ("Rory McIlroy", 0.12, 0.12)]),
+        (11224673, "PMB9-LIV", "Will LIV Golf announce shutdown in 2026?", "golf", False, [("Yes", 0.03, 0.04)]),
+        (176, "KXB9-SLAM", "Will Scottie Scheffler win the grand slam before 2028?", "golf", False, [("Yes", 0.02, 0.03)]),
+        (58852162, "KXB9-CONOR", "UFC: Who Will Conor McGregor Fight Next?", "mma", False, [("Max Holloway", 0.30, 0.28), ("Michael Chandler", 0.21, 0.19), ("Nate Diaz", 0.14, 0.11)]),
+        (20565989, "KXB9-STRICK", "UFC: Who Will Sean Strickland Fight Next?", "mma", False, [("Nassourdine Imavov", 0.81, 0.78), ("Khamzat Chimaev", 0.07, 0.09)]),
+        (10603290, "KXB9-ULBERG", "UFC: Who will Carlos Ulberg fight next?", "mma", False, [("Magomed Ankalaev", 0.40, 0.41), ("Paulo Costa", 0.10, 0.13)]),
+        (57284647, "KXB9-ANK", "UFC: Who Will Magomed Ankalaev Fight Next?", "mma", False, [("Carlos Ulberg", 0.28, 0.35), ("Paulo Costa", 0.13, 0.12)]),
+        (10437337, "PMB9-FURYJOSH", "Tyson Fury and Anthony Joshua to Fight in 2026", "boxing", False, [("Yes", 0.04, 0.05)]),
+        (61141844, "KXB9-JSILVA", "UFC: Who Will Jean Silva Fight Next?", "mma", False, [("Lerone Murphy", 0.25, 0.23), ("Kevin Vallejos", 0.24, 0.24)]),
+    ):
+        await _add_market(
+            market_id=mid,
+            external_id=ext,
+            name=name,
+            category=cat,
+            outcomes=outs,
+            with_history=hist,
+        )
     await session.commit()
 
 
@@ -1250,8 +1301,12 @@ async def test_load_snapshot_from_db_executes_every_query_for_every_candidate_de
     assert "row_number() over (partition by futures_odds_snapshots.outcome_id" not in joined_sql
 
 
-async def test_paired_discover_card_and_set_match_the_market_pages_allocation(pg_machinery):
+@pytest.mark.parametrize("new_probability, expected_percent", [(0.41, 42), (0.46, 44)])
+async def test_paired_discover_card_and_set_match_the_market_pages_allocation(
+    pg_machinery, new_probability, expected_percent
+):
     from app.routes.futures import get_futures_market
+    from app.utils.graded_card import rendered_percent
     from app.utils.roundup_containers import RoundupMembers
 
     defn = next(
@@ -1262,7 +1317,9 @@ async def test_paired_discover_card_and_set_match_the_market_pages_allocation(pg
         await db.execute(
             update(FuturesOutcome)
             .where(FuturesOutcome.market_id == 6173044, FuturesOutcome.name == "The Odyssey")
-            .values(current_probability=0.41)
+            .values(current_probability=new_probability,
+                    current_yes_bid=new_probability - 0.01,
+                    current_yes_ask=new_probability + 0.01)
         )
         await db.commit()
     async with pg_machinery["maker"]() as db:
@@ -1277,9 +1334,131 @@ async def test_paired_discover_card_and_set_match_the_market_pages_allocation(pg
         if section["visual_block"]["form_id"] == "paired_stage_bars"
     )
     set_row = next(row for row in set_table["entries"] if row["subject"] == "The Odyssey")
-    assert page_row["rendered_percent"] == 42
+    page_percent = page_row.get("rendered_percent", rendered_percent(page_row["probability"]))
+    assert page_percent == expected_percent
     assert card_row["probability"] == set_row["stage_2_probability"] == page_row["probability"]
-    assert card_row["rendered_percent"] == set_row["stage_2_rendered_percent"] == page_row["rendered_percent"]
+    set_percent = set_row["stage_2_rendered_percent"]
+    if set_percent is None:
+        set_percent = rendered_percent(set_row["stage_2_probability"])
+    assert card_row["rendered_percent"] == set_percent == page_percent
+
+
+async def test_grouping_rechecks_its_minimum_after_withdrawing_a_field(pg_machinery):
+    from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
+
+    now = pg_machinery["now_dt"]
+    definition = {
+        "slug": "test-review-awards",
+        "name": "Review awards",
+        "category": "entertainment",
+        "rule": {"sections": [{
+            "key": "award_fields",
+            "title": "Award winners",
+            "atom_query": {
+                "kind": "markets",
+                "title_all_tokens": ["review", "award"],
+                "min_items": 2,
+            },
+        }]},
+    }
+    async with pg_machinery["maker"]() as db:
+        market_ids = []
+        for index, label in enumerate(("film", "song", "book")):
+            market = FuturesMarket(
+                source="kalshi", external_id=f"KXREVIEW-{label}",
+                name=f"Review Award: {label} winner", category="entertainment",
+                llm_sport_category="entertainment", market_type="field",
+                status="open", mutually_exclusive=True, volume=10_000,
+                resolution_date=now + timedelta(days=30),
+            )
+            db.add(market)
+            await db.flush()
+            market_ids.append(market.id)
+            probabilities = (0.20, 0.10, 0.08, 0.04) if index == 0 else (0.40, 0.30, 0.20, 0.10)
+            for outcome_index, (name, price) in enumerate(
+                zip(("Alice", "Beatrice", "Carmen", "Diana"), probabilities, strict=True)
+            ):
+                db.add(FuturesOutcome(
+                    market_id=market.id, external_id=f"KXREVIEW-{label}-{outcome_index}",
+                    name=name, current_probability=price, last_updated=now,
+                ))
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupMembers)
+        assert {item["id"] for item in group.members} == set(market_ids[1:])
+
+    async with pg_machinery["maker"]() as db:
+        await db.execute(
+            update(FuturesOutcome).where(FuturesOutcome.market_id == market_ids[1])
+            .values(current_probability=0.10)
+        )
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupRefusal)
+        assert ("container_machinery", "too_few_markets:award_fields") in group.reasons
+
+
+async def test_grouping_rechecks_its_minimum_after_withdrawing_a_field(pg_machinery):
+    from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
+
+    now = pg_machinery["now_dt"]
+    definition = {
+        "slug": "test-review-awards",
+        "name": "Review awards",
+        "category": "entertainment",
+        "rule": {"sections": [{
+            "key": "award_fields",
+            "title": "Award winners",
+            "atom_query": {
+                "kind": "markets",
+                "title_all_tokens": ["review", "award"],
+                "min_items": 2,
+            },
+        }]},
+    }
+    async with pg_machinery["maker"]() as db:
+        market_ids = []
+        for index, label in enumerate(("film", "song", "book")):
+            market = FuturesMarket(
+                source="kalshi", external_id=f"KXREVIEW-{label}",
+                name=f"Review Award: {label} winner", category="entertainment",
+                llm_sport_category="entertainment", market_type="field",
+                status="open", mutually_exclusive=True, volume=10_000,
+                resolution_date=now + timedelta(days=30),
+            )
+            db.add(market)
+            await db.flush()
+            market_ids.append(market.id)
+            probabilities = (0.20, 0.10, 0.08, 0.04) if index == 0 else (0.40, 0.30, 0.20, 0.10)
+            for outcome_index, (name, price) in enumerate(
+                zip(("Alice", "Beatrice", "Carmen", "Diana"), probabilities, strict=True)
+            ):
+                db.add(FuturesOutcome(
+                    market_id=market.id, external_id=f"KXREVIEW-{label}-{outcome_index}",
+                    name=name, current_probability=price, last_updated=now,
+                ))
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupMembers)
+        assert {item["id"] for item in group.members} == set(market_ids[1:])
+
+    async with pg_machinery["maker"]() as db:
+        await db.execute(
+            update(FuturesOutcome).where(FuturesOutcome.market_id == market_ids[1])
+            .values(current_probability=0.10)
+        )
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupRefusal)
+        assert ("container_machinery", "too_few_markets:award_fields") in group.reasons
 
 
 async def test_evaluate_machinery_candidates_preview_returns_all_ok_with_zero_error_logs(

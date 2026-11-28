@@ -36,6 +36,54 @@ enum EventSportHeadlines12472 {
         return noLiveScoreGameLine
     }
 
+    /// #13799 — plain-English notice on the headline when a game that has not
+    /// settled has no printable current probability (`"No probability yet"`
+    /// before kickoff, `"No recent probability"` once started/live), returning
+    /// `nil` for terminal or stopped states that already carry a status badge.
+    nonisolated static func resolveProbabilityUnavailableNotice(
+        for event: EventDetail,
+        hasCurrentChance: Bool,
+        now: Date = Date()
+    ) -> String? {
+        guard !hasCurrentChance else { return nil }
+        let lowerStatus = (event.status ?? "").lowercased()
+        if lowerStatus == "postponed" || lowerStatus == "canceled" || lowerStatus == "cancelled" {
+            return nil
+        }
+        return EventAtlasStates11666.heroStateLabel(
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            authorityPeriod: event.espn?.period,
+            venueSettled: event.venueSettled,
+            venueClosedNoWinner: event.venueClosedNoWinner,
+            hasCurrentOdds: false,
+            now: now
+        )
+    }
+
+    /// Ruling 250: A — When a draw-priced soccer match prints Home's probability with
+    /// Away withheld (no explicit draw probability), the Away cell prints
+    /// `"No probability yet"` before the game has had any number and `"No recent probability"`
+    /// after, never an empty box.
+    nonisolated static func resolveWithheldAwayNotice(
+        for event: EventDetail,
+        now: Date = Date()
+    ) -> String {
+        let hasPriorOdds = event.openingOdds?.homeProbability != nil
+            || event.openingOdds?.awayProbability != nil
+            || event.prematchOdds?.homeProbability != nil
+            || event.prematchOdds?.awayProbability != nil
+            || event.prematchOdds?.drawProbability != nil
+        if hasPriorOdds {
+            return EventAtlasStates11666.noRecentPrice
+        }
+        return resolveProbabilityUnavailableNotice(
+            for: event,
+            hasCurrentChance: false,
+            now: now
+        ) ?? EventAtlasStates11666.noRecentPrice
+    }
+
     nonisolated enum Phase: String, Equatable, Sendable, CaseIterable {
         case before
         case during
@@ -167,6 +215,9 @@ enum EventSportHeadlines12472 {
         var emphasizedColumns: Set<Int> = []
         /// Optional per-column tiebreak superscripts (e.g. `7` with superscript `"7"` / `6` with `"4"`).
         var cellSuperscripts: [Int: String] = [:]
+        /// Column indices carrying a quiet plain-English status notice (e.g. Ruling 250: A
+        /// withheld Away cell on soccer) rather than a primary team-coloured number.
+        var quietNoticeColumns: Set<Int> = []
         var abbreviation: String? = nil
         var opponentAbbreviation: String? = nil
     }
@@ -307,6 +358,7 @@ enum EventSportHeadlines12472 {
         let pregameAwayMarker: Double?
         let livePregameSummary: LivePregameSummary?
         var scoreUnavailableNotice: String? = nil
+        var probabilityUnavailableNotice: String? = nil
         let showsEkg: Bool
         let sourceMark: SourceMark?
         let confidenceTier: String?
@@ -334,6 +386,7 @@ enum EventSportHeadlines12472 {
             pregameAwayMarker: Double?,
             livePregameSummary: LivePregameSummary?,
             scoreUnavailableNotice: String? = nil,
+            probabilityUnavailableNotice: String? = nil,
             showsEkg: Bool,
             sourceMark: SourceMark?,
             confidenceTier: String?
@@ -367,6 +420,7 @@ enum EventSportHeadlines12472 {
             self.pregameAwayMarker = pregameAwayMarker
             self.livePregameSummary = livePregameSummary
             self.scoreUnavailableNotice = scoreUnavailableNotice
+            self.probabilityUnavailableNotice = probabilityUnavailableNotice
             self.showsEkg = showsEkg
             self.sourceMark = sourceMark
             self.confidenceTier = confidenceTier
@@ -860,19 +914,56 @@ enum EventSportHeadlines12472 {
             }
         }
 
+        var awayChanceIsQuietNotice = false
+        if awayChance.isEmpty && !homeChance.isEmpty {
+            awayChance = resolveWithheldAwayNotice(for: event, now: now)
+            awayChanceIsQuietNotice = true
+        }
+
         if !homeChance.isEmpty,
            let proj = pregameProj,
            ProjectedFinalChanceGuard240A.conflicts(
                projectedHome: printedHeadlineProjectedValue(proj.rawHome, sportKey: event.sport),
                projectedAway: printedHeadlineProjectedValue(proj.rawAway, sportKey: event.sport),
                homeChance: homeProb,
-               awayChance: awayChance.isEmpty ? nil : awayProb,
+               awayChance: (awayChanceIsQuietNotice || awayChance.isEmpty) ? nil : awayProb,
                sportKey: event.sport
            ) {
             pregameProj = nil
             awayProjCell = ""
             homeProjCell = ""
         }
+
+        let hasCurrentChance = !awayChance.isEmpty || !homeChance.isEmpty
+        let resolvedColumns: [ColumnSpec] = {
+            var cols: [ColumnSpec] = []
+            if hasProjCol {
+                cols.append(.init(role: .projected, header: "Proj."))
+            }
+            if hasCurrentChance {
+                cols.append(.init(role: .chance, header: "Chance"))
+            }
+            return cols
+        }()
+
+        let awayCells: [String] = {
+            var cells: [String] = []
+            if hasProjCol { cells.append(awayProjCell) }
+            if hasCurrentChance { cells.append(awayChance) }
+            return cells
+        }()
+        let homeCells: [String] = {
+            var cells: [String] = []
+            if hasProjCol { cells.append(homeProjCell) }
+            if hasCurrentChance { cells.append(homeChance) }
+            return cells
+        }()
+
+        let probabilityUnavailableNotice = resolveProbabilityUnavailableNotice(
+            for: event,
+            hasCurrentChance: hasCurrentChance,
+            now: now
+        )
 
         let awayRow = CompetitorRow(
             role: .away,
@@ -881,9 +972,10 @@ enum EventSportHeadlines12472 {
             shortName: shortNames.away,
             logoURL: awayLogo,
             record: awayRecord,
-            cells: hasProjCol ? [awayProjCell, awayChance] : [awayChance],
-            rawProbability: awayChance.isEmpty ? nil : awayProb,
-            won: nil
+            cells: awayCells,
+            rawProbability: (awayChanceIsQuietNotice || awayChance.isEmpty) ? nil : awayProb,
+            won: nil,
+            quietNoticeColumns: awayChanceIsQuietNotice ? [awayCells.count - 1] : []
         )
         let homeRow = CompetitorRow(
             role: .home,
@@ -892,7 +984,7 @@ enum EventSportHeadlines12472 {
             shortName: shortNames.home,
             logoURL: homeLogo,
             record: homeRecord,
-            cells: hasProjCol ? [homeProjCell, homeChance] : [homeChance],
+            cells: homeCells,
             rawProbability: homeChance.isEmpty ? nil : homeProb,
             won: nil
         )
@@ -908,7 +1000,7 @@ enum EventSportHeadlines12472 {
             eventStatus: event.status,
             liveBadgeText: nil,
             leagueLabel: league,
-            columns: columns,
+            columns: resolvedColumns,
             rows: [awayRow, homeRow],
             bottomBar: bar,
             pregameColumnHeaders: pregameHeaders,
@@ -918,8 +1010,9 @@ enum EventSportHeadlines12472 {
             home: makeCompatTeamRow(homeRow, projNumber: pregameProj?.homeNumber, liveScore: nil, pregameChance: nil, chance: homeChance, finalText: nil),
             pregameAwayMarker: nil,
             livePregameSummary: nil,
+            probabilityUnavailableNotice: probabilityUnavailableNotice,
             showsEkg: canGrade && !homeChance.isEmpty,
-            sourceMark: (awayChance.isEmpty && homeChance.isEmpty) ? nil : event.sourceMark,
+            sourceMark: hasCurrentChance ? event.sourceMark : nil,
             confidenceTier: confidenceTier
         )
     }
@@ -1180,6 +1273,8 @@ enum EventSportHeadlines12472 {
                     }
                     bar = .twoWay(awayShare: away, homeShare: pair.home, pregameAwayMarker: pregameMarker)
                 } else {
+                    // Draw-priced sport with only home win chance served (#5271):
+                    // print live home chance alone and withhold away; never invent `1 - home`.
                     homeNow = EventHeadlineTenths10090.pair(home: pair.home, away: nil).home
                 }
                 confidenceTier = Confidence.fromSources(
@@ -1190,13 +1285,19 @@ enum EventSportHeadlines12472 {
             }
         }
 
+        var awayNowIsQuietNotice = false
+        if awayNow.isEmpty && !homeNow.isEmpty {
+            awayNow = resolveWithheldAwayNotice(for: event, now: now)
+            awayNowIsQuietNotice = true
+        }
+
         if !homeNow.isEmpty,
            let proj = liveProjNumbers,
            ProjectedFinalChanceGuard240A.conflicts(
                projectedHome: printedHeadlineProjectedValue(proj.rawHome, sportKey: event.sport),
                projectedAway: printedHeadlineProjectedValue(proj.rawAway, sportKey: event.sport),
                homeChance: homeProb,
-               awayChance: awayNow.isEmpty ? nil : awayProb,
+               awayChance: (awayNowIsQuietNotice || awayNow.isEmpty) ? nil : awayProb,
                sportKey: event.sport
            ) {
             liveProjNumbers = nil
@@ -1205,6 +1306,30 @@ enum EventSportHeadlines12472 {
         }
 
         let summary = isLive ? resolveLivePregameSummary(event: event, shortNames: shortNames) : nil
+        let hasCurrentChance = !awayNow.isEmpty || !homeNow.isEmpty
+        let duringColumns: [ColumnSpec] = {
+            if let tennisSlot = tennisScoreSlot {
+                return hasCurrentChance
+                    ? tennisSlot.columns + [.init(role: .now, header: "Now")]
+                    : tennisSlot.columns
+            }
+            var cols: [ColumnSpec] = []
+            if !omitsScoreColumn {
+                cols.append(.init(role: .score, header: "Score"))
+            }
+            if hasProjCol {
+                cols.append(.init(role: .projected, header: "Proj."))
+            }
+            if hasCurrentChance {
+                cols.append(.init(role: .now, header: "Now"))
+            }
+            return cols
+        }()
+        let probabilityUnavailableNotice = resolveProbabilityUnavailableNotice(
+            for: event,
+            hasCurrentChance: hasCurrentChance,
+            now: now
+        )
 
         let awayScoreCell = (!omitsScoreColumn && effectiveHasScore && event.awayScore != nil) ? "\(event.awayScore!)" : ""
         let homeScoreCell = (!omitsScoreColumn && effectiveHasScore && event.homeScore != nil) ? "\(event.homeScore!)" : ""
@@ -1217,8 +1342,8 @@ enum EventSportHeadlines12472 {
         let homeSuperscripts: [Int: String]
 
         if let tennisSlot = tennisScoreSlot {
-            awayCells = tennisSlot.awayCells + [awayNow]
-            homeCells = tennisSlot.homeCells + [homeNow]
+            awayCells = hasCurrentChance ? tennisSlot.awayCells + [awayNow] : tennisSlot.awayCells
+            homeCells = hasCurrentChance ? tennisSlot.homeCells + [homeNow] : tennisSlot.homeCells
             awayEmph = tennisSlot.awayEmph
             homeEmph = tennisSlot.homeEmph
             awaySuperscripts = tennisSlot.awaySuperscripts
@@ -1234,8 +1359,10 @@ enum EventSportHeadlines12472 {
                 a.append(awayProjCell)
                 h.append(homeProjCell)
             }
-            a.append(awayNow)
-            h.append(homeNow)
+            if hasCurrentChance {
+                a.append(awayNow)
+                h.append(homeNow)
+            }
             awayCells = a
             homeCells = h
             awayEmph = []
@@ -1252,10 +1379,11 @@ enum EventSportHeadlines12472 {
             logoURL: awayLogo,
             record: nil,
             cells: awayCells,
-            rawProbability: awayNow.isEmpty ? nil : awayProb,
+            rawProbability: (awayNowIsQuietNotice || awayNow.isEmpty) ? nil : awayProb,
             won: nil,
             emphasizedColumns: awayEmph,
-            cellSuperscripts: awaySuperscripts
+            cellSuperscripts: awaySuperscripts,
+            quietNoticeColumns: awayNowIsQuietNotice ? [awayCells.count - 1] : []
         )
         let homeRow = CompetitorRow(
             role: .home,
@@ -1282,7 +1410,7 @@ enum EventSportHeadlines12472 {
             eventStatus: event.status,
             liveBadgeText: liveBadge,
             leagueLabel: league,
-            columns: columns,
+            columns: duringColumns,
             rows: [awayRow, homeRow],
             bottomBar: bar,
             pregameColumnHeaders: nil,
@@ -1294,8 +1422,9 @@ enum EventSportHeadlines12472 {
             pregameAwayMarker: pregameMarker,
             livePregameSummary: summary,
             scoreUnavailableNotice: noLiveScoreNotice,
+            probabilityUnavailableNotice: probabilityUnavailableNotice,
             showsEkg: isLive && !homeNow.isEmpty,
-            sourceMark: (awayNow.isEmpty && homeNow.isEmpty) ? nil : event.sourceMark,
+            sourceMark: hasCurrentChance ? event.sourceMark : nil,
             confidenceTier: confidenceTier
         )
     }
@@ -1353,14 +1482,24 @@ enum EventSportHeadlines12472 {
                 event: event,
                 marketSnapshot: marketSnap
             )
-            let pregameTexts = pregameShares.map {
-                soccerThreeWayChanceTexts(
-                    home: $0.home,
-                    draw: $0.draw,
-                    away: $0.away,
+            let pregameTexts: (home: String, draw: String, away: String)? = {
+                guard let shares = pregameShares else { return nil }
+                if let pre = event.prematchOdds,
+                   let servedHome = pre.homeRenderedPercent,
+                   let servedAway = pre.awayRenderedPercent {
+                    let servedDraw = 100 - servedHome - servedAway
+                    if servedHome > 0, servedAway > 0, servedDraw > 0,
+                       abs(Double(servedDraw) - shares.draw * 100.0) <= 1.0 {
+                        return (home: "\(servedHome)%", draw: "\(servedDraw)%", away: "\(servedAway)%")
+                    }
+                }
+                return soccerThreeWayChanceTexts(
+                    home: shares.home,
+                    draw: shares.draw,
+                    away: shares.away,
                     numberStreams: false
                 )
-            }
+            }()
 
             let resolvedOutcome = EventOutcome.resolve(
                 status: event.status,
@@ -1482,6 +1621,14 @@ enum EventSportHeadlines12472 {
                sport: event.sport
            ) {
             if pair.away != nil, let texts = nbaPregameTexts(strictPregame) {
+                awayPre = texts.away
+                homePre = texts.home
+            } else if !strictPregame.awayIsComplement,
+                      strictPregame.awayProbability + pair.home < 0.985,
+                      let texts = nbaPregameTexts(strictPregame) {
+                // #13292 — explicit venue-backed away price (sum < 98.5%, not a
+                // `1 - home` complement) is preserved in the 2-row fallback when
+                // `draw_probability` is absent so the away Pregame cell is not blank.
                 awayPre = texts.away
                 homePre = texts.home
             } else {
@@ -2029,11 +2176,11 @@ enum EventSportHeadlines12472 {
                 String(format: "%.1f%%", Double(units[2]) / 10.0)
             )
         } else {
-            if shares.contains(where: { $0 < 0.005 || $0 > 0.995 }) {
+            if shares.contains(where: { $0 < 0.01 || $0 > 0.995 }) {
                 let formatted = shares.map { p -> String in
-                    if p < 0.005 { return "<1%" }
+                    if p < 0.01 { return "<1%" }
                     if p > 0.995 { return ">99%" }
-                    return "\(Int((p * 100.0).rounded()))%"
+                    return DiscoverRoundupCardModel.probabilityText(probability: p, renderedPercent: nil)
                 }
                 return (formatted[0], formatted[1], formatted[2])
             }

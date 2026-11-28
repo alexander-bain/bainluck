@@ -100,12 +100,16 @@ nonisolated struct PairedSubjectEntry: Decodable, Equatable, Identifiable, Senda
     let stage1MarketId: Int
     let stage1Outcome: String?
     let stage1Probability: Double?
+    var stage1RenderedPercent: Int? = nil
+    var stage1UnflooredPercent: Int? = nil
     /// `"yes"`, `"no"`, or `nil` while unsettled.
     let stage1SettledState: String?
+    let stage1SourceMark: SourceMark?
     let stage2MarketId: Int
     let stage2Outcome: String?
     let stage2Probability: Double?
     var stage2RenderedPercent: Int? = nil
+    let stage2SourceMark: SourceMark?
     let missingStage1Reason: String?
     let missingStage2Reason: String?
     let art: PairedArtAsset?
@@ -120,9 +124,11 @@ nonisolated struct PairedSubjectEntry: Decodable, Equatable, Identifiable, Senda
         stage1Outcome: String? = nil,
         stage1Probability: Double?,
         stage1SettledState: String? = nil,
+        stage1SourceMark: SourceMark? = nil,
         stage2MarketId: Int,
         stage2Outcome: String? = nil,
         stage2Probability: Double?,
+        stage2SourceMark: SourceMark? = nil,
         missingStage1Reason: String? = nil,
         missingStage2Reason: String? = nil,
         art: PairedArtAsset? = nil
@@ -134,9 +140,11 @@ nonisolated struct PairedSubjectEntry: Decodable, Equatable, Identifiable, Senda
         self.stage1Outcome = stage1Outcome
         self.stage1Probability = stage1Probability
         self.stage1SettledState = stage1SettledState
+        self.stage1SourceMark = stage1SourceMark
         self.stage2MarketId = stage2MarketId
         self.stage2Outcome = stage2Outcome
         self.stage2Probability = stage2Probability
+        self.stage2SourceMark = stage2SourceMark
         self.missingStage1Reason = missingStage1Reason
         self.missingStage2Reason = missingStage2Reason
         self.art = art
@@ -153,11 +161,15 @@ nonisolated struct PairedSubjectEntry: Decodable, Equatable, Identifiable, Senda
         self.stage1MarketId = c.decodeFirst(Int.self, keys: ["stage1MarketId", "stage_1_market_id"]) ?? 0
         self.stage1Outcome = c.decodeFirst(String.self, keys: ["stage1Outcome", "stage_1_outcome"])
         self.stage1Probability = c.decodeFirst(Double.self, keys: ["stage1Probability", "stage_1_probability"])
+        self.stage1RenderedPercent = c.decodeFirst(Int.self, keys: ["stage1RenderedPercent", "stage_1_rendered_percent"])
+        self.stage1UnflooredPercent = c.decodeFirst(Int.self, keys: ["stage1UnflooredPercent", "stage_1_unfloored_percent"])
         self.stage1SettledState = c.decodeFirst(String.self, keys: ["stage1SettledState", "stage_1_settled_state"])
+        self.stage1SourceMark = c.decodeFirst(SourceMark.self, keys: ["stage1SourceMark", "stage_1_source_mark"])
         self.stage2MarketId = c.decodeFirst(Int.self, keys: ["stage2MarketId", "stage_2_market_id"]) ?? 0
         self.stage2Outcome = c.decodeFirst(String.self, keys: ["stage2Outcome", "stage_2_outcome"])
         self.stage2Probability = c.decodeFirst(Double.self, keys: ["stage2Probability", "stage_2_probability"])
         self.stage2RenderedPercent = c.decodeFirst(Int.self, keys: ["stage2RenderedPercent", "stage_2_rendered_percent"])
+        self.stage2SourceMark = c.decodeFirst(SourceMark.self, keys: ["stage2SourceMark", "stage_2_source_mark"])
         self.missingStage1Reason = c.decodeFirst(String.self, keys: ["missingStage1Reason", "missing_stage_1_reason"])
         self.missingStage2Reason = c.decodeFirst(String.self, keys: ["missingStage2Reason", "missing_stage_2_reason"])
         self.art = c.decodeFirst(PairedArtAsset.self, keys: ["art"])

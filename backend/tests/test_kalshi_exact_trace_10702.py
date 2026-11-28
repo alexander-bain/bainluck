@@ -262,6 +262,7 @@ def handler(trace, mapped=True, non_blend=()):
         buffer_lock=asyncio.Lock(),
         price_buffer={},
         input_marks={},
+        prices=task._KalshiPriceOwner(),
         # #10090: the worker's primary-quote custody (bundled Challenger pair).
         primary_quote_custody=PrimaryQuoteCustody(),
         # #10090 closure names in the worker (`_run_kalshi_ws_consumer`).

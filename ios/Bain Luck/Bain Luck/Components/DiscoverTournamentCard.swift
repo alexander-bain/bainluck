@@ -44,7 +44,9 @@ struct NativeTournamentDiscoverCard: View {
     let feedContext: String?
     @Binding var navigationPath: NavigationPath
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     private var gradient: (Color, Color) {
         sportCategoryGradients["golf"] ?? sportDefaultGradient
@@ -112,10 +114,11 @@ struct NativeTournamentDiscoverCard: View {
                         }
                     }
 
+                    let relaxed = dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn
                     Text(properTitleCase(data.name))
                         .font(.headline.bold())
                         .foregroundStyle(.white)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .lineLimit(relaxed ? nil : 2)
                         .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 0.78 : 1.0)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -135,7 +138,7 @@ struct NativeTournamentDiscoverCard: View {
                                     Text(leader.name)
                                         .font(.title3.bold())
                                         .foregroundStyle(.white)
-                                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                                        .lineLimit(relaxed ? nil : 2)
                                         .minimumScaleFactor(0.85)
                                         .fixedSize(horizontal: false, vertical: true)
                                     if let mark = SourceMarkButton(leader.sourceMark, number: nil, subject: leader.name, numberSize: 17, compactRow: true) {
@@ -156,7 +159,7 @@ struct NativeTournamentDiscoverCard: View {
                             }
                         } else {
                             let leaderPriceText = leader.renderedPercent.map { formatProbability(leader.probability, renderedPercent: $0) } ?? FeedProbabilityScale.percentLabel(fromFraction: leader.probability)
-                            let heroLayout = dynamicTypeSize.isAccessibilitySize
+                            let heroLayout = relaxed
                                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                                 : AnyLayout(HStackLayout(spacing: 8))
                             heroLayout {
@@ -187,7 +190,7 @@ struct NativeTournamentDiscoverCard: View {
                                     Text(leader.name)
                                         .font(.subheadline.bold())
                                         .foregroundStyle(.white)
-                                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                                        .lineLimit(relaxed ? nil : 2)
                                         .fixedSize(horizontal: false, vertical: true)
                                     if presentation.showsMovementLine,
                                        let move = FeedProbabilityScale.movementPoints(fromFraction: leader.movement24h) {
@@ -196,8 +199,8 @@ struct NativeTournamentDiscoverCard: View {
                                         Text(Self.movementTodayText(move))
                                             .font(.caption2)
                                             .foregroundStyle(move > 0 ? .green : .red)
-                                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                                            .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.85)
+                                            .lineLimit(relaxed ? nil : 1)
+                                            .minimumScaleFactor(relaxed ? 1.0 : 0.85)
                                             .fixedSize(horizontal: false, vertical: true)
                                     }
                                 }
@@ -217,7 +220,7 @@ struct NativeTournamentDiscoverCard: View {
                     // runners stack, one per line, and the percent never wraps. Below
                     // accessibility sizes the row is the one it always was.
                     if presentation.showsRunnerUpStrip, let golfers = data.golfers {
-                        let runnersStacked = dynamicTypeSize.isAccessibilitySize
+                        let runnersStacked = relaxed
                         let runnerLayout = runnersStacked
                             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                             : AnyLayout(HStackLayout(spacing: 12))
@@ -252,12 +255,16 @@ struct NativeTournamentDiscoverCard: View {
                 Text(context)
                     .font(.caption)
                     .foregroundStyle(DS.textSecondaryReadable)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    .lineLimit((dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn) ? nil : 2)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.systemBackground)
+            }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, surfaceColor: Color.systemBackground)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 16))

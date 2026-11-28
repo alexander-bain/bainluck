@@ -454,6 +454,36 @@ export const TRUTH_CHIP_MEANING = {
   planned: "Not built yet, so it shows no number. It names what it is waiting on.",
 } as const;
 
+export const CU_SCORECARD_COPY = {
+  title: "How well Bain Luck understands its markets",
+  lead: "Every market gets facts read by fixed rules and by AI. Here we score each field on a sealed test set against two-person labels, with what the run cost.",
+  detail:
+    "For each field we separate rules-decided entries from AI-decided entries and count right, wrong, blank and said it did not know.",
+  repeatabilityHeading: "Asking twice",
+  repeatabilityBefore: "Asked the same thing twice, the AI changed at least one answer on",
+  repeatabilityOf: "of",
+  repeatabilityAfter: "markets. Measured",
+  repeatabilityCostBefore: "; the two runs cost",
+  repeatabilityCostAfter: "cents.",
+  repeatabilityLink: "See the run results",
+  notMeasuredYet: "Not measured yet as of",
+  notMeasuredDetail:
+    "The first published numbers come from the sealed test set once two people have finished labeling its facts.",
+  rulesHeading: "Decided by fixed rules",
+  aiHeading: "Decided by AI",
+  slicesSummary:
+    "Runs are also sliced four ways: by site, by topic, by market shape, and what readers see against the rest.",
+  recordedOn: "Scored on",
+  marketsScored: "Markets scored:",
+  revisionLabel: "Writer revision:",
+  costLabel: "Run cost:",
+  fieldCol: "Field",
+  rulesCol: "Fixed rules",
+  aiCol: "AI",
+  countsLegend: "right / wrong / blank / said it did not know",
+  sliceMarkets: "markets",
+} as const;
+
 export const RESULT_CHIP_MEANING = {
   pass: "Met the pass mark set before the run.",
   fail: "Missed its pass mark. A FAIL shows everywhere it applies, with anything it did pass under it, never instead of it.",

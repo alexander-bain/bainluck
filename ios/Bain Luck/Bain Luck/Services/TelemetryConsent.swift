@@ -146,6 +146,13 @@ public final class TelemetryConsent: @unchecked Sendable {
         lock.unlock()
 
         apply(level)
+        if self === Self.shared {
+            if level == nil {
+                HeldAnalyticsQueue417C.shared.recordFirstOpenIfNeeded()
+            } else if Self.isAnalyticsGranted(level) {
+                AnalyticsService.flushHeldEventsIfConsented()
+            }
+        }
         return level
     }
 
@@ -254,6 +261,9 @@ public final class TelemetryConsent: @unchecked Sendable {
         lock.unlock()
 
         apply(level)
+        if self === Self.shared, Self.isAnalyticsGranted(level) {
+            AnalyticsService.flushHeldEventsIfConsented()
+        }
         return resolved
     }
 
@@ -269,6 +279,10 @@ public final class TelemetryConsent: @unchecked Sendable {
             // already accumulated on device, rather than merely stopping new
             // ones. This is the native equivalent of the web's reload-to-unload.
             sink.resetAnalyticsData()
+            AnalyticsPrivacy.resetSearchHashSecret()
+            if self === Self.shared, level == ConsentLevel.none {
+                HeldAnalyticsQueue417C.shared.clear()
+            }
         }
     }
 
@@ -285,5 +299,8 @@ public final class TelemetryConsent: @unchecked Sendable {
         defaults.removeObject(forKey: Self.storageKey)
         defaults.removeObject(forKey: Self.epochStorageKey)
         lock.unlock()
+        if self === Self.shared {
+            HeldAnalyticsQueue417C.shared.resetForTests()
+        }
     }
 }

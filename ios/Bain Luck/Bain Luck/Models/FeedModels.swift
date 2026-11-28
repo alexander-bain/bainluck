@@ -399,8 +399,20 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// True when this `roundup` bundle has both a verified `collection_ref` and a
     /// readable `FeedRoundupContract` or `MachineryCardContract` (`RoundupCard`: no container, no card).
     var admitsRoundupCard: Bool {
-        guard kind == "roundup", roundupCollectionRef != nil else { return false }
+        guard kind == "roundup", let ref = roundupCollectionRef else { return false }
         if roundupContract?.machineryCard != nil { return true }
+        if roundupContract?.hasUnknownLookFallback == true || roundupContract?.kitCard != nil {
+            if DiscoverRoundupCardModel.build(
+                title: title,
+                contract: roundupContract,
+                fallbackKicker: ref.name,
+                fallbackFooter: DiscoverRoundupCardModel.fallbackFooter(for: ref),
+                allowFlexibleRowCount: true
+            ) != nil {
+                return true
+            }
+            return items.contains { $0.futures != nil || $0.event != nil }
+        }
         return DiscoverRoundupCardModel.build(title: title, contract: roundupContract) != nil
     }
 }
@@ -964,6 +976,13 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     var awaySourceMark: SourceMark? = nil
     var pregameSourceMark: SourceMark? = nil
     var awayPregameSourceMark: SourceMark? = nil
+    /// #13775 — server-resolved hero win probability pair (`hero_probability` /
+    /// `hero_probability_away`) carried alongside `hero_probability_source`.
+    /// Read through `CompactGameCard12616.currentOddsForCard` when `current_odds`
+    /// is nil or carries no current probability (e.g. prediction-market-only upcoming
+    /// games with `bookmaker_count == 0`).
+    var heroProbability: Double? = nil
+    var heroProbabilityAway: Double? = nil
 }
 
 /// What a card should draw in one participant's avatar slot, and how.
@@ -1003,6 +1022,13 @@ extension FeedEventData {
 /// Futures-market payload embedded inside a futures-type feed card.
 nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     var fullFieldRendered: Bool? = nil
+    var fieldPriceCoverageIncomplete: Bool? = nil
+
+    var withdrawnProbabilityNotice: String? {
+        guard status == "open", fieldPriceCoverageIncomplete == true else { return nil }
+        return EventAtlasStates11666.noRecentPrice
+    }
+
     let id: Int
     /// Fresh leaf identity; older cached feed bodies may omit it.
     var externalId: String? = nil
@@ -1032,7 +1058,7 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let imageUrl: String?
     var imagePresentation: String? = nil
     var imageMonogram: DiscoverImageMonogram? = nil
-    let hookDescription: String?
+    var hookDescription: String?
     let matchedOutcomes: [MatchedOutcome]?
     let discoverCard: FeedDiscoverCard?
     // #490 (L2-172 native half): confidence signal (1-3 bars). Decoded from
@@ -1118,6 +1144,15 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
         }
         return nil
     }
+
+    /// True when any rendered number on this futures card already carries a drawable `ⓘ` source mark (`#11920`).
+    var hasDrawableSourceMark: Bool {
+        if sourceMark?.draws == true { return true }
+        if deadlineMember?.sourceMark?.draws == true || deadlineMember?.noSourceMark?.draws == true { return true }
+        if topOutcomes?.contains(where: { $0.sourceMark?.draws == true }) == true { return true }
+        if discoverCard?.distributionOutcomes?.contains(where: { $0.sourceMark?.draws == true }) == true { return true }
+        return false
+    }
 }
 
 /// #12884: cumulative deadline member attribution carried on `FeedFuturesData.deadline_member`.
@@ -1160,8 +1195,29 @@ nonisolated struct FeedDiscoverThresholdPoint: Decodable, Identifiable, Sendable
     let direction: String?
     let probability: Double?
     let needsSiblingMarkets: Bool?
+    var movement: Double? = nil
 
     var id: String { label }
+
+    init(
+        source: String?,
+        label: String,
+        value: Double?,
+        unit: String?,
+        direction: String?,
+        probability: Double?,
+        needsSiblingMarkets: Bool?,
+        movement: Double? = nil
+    ) {
+        self.source = source
+        self.label = label
+        self.value = value
+        self.unit = unit
+        self.direction = direction
+        self.probability = probability
+        self.needsSiblingMarkets = needsSiblingMarkets
+        self.movement = movement
+    }
 }
 
 /// Single outcome row for distribution-style cards.
@@ -1251,6 +1307,7 @@ nonisolated struct MatchedOutcome: Decodable, Identifiable, Sendable {
     let probability: Double?
     let rank: Int?
     let movement: Double?
+    var sourceMark: SourceMark? = nil
 
     var id: String { name }
 }

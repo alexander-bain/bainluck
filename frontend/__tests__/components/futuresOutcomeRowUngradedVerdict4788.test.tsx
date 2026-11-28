@@ -443,5 +443,5 @@ test("an eliminated contender on an open field prints only Out as its value", ()
   expect(row).toContain(">Out<");
   expect(row).not.toContain("outcome-price");
   expect(row).not.toContain("outcome-rank-badge");
-  expect(row).not.toContain("No current price");
+  expect(row).not.toContain("No recent probability");
 });

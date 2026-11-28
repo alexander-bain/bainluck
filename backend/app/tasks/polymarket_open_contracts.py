@@ -72,6 +72,12 @@ OPEN_FLUSH_CHUNKS_PER_FLUSH = 2
 #: markets are about ten statements.
 OUTCOME_READ_MARKETS = 2_000
 
+#: #13673: pause (seconds) between releasing and re-acquiring the pooled read
+#: session across multi-chunk open-catalog outcome reads, so half-hourly
+#: catalog refreshes cannot monopolize the 5-connection pool or saturate Postgres
+#: while live game price flushes (`250 ms` deadline) are writing.
+OPEN_OUTCOME_CHUNK_PAUSE_S = 0.05
+
 #: #10090: rows the open-catalog mapping handles per event-loop turn. The
 #: mapping runs on the loop that receives every Polymarket socket. Measured
 #: 2026-10-20 (worker-ws v5827): after the 50 s admission read, mapping the

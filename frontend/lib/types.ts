@@ -50,6 +50,7 @@ export interface CurrentOdds {
   away_moneyline?: number | null;
   home_probability: number | null; // 0.0-1.0
   away_probability: number | null; // 0.0-1.0
+  draw_probability?: number | null; // 0.0-1.0 for three-way markets (#13131)
   // UX-P114: the whole percents the card PRINTS for the two probabilities above.
   // A game card draws both sides at once and the feed derives away as `1 - home`,
   // so rounding them independently printed 101 whenever the blend landed on a
@@ -59,6 +60,7 @@ export interface CurrentOdds {
   // pre-deploy payload will not carry it. See contracts/rendered_percent.json.
   home_rendered_percent?: number | null;
   away_rendered_percent?: number | null;
+  draw_rendered_percent?: number | null;
   spread: number | null;
   home_spread?: number | null;
   over_under: number | null;
@@ -283,6 +285,7 @@ export interface Event {
    * name". A client may not reconstruct it. See `lib/drawPricedWinner.ts`.
    */
   hero_probability_away?: number;
+  hero_probability_draw?: number | null;
   event_tags?: string[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */
@@ -1487,7 +1490,7 @@ export interface RelatedFuture {
   outcome_id: number;
   outcome_name: string;
   probability: number | null;
-  american_odds: number | null;
+  american_odds?: number | null;
   probability_change_24h: number | null;
   opening_probability: number | null;
   rank: number | null;
@@ -1732,6 +1735,8 @@ export interface OnboardingSubmission {
   rival_teams: { team_id: number }[];
   sport_affinities: Record<string, number>;
   raw_inputs: Record<string, unknown>;
+  /** Full-replace opt-in set only by the website wizard after loading saved state (#13779). */
+  replace?: boolean;
 }
 
 // Unified Feed types
@@ -1801,6 +1806,7 @@ export interface FeedEventData {
   current_odds?: {
     home_probability: number | null;
     away_probability: number | null;
+    draw_probability?: number | null;
     // UX-P114: the whole percents the card PRINTS for the two probabilities
     // above. The feed derives away as `1 - home`, so a game card draws an exact
     // complement pair — and rounding the two independently printed 101 whenever
@@ -1811,6 +1817,7 @@ export interface FeedEventData {
     // payload carries it".
     home_rendered_percent?: number | null;
     away_rendered_percent?: number | null;
+    draw_rendered_percent?: number | null;
     bookmaker_count?: number;
     source?: string;  // "aggregate" when computed from non-sportsbook sources
     // #2920 / #9483 — the sportsbooks' projected pair `/api/events/{id}` and
@@ -1956,6 +1963,8 @@ export interface FeedFuturesData {
    * null for an undatable stamp rather than inventing "just now".
    */
   price_observed_at?: string | null;
+  /** The full screened field lacks enough price coverage to name a leader. */
+  field_price_coverage_incomplete?: boolean;
   top_outcomes: FeedFuturesOutcome[];
   /** #11995: whole percentages were allocated over the complete one-winner field. */
   full_field_rendered?: boolean;
@@ -2317,10 +2326,12 @@ export type FeedRoundupRow = {
   probability: number;
   /** The server's whole-percent rendering of `probability`, when it sent one. */
   rendered_percent?: number | null;
+  unfloored_percent?: number | null;
   /** Optional second bar probability in [0, 1] for two-bar awards rows (e.g. nomination %). */
   secondary_probability?: number | null;
   /** The server's whole-percent rendering of `secondary_probability`, when it sent one. */
   secondary_rendered_percent?: number | null;
+  secondary_unfloored_percent?: number | null;
   /** Optional short label for the primary bar when a second bar is present (e.g. "Wins"). */
   primary_bar_label?: string | null;
   /** Optional short label for the secondary bar when present (e.g. "Nominated"). */
@@ -2347,6 +2358,7 @@ export interface FeedRoundupContract {
   paired_metric_set?: import("@/lib/discover/visualForms").PairedMetricSet | null;
   machinery_card?: import("@/components/collections/MachinerySectionRenderer").MachineryCardContract | null;
   rows: FeedRoundupRow[];
+  unpriced_outcomes?: import("@/lib/collections").MachineryOutcomeVisual[];
 }
 
 // #9925: where a theme card's "View collection" goes. `name` is the

@@ -80,7 +80,7 @@ struct EventModelsView: View {
                 }
                 Spacer()
                 if let value = source.value {
-                    Text("\(Int(value * 100))%")
+                    Text(formatProbability(value))
                         .font(.title3.weight(.bold).monospacedDigit())
                 }
             }
@@ -116,10 +116,19 @@ struct EventModelsView: View {
     private func load() async {
         do {
             async let eventReq = APIClient.shared.fetchEvent(id: eventId)
-            async let historyReq = APIClient.shared.fetchEventHistory(id: eventId)
-            let (e, h) = try await (eventReq, historyReq)
+            async let historyReq = APIClient.shared.fetchEventHistory(id: eventId, hours: 24, range: "since_start")
+            let (e, initialHistory) = try await (eventReq, historyReq)
+            var resolvedHistory = initialHistory
+            if OddsChartView.needsFullHistoryUpgrade(
+                status: e.status,
+                commenceTime: e.commenceTime?.asDate,
+                history: initialHistory,
+                selectedRange: .sinceStart
+            ), let fullHistory = try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 24, range: "all") {
+                resolvedHistory = fullHistory
+            }
             event = e
-            history = h
+            history = resolvedHistory
         } catch {
             self.error = error.localizedDescription
         }

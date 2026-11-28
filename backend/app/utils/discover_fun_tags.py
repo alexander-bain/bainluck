@@ -65,6 +65,7 @@ CURATED_GROUPING_SETS_PATHS: tuple[Path, ...] = (
     Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch6_curated_sets.json",
     Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch7_curated_sets.json",
     Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch8_curated_sets.json",
+    Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch9_curated_sets.json",
 )
 
 
@@ -186,8 +187,8 @@ _TASTE_GUARD_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "affairs",
         re.compile(
-            r"\b(?:extramarital\s+affair|have\s+an\s+affair|having\s+an\s+affair|"
-            r"cheat(?:ed|ing)?\s+on|infidelity|unfaithful|mistress|sex\s+tape)\b",
+            r"\b(?:(?:extramarital|another)\s+affair|have\s+an\s+affair|having\s+an\s+affair|"
+            r"affair\s+with\b|cheat(?:ed|ing)?\s+on|infidelity|unfaithful|mistress|sex\s+tape)\b",
             re.IGNORECASE,
         ),
     ),

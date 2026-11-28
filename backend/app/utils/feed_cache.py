@@ -503,6 +503,35 @@ def feed_page_base_enabled() -> bool:
     return str(raw).strip().lower() not in _PAGE_BASE_OFF_VALUES
 
 
+#: Explicit contract version for cross-limit anonymous page-base reuse (#13573).
+#: Bump whenever ``limit`` begins altering ``apply_discover_display_chain`` or
+#: built-deck order/membership outside the final slice.
+FEED_PAGE_BASE_REUSE_VERSION: int = 1
+
+
+def feed_page_base_fallback_limits(
+    *,
+    limit: int,
+    include_events: bool = True,
+    include_futures: bool = True,
+) -> tuple[int, ...]:
+    """Prewarmed page-base ``limit`` candidates that build the identical deck (#13573).
+
+    Since #5101 (``DISCOVER_COMPOSITION_WINDOW = 20``), ``limit`` only slices the
+    finished deck at pagination rather than changing what ``get_feed`` builds.
+    Warming populates ``limit=50`` / ``limit=20`` (and ``limit=200`` for
+    events-only shapes), so any non-prewarmed ``limit`` (e.g. ``limit=5``) can
+    safely slice those warm bases instead of triggering a cold Discover build.
+    """
+    if include_futures:
+        candidates = (50, 20)
+    elif include_events:
+        candidates = (200,)
+    else:
+        return ()
+    return tuple(cand for cand in candidates if cand != int(limit))
+
+
 def feed_page_base_cache_key(
     *,
     sport: Optional[str] = None,
@@ -524,11 +553,13 @@ def feed_page_base_cache_key(
     not one, and no principal appears because the base is only ever the
     anonymous build (see the block comment above).
 
-    ``limit`` IS a build input and stays in the key —
-    ``apply_discover_display_chain``'s own docstring says so ("Several stages
-    size their windows from it, so it is part of the build, not just the
-    slice"). Native (50) and web (20) therefore get one base each, which is
-    honest: they are two different lists, not two windows onto one.
+    ``limit`` stays in the key for backward-compatible key isolation (and
+    ``tests/test_feed_page_base_p141.py`` below pins this signature against
+    ``get_feed``'s ``_cache_shape``), even though since #5101
+    ``apply_discover_display_chain`` composes over a fixed window of 20
+    independent of ``limit`` — so native (50) and web (20) produce the same
+    ordered list (`#13445` Option 2 derives the ``limit=20`` sibling from the
+    ``limit=50`` parent's page base).
 
     ``tests/test_feed_page_base_p141.py`` pins this signature against
     ``get_feed``'s ``_cache_shape`` so a build input added to the response key

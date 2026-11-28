@@ -187,6 +187,70 @@ class TestTeamSeeded:
         assert isinstance(body["recent_events"], list)
         assert isinstance(body["futures"], list)
         assert isinstance(body["championship_path"], list)
+        assert "futures_unavailable" not in body
+        assert "futures_partial" not in body
+        assert "futures_omitted_count" not in body
+
+    async def test_incomplete_price_screen_with_zero_survivors_serves_page_and_flags_section(
+        self, client, mock_db
+    ):
+        from app.routes.user import TeamFuturesScreenUnavailableError
+
+        team = _mock_team()
+        mock_db.execute.side_effect = [
+            _scalars_result([team]),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalars_result([]),
+        ]
+        with patch(
+            "app.routes.user._query_team_futures",
+            AsyncMock(side_effect=TeamFuturesScreenUnavailableError()),
+        ):
+            resp = await client.get("/api/teams/lakers")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["team"]["name"]
+        assert isinstance(body["upcoming_events"], list)
+        assert isinstance(body["recent_events"], list)
+        assert isinstance(body["championship_path"], list)
+        assert body["futures"] == []
+        assert body["futures_unavailable"] is True
+        assert "futures_partial" not in body
+
+    async def test_incomplete_price_screen_with_survivors_sets_partial_and_omitted_count(self, client, mock_db):
+        team = _mock_team()
+        mock_db.execute.side_effect = [
+            _scalars_result([team]),
+            _scalars_result([]),
+            _scalars_result([]),
+            _scalars_result([]),
+        ]
+        partial_payload = {
+            "items": [
+                {
+                    "market_id": 101,
+                    "market_name": "NBA Champion",
+                    "market_tier": 1,
+                    "probability": 0.22,
+                }
+            ],
+            "teams": [],
+            "team_ids": [42],
+            "total_count": 1,
+            "partial": True,
+            "omitted_count": 7,
+        }
+        with patch("app.routes.user._query_team_futures", AsyncMock(return_value=partial_payload)):
+            resp = await client.get("/api/teams/lakers")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["futures"]) == 1
+        assert body["futures_partial"] is True
+        assert body["futures_omitted_count"] == 7
+        assert "partial" not in body
+        assert "omitted_count" not in body
 
 
 # ============================================================================

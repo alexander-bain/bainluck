@@ -1,22 +1,81 @@
 import SwiftUI
 
+private struct LiveOddsRefreshActiveKey13634: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Direction 395 (#12538 / #13634) — Tenths belong ONLY on numbers pushed at
+    /// sub-second stream pace. Cards refreshed on a timer (Discover 30s, Sports 30s,
+    /// My Stuff 15s) and non-refreshing surfaces leave this default `false` in 1.0.8
+    /// so every feed/card prints whole percents (`54%`). Kept as the fail-closed
+    /// gate for 1.0.9 per-card sub-second streams (`#10090`).
+    var liveOddsRefreshActive: Bool {
+        get { self[LiveOddsRefreshActiveKey13634.self] }
+        set { self[LiveOddsRefreshActiveKey13634.self] = newValue }
+    }
+}
+
 /// #12616 (Decision 161-B, "chance first") — pure column grammar, scheduled
 /// sportsbook projection admission, live tenths duel formatting, optional
 /// three-way soccer draw row, and compact context-line formatting for
 /// `EventCardView`.
 enum CompactGameCard12616 {
 
-    /// Older feed items can carry the stored opening in `current_odds` (#12824).
-    /// Keep projections on the card while withholding the chance and its rendered pair.
+    /// Resolves card-facing `currentOdds`:
+    /// - #12824: when `heroProbabilitySource == "opening"`, strip win-chance fields
+    ///   while retaining score projections.
+    /// - #13775: when `currentOdds` is nil or carries no current probability on a
+    ///   gradable non-settled event, fall back to `heroProbability` / `heroProbabilityAway`
+    ///   (deriving `1 - home` only for two-way sports, preserving `#5363` away-withholding
+    ///   on draw-priced sports when `heroProbabilityAway` is absent).
     nonisolated static func currentOddsForCard(_ event: FeedEventData) -> CurrentOdds? {
-        guard event.heroProbabilitySource == OpeningLineHero.openingSource,
-              var odds = event.currentOdds else { return event.currentOdds }
-        odds.homeProbability = nil
-        odds.awayProbability = nil
-        odds.drawProbability = nil
-        odds.homeRenderedPercent = nil
-        odds.awayRenderedPercent = nil
-        return odds
+        if event.heroProbabilitySource == OpeningLineHero.openingSource {
+            return OpeningLineHero.currentOddsForCard(
+                event.currentOdds,
+                heroSource: event.heroProbabilitySource
+            )
+        }
+        if let existing = event.currentOdds,
+           usableProbability(existing.homeProbability) != nil {
+            return existing
+        }
+        guard event.heroProbabilitySource != "settled",
+              EventState.canStillBeGraded(
+                  event.status,
+                  commenceTime: event.commenceTime?.asDate
+              ),
+              let heroHome = usableProbability(event.heroProbability) else {
+            return event.currentOdds
+        }
+        let resolvedAway: Double? = {
+            if let away = usableProbability(event.heroProbabilityAway) {
+                return away
+            }
+            return DrawPricedWinner.sportPricesADraw(event.sport) ? nil : (1.0 - heroHome)
+        }()
+        if var existing = event.currentOdds {
+            existing.homeProbability = heroHome
+            existing.awayProbability = resolvedAway
+            existing.homeRenderedPercent = nil
+            existing.awayRenderedPercent = nil
+            return existing
+        }
+        return CurrentOdds(
+            capturedAt: event.heroProbabilityObservedAt,
+            homeProbability: heroHome,
+            awayProbability: resolvedAway,
+            homeRenderedPercent: nil,
+            awayRenderedPercent: nil,
+            spread: nil,
+            homeSpread: nil,
+            overUnder: nil,
+            projectedHomeScore: nil,
+            projectedAwayScore: nil,
+            bookmakerCount: nil,
+            liveProjection: nil,
+            drawProbability: nil
+        )
     }
 
     /// Column headers above the team rows (`medium` context on the left,
@@ -196,13 +255,16 @@ enum CompactGameCard12616 {
         isScheduled: Bool,
         isLive: Bool,
         isFinished: Bool,
-        isSuspended: Bool
+        isSuspended: Bool,
+        showsLiveTenths: Bool = false
     ) -> String? {
         guard DrawPricedWinner.sportPricesADraw(event.sport), !isSuspended else { return nil }
         if isLive {
             guard hasExplicitThreeWayCurrent(event),
                   let draw = usableProbability(event.currentOdds?.drawProbability) else { return nil }
-            return formatSingleLiveTenths(draw)
+            return showsLiveTenths
+                ? formatSingleLiveTenths(draw)
+                : formatProbability(draw, renderedPercent: nil)
         }
         if isScheduled {
             guard hasExplicitThreeWayCurrent(event),

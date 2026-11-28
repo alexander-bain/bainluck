@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { Check, ChevronRight, Heart, Share2 } from "lucide-react";
+import { Check, ChevronRight, Heart, Share2, X } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { sentencePreview } from "./utils";
 import { PinButton } from "@/components/PinButton";
@@ -427,7 +427,7 @@ export function SignalBars({
 
 // ── Action Bar ──
 
-export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare, pin, priceObservedAt, priceStatus }: ActionBarProps) {
+export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare, onDismiss, pin, priceObservedAt, priceStatus }: ActionBarProps) {
   const [copied, setCopied] = useState(false);
 
   const trackShare = (method: string) => {
@@ -464,16 +464,35 @@ export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, co
   };
 
   return (
-    <div className="flex items-center gap-1 mt-3 pt-3 border-t border-surface-border">
-      <button onClick={() => setLiked(!liked)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors text-sm ${liked ? "bg-red-500/10 text-red-500" : "text-text-muted hover:text-text-secondary hover:bg-surface-elevated"}`}>
-        <Heart size={16} fill={liked ? "currentColor" : "none"} strokeWidth={2} />
-        {liked ? "Liked" : "Like"}
-      </button>
-      <div className="flex-1" />
+    <div
+      data-testid="action-bar"
+      className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1.5 mt-3 pt-3 border-t border-surface-border min-w-0"
+    >
+      <div className="flex items-center gap-0.5 min-w-0 shrink-0">
+        <button
+          onClick={() => setLiked(!liked)}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors text-[13px] whitespace-nowrap shrink-0 ${liked ? "bg-red-500/10 text-red-500" : "text-text-muted hover:text-text-secondary hover:bg-surface-elevated"}`}
+        >
+          <Heart size={15} fill={liked ? "currentColor" : "none"} strokeWidth={2} />
+          {liked ? "Liked" : "Like"}
+        </button>
+        {onDismiss && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDismiss();
+            }}
+            data-testid="action-bar-dismiss"
+            title="Not for me"
+            aria-label="Not for me"
+            className="flex items-center justify-center p-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors shrink-0"
+          >
+            <X size={15} strokeWidth={2} aria-hidden="true" />
+          </button>
+        )}
+      </div>
       {/* #5752 — HOW OLD THE NUMBER ABOVE THIS BAR IS.
-          It sits in the gap the layout already had (`flex-1` either side), so a
-          card that draws no mark is byte-identical to before and one that does
-          takes no room from Like, the pin or Share.
           `PriceAgeMark` decides whether to draw at all: nothing inside the
           cadence's threshold, nothing for a stamp it cannot read.
 
@@ -500,7 +519,6 @@ export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, co
         scope="card"
         cadence={priceStatus === "live" ? "live" : "futures"}
       />
-      <div className="flex-1" />
       {/* UX-P234 (board item 16): Discover was the one surface with no pin at all,
           while search, my-stuff and preferences all had one on the very same market.
           It sits in the action bar — beside Like and Share, where a reader already
@@ -508,27 +526,32 @@ export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, co
           an ActionBar inherits it from one place rather than growing a fourth copy
           of the button. `stopPropagation` because these cards are wrapped in
           `useSwipe` and, in some variants, a <Link>: without it a pin click also
-          navigates away and the pin looks like it did nothing. */}
-      {pin && (
-        <PinButton
-          pinned={pin.pinned}
-          onToggle={pin.onToggle}
-          atMax={pin.atMax}
-          noun={pin.noun}
-          variant="labelled"
-          stopPropagation
-          className="text-text-muted hover:text-text-secondary"
-        />
-      )}
-      <button
-        onClick={handleShare}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-sm"
-        title={copied ? "Copied" : "Share"}
-        aria-label={copied ? "Copied share link" : "Share this card"}
-      >
-        {copied ? <Check size={14} strokeWidth={2.4} /> : <Share2 size={14} strokeWidth={2} />}
-        {copied ? "Copied" : "Share"}
-      </button>
+          navigates away and the pin looks like it did nothing.
+          #13804: flex-wrap + compact padding + shrink-0 prevent Share from clipping
+          at the right edge of 288px desktop cards (1280px/1024px) when PriceAgeMark,
+          PinButton, and Share appear together. */}
+      <div className="flex items-center gap-1 ml-auto shrink-0">
+        {pin && (
+          <PinButton
+            pinned={pin.pinned}
+            onToggle={pin.onToggle}
+            atMax={pin.atMax}
+            noun={pin.noun}
+            variant="labelled"
+            stopPropagation
+            className="!px-2 !py-1.5 !text-[13px] text-text-muted hover:text-text-secondary whitespace-nowrap shrink-0"
+          />
+        )}
+        <button
+          onClick={handleShare}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-[13px] whitespace-nowrap shrink-0"
+          title={copied ? "Copied" : "Share"}
+          aria-label={copied ? "Copied share link" : "Share this card"}
+        >
+          {copied ? <Check size={14} strokeWidth={2.4} /> : <Share2 size={14} strokeWidth={2} />}
+          {copied ? "Copied" : "Share"}
+        </button>
+      </div>
     </div>
   );
 }

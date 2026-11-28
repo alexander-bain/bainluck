@@ -1,6 +1,6 @@
 {
   "slug": "machinery-afc-west-duel",
-  "stage": "preview",
+  "stage": "public",
   "look": "bars",
   "membership": "computed-produced",
   "kind": "roundup",
@@ -13,21 +13,21 @@
   "name": "AFC West Title Race",
   "category": "football",
   "tag": "NFL",
-  "section_title": "AFC West Two-Team Race",
+  "section_title": "AFC West Title Race",
   "footer": "",
   "rule": {
     "producer": "container_machinery",
     "refusal": "all-or-nothing",
     "materialize": "read-time",
-    "card_rows": 2,
+    "card_rows": 4,
     "card_section_key": "afc_west_duel",
     "suppress_card_photo": true,
     "sections": [
       {
         "key": "afc_west_duel",
-        "title": "AFC West Two-Team Race",
+        "title": "AFC West Title Race",
         "item_noun": "contenders",
-        "note": "Denver and Kansas City go head-to-head for the AFC West division crown.",
+        "note": "All four AFC West teams in the division title race.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch7-afc-west-duel",
@@ -35,8 +35,9 @@
           "order_by": "lead_prob_desc",
           "min_items": 1,
           "max_items": 1,
-          "max_outcomes": 2,
-          "initial_visible_limit": 2,
+          "max_outcomes": 4,
+          "initial_visible_limit": 4,
+          "include_all_division_teams": true,
           "min_lifetime_volume": 1
         }
       },
@@ -44,7 +45,7 @@
         "key": "nfl_division_races",
         "title": "Other Division Leaders",
         "item_noun": "divisions",
-        "note": "Front-runners across the remaining NFL division title races.",
+        "note": "All four teams across the remaining NFL division title races.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch7-nfl-divisions",
@@ -52,8 +53,9 @@
           "order_by": "closeness_to_50",
           "min_items": 3,
           "max_items": 3,
-          "max_outcomes": 3,
+          "max_outcomes": 4,
           "initial_visible_limit": 3,
+          "include_all_division_teams": true,
           "min_lifetime_volume": 1
         }
       }

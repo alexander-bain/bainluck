@@ -80,7 +80,7 @@ const response = (outcomes: FuturesOutcomeHistory[]) => ({
   history_range: null,
 });
 
-const SPARSE = "Limited price history available";
+const SPARSE = "Limited probability history available";
 const CHIPS = 'aria-label="Chart time range"';
 
 const SECTIONS: [string, () => React.ReactElement][] = [

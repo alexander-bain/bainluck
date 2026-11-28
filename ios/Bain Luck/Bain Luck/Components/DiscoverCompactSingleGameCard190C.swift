@@ -19,6 +19,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     @ViewBuilder let footerRow: () -> FooterRow
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
+    @Environment(\.liveOddsRefreshActive) private var liveOddsRefreshActive
 
     // Unified onto HeadlineStyleTable199 (.card) so team names, scores, and chances
     // share one size and weight family with the event-page headline, feed card, widget, and Watch tile.
@@ -71,7 +73,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             event: event,
             prematch: effectivePrematch,
             showsInlinePregame: showsInlinePregame,
-            usesPictureLayout: usesPictureLayout191A
+            usesPictureLayout: usesPictureLayout191A,
+            showsLiveTenths: liveOddsRefreshActive
         )
     }
 
@@ -119,11 +122,16 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         CompactGameCard12616.uniformCardNameFontSize(scaledBaseSize: compactNameSize)
     }
 
+    private var usesStackedNarrowLayout: Bool {
+        dynamicTypeSize.isAccessibilitySize
+            || (isNarrowTwoColumn && (model.headers.score != nil || model.headers.pregame != nil || (measuredContentWidth > 0 && measuredContentWidth - trailingColumnsClusterWidth < 145)))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             topHeaderSection
 
-            if dynamicTypeSize.isAccessibilitySize {
+            if usesStackedNarrowLayout {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
                         accessibilityRowView(row)
@@ -189,7 +197,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
     @ViewBuilder
     private var topHeaderSection: some View {
-        if dynamicTypeSize.isAccessibilitySize {
+        if usesStackedNarrowLayout {
             VStack(alignment: .leading, spacing: 6) {
                 leagueAndStatusView
                 if model.headers.hasAny {
@@ -239,7 +247,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             canStillBeGraded: canGrade,
             currentAwayIsWithheld: currentAwayWithheld,
             prematch: effectivePrematch,
-            prematchAwayIsWithheld: prematchAwayWithheld
+            prematchAwayIsWithheld: prematchAwayWithheld,
+            showsLiveTenths: liveOddsRefreshActive
         ),
         let button = SourceMarkButton(
             resolved.mark,
@@ -437,7 +446,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         let contentW = measuredContentWidth > 0 ? measuredContentWidth : 333
         return CardTeamNameSizing.sharedUnboundedWordSafeFontSize(
             names: names,
-            baseSize: compactNameSize,
+            baseSize: dynamicTypeSize.isAccessibilitySize ? compactNameSize : uniformCompactTeamNameFontSize,
             weight: .bold,
             availableWidth: max(contentW, 120),
             minimumScale: 0.55

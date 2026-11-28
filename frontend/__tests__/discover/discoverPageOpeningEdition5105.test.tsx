@@ -321,6 +321,18 @@ const positions = (container: Node) => walk(container).filter((n) => n["data-pos
 const peeks = (container: Node) => walk(container).filter((n) => n["data-class"] === "animate-peek-right").length;
 const textOf = (container: Node, id: string) => walk(container).find((n) => n["data-card"] === id)?.textContent;
 const has = (container: Node, attr: string) => walk(container).some((n) => n[attr] !== undefined);
+function findByTestId(container: Node, testId: string): Node | undefined {
+  return walk(container).find((n) => n["data-testid"] === testId);
+}
+async function clickTestId(container: Node, testId: string) {
+  const node = findByTestId(container, testId);
+  if (!node) throw new Error(`missing node data-testid="${testId}"`);
+  const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
+  const onClick = key ? (node[key] as { onClick?: () => void }).onClick : undefined;
+  if (!onClick) throw new Error(`missing onClick on data-testid="${testId}"`);
+  await act(async () => { onClick(); });
+  await settle();
+}
 const ids = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `c${from + i}`);
 const storedSnapshot = () => JSON.parse(session.getItem(FEED_SNAPSHOT_KEY) ?? "null");
 
@@ -497,17 +509,22 @@ describe("#5105 option ON — current bodies and late replies", () => {
     await fireSentinel();
     const oldPage = calls[1];
     expect(oldPage.params).toEqual({ limit: 20, offset: 20, event_pct: 0.15, edition: "E1" });
-    // While page two is in flight, a background tick finds E1 retired at page zero.
+    // While page two is in flight, a background tick finds E1 retired at page zero:
+    // #13643 holds E1 seated until the reader clicks "New cards available".
     await revalidate();
     await answer(calls[2], reply(list(30, 100), 0, { edition: "E2", boundary: 0, status: "expired" }));
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
+    await clickTestId(page, "discover-new-cards-button");
+    expect(calls).toHaveLength(4);
+    await answer(calls[3], reply(list(30, 100), 0, { edition: "E2", boundary: 0 }));
     expect(sequence(page)).toEqual(["H", ...ids(100, 120)]);
     await answer(oldPage, reply(list(40), 20, { boundary: 3, status: "pinned" }));
     expect(sequence(page)).toEqual(["H", ...ids(100, 120)]);
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
   });
 });
 
-describe("#5105 option ON — a retired edition restarts from page zero once", () => {
+describe("#5105 option ON — a retired edition holds its seat, appends unseen tail below, and restarts from page zero when refreshed", () => {
   async function retiredTail() {
     const page = await mount();
     await answer(calls[0], reply(list(40), 0, { boundary: 3 }));
@@ -516,13 +533,17 @@ describe("#5105 option ON — a retired edition restarts from page zero once", (
     return page;
   }
 
-  it("keeps the visible deck and asks for one unpinned page zero, then replaces atomically", async () => {
+  it("keeps the visible deck, appends unseen retired-edition cards strictly below without uninvited page-zero asks, then replaces atomically on refresh", async () => {
     const page = await retiredTail();
+    // Held seats 0..19 stay put; unseen page-20 cards (c520..c539) append strictly below; no uninvited page 0 fired.
+    expect(calls).toHaveLength(2);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20), ...ids(520, 540)]);
+    expect(findByTestId(page, "discover-new-cards-button")).toBeDefined();
+
+    await clickTestId(page, "discover-new-cards-button");
     const restarts = calls.slice(2);
     expect(restarts).toHaveLength(1);
     expect(restarts[0].params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
-    // Nothing of the retired page was appended; the reader's deck is intact.
-    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
 
     await answer(restarts[0], reply(list(40, 200), 0, { edition: "E2", boundary: 0 }));
     expect(sequence(page)).toEqual(["H", ...ids(200, 220)]);
@@ -535,8 +556,9 @@ describe("#5105 option ON — a retired edition restarts from page zero once", (
 
   it("an unavailable replacement keeps the deck and its cursor and raises the retry state, without re-asking", async () => {
     const page = await retiredTail();
+    await clickTestId(page, "discover-new-cards-button");
     await answer(calls[2], UNAVAILABLE);
-    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20), ...ids(520, 540)]);
     expect(walk(page).some((n) => n["data-unavailable"] === "inline")).toBe(true);
     await settle(10);
     expect(calls).toHaveLength(3);
@@ -558,18 +580,20 @@ describe("#5105 option ON — a retired edition restarts from page zero once", (
 
   it("an unsupported replacement (untokened over a section deck) is refused the same way", async () => {
     const page = await retiredTail();
+    await clickTestId(page, "discover-new-cards-button");
     await answer(calls[2], reply(list(40, 200), 0, { edition: null }));
-    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20), ...ids(520, 540)]);
     expect(walk(page).some((n) => n["data-unavailable"] === "inline")).toBe(true);
     expect(calls).toHaveLength(3);
   });
 
   it("a thrown replacement keeps the deck and raises the retry state", async () => {
     const page = await retiredTail();
+    await clickTestId(page, "discover-new-cards-button");
     (calls[2] as Call & { done?: boolean }).done = true;
     await act(async () => { calls[2].reject(new Error("network")); });
     await settle();
-    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20), ...ids(520, 540)]);
     expect(walk(page).some((n) => n["data-unavailable"] === "inline")).toBe(true);
     expect(calls).toHaveLength(3);
   });
@@ -616,8 +640,10 @@ describe("#5105 option ON — Back restores the sections; refresh opens a new ed
     await fireSentinel();
     expect(calls.length).toBe(before + 1);
     expect(lastCall().params).toEqual({ limit: 20, offset: 40, event_pct: 0.15, edition: "E1" });
-    // ...and a retirement there replaces the restored deck and resets BOTH seeds.
+    // ...and a retirement there keeps the restored cards seated, appends unseen tail below, and refresh resets BOTH seeds.
     await answer(lastCall(), reply(list(60, 700), 40, { edition: "E7", status: "superseded" }));
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 40), ...ids(740, 760)]);
+    await clickTestId(page, "discover-new-cards-button");
     await answer(lastCall(), reply(list(60, 800), 0, { edition: "E8", boundary: 1 }));
     expect(sequence(page)).toEqual(["c800", "H", ...ids(801, 820)]);
     const afterReplace = calls.length;
@@ -741,6 +767,8 @@ it("Root late old transport failure cannot freeze an accepted replacement", asyn
   const oldTail = lastCall();
   await revalidate();
   await answer(lastCall(), reply(list(40,200), 0, { boundary: 3, edition: "NEW", status: "expired" }));
+  await clickTestId(page, "discover-new-cards-button");
+  await answer(lastCall(), reply(list(40,200), 0, { boundary: 3, edition: "NEW" }));
   expect(cardsOf(page)).toEqual(ids(200,220));
   (oldTail as Call & { done?: boolean }).done = true;
   await act(async () => { oldTail.reject(new Error("old request timed out")); });
@@ -1177,10 +1205,12 @@ describe("#5105 option ON — a failure is inert once its request is no longer c
     await answer(calls[0], reply(list(40), 0, { boundary: 3 }));
     await fireSentinel();
     await answer(calls[1], reply(list(40, 500), 20, { edition: "E9", status: "expired" }));
+    await clickTestId(page, "discover-new-cards-button");
     const replacement = calls[2];
     expect(replacement.params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
-    await revalidate();
-    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "NEW", status: "expired" }));
+    // A newer manual refresh overtakes the in-flight replacement and adopts NEW.
+    await clickTestId(page, "discover-new-cards-button");
+    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "NEW" }));
     expect(cardsOf(page)).toEqual(ids(200, 220));
     await reject(replacement);
     expect(has(page, "data-unavailable")).toBe(false);
@@ -1195,8 +1225,10 @@ describe("#5105 option ON — a failure is inert once its request is no longer c
     await settle();
     const refresh = lastCall();
     expect(refresh.params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
-    await revalidate();
-    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "NEW", status: "expired" }));
+    // A newer manual refresh overtakes the slow first one and adopts NEW.
+    await act(async () => { endOfFeed.onRefresh!(); });
+    await settle();
+    await answer(lastCall(), reply(list(40, 200), 0, { boundary: 3, edition: "NEW" }));
     expect(cardsOf(page)).toEqual(ids(200, 220));
     await reject(refresh);
     expect(has(page, "data-unavailable")).toBe(false);

@@ -97,6 +97,7 @@ SPORT_ID = 1009081
 EVENT_ID = 1009082
 TEAM_IDS = (1009083, 1009084)
 MARKET_IDS = (1009085, 1009086)
+SOCCER_SPORT_IDS = (1009087, 1009088, 1009089)
 M1, M2 = MARKET_IDS
 #: Far above anything another file seeds, so both enrichers pick these two first.
 VOLUME = 9.0e15
@@ -141,7 +142,10 @@ async def _clear(conn):
     await conn.execute(text("DELETE FROM futures_markets WHERE id = ANY(:ids)"), {"ids": ids})
     await conn.execute(text("DELETE FROM events WHERE id = :i"), {"i": EVENT_ID})
     await conn.execute(text("DELETE FROM teams WHERE id = ANY(:ids)"), {"ids": list(TEAM_IDS)})
-    await conn.execute(text("DELETE FROM sports WHERE id = :i"), {"i": SPORT_ID})
+    await conn.execute(
+        text("DELETE FROM sports WHERE id = ANY(:ids)"),
+        {"ids": [SPORT_ID, *SOCCER_SPORT_IDS]},
+    )
 
 
 async def _seed(conn):
@@ -388,6 +392,107 @@ async def test_cu_v2_holds_nothing_while_it_waits_on_the_next_markets_llm_call(p
         assert profile["story_key"] == STORY_KEY and profile["schema_version"] == 2
 
 
+@pytest.mark.parametrize(
+    ("start_source", "expected_linked_day"), [("espn", "2026-11-28"), ("kalshi", None)]
+)
+@pytest.mark.parametrize("unlinked_category", ["football", "politics"])
+async def test_cu_v2_grounds_the_linked_day_and_screens_unlinked_payout_copies(
+    pg_engine, monkeypatch, start_source, expected_linked_day, unlinked_category
+):
+    from app.tasks.enrich_markets import DISCOVER_LLM_METADATA_KEY, enrich_cu_v2_profiles
+
+    start = datetime(2026, 11, 29, 0, 30, tzinfo=timezone.utc)
+    settlement = datetime(2026, 11, 28, 4, 59, tzinfo=timezone.utc)
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE events SET commence_time = :start, commence_time_source = :source "
+                "WHERE id = :event_id"
+            ),
+            {"start": start, "source": start_source, "event_id": EVENT_ID},
+        )
+        await conn.execute(
+            text("UPDATE futures_markets SET resolution_date = :date WHERE id = ANY(:ids)"),
+            {"date": settlement, "ids": list(MARKET_IDS)},
+        )
+        await conn.execute(
+            text(
+                "UPDATE futures_markets SET event_id = NULL, llm_sport_category = :category "
+                "WHERE id = :id"
+            ),
+            {"category": unlinked_category, "id": M2},
+        )
+    payload = {**_cu_payload(), "geography": "global", "event_date": "2026-11-28"}
+    _install(monkeypatch, _LLMStub(payload))
+
+    stats = await enrich_cu_v2_profiles(limit=2)
+
+    assert stats["generated"] == 2
+    rows = await _rows(pg_engine)
+    linked = rows[M1]["market_metadata"][DISCOVER_LLM_METADATA_KEY]
+    unlinked = rows[M2]["market_metadata"][DISCOVER_LLM_METADATA_KEY]
+    assert linked["event_date"] == expected_linked_day
+    assert linked["geography"] == "us"
+    assert unlinked["event_date"] is None
+    assert unlinked["geography"] == "global"
+
+
+@pytest.mark.parametrize(
+    ("home_key", "away_key", "model_geography", "expected"),
+    [
+        ("soccer_france_ligue_one", "soccer_germany_bundesliga", "country:FR", "global"),
+        ("soccer_other", "soccer_other", "us", None),
+        ("soccer_other", "soccer_other", "country:DE", "country:DE"),
+    ],
+)
+async def test_cu_v2_stores_club_and_election_facts_over_the_model(
+    pg_engine, monkeypatch, home_key, away_key, model_geography, expected
+):
+    from app.tasks.enrich_markets import DISCOVER_LLM_METADATA_KEY, enrich_cu_v2_profiles
+
+    async with pg_engine.begin() as conn:
+        league_keys = ("soccer_other", "soccer_france_ligue_one", "soccer_germany_bundesliga")
+        await conn.execute(
+            text(
+                "INSERT INTO sports (id, key, name, active) VALUES (:id, :key, :key, true) "
+                "ON CONFLICT (key) DO NOTHING"
+            ),
+            [{"id": sport_id, "key": key} for sport_id, key in zip(SOCCER_SPORT_IDS, league_keys)],
+        )
+        await conn.execute(
+            text("UPDATE events SET sport_id = (SELECT id FROM sports WHERE key = :key) WHERE id = :id"),
+            {"key": league_keys[0], "id": EVENT_ID},
+        )
+        await conn.execute(
+            text("UPDATE teams SET sport_id = (SELECT id FROM sports WHERE key = :key) WHERE id = :id"),
+            [{"key": key, "id": team_id} for key, team_id in zip((home_key, away_key), TEAM_IDS)],
+        )
+        await conn.execute(
+            text("UPDATE futures_markets SET name = :name WHERE id = :id"),
+            {"name": "Total Corners: Over 10.5", "id": M1},
+        )
+        await conn.execute(
+            text(
+                "UPDATE futures_markets SET name = :name, event_id = NULL, "
+                "llm_sport_category = 'politics' WHERE id = :id"
+            ),
+            {"name": "Vermont House Orleans-3 winner? (2028)", "id": M2},
+        )
+    payload = {**_cu_payload(), "geography": model_geography, "event_date": "2028-11-08"}
+    _install(monkeypatch, _LLMStub(payload))
+
+    stats = await enrich_cu_v2_profiles(limit=2)
+
+    assert stats["generated"] == 2
+    rows = await _rows(pg_engine)
+    linked = rows[M1]["market_metadata"][DISCOVER_LLM_METADATA_KEY]
+    district = rows[M2]["market_metadata"][DISCOVER_LLM_METADATA_KEY]
+    assert linked["geography"] == expected
+    assert linked["event_date"] is None
+    assert district["geography"] == "local"
+    assert district["event_date"] == "2028-11-07"
+
+
 async def test_cu_v2_write_still_bumps_updated_at(pg_engine, monkeypatch):
     # The merged write goes through a table clause with no `onupdate`, so the
     # `updated_at=now()` the old ORM UPDATE carried must be written by name.
@@ -414,6 +519,50 @@ async def test_cu_v2_write_still_bumps_updated_at(pg_engine, monkeypatch):
             )
         ).all()
     assert all(r[1] > old for r in rows), f"CU v2 wrote the profile but left updated_at at {old}: {rows}"
+
+
+async def test_cu_v2_visits_an_eligible_null_category_and_skips_crypto(pg_engine, monkeypatch):
+    from app.tasks.enrich_markets import DISCOVER_LLM_METADATA_KEY, enrich_cu_v2_profiles
+
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE futures_markets SET llm_sport_category = :category, volume_24h = :volume WHERE id = :id"),
+            [{"category": None, "volume": VOLUME - 1, "id": M1},
+             {"category": "crypto", "volume": VOLUME, "id": M2}],
+        )
+    stub = _LLMStub(_cu_payload())
+    _install(monkeypatch, stub)
+
+    await enrich_cu_v2_profiles(limit=1)
+
+    rows = await _rows(pg_engine)
+    assert stub.calls == 1
+    assert DISCOVER_LLM_METADATA_KEY in rows[M1]["market_metadata"]
+    assert DISCOVER_LLM_METADATA_KEY not in rows[M2]["market_metadata"]
+
+
+async def test_cu_v2_preserves_metadata_changed_while_classifying(pg_engine, monkeypatch):
+    from app.tasks import enrich_markets
+
+    async def write_concurrent_metadata(*args, **kwargs):
+        async with pg_engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE futures_markets SET market_metadata = CAST(:metadata AS jsonb) WHERE id = :id"),
+                {"metadata": json.dumps({"provider_identity": {"external_id": "new"}}), "id": M1},
+            )
+        return {}
+
+    stub = _LLMStub(_cu_payload())
+    _install(monkeypatch, stub)
+    monkeypatch.setattr(enrich_markets, "_resolve_entity_refs", write_concurrent_metadata)
+
+    stats = await enrich_markets.enrich_cu_v2_profiles(limit=1)
+
+    rows = await _rows(pg_engine)
+    assert stats["generated"] == 1
+    metadata = rows[M1]["market_metadata"]
+    assert metadata["provider_identity"] == {"external_id": "new"}
+    assert metadata[enrich_markets.DISCOVER_LLM_METADATA_KEY]["subject_ref"].startswith("unresolved:")
 
 
 async def test_cu_v2_a_failed_llm_call_rolls_back_only_its_own_market(pg_engine, monkeypatch):

@@ -27,6 +27,7 @@ const { execFileSync } = require("node:child_process");
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const CI_YML = path.join(REPO_ROOT, ".github", "workflows", "ci.yml");
+const HEROKU_DEPLOY_SH = path.join(REPO_ROOT, ".github", "scripts", "heroku-deploy.sh");
 
 // Fabricated 40-char SHAs. OLD is an ancestor of NEW is an ancestor of NEWEST.
 // FORK shares no ancestry with any of them: a rewritten master.
@@ -42,42 +43,33 @@ const LINEAGE = [`${OLD}:${NEW}`, `${OLD}:${NEWEST}`, `${NEW}:${NEWEST}`].join("
 const ALL_KNOWN = [OLD, NEW, NEWEST, FORK].join(" ");
 
 /**
- * Pull the `run: |` body of the deploy step out of ci.yml and dedent it.
- * Deliberately text-based: the point is to execute the bytes CI executes, not a
- * paraphrase of them.
+ * Verify both `deploy:` and `deploy-after-full:` invoke `.github/scripts/heroku-deploy.sh`,
+ * then read and return the checked-in script bytes that CI executes.
  */
 function extractDeployScript() {
   const lines = fs.readFileSync(CI_YML, "utf8").split("\n");
 
-  const jobStart = lines.indexOf("  deploy:");
-  assert.notEqual(jobStart, -1, "ci.yml has no top-level job named `deploy`.");
-  const after = lines.slice(jobStart + 1);
-  let jobEnd = after.findIndex((l) => /^ {2}\S/.test(l));
-  if (jobEnd === -1) jobEnd = after.length;
-  const job = after.slice(0, jobEnd);
+  for (const jobName of ["deploy", "deploy-after-full"]) {
+    const jobStart = lines.indexOf(`  ${jobName}:`);
+    assert.notEqual(jobStart, -1, `ci.yml has no top-level job named \`${jobName}\`.`);
+    const after = lines.slice(jobStart + 1);
+    let jobEnd = after.findIndex((l) => /^ {2}\S/.test(l));
+    if (jobEnd === -1) jobEnd = after.length;
+    const job = after.slice(0, jobEnd);
 
-  const deployStep = job.findIndex((l) => l.startsWith("      - name: Deploy to Heroku"));
-  assert.notEqual(deployStep, -1, "the named Deploy to Heroku step is missing");
-  const runIdx = job.findIndex((l, i) => i > deployStep && /^ {8}run: \|\s*$/.test(l));
-  assert.notEqual(
-    runIdx,
-    -1,
-    "the deploy job no longer has a step with a literal `run: |` block. This suite " +
-      "executes that block; if the deploy moved to an action or a checked-in script, " +
-      "point this suite at wherever the guard now lives rather than deleting it.",
-  );
-
-  const body = [];
-  for (const line of job.slice(runIdx + 1)) {
-    if (line.trim() === "") {
-      body.push("");
-      continue;
-    }
-    if (!/^ {10}/.test(line)) break;
-    body.push(line.slice(10));
+    const deployStep = job.findIndex((l) => l.startsWith("      - name: Deploy to Heroku"));
+    assert.notEqual(deployStep, -1, `${jobName} is missing the Deploy to Heroku step`);
+    const runLine = job.find((l, i) => i > deployStep && /^ {8}run:\s*bash \.github\/scripts\/heroku-deploy\.sh\s*$/.test(l));
+    assert.ok(
+      runLine,
+      `${jobName} no longer executes \`bash .github/scripts/heroku-deploy.sh\``,
+    );
   }
-  assert.ok(body.length > 0, "the deploy step's `run: |` block is empty.");
-  return body.join("\n");
+
+  assert.ok(fs.existsSync(HEROKU_DEPLOY_SH), `${HEROKU_DEPLOY_SH} is missing`);
+  const script = fs.readFileSync(HEROKU_DEPLOY_SH, "utf8");
+  assert.ok(script.trim().length > 0, "heroku-deploy.sh is empty");
+  return script;
 }
 
 /** The guard's decision logic, with comment lines removed. */

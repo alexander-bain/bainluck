@@ -14,6 +14,7 @@ struct DistributionCardView: View {
     /// #6343 — the price-age reveal, open or closed. See `PriceAgeMarkView`.
     @State private var revealedPriceAge: String?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     private var primaryInk: Color {
         colorScheme == .dark ? Color.primary : DS.textPrimary
@@ -156,8 +157,10 @@ struct DistributionCardView: View {
                     mark
                 }
                 // #4351: named, or not drawn — was `src.uppercased()`, which is
-                // how this card printed `ODDS_API`. Card faces omit Kalshi/Polymarket.
-                if let src = SourceLabels.cardFaceLabel(
+                // how this card printed `ODDS_API`. Card faces omit Kalshi/Polymarket,
+                // and omit `"2 sources"` once `ⓘ` source marks draw on the numbers (#11920).
+                if !data.hasDrawableSourceMark,
+                   let src = SourceLabels.cardFaceLabel(
                     for: data.source,
                     sources: data.sources,
                     sourceCount: data.sourceCount
@@ -178,6 +181,11 @@ struct DistributionCardView: View {
             // the affordance does not differ by card shape.
             if let revealedPriceAge {
                 LiquidityRevealCaption(sentence: revealedPriceAge)
+                    .padding(.top, 8)
+            }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 0, verticalPadding: 4)
                     .padding(.top, 8)
             }
         }
@@ -205,7 +213,6 @@ struct DistributionCardView: View {
         isLeader: Bool
     ) -> some View {
         let probability = outcome.probability ?? 0
-        let pct = outcome.renderedPercent ?? Int((probability * 100).rounded())
         let barWidth = max(5, probability / maxProbability * 100)
 
         HStack(spacing: 8) {
@@ -245,7 +252,7 @@ struct DistributionCardView: View {
 
             // Percentage + optional served source mark (#12887)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(probability > 0 ? "\(pct)%" : "\u{2014}")
+                Text(probability > 0 ? formatProbability(probability, renderedPercent: outcome.renderedPercent) : "\u{2014}")
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundStyle(primaryInk)
                     .frame(width: 40, alignment: .trailing)

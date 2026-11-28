@@ -17,6 +17,8 @@ nonisolated enum ShareSurface: String, CaseIterable, Sendable {
     case eventDetail = "event_detail"
     /// Either share button on the futures page — toolbar or hero.
     case futuresDetail = "futures_detail"
+    /// The share button in the set / collection page's toolbar (#13103).
+    case collectionDetail = "collection_detail"
 }
 
 /// The one place a share is recorded from a surface that has no feed
