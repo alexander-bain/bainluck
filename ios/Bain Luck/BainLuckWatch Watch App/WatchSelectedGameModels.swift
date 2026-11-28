@@ -39,6 +39,7 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     /// The crest the event page serves for each side (direction 217's Matchup slot).
     let homeLogoURL: String?
     let awayLogoURL: String?
+    private let hadPriorProbabilitySignal: Bool
 
     var isFinal: Bool { ["completed", "final"].contains(status?.lowercased() ?? "") }
     var isClosed: Bool { status?.lowercased() == "closed" }
@@ -102,6 +103,28 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     }
 
     var isLive: Bool { ["live", "in_progress"].contains(status?.lowercased() ?? "") }
+    func hasStarted(at now: Date = Date()) -> Bool {
+        if isLive || isFinal || isClosed { return true }
+        let lower = (status ?? "").lowercased()
+        if ["suspended", "postponed", "in_progress", "halftime", "delayed"].contains(lower) {
+            return true
+        }
+        guard let commenceTime else { return true }
+        return commenceTime <= now
+    }
+    var hadPriorProbability: Bool {
+        hadPriorProbabilitySignal
+            || probabilityObservedAt != nil
+            || prematchHomeProbability != nil
+            || prematchAwayProbability != nil
+            || prematchDrawProbability != nil
+    }
+    func missingProbabilityText(at now: Date = Date()) -> String {
+        ExternalSurfaceProbabilityFormat.missingProbabilityText(
+            hasStarted: hasStarted(at: now),
+            hadPriorNumber: hadPriorProbability
+        )
+    }
     var liveClockText: String? {
         // The shared formatter normalizes once. Pre-normalizing an inning
         // ("Bottom 3rd" -> "3rd") makes a second pass misread it as Q3.
@@ -129,6 +152,7 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         case heroProbabilitySource = "hero_probability_source"
         case probabilityObservedAt = "hero_probability_observed_at"
         case openingChancePolicyChecked
+        case hadPriorProbabilitySignal
     }
     private struct TeamColorFields: Codable {
         let teamID: Int?
@@ -246,7 +270,18 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         let hero = rawHero.flatMap { $0.isFinite && (0...1).contains($0) ? $0 : nil }
         let heroAway = try? c.decode(Double.self, forKey: .heroAway)
         // The producer clock dates the hero, never the sportsbook capture or score.
-        probabilityObservedAt = hero != nil ? Self.date(try? c.decode(String.self, forKey: .probabilityObservedAt)) : nil
+        let rawObservedAt = Self.date(try? c.decode(String.self, forKey: .probabilityObservedAt))
+        probabilityObservedAt = hero != nil ? rawObservedAt : nil
+        let cachedPriorSignal = (try? c.decode(Bool.self, forKey: .hadPriorProbabilitySignal)) == true
+        hadPriorProbabilitySignal = cachedPriorSignal
+            || rawObservedAt != nil
+            || rawHero != nil
+            || heroAway != nil
+            || odds?.homeProbability != nil
+            || odds?.awayProbability != nil
+            || prematch?.homeProbability != nil
+            || prematch?.awayProbability != nil
+            || prematch?.drawProbability != nil
         let currentOdds = heroSource == "opening" || openingOdds ? nil : odds
         let checkedOpeningSource = (try? c.decode(Bool.self, forKey: .openingChancePolicyChecked)) == true
         let showsPrice = !isCachedReading || checkedOpeningSource || probabilityObservedAt != nil
@@ -305,6 +340,7 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         try c.encode(true, forKey: .openingChancePolicyChecked)
+        try c.encodeIfPresent(hadPriorProbabilitySignal ? true : nil, forKey: .hadPriorProbabilitySignal)
         try c.encodeIfPresent(commenceTime.map(formatter.string), forKey: .commenceTime)
         try c.encodeIfPresent(scoreObservedAt.map(formatter.string), forKey: .scoreObservedAt)
         try c.encodeIfPresent(probabilityObservedAt.map(formatter.string), forKey: .probabilityObservedAt)

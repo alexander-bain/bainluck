@@ -214,6 +214,12 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
         let effectiveAwayProb = isThreeWaySport
             ? odds.awayProbability
             : (odds.awayProbability.flatMap { $0.isFinite ? $0 : nil } ?? (1.0 - homeProb))
+        let hasStarted = isLive || EventState.hasStarted(commenceTime: art.commenceTime, now: now)
+        let hadPriorNumber = event.heroProbabilityObservedAt != nil || event.heroProbability != nil
+        let missingText = ExternalSurfaceProbabilityFormat.missingProbabilityText(
+            hasStarted: hasStarted,
+            hadPriorNumber: hadPriorNumber
+        )
         if side == nil, isThreeWaySport, let drawPct = drawPercentInt, let awayPct = awayPercentInt {
             let out = WatchMatchupReading217.resolveOutcomePresentation(
                 homePercent: homePct,
@@ -229,7 +235,8 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                 drawSubOne: ExternalSurfaceProbabilityFormat.isSubOne(odds.drawProbability),
                 drawAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(odds.drawProbability),
                 awaySubOne: ExternalSurfaceProbabilityFormat.isSubOne(odds.awayProbability),
-                awayAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(odds.awayProbability)
+                awayAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(odds.awayProbability),
+                missingProbabilityText: missingText
             )
             threeWay = out.threeWay
             bigText = out.bigText
@@ -241,7 +248,7 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
             bigText = ExternalSurfaceProbabilityFormat.openWholePercent(
                 awayPct,
                 probability: effectiveAwayProb
-            ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+            ) ?? missingText
             bigIsHome = false
             ownerAbbr = art.away.short
             ownerName = event.awayTeam
@@ -250,7 +257,7 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
             bigText = ExternalSurfaceProbabilityFormat.openWholePercent(
                 homePct,
                 probability: homeProb
-            ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+            ) ?? missingText
             bigIsHome = true
             ownerAbbr = art.home.short
             ownerName = event.homeTeam
@@ -267,7 +274,8 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                 homeSubOne: ExternalSurfaceProbabilityFormat.isSubOne(homeProb),
                 homeAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(homeProb),
                 awaySubOne: ExternalSurfaceProbabilityFormat.isSubOne(effectiveAwayProb),
-                awayAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(effectiveAwayProb)
+                awayAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(effectiveAwayProb),
+                missingProbabilityText: missingText
             )
             threeWay = nil
             bigText = out.bigText

@@ -1,6 +1,9 @@
 import AppIntents
 import SwiftUI
 import WidgetKit
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 /// #12305 — the saved widget's ↻. Running it is the whole job: WidgetKit asks
 /// the widget for a new timeline after an intent from one of its buttons

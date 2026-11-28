@@ -1,11 +1,14 @@
 import SwiftUI
 import WidgetKit
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 // #10875 — one saved game or market, chosen per widget, on the Home Screen
 // (small, medium) and the iPhone Lock Screen (rectangular, circular). The
 // general live-games widget is unchanged beside it.
 
-struct SavedItemWidgetEntry10875: TimelineEntry {
+struct SavedItemWidgetEntry10875: WidgetKit.TimelineEntry {
     let date: Date
     let selection: SavedWidgetSelection10875?
     let content: SavedWidgetContent10875
@@ -349,7 +352,7 @@ struct SavedSmall10875: View {
                     .lineLimit(1)
                 SavedValue10875(row: headline, size: 30)
             } else {
-                Text(reading.phase == .noResult ? "No result recorded" : ExternalSurfaceProbabilityFormat.missingProbabilityText)
+                Text(reading.phase == .noResult ? "No result reported" : reading.unavailableProbabilityText)
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -359,7 +362,8 @@ struct SavedSmall10875: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.65)
+                .allowsTightening(true)
                 .padding(.trailing, entry.isRefreshable12305 ? 24 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -367,24 +371,50 @@ struct SavedSmall10875: View {
 }
 
 struct SavedMedium10875: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let reading: SavedWidgetReading10875
     let entry: SavedItemWidgetEntry10875
 
     var body: some View {
         let caption = SavedClock10875.caption(reading, entry: entry)
-        // #12305: with no caption line (a result, or no chance to show) the
-        // last row is the bottom line, so the rows keep clear of the ↻ there.
-        let clearsRefresh = caption == nil && entry.isRefreshable12305
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(reading.subject)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(2)
-                Spacer(minLength: 4)
-                Text(reading.status)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+        let showsUnavailableLine = caption == nil
+            && !reading.rows.isEmpty
+            && reading.rows.allSatisfy { $0.figure == nil && $0.verdict == nil }
+            && (reading.phase == .unavailable || reading.phase == .noResult)
+        // #12305: with no bottom caption line, the last row is the bottom line,
+        // so the rows keep clear of the ↻ button there.
+        let clearsRefresh = caption == nil && !showsUnavailableLine && entry.isRefreshable12305
+        let tightVertical = dynamicTypeSize >= .xxLarge || (showsUnavailableLine && reading.rows.count >= 3)
+        VStack(alignment: .leading, spacing: tightVertical ? 3 : 6) {
+            if dynamicTypeSize >= .xxLarge && reading.rows.count <= 2 {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(reading.subject)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .allowsTightening(true)
+                    Text(reading.status)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .allowsTightening(true)
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(reading.subject)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                        .allowsTightening(true)
+                    Spacer(minLength: 4)
+                    Text(reading.status)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .allowsTightening(true)
+                }
             }
             Spacer(minLength: 0)
             ForEach(Array(reading.rows.enumerated()), id: \.offset) { _, row in
@@ -392,6 +422,7 @@ struct SavedMedium10875: View {
                     Text(row.label)
                         .font(.footnote.weight(row.emphasized ? .semibold : .regular))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                     Spacer(minLength: 4)
                     if let figure = row.figure {
                         Text(figure).font(.footnote.weight(.semibold).monospacedDigit())
@@ -410,6 +441,13 @@ struct SavedMedium10875: View {
             if let caption {
                 let prefix = reading.phase == .openingLine ? nil : reading.priceCaption
                 Text(prefix.map { "\($0) · \(caption)" } ?? caption)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .padding(.trailing, entry.isRefreshable12305 ? 24 : 0)
+            } else if showsUnavailableLine {
+                Text(reading.phase == .noResult ? "No result reported" : reading.unavailableProbabilityText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -497,7 +535,7 @@ struct SavedRectangular10875: View {
                         .font(.body.weight(.semibold).monospacedDigit())
                 }
             } else {
-                Text(reading.phase == .noResult ? "No result recorded" : ExternalSurfaceProbabilityFormat.missingProbabilityText)
+                Text(reading.phase == .noResult ? "No result reported" : reading.unavailableProbabilityText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
             }

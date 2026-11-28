@@ -1,5 +1,8 @@
 import SwiftUI
 import WidgetKit
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 // Direction 217 (Alex, Nov 16) + #13432 iPhone Lock Screen double-wide parity:
 // Both crests, live/final score, and ONE big number in its team's colour (or
@@ -81,6 +84,17 @@ struct WatchMatchupComplication217: View {
                     threeWayColumn(label: threeWay.awayLabel, value: threeWay.awayText, m: m)
                 }
                 .widgetAccentable()
+            } else if reading.bigText == ExternalSurfaceProbabilityFormat.noProbabilityYetText
+                || reading.bigText == ExternalSurfaceProbabilityFormat.missingProbabilityText {
+                Text(reading.bigText)
+                    .font(.system(size: max(10, (m.small * 1.15).rounded()), weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.75)
+                    .allowsTightening(true)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .widgetAccentable()
             } else {
                 let ownerSize = reading.bigOwnerLabel.count >= 4 ? (m.bigOwner * 0.90).rounded() : m.bigOwner
                 (Text(reading.bigOwnerLabel)

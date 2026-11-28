@@ -192,7 +192,7 @@ struct WatchDiscoverStoriesView: View {
                 Text(game.stateLabel).font(.subheadline.bold())
                 if game.showsForecast {
                     Text(game.homeProbabilityText.map { "\(game.homeTeam) win · \($0)" }
-                         ?? ExternalSurfaceProbabilityFormat.missingProbabilityText)
+                         ?? game.missingProbabilityText())
                         .font(.body.bold()).fixedSize(horizontal: false, vertical: true)
                 } else if game.isFinal, let away = game.awayScore, let home = game.homeScore {
                     Text("Final · \(game.awayTeam) \(away), \(game.homeTeam) \(home)")

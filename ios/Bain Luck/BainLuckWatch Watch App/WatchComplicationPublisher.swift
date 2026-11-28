@@ -340,11 +340,13 @@ nonisolated enum WatchComplicationProjection {
         }
         guard isAdmitted, game.showsForecast, game.homeProbabilityText != nil else {
             let scoreOnlySnap = snapshot(game: game, savedAt: savedAt, clockSkewTolerance: clockSkewTolerance)
+            let reason: WatchFaceUnavailableReason13339 =
+                (!game.hasStarted(at: savedAt) && !game.hadPriorProbability) ? .noProbabilityYet : .noLiveOdds
             return .unavailable(
                 WatchFaceStatusPayload13339(
                     targetID: targetID,
                     title: title,
-                    reason: .noLiveOdds,
+                    reason: reason,
                     updatedAt: savedAt
                 ),
                 snapshot: scoreOnlySnap

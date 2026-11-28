@@ -89,13 +89,16 @@ final class SavedItemControl12305Tests: XCTestCase {
         XCTAssertTrue(small.contains(".padding(.trailing, entry.isRefreshable12305 ? 24 : 0)"),
                       "the small widget's caption no longer keeps clear of the ↻")
         let medium = try body("struct SavedMedium10875: View {", "#if os(iOS)")
-        XCTAssertTrue(medium.contains("let clearsRefresh = caption == nil && entry.isRefreshable12305"),
+        XCTAssertTrue(medium.contains("let clearsRefresh = caption == nil && !showsUnavailableLine && entry.isRefreshable12305"),
                       "the medium widget no longer knows when its rows are the bottom line")
         let rows = try XCTUnwrap(medium.range(of: "ForEach(Array(reading.rows.enumerated())"))
         let captionLine = try XCTUnwrap(medium.range(of: "if let caption {"))
         XCTAssertTrue(medium[rows.upperBound..<captionLine.lowerBound].contains(".padding(.trailing, clearsRefresh ? 24 : 0)"),
                       "the medium widget's rows run under the ↻ when there is no caption line")
-        XCTAssertTrue(medium[captionLine.upperBound...].contains(".padding(.trailing, entry.isRefreshable12305 ? 24 : 0)"),
-                      "the medium widget's caption no longer keeps clear of the ↻")
+        XCTAssertGreaterThanOrEqual(
+            medium[captionLine.upperBound...].components(separatedBy: ".padding(.trailing, entry.isRefreshable12305 ? 24 : 0)").count - 1,
+            2,
+            "the medium widget's caption or unavailable bottom line no longer keeps clear of the ↻"
+        )
     }
 }
