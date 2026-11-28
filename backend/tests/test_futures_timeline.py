@@ -272,10 +272,12 @@ class TestFullRangeTopNArchiveAndVenueScoping:
     live snapshot and older-live reads preserve exact Field medians."""
 
     async def test_top_n_scoping_keeps_exact_field_median(self):
+        from app.models.models import FuturesOddsSnapshot
         from app.routes import futures as futures_routes
 
         now = datetime.now(timezone.utc)
         older_ts = now - timedelta(hours=200)
+        mid_ts = now - timedelta(hours=100)
         recent_ts = now - timedelta(hours=2)
         outcomes = [
             _make_outcome(1, "Leader A", 0.30),
@@ -300,20 +302,37 @@ class TestFullRangeTopNArchiveAndVenueScoping:
         market.sport = None
 
         older_snaps = [_make_snapshot(o.id, o.current_probability, older_ts) for o in outcomes]
+        mid_snaps = [_make_snapshot(o.id, o.current_probability, mid_ts) for o in outcomes]
         recent_snaps = [_make_snapshot(o.id, o.current_probability, recent_ts) for o in outcomes]
-        for s in older_snaps + recent_snaps:
+        for s in older_snaps + mid_snaps + recent_snaps:
             s.yes_bid = 0.01
             s.yes_ask = 0.99
             s.last_price = s.probability
 
-        market_result = MagicMock()
-        market_result.scalar_one_or_none.return_value = market
-        snap_result = MagicMock()
-        snap_result.scalars.return_value.all.return_value = recent_snaps
-        db = MagicMock()
-        db.execute = AsyncMock(side_effect=[market_result, snap_result])
+        seen_calls: dict[str, object] = {"snapshot_queries": []}
 
-        seen_calls: dict[str, list] = {}
+        async def _fake_execute(stmt, *_args, **_kwargs):
+            entities = {d.get("entity") for d in getattr(stmt, "column_descriptions", ())}
+            if FuturesOddsSnapshot in entities:
+                params = stmt.compile().params
+                requested_ids = sorted(
+                    next(v for v in params.values() if isinstance(v, (list, tuple)))
+                )
+                seen_calls["snapshot_queries"].append(requested_ids)
+                since = next(v for v in params.values() if isinstance(v, datetime))
+                res = MagicMock()
+                res.scalars.return_value.all.return_value = [
+                    s
+                    for s in (recent_snaps + mid_snaps)
+                    if s.outcome_id in requested_ids and s.captured_at >= since
+                ]
+                return res
+            res = MagicMock()
+            res.scalar_one_or_none.return_value = market
+            return res
+
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=_fake_execute)
 
         older_live = MagicMock()
         older_live.rows = older_snaps
@@ -366,15 +385,23 @@ class TestFullRangeTopNArchiveAndVenueScoping:
             patch.object(futures_routes, "load_archive_history", _fake_load_archive),
             patch.object(futures_routes, "add_timeline_steps", AsyncMock()),
         ):
-            resp = await get_probability_timeline(
+            full_resp = await get_probability_timeline(
                 market_id=1, top=3, hours=168, db=db, history_range="full",
             )
+            seen_calls["full_snapshot_queries"] = list(seen_calls["snapshot_queries"])
+            seen_calls["snapshot_queries"] = []
+            extended_resp = await get_probability_timeline(
+                market_id=1, top=3, hours=24, db=db, history_range=None,
+            )
 
+        assert seen_calls["full_snapshot_queries"] == [[1, 2, 3, 4, 5, 6]]
+        assert seen_calls["snapshot_queries"] == [[1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]]
         assert seen_calls["read_older_live"] == [1, 2, 3, 4, 5, 6]
         assert seen_calls["venue_in_window"] == [1, 2, 3]
         assert seen_calls["load_archive_history"] == [1, 2, 3]
         assert seen_calls["archive_claims"] == [1, 2, 3]
         assert seen_calls["archive_served"] == [1, 2, 3]
-        assert len(resp["timeline"]) >= 2
-        for entry in resp["timeline"]:
+        assert len(full_resp["timeline"]) >= 3
+        assert len(extended_resp["timeline"]) >= 2
+        for entry in full_resp["timeline"] + extended_resp["timeline"]:
             assert entry["outcomes"]["Field"] == pytest.approx(0.25)
