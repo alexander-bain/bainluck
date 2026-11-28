@@ -1,7 +1,7 @@
 {
   "base_url": "https://api.bainluck.com",
-  "date": "2026-11-27",
-  "generated_at": "2026-11-27T18:55:58.308187+00:00",
+  "date": "2026-11-28",
+  "generated_at": "2026-11-28T10:19:13.292119+00:00",
   "http_errors": [],
   "http_errors_count": 0,
   "list_vs_page": {
@@ -9,1547 +9,546 @@
       {
         "detail_copy_age": {
           "cache_status": "cached",
-          "copy_age_seconds": 5.9,
+          "copy_age_seconds": 6.5,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:05.282763+00:00",
-          "reading_age_seconds": 20.7,
+          "fetched_at": "2026-11-28T10:21:06.637208+00:00",
+          "reading_age_seconds": 8.5,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-          "summary": "copy 6s (cached), read 21s"
+          "reading_observed_at": "2026-11-28T10:20:57.476929+00:00",
+          "summary": "copy 6s (cached), read 8s"
         },
-        "detail_value": 73,
-        "event_id": 15300207,
-        "fetch_gap_seconds": 1.4,
+        "detail_value": 96,
+        "event_id": 15352551,
+        "fetch_gap_seconds": 3.2,
         "field": "source.polymarket",
-        "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-        "sport_key": "americanfootball_ncaaf",
+        "matchup": "Persijap Jepara @ Psim Yogyakarta",
+        "sport_key": "soccer_other",
         "surface": "GET /api/events/search",
         "surface_copy_age": {
-          "cache_status": "miss",
+          "cache_status": "hit",
           "copy_age_seconds": null,
           "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:58:03.848144+00:00",
-          "reading_age_seconds": 0.9,
+          "fetched_at": "2026-11-28T10:21:03.416550+00:00",
+          "reading_age_seconds": 70.7,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:57:59.127154+00:00",
-          "summary": "copy ? (miss), read 1s"
+          "reading_observed_at": "2026-11-28T10:19:51.272992+00:00",
+          "summary": "copy ? (hit), read 71s"
         },
-        "surface_value": 74
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 12.9,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:12.479699+00:00",
-          "reading_age_seconds": 27.7,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-          "summary": "copy 13s (cached), read 28s"
-        },
-        "detail_value": 73,
-        "event_id": 15300207,
-        "fetch_gap_seconds": 0.1,
-        "field": "source.polymarket",
-        "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/events?status=live",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": null,
-          "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:58:12.408434+00:00",
-          "reading_age_seconds": 7.9,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:57:59.127154+00:00",
-          "summary": "copy ?, read 8s"
-        },
-        "surface_value": 74
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 27.9,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:26.881753+00:00",
-          "reading_age_seconds": 42.7,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-          "summary": "copy 28s (cached), read 43s"
-        },
-        "detail_value": 70,
-        "event_id": 15300207,
-        "fetch_gap_seconds": 3.6,
-        "field": "headline_percent",
-        "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/leagues/americanfootball_ncaaf",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 126.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T18:58:23.318887+00:00",
-          "reading_age_seconds": 308.2,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:53:14.770078+00:00",
-          "summary": "copy 2.1m, read 5.1m"
-        },
-        "surface_value": 68
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 27.9,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:26.881753+00:00",
-          "reading_age_seconds": 42.7,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-          "summary": "copy 28s (cached), read 43s"
-        },
-        "detail_value": 67,
-        "event_id": 15300207,
-        "fetch_gap_seconds": 3.6,
-        "field": "source.betting",
-        "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/leagues/americanfootball_ncaaf",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 126.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T18:58:23.318887+00:00",
-          "reading_age_seconds": 308.2,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:53:14.770078+00:00",
-          "summary": "copy 2.1m, read 5.1m"
-        },
-        "surface_value": 66
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 27.9,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:26.881753+00:00",
-          "reading_age_seconds": 42.7,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-          "summary": "copy 28s (cached), read 43s"
-        },
-        "detail_value": 72,
-        "event_id": 15300207,
-        "fetch_gap_seconds": 3.6,
-        "field": "source.espn",
-        "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/leagues/americanfootball_ncaaf",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 126.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T18:58:23.318887+00:00",
-          "reading_age_seconds": 308.2,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:53:14.770078+00:00",
-          "summary": "copy 2.1m, read 5.1m"
-        },
-        "surface_value": 69
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 27.9,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:26.881753+00:00",
-          "reading_age_seconds": 42.7,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-          "summary": "copy 28s (cached), read 43s"
-        },
-        "detail_value": 73,
-        "event_id": 15300207,
-        "fetch_gap_seconds": 3.6,
-        "field": "source.polymarket",
-        "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/leagues/americanfootball_ncaaf",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 126.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T18:58:23.318887+00:00",
-          "reading_age_seconds": 308.2,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:53:14.770078+00:00",
-          "summary": "copy 2.1m, read 5.1m"
-        },
-        "surface_value": 70
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 27.9,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:26.881753+00:00",
-          "reading_age_seconds": 42.7,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-          "summary": "copy 28s (cached), read 43s"
-        },
-        "detail_value": 7,
-        "event_id": 15300207,
-        "fetch_gap_seconds": 3.6,
-        "field": "bookmaker_count",
-        "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/leagues/americanfootball_ncaaf",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 126.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T18:58:23.318887+00:00",
-          "reading_age_seconds": 308.2,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:53:14.770078+00:00",
-          "summary": "copy 2.1m, read 5.1m"
-        },
-        "surface_value": 6
+        "surface_value": 94
       },
       {
         "detail_copy_age": {
           "cache_status": "cached",
           "copy_age_seconds": 6.5,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:37.678157+00:00",
-          "reading_age_seconds": 15.3,
+          "fetched_at": "2026-11-28T10:21:24.635659+00:00",
+          "reading_age_seconds": 7.2,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:58:21.657163+00:00",
-          "summary": "copy 6s (cached), read 15s"
+          "reading_observed_at": "2026-11-28T10:21:16.769363+00:00",
+          "summary": "copy 6s (cached), read 7s"
         },
-        "detail_value": 62,
-        "event_id": 15354867,
-        "fetch_gap_seconds": 0.7,
-        "field": "source.polymarket",
-        "matchup": "Mandatory @ Aurora Gaming",
-        "sport_key": "esports_other",
+        "detail_value": 48,
+        "event_id": 15354942,
+        "fetch_gap_seconds": 3.1,
+        "field": "headline_percent",
+        "matchup": "MeatZn @ Finishers",
+        "sport_key": "esports",
         "surface": "GET /api/events/search",
         "surface_copy_age": {
-          "cache_status": "miss",
+          "cache_status": "hit",
           "copy_age_seconds": null,
           "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:58:37.012797+00:00",
-          "reading_age_seconds": 1.2,
+          "fetched_at": "2026-11-28T10:21:21.505788+00:00",
+          "reading_age_seconds": 59.6,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:58:32.801834+00:00",
-          "summary": "copy ? (miss), read 1s"
+          "reading_observed_at": "2026-11-28T10:20:20.371400+00:00",
+          "summary": "copy ? (hit), read 60s"
         },
-        "surface_value": 61
+        "surface_value": 46
       },
       {
         "detail_copy_age": {
           "cache_status": "cached",
-          "copy_age_seconds": 13.5,
+          "copy_age_seconds": 6.5,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:44.879808+00:00",
-          "reading_age_seconds": 22.3,
+          "fetched_at": "2026-11-28T10:21:24.635659+00:00",
+          "reading_age_seconds": 7.2,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:58:21.657163+00:00",
-          "summary": "copy 14s (cached), read 22s"
+          "reading_observed_at": "2026-11-28T10:21:16.769363+00:00",
+          "summary": "copy 6s (cached), read 7s"
         },
-        "detail_value": 62,
-        "event_id": 15354867,
-        "fetch_gap_seconds": 3.5,
-        "field": "headline_percent",
-        "matchup": "Mandatory @ Aurora Gaming",
-        "sport_key": "esports_other",
-        "surface": "GET /api/events?status=live",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": null,
-          "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:58:41.361931+00:00",
-          "reading_age_seconds": 0.3,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:58:40.692084+00:00",
-          "summary": "copy ?, read 0s"
-        },
-        "surface_value": 64
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 13.5,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:44.879808+00:00",
-          "reading_age_seconds": 22.3,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:58:21.657163+00:00",
-          "summary": "copy 14s (cached), read 22s"
-        },
-        "detail_value": 62,
-        "event_id": 15354867,
-        "fetch_gap_seconds": 3.5,
-        "field": "source.kalshi",
-        "matchup": "Mandatory @ Aurora Gaming",
-        "sport_key": "esports_other",
-        "surface": "GET /api/events?status=live",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": null,
-          "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:58:41.361931+00:00",
-          "reading_age_seconds": 0.3,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:58:40.692084+00:00",
-          "summary": "copy ?, read 0s"
-        },
-        "surface_value": 63
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 13.5,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:44.879808+00:00",
-          "reading_age_seconds": 22.3,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:58:21.657163+00:00",
-          "summary": "copy 14s (cached), read 22s"
-        },
-        "detail_value": 62,
-        "event_id": 15354867,
-        "fetch_gap_seconds": 3.5,
+        "detail_value": 51,
+        "event_id": 15354942,
+        "fetch_gap_seconds": 3.1,
         "field": "source.polymarket",
-        "matchup": "Mandatory @ Aurora Gaming",
-        "sport_key": "esports_other",
+        "matchup": "MeatZn @ Finishers",
+        "sport_key": "esports",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:21.505788+00:00",
+          "reading_age_seconds": 59.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:20.371400+00:00",
+          "summary": "copy ? (hit), read 60s"
+        },
+        "surface_value": 46
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:31.837136+00:00",
+          "reading_age_seconds": 14.2,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:16.769363+00:00",
+          "summary": "copy 14s (cached), read 14s"
+        },
+        "detail_value": 48,
+        "event_id": 15354942,
+        "fetch_gap_seconds": 3.5,
+        "field": "headline_percent",
+        "matchup": "MeatZn @ Finishers",
+        "sport_key": "esports",
         "surface": "GET /api/events?status=live",
         "surface_copy_age": {
           "cache_status": null,
           "copy_age_seconds": null,
           "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:58:41.361931+00:00",
-          "reading_age_seconds": 0.3,
+          "fetched_at": "2026-11-28T10:21:28.314387+00:00",
+          "reading_age_seconds": 0.2,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:58:40.692084+00:00",
+          "reading_observed_at": "2026-11-28T10:21:26.820676+00:00",
           "summary": "copy ?, read 0s"
-        },
-        "surface_value": 64
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 20.5,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:52.078950+00:00",
-          "reading_age_seconds": 29.3,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:58:21.657163+00:00",
-          "summary": "copy 20s (cached), read 29s"
-        },
-        "detail_value": 62,
-        "event_id": 15354867,
-        "fetch_gap_seconds": 3.6,
-        "field": "headline_percent",
-        "matchup": "Mandatory @ Aurora Gaming",
-        "sport_key": "esports_other",
-        "surface": "GET /api/leagues/esports_other",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 114.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T18:58:48.482415+00:00",
-          "reading_age_seconds": null,
-          "reading_age_source": null,
-          "reading_observed_at": null,
-          "summary": "copy 115s, read ?"
         },
         "surface_value": 51
       },
       {
         "detail_copy_age": {
           "cache_status": "cached",
-          "copy_age_seconds": 20.5,
+          "copy_age_seconds": 13.5,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:52.078950+00:00",
-          "reading_age_seconds": 29.3,
+          "fetched_at": "2026-11-28T10:21:31.837136+00:00",
+          "reading_age_seconds": 14.2,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:58:21.657163+00:00",
-          "summary": "copy 20s (cached), read 29s"
+          "reading_observed_at": "2026-11-28T10:21:16.769363+00:00",
+          "summary": "copy 14s (cached), read 14s"
         },
-        "detail_value": 62,
-        "event_id": 15354867,
-        "fetch_gap_seconds": 3.6,
-        "field": "source.kalshi",
-        "matchup": "Mandatory @ Aurora Gaming",
-        "sport_key": "esports_other",
-        "surface": "GET /api/leagues/esports_other",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 114.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T18:58:48.482415+00:00",
-          "reading_age_seconds": null,
-          "reading_age_source": null,
-          "reading_observed_at": null,
-          "summary": "copy 115s, read ?"
-        },
-        "surface_value": 50
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 20.5,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:52.078950+00:00",
-          "reading_age_seconds": 29.3,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:58:21.657163+00:00",
-          "summary": "copy 20s (cached), read 29s"
-        },
-        "detail_value": 62,
-        "event_id": 15354867,
-        "fetch_gap_seconds": 3.6,
+        "detail_value": 51,
+        "event_id": 15354942,
+        "fetch_gap_seconds": 3.5,
         "field": "source.polymarket",
-        "matchup": "Mandatory @ Aurora Gaming",
-        "sport_key": "esports_other",
-        "surface": "GET /api/leagues/esports_other",
+        "matchup": "MeatZn @ Finishers",
+        "sport_key": "esports",
+        "surface": "GET /api/events?status=live",
         "surface_copy_age": {
           "cache_status": null,
-          "copy_age_seconds": 114.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T18:58:48.482415+00:00",
-          "reading_age_seconds": null,
-          "reading_age_source": null,
-          "reading_observed_at": null,
-          "summary": "copy 115s, read ?"
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:28.314387+00:00",
+          "reading_age_seconds": 0.2,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:21:26.820676+00:00",
+          "summary": "copy ?, read 0s"
         },
-        "surface_value": 52
+        "surface_value": 57
       },
       {
         "detail_copy_age": {
           "cache_status": "cached",
           "copy_age_seconds": 6.7,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:59:06.480880+00:00",
-          "reading_age_seconds": 31.7,
+          "fetched_at": "2026-11-28T10:21:53.436391+00:00",
+          "reading_age_seconds": 7.6,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:58:34.316514+00:00",
-          "summary": "copy 7s (cached), read 32s"
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 7s (cached), read 8s"
         },
-        "detail_value": 93,
-        "event_id": 15351853,
-        "fetch_gap_seconds": 3.0,
-        "field": "source.polymarket",
-        "matchup": "1. FC N\u00fcrnberg @ 1. FC Heidenheim",
-        "sport_key": "soccer_germany_bundesliga2",
+        "detail_value": 32,
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.4,
+        "field": "headline_percent",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
         "surface": "GET /api/events/search",
         "surface_copy_age": {
           "cache_status": "hit",
           "copy_age_seconds": null,
           "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:59:03.459535+00:00",
-          "reading_age_seconds": 96.6,
+          "fetched_at": "2026-11-28T10:21:50.054312+00:00",
+          "reading_age_seconds": 83.0,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:57:25.378404+00:00",
-          "summary": "copy ? (hit), read 97s"
+          "reading_observed_at": "2026-11-28T10:20:26.047371+00:00",
+          "summary": "copy ? (hit), read 83s"
         },
-        "surface_value": 92
+        "surface_value": 26
       },
       {
         "detail_copy_age": {
           "cache_status": "cached",
           "copy_age_seconds": 6.7,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:18.488036+00:00",
-          "reading_age_seconds": 9.7,
+          "fetched_at": "2026-11-28T10:21:53.436391+00:00",
+          "reading_age_seconds": 7.6,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:03:08.339426+00:00",
-          "summary": "copy 7s (cached), read 10s"
-        },
-        "detail_value": 77,
-        "event_id": 15354992,
-        "fetch_gap_seconds": 3.5,
-        "field": "headline_percent",
-        "matchup": "Aurora @ PARIVISION",
-        "sport_key": "esports",
-        "surface": "GET /api/events?status=live",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": null,
-          "copy_age_source": null,
-          "fetched_at": "2026-11-27T19:03:14.994123+00:00",
-          "reading_age_seconds": 0.3,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T19:03:13.662044+00:00",
-          "summary": "copy ?, read 0s"
-        },
-        "surface_value": 76
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 6.7,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:18.488036+00:00",
-          "reading_age_seconds": 9.7,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:03:08.339426+00:00",
-          "summary": "copy 7s (cached), read 10s"
-        },
-        "detail_value": 78,
-        "event_id": 15354992,
-        "fetch_gap_seconds": 3.5,
-        "field": "source.polymarket",
-        "matchup": "Aurora @ PARIVISION",
-        "sport_key": "esports",
-        "surface": "GET /api/events?status=live",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": null,
-          "copy_age_source": null,
-          "fetched_at": "2026-11-27T19:03:14.994123+00:00",
-          "reading_age_seconds": 0.3,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T19:03:13.662044+00:00",
-          "summary": "copy ?, read 0s"
-        },
-        "surface_value": 77
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 6.9,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:29.286854+00:00",
-          "reading_age_seconds": 10.4,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:03:18.552559+00:00",
-          "summary": "copy 7s (cached), read 10s"
-        },
-        "detail_value": 20,
-        "event_id": 15353868,
-        "fetch_gap_seconds": 3.4,
-        "field": "headline_percent",
-        "matchup": "Germany @ Latvia",
-        "sport_key": "basketball_other",
-        "surface": "GET /api/events?status=live",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": null,
-          "copy_age_source": null,
-          "fetched_at": "2026-11-27T19:03:25.843559+00:00",
-          "reading_age_seconds": 1.4,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T19:03:23.617077+00:00",
-          "summary": "copy ?, read 1s"
-        },
-        "surface_value": 19
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 20.1,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:54.492646+00:00",
-          "reading_age_seconds": 32.1,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-          "summary": "copy 20s (cached), read 32s"
-        },
-        "detail_value": 35,
-        "event_id": 15351517,
-        "fetch_gap_seconds": 3.5,
-        "field": "headline_percent",
-        "matchup": "Buffalo Bulls @ Akron Zips",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/leagues/americanfootball_ncaaf",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 453.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T19:03:51.020013+00:00",
-          "reading_age_seconds": 576.1,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:54:13.903696+00:00",
-          "summary": "copy 7.6m, read 9.6m"
-        },
-        "surface_value": 41
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 20.1,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:54.492646+00:00",
-          "reading_age_seconds": 32.1,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-          "summary": "copy 20s (cached), read 32s"
-        },
-        "detail_value": 37,
-        "event_id": 15351517,
-        "fetch_gap_seconds": 3.5,
-        "field": "source.betting",
-        "matchup": "Buffalo Bulls @ Akron Zips",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/leagues/americanfootball_ncaaf",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 453.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T19:03:51.020013+00:00",
-          "reading_age_seconds": 576.1,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:54:13.903696+00:00",
-          "summary": "copy 7.6m, read 9.6m"
-        },
-        "surface_value": 38
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 20.1,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:54.492646+00:00",
-          "reading_age_seconds": 32.1,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-          "summary": "copy 20s (cached), read 32s"
-        },
-        "detail_value": 30,
-        "event_id": 15351517,
-        "fetch_gap_seconds": 3.5,
-        "field": "source.espn",
-        "matchup": "Buffalo Bulls @ Akron Zips",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/leagues/americanfootball_ncaaf",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 453.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T19:03:51.020013+00:00",
-          "reading_age_seconds": 576.1,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:54:13.903696+00:00",
-          "summary": "copy 7.6m, read 9.6m"
-        },
-        "surface_value": 36
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 20.1,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:54.492646+00:00",
-          "reading_age_seconds": 32.1,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-          "summary": "copy 20s (cached), read 32s"
-        },
-        "detail_value": 37,
-        "event_id": 15351517,
-        "fetch_gap_seconds": 3.5,
-        "field": "source.polymarket",
-        "matchup": "Buffalo Bulls @ Akron Zips",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/leagues/americanfootball_ncaaf",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 453.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T19:03:51.020013+00:00",
-          "reading_age_seconds": 576.1,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:54:13.903696+00:00",
-          "summary": "copy 7.6m, read 9.6m"
-        },
-        "surface_value": 45
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 20.1,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:54.492646+00:00",
-          "reading_age_seconds": 32.1,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-          "summary": "copy 20s (cached), read 32s"
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 7s (cached), read 8s"
         },
         "detail_value": 33,
-        "event_id": 15351517,
-        "fetch_gap_seconds": 3.5,
-        "field": "source.stat_model",
-        "matchup": "Buffalo Bulls @ Akron Zips",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/leagues/americanfootball_ncaaf",
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.4,
+        "field": "source.kalshi",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events/search",
         "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": 453.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T19:03:51.020013+00:00",
-          "reading_age_seconds": 576.1,
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:50.054312+00:00",
+          "reading_age_seconds": 83.0,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:54:13.903696+00:00",
-          "summary": "copy 7.6m, read 9.6m"
+          "reading_observed_at": "2026-11-28T10:20:26.047371+00:00",
+          "summary": "copy ? (hit), read 83s"
         },
-        "surface_value": 45
-      }
-    ],
-    "disagreements_count": 23,
-    "games_selected": 60,
-    "games_verified": 60,
-    "live_tick_drifts": [
+        "surface_value": 27
+      },
       {
         "detail_copy_age": {
           "cache_status": "cached",
-          "copy_age_seconds": 20.9,
+          "copy_age_seconds": 6.7,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:58:19.679488+00:00",
-          "reading_age_seconds": 35.7,
+          "fetched_at": "2026-11-28T10:21:53.436391+00:00",
+          "reading_age_seconds": 7.6,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-          "summary": "copy 21s (cached), read 36s"
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 7s (cached), read 8s"
         },
-        "event_id": 15300207,
-        "fetch_gap_seconds": 3.5,
-        "initial_diffs": [
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:57:58.149558+00:00",
-              "reading_age_seconds": 13.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-              "summary": "copy 0s (fresh), read 14s"
-            },
-            "detail_value": 70,
-            "event_id": 15300207,
-            "fetch_gap_seconds": 105.5,
-            "field": "headline_percent",
-            "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 42.1,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:28.867793+00:00",
-              "summary": "copy 23s (page_base_hit), read 42s"
-            },
-            "surface_value": 67
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:57:58.149558+00:00",
-              "reading_age_seconds": 13.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-              "summary": "copy 0s (fresh), read 14s"
-            },
-            "detail_value": 67,
-            "event_id": 15300207,
-            "fetch_gap_seconds": 105.5,
-            "field": "source.betting",
-            "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 42.1,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:28.867793+00:00",
-              "summary": "copy 23s (page_base_hit), read 42s"
-            },
-            "surface_value": 66
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:57:58.149558+00:00",
-              "reading_age_seconds": 13.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-              "summary": "copy 0s (fresh), read 14s"
-            },
-            "detail_value": 72,
-            "event_id": 15300207,
-            "fetch_gap_seconds": 105.5,
-            "field": "source.espn",
-            "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 42.1,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:28.867793+00:00",
-              "summary": "copy 23s (page_base_hit), read 42s"
-            },
-            "surface_value": 71
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:57:58.149558+00:00",
-              "reading_age_seconds": 13.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-              "summary": "copy 0s (fresh), read 14s"
-            },
-            "detail_value": 73,
-            "event_id": 15300207,
-            "fetch_gap_seconds": 105.5,
-            "field": "source.polymarket",
-            "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 42.1,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:28.867793+00:00",
-              "summary": "copy 23s (page_base_hit), read 42s"
-            },
-            "surface_value": 67
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:57:58.149558+00:00",
-              "reading_age_seconds": 13.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-              "summary": "copy 0s (fresh), read 14s"
-            },
-            "detail_value": 68,
-            "event_id": 15300207,
-            "fetch_gap_seconds": 105.5,
-            "field": "source.stat_model",
-            "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 42.1,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:28.867793+00:00",
-              "summary": "copy 23s (page_base_hit), read 42s"
-            },
-            "surface_value": 69
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:57:58.149558+00:00",
-              "reading_age_seconds": 13.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-              "summary": "copy 0s (fresh), read 14s"
-            },
-            "detail_value": 7,
-            "event_id": 15300207,
-            "fetch_gap_seconds": 105.5,
-            "field": "bookmaker_count",
-            "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 42.1,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:28.867793+00:00",
-              "summary": "copy 23s (page_base_hit), read 42s"
-            },
-            "surface_value": 6
-          }
-        ],
-        "is_live": true,
-        "matchup": "Mississippi State Bulldogs @ Ole Miss Rebels",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/feed?mode=sports",
+        "detail_value": 33,
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.4,
+        "field": "source.polymarket",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events/search",
         "surface_copy_age": {
-          "cache_status": "page_base_hit",
-          "copy_age_seconds": 27.2,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T18:58:16.216563+00:00",
-          "reading_age_seconds": 31.7,
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:50.054312+00:00",
+          "reading_age_seconds": 83.0,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:57:43.273231+00:00",
-          "summary": "copy 27s (page_base_hit), read 32s"
-        }
+          "reading_observed_at": "2026-11-28T10:20:26.047371+00:00",
+          "summary": "copy ? (hit), read 83s"
+        },
+        "surface_value": 27
       },
       {
         "detail_copy_age": {
           "cache_status": "cached",
           "copy_age_seconds": 13.7,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:59:13.681430+00:00",
-          "reading_age_seconds": 38.7,
+          "fetched_at": "2026-11-28T10:22:00.638972+00:00",
+          "reading_age_seconds": 14.6,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:58:34.316514+00:00",
-          "summary": "copy 14s (cached), read 39s"
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 14s (cached), read 15s"
         },
-        "event_id": 15351853,
+        "detail_value": 32,
+        "event_id": 15355161,
         "fetch_gap_seconds": 3.5,
-        "initial_diffs": [
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:58:59.370401+00:00",
-              "reading_age_seconds": 24.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T18:58:34.316514+00:00",
-              "summary": "copy 0s (fresh), read 25s"
-            },
-            "detail_value": 91,
-            "event_id": 15351853,
-            "fetch_gap_seconds": 167.3,
-            "field": "headline_percent",
-            "matchup": "1. FC N\u00fcrnberg @ 1. FC Heidenheim",
-            "sport_key": "soccer_germany_bundesliga2",
-            "surface": "GET /api/events?status=live",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:12.038103+00:00",
-              "reading_age_seconds": 10.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:57.849118+00:00",
-              "summary": "copy ?, read 10s"
-            },
-            "surface_value": 90
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:58:59.370401+00:00",
-              "reading_age_seconds": 24.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T18:58:34.316514+00:00",
-              "summary": "copy 0s (fresh), read 25s"
-            },
-            "detail_value": 90,
-            "event_id": 15351853,
-            "fetch_gap_seconds": 167.3,
-            "field": "source.betting",
-            "matchup": "1. FC N\u00fcrnberg @ 1. FC Heidenheim",
-            "sport_key": "soccer_germany_bundesliga2",
-            "surface": "GET /api/events?status=live",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:12.038103+00:00",
-              "reading_age_seconds": 10.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:57.849118+00:00",
-              "summary": "copy ?, read 10s"
-            },
-            "surface_value": 89
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:58:59.370401+00:00",
-              "reading_age_seconds": 24.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T18:58:34.316514+00:00",
-              "summary": "copy 0s (fresh), read 25s"
-            },
-            "detail_value": 93,
-            "event_id": 15351853,
-            "fetch_gap_seconds": 167.3,
-            "field": "source.polymarket",
-            "matchup": "1. FC N\u00fcrnberg @ 1. FC Heidenheim",
-            "sport_key": "soccer_germany_bundesliga2",
-            "surface": "GET /api/events?status=live",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:12.038103+00:00",
-              "reading_age_seconds": 10.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:57.849118+00:00",
-              "summary": "copy ?, read 10s"
-            },
-            "surface_value": 92
-          }
-        ],
-        "is_live": true,
-        "matchup": "1. FC N\u00fcrnberg @ 1. FC Heidenheim",
-        "sport_key": "soccer_germany_bundesliga2",
+        "field": "headline_percent",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
         "surface": "GET /api/events?status=live",
         "surface_copy_age": {
           "cache_status": null,
           "copy_age_seconds": null,
           "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:59:10.162781+00:00",
-          "reading_age_seconds": 0.0,
+          "fetched_at": "2026-11-28T10:21:57.138296+00:00",
+          "reading_age_seconds": 2.4,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:59:09.211250+00:00",
-          "summary": "copy ?, read 0s"
-        }
+          "reading_observed_at": "2026-11-28T10:21:53.611607+00:00",
+          "summary": "copy ?, read 2s"
+        },
+        "surface_value": 27
       },
       {
         "detail_copy_age": {
           "cache_status": "cached",
-          "copy_age_seconds": 6.1,
+          "copy_age_seconds": 13.7,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:59:28.080645+00:00",
-          "reading_age_seconds": 27.0,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:58:59.953601+00:00",
-          "summary": "copy 6s (cached), read 27s"
+          "fetched_at": "2026-11-28T10:22:00.638972+00:00",
+          "reading_age_seconds": 14.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 14s (cached), read 15s"
         },
-        "detail_status": "completed",
-        "event_id": 15351831,
-        "fetch_gap_seconds": 196.0,
-        "initial_diffs": [
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:59:20.944526+00:00",
-              "reading_age_seconds": 20.0,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:58:59.953601+00:00",
-              "summary": "copy 0s (fresh), read 20s"
-            },
-            "detail_value": 8,
-            "event_id": 15351831,
-            "fetch_gap_seconds": 188.9,
-            "field": "bookmaker_count",
-            "matchup": "Piast Gliwice @ Rak\u00f3w Cz\u0119stochowa",
-            "sport_key": "soccer_poland_ekstraklasa",
-            "surface": "GET /api/events?status=live",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:12.038103+00:00",
-              "reading_age_seconds": 5.6,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:56:02.354411+00:00",
-              "summary": "copy ?, read 6s"
-            },
-            "surface_value": 5
-          }
-        ],
-        "is_live": false,
-        "matchup": "Piast Gliwice @ Rak\u00f3w Cz\u0119stochowa",
-        "reason": "status_transitioned_off_surface:live->completed",
-        "sport_key": "soccer_poland_ekstraklasa",
+        "detail_value": 33,
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.5,
+        "field": "source.kalshi",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
         "surface": "GET /api/events?status=live",
         "surface_copy_age": {
           "cache_status": null,
           "copy_age_seconds": null,
           "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:56:12.038103+00:00",
-          "reading_age_seconds": 5.6,
+          "fetched_at": "2026-11-28T10:21:57.138296+00:00",
+          "reading_age_seconds": 2.4,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:56:02.354411+00:00",
-          "summary": "copy ?, read 6s"
-        }
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 17.1,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T18:59:38.884337+00:00",
-          "reading_age_seconds": 38.0,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:58:59.953601+00:00",
-          "summary": "copy 17s (cached), read 38s"
+          "reading_observed_at": "2026-11-28T10:21:53.611607+00:00",
+          "summary": "copy ?, read 2s"
         },
-        "event_id": 15351831,
-        "fetch_gap_seconds": 3.1,
-        "initial_diffs": [
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:59:20.944526+00:00",
-              "reading_age_seconds": 20.0,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:58:59.953601+00:00",
-              "summary": "copy 0s (fresh), read 20s"
-            },
-            "detail_value": 8,
-            "event_id": 15351831,
-            "fetch_gap_seconds": 188.3,
-            "field": "bookmaker_count",
-            "matchup": "Piast Gliwice @ Rak\u00f3w Cz\u0119stochowa",
-            "sport_key": "soccer_poland_ekstraklasa",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 69.0,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:02.021082+00:00",
-              "summary": "copy 23s (page_base_hit), read 69s"
-            },
-            "surface_value": 5
-          }
-        ],
-        "is_live": false,
-        "matchup": "Piast Gliwice @ Rak\u00f3w Cz\u0119stochowa",
-        "sport_key": "soccer_poland_ekstraklasa",
-        "surface": "GET /api/feed?mode=sports",
-        "surface_copy_age": {
-          "cache_status": "page_base_hit",
-          "copy_age_seconds": 7.8,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T18:59:35.800141+00:00",
-          "reading_age_seconds": 35.0,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:58:59.953601+00:00",
-          "summary": "copy 8s (page_base_hit), read 35s"
-        }
+        "surface_value": 28
       },
       {
         "detail_copy_age": {
           "cache_status": "cached",
-          "copy_age_seconds": 6.1,
+          "copy_age_seconds": 13.7,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:00:04.083468+00:00",
-          "reading_age_seconds": 11.7,
+          "fetched_at": "2026-11-28T10:22:00.638972+00:00",
+          "reading_age_seconds": 14.6,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T18:59:51.301828+00:00",
-          "summary": "copy 6s (cached), read 12s"
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 14s (cached), read 15s"
         },
-        "event_id": 15354449,
-        "fetch_gap_seconds": 3.3,
-        "initial_diffs": [
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T18:59:56.962116+00:00",
-              "reading_age_seconds": 4.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T18:59:51.301828+00:00",
-              "summary": "copy 0s (fresh), read 5s"
-            },
-            "detail_value": 21,
-            "event_id": 15354449,
-            "fetch_gap_seconds": 228.0,
-            "field": "bookmaker_count",
-            "matchup": "Dallas Stars @ St Louis Blues",
-            "sport_key": "icehockey_nhl",
-            "surface": "GET /api/events?status=scheduled",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-              "reading_age_seconds": 11.6,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:49.425748+00:00",
-              "summary": "copy ?, read 12s"
-            },
-            "surface_value": 20
-          }
-        ],
-        "is_live": false,
-        "matchup": "Dallas Stars @ St Louis Blues",
-        "sport_key": "icehockey_nhl",
-        "surface": "GET /api/events?status=scheduled",
+        "detail_value": 33,
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.5,
+        "field": "source.polymarket",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events?status=live",
         "surface_copy_age": {
           "cache_status": null,
           "copy_age_seconds": null,
           "copy_age_source": null,
-          "fetched_at": "2026-11-27T19:00:00.743778+00:00",
-          "reading_age_seconds": 0.5,
+          "fetched_at": "2026-11-28T10:21:57.138296+00:00",
+          "reading_age_seconds": 2.4,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:59:58.500069+00:00",
-          "summary": "copy ?, read 0s"
-        }
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 6.3,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:01:26.885831+00:00",
-          "reading_age_seconds": 8.6,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:01:17.394047+00:00",
-          "summary": "copy 6s (cached), read 9s"
+          "reading_observed_at": "2026-11-28T10:21:53.611607+00:00",
+          "summary": "copy ?, read 2s"
         },
-        "event_id": 15344976,
-        "fetch_gap_seconds": 3.4,
-        "initial_diffs": [
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:01:19.735478+00:00",
-              "reading_age_seconds": 0.6,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:01:17.394047+00:00",
-              "summary": "copy 0s (fresh), read 1s"
-            },
-            "detail_value": 48,
-            "event_id": 15344976,
-            "fetch_gap_seconds": 310.8,
-            "field": "source.polymarket",
-            "matchup": "Real Racing Club de Santander @ Levante",
-            "sport_key": "soccer_spain_la_liga",
-            "surface": "GET /api/events?status=scheduled",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-              "reading_age_seconds": 112.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:54:08.751843+00:00",
-              "summary": "copy ?, read 112s"
-            },
-            "surface_value": 49
-          }
-        ],
-        "is_live": false,
-        "matchup": "Real Racing Club de Santander @ Levante",
-        "sport_key": "soccer_spain_la_liga",
-        "surface": "GET /api/events?status=scheduled",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": null,
-          "copy_age_source": null,
-          "fetched_at": "2026-11-27T19:01:23.509626+00:00",
-          "reading_age_seconds": 5.6,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T19:01:17.394047+00:00",
-          "summary": "copy ?, read 6s"
-        }
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 13.3,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:01:34.084437+00:00",
-          "reading_age_seconds": 15.6,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:01:17.394047+00:00",
-          "summary": "copy 13s (cached), read 16s"
-        },
-        "event_id": 15344976,
-        "fetch_gap_seconds": 3.4,
-        "initial_diffs": [
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:01:19.735478+00:00",
-              "reading_age_seconds": 0.6,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:01:17.394047+00:00",
-              "summary": "copy 0s (fresh), read 1s"
-            },
-            "detail_value": 48,
-            "event_id": 15344976,
-            "fetch_gap_seconds": 307.1,
-            "field": "source.polymarket",
-            "matchup": "Real Racing Club de Santander @ Levante",
-            "sport_key": "soccer_spain_la_liga",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 122.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:54:08.751843+00:00",
-              "summary": "copy 23s (page_base_hit), read 2.0m"
-            },
-            "surface_value": 49
-          }
-        ],
-        "is_live": false,
-        "matchup": "Real Racing Club de Santander @ Levante",
-        "sport_key": "soccer_spain_la_liga",
-        "surface": "GET /api/feed?mode=sports",
-        "surface_copy_age": {
-          "cache_status": "page_base_stale_hit",
-          "copy_age_seconds": 45.7,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T19:01:30.644776+00:00",
-          "reading_age_seconds": 121.1,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:59:28.871918+00:00",
-          "summary": "copy 46s (page_base_stale_hit), read 2.0m"
-        }
+        "surface_value": 28
       },
       {
         "detail_copy_age": {
           "cache_status": "cached",
           "copy_age_seconds": 6.7,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:01:48.486338+00:00",
-          "reading_age_seconds": 28.8,
+          "fetched_at": "2026-11-28T10:22:11.438148+00:00",
+          "reading_age_seconds": 12.3,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:01:19.189931+00:00",
-          "summary": "copy 7s (cached), read 29s"
+          "reading_observed_at": "2026-11-28T10:21:58.657183+00:00",
+          "summary": "copy 7s (cached), read 12s"
         },
-        "event_id": 15352066,
-        "fetch_gap_seconds": 3.5,
-        "initial_diffs": [
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:01:41.332480+00:00",
-              "reading_age_seconds": 20.8,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:01:19.189931+00:00",
-              "summary": "copy 0s (fresh), read 21s"
-            },
-            "detail_value": 40,
-            "event_id": 15352066,
-            "fetch_gap_seconds": 332.4,
-            "field": "headline_percent",
-            "matchup": "Inter Miami CF @ Columbus Crew SC",
-            "sport_key": "soccer_usa_mls",
-            "surface": "GET /api/events?status=scheduled",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-              "reading_age_seconds": 274.5,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:51:26.514722+00:00",
-              "summary": "copy ?, read 4.6m"
-            },
-            "surface_value": 41
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:01:41.332480+00:00",
-              "reading_age_seconds": 20.8,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:01:19.189931+00:00",
-              "summary": "copy 0s (fresh), read 21s"
-            },
-            "detail_value": 40,
-            "event_id": 15352066,
-            "fetch_gap_seconds": 332.4,
-            "field": "source.betting",
-            "matchup": "Inter Miami CF @ Columbus Crew SC",
-            "sport_key": "soccer_usa_mls",
-            "surface": "GET /api/events?status=scheduled",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-              "reading_age_seconds": 274.5,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:51:26.514722+00:00",
-              "summary": "copy ?, read 4.6m"
-            },
-            "surface_value": 41
-          }
-        ],
-        "is_live": false,
-        "matchup": "Inter Miami CF @ Columbus Crew SC",
-        "sport_key": "soccer_usa_mls",
-        "surface": "GET /api/events?status=scheduled",
+        "detail_value": 16,
+        "event_id": 15352125,
+        "fetch_gap_seconds": 3.2,
+        "field": "headline_percent",
+        "matchup": "Auckland FC @ Central Coast Mariners",
+        "sport_key": "soccer_australia_aleague",
+        "surface": "GET /api/events/search",
         "surface_copy_age": {
-          "cache_status": null,
+          "cache_status": "hit",
           "copy_age_seconds": null,
           "copy_age_source": null,
-          "fetched_at": "2026-11-27T19:01:44.990613+00:00",
-          "reading_age_seconds": 24.8,
+          "fetched_at": "2026-11-28T10:22:08.251097+00:00",
+          "reading_age_seconds": 119.1,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T19:01:19.189931+00:00",
-          "summary": "copy ?, read 25s"
-        }
+          "reading_observed_at": "2026-11-28T10:20:07.878395+00:00",
+          "summary": "copy ? (hit), read 119s"
+        },
+        "surface_value": 17
       },
       {
         "detail_copy_age": {
-          "cache_status": "fresh",
-          "copy_age_seconds": 0.0,
+          "cache_status": "cached",
+          "copy_age_seconds": 6.7,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:00.622851+00:00",
-          "reading_age_seconds": 18.7,
+          "fetched_at": "2026-11-28T10:22:11.438148+00:00",
+          "reading_age_seconds": 12.3,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:02:40.328855+00:00",
-          "summary": "copy 0s (fresh), read 19s"
+          "reading_observed_at": "2026-11-28T10:21:58.657183+00:00",
+          "summary": "copy 7s (cached), read 12s"
         },
-        "detail_status": "live",
-        "event_id": 15354717,
-        "fetch_gap_seconds": 411.7,
+        "detail_value": 16,
+        "event_id": 15352125,
+        "fetch_gap_seconds": 3.2,
+        "field": "source.betting",
+        "matchup": "Auckland FC @ Central Coast Mariners",
+        "sport_key": "soccer_australia_aleague",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:22:08.251097+00:00",
+          "reading_age_seconds": 119.1,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:07.878395+00:00",
+          "summary": "copy ? (hit), read 119s"
+        },
+        "surface_value": 17
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:11.438148+00:00",
+          "reading_age_seconds": 12.3,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:58.657183+00:00",
+          "summary": "copy 7s (cached), read 12s"
+        },
+        "detail_value": 16,
+        "event_id": 15352125,
+        "fetch_gap_seconds": 3.2,
+        "field": "source.polymarket",
+        "matchup": "Auckland FC @ Central Coast Mariners",
+        "sport_key": "soccer_australia_aleague",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:22:08.251097+00:00",
+          "reading_age_seconds": 119.1,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:07.878395+00:00",
+          "summary": "copy ? (hit), read 119s"
+        },
+        "surface_value": 17
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:18.639916+00:00",
+          "reading_age_seconds": 19.3,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:58.657183+00:00",
+          "summary": "copy 14s (cached), read 19s"
+        },
+        "detail_value": 16,
+        "event_id": 15352125,
+        "fetch_gap_seconds": 3.5,
+        "field": "headline_percent",
+        "matchup": "Auckland FC @ Central Coast Mariners",
+        "sport_key": "soccer_australia_aleague",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:22:15.158053+00:00",
+          "reading_age_seconds": 8.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:22:05.399014+00:00",
+          "summary": "copy ?, read 9s"
+        },
+        "surface_value": 15
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:18.639916+00:00",
+          "reading_age_seconds": 19.3,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:58.657183+00:00",
+          "summary": "copy 14s (cached), read 19s"
+        },
+        "detail_value": 16,
+        "event_id": 15352125,
+        "fetch_gap_seconds": 3.5,
+        "field": "source.polymarket",
+        "matchup": "Auckland FC @ Central Coast Mariners",
+        "sport_key": "soccer_australia_aleague",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:22:15.158053+00:00",
+          "reading_age_seconds": 8.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:22:05.399014+00:00",
+          "summary": "copy ?, read 9s"
+        },
+        "surface_value": 15
+      }
+    ],
+    "disagreements_count": 16,
+    "games_selected": 60,
+    "games_verified": 60,
+    "live_tick_drifts": [
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:13.836924+00:00",
+          "reading_age_seconds": 15.5,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:20:57.476929+00:00",
+          "summary": "copy 14s (cached), read 16s"
+        },
+        "event_id": 15352551,
+        "fetch_gap_seconds": 3.4,
         "initial_diffs": [
           {
             "detail_copy_age": {
               "cache_status": "fresh",
               "copy_age_seconds": 0.0,
               "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:02:53.387013+00:00",
-              "reading_age_seconds": 11.7,
+              "fetched_at": "2026-11-28T10:21:00.919794+00:00",
+              "reading_age_seconds": 1.5,
               "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:02:40.328855+00:00",
-              "summary": "copy 0s (fresh), read 12s"
+              "reading_observed_at": "2026-11-28T10:20:57.476929+00:00",
+              "summary": "copy 0s (fresh), read 2s"
             },
-            "detail_value": 53,
-            "event_id": 15354717,
-            "fetch_gap_seconds": 404.5,
-            "field": "source.betting",
-            "matchup": "Fresno St Bulldogs @ South Alabama Jaguars",
-            "sport_key": "basketball_ncaab",
-            "surface": "GET /api/events?status=scheduled",
+            "detail_value": 96,
+            "event_id": 15352551,
+            "fetch_gap_seconds": 98.5,
+            "field": "source.polymarket",
+            "matchup": "Persijap Jepara @ Psim Yogyakarta",
+            "sport_key": "soccer_other",
+            "surface": "GET /api/events?status=live",
             "surface_copy_age": {
               "cache_status": null,
               "copy_age_seconds": null,
               "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-              "reading_age_seconds": 21.2,
+              "fetched_at": "2026-11-28T10:19:22.381149+00:00",
+              "reading_age_seconds": 32.1,
               "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.752564+00:00",
-              "summary": "copy ?, read 21s"
+              "reading_observed_at": "2026-11-28T10:18:49.939776+00:00",
+              "summary": "copy ?, read 32s"
             },
-            "surface_value": 54
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:02:53.387013+00:00",
-              "reading_age_seconds": 11.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:02:40.328855+00:00",
-              "summary": "copy 0s (fresh), read 12s"
-            },
-            "detail_value": [
-              "betting",
-              "polymarket",
-              "stat_model"
-            ],
-            "event_id": 15354717,
-            "fetch_gap_seconds": 404.5,
-            "field": "source_keys",
-            "matchup": "Fresno St Bulldogs @ South Alabama Jaguars",
-            "sport_key": "basketball_ncaab",
-            "surface": "GET /api/events?status=scheduled",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-              "reading_age_seconds": 21.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.752564+00:00",
-              "summary": "copy ?, read 21s"
-            },
-            "surface_value": [
-              "betting",
-              "polymarket"
-            ]
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:02:53.387013+00:00",
-              "reading_age_seconds": 11.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:02:40.328855+00:00",
-              "summary": "copy 0s (fresh), read 12s"
-            },
-            "detail_value": 19,
-            "event_id": 15354717,
-            "fetch_gap_seconds": 404.5,
-            "field": "bookmaker_count",
-            "matchup": "Fresno St Bulldogs @ South Alabama Jaguars",
-            "sport_key": "basketball_ncaab",
-            "surface": "GET /api/events?status=scheduled",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-              "reading_age_seconds": 21.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.752564+00:00",
-              "summary": "copy ?, read 21s"
-            },
-            "surface_value": 18
+            "surface_value": 92
           }
         ],
         "is_live": true,
-        "matchup": "Fresno St Bulldogs @ South Alabama Jaguars",
-        "reason": "status_transitioned_off_surface:scheduled->live",
-        "sport_key": "basketball_ncaab",
-        "surface": "GET /api/events?status=scheduled",
+        "matchup": "Persijap Jepara @ Psim Yogyakarta",
+        "sport_key": "soccer_other",
+        "surface": "GET /api/events?status=live",
         "surface_copy_age": {
           "cache_status": null,
           "copy_age_seconds": null,
           "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-          "reading_age_seconds": 21.2,
+          "fetched_at": "2026-11-28T10:21:10.449903+00:00",
+          "reading_age_seconds": 12.5,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:55:39.752564+00:00",
-          "summary": "copy ?, read 21s"
+          "reading_observed_at": "2026-11-28T10:20:57.476929+00:00",
+          "summary": "copy ?, read 12s"
         }
       },
       {
@@ -1557,13 +556,13 @@
           "cache_status": "cached",
           "copy_age_seconds": 6.5,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:07.688019+00:00",
-          "reading_age_seconds": 26.7,
+          "fetched_at": "2026-11-28T10:21:42.637969+00:00",
+          "reading_age_seconds": 20.1,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:02:40.328855+00:00",
-          "summary": "copy 6s (cached), read 27s"
+          "reading_observed_at": "2026-11-28T10:21:21.869444+00:00",
+          "summary": "copy 6s (cached), read 20s"
         },
-        "event_id": 15354717,
+        "event_id": 15355002,
         "fetch_gap_seconds": 3.5,
         "initial_diffs": [
           {
@@ -1571,185 +570,28 @@
               "cache_status": "fresh",
               "copy_age_seconds": 0.0,
               "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:02:53.387013+00:00",
-              "reading_age_seconds": 11.7,
+              "fetched_at": "2026-11-28T10:21:35.782575+00:00",
+              "reading_age_seconds": 13.1,
               "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:02:40.328855+00:00",
-              "summary": "copy 0s (fresh), read 12s"
+              "reading_observed_at": "2026-11-28T10:21:21.869444+00:00",
+              "summary": "copy 0s (fresh), read 13s"
             },
-            "detail_value": 53,
-            "event_id": 15354717,
-            "fetch_gap_seconds": 400.7,
-            "field": "source.betting",
-            "matchup": "Fresno St Bulldogs @ South Alabama Jaguars",
-            "sport_key": "basketball_ncaab",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 31.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.752564+00:00",
-              "summary": "copy 23s (page_base_hit), read 31s"
-            },
-            "surface_value": 54
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:02:53.387013+00:00",
-              "reading_age_seconds": 11.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:02:40.328855+00:00",
-              "summary": "copy 0s (fresh), read 12s"
-            },
-            "detail_value": [
-              "betting",
-              "polymarket",
-              "stat_model"
-            ],
-            "event_id": 15354717,
-            "fetch_gap_seconds": 400.7,
-            "field": "source_keys",
-            "matchup": "Fresno St Bulldogs @ South Alabama Jaguars",
-            "sport_key": "basketball_ncaab",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 31.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.752564+00:00",
-              "summary": "copy 23s (page_base_hit), read 31s"
-            },
-            "surface_value": [
-              "betting",
-              "polymarket"
-            ]
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:02:53.387013+00:00",
-              "reading_age_seconds": 11.7,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:02:40.328855+00:00",
-              "summary": "copy 0s (fresh), read 12s"
-            },
-            "detail_value": 19,
-            "event_id": 15354717,
-            "fetch_gap_seconds": 400.7,
-            "field": "bookmaker_count",
-            "matchup": "Fresno St Bulldogs @ South Alabama Jaguars",
-            "sport_key": "basketball_ncaab",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 31.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.752564+00:00",
-              "summary": "copy 23s (page_base_hit), read 31s"
-            },
-            "surface_value": 18
-          }
-        ],
-        "is_live": true,
-        "matchup": "Fresno St Bulldogs @ South Alabama Jaguars",
-        "sport_key": "basketball_ncaab",
-        "surface": "GET /api/feed?mode=sports",
-        "surface_copy_age": {
-          "cache_status": "page_base_hit",
-          "copy_age_seconds": 22.4,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T19:03:04.200414+00:00",
-          "reading_age_seconds": 40.0,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T19:02:23.953871+00:00",
-          "summary": "copy 22s (page_base_hit), read 40s"
-        }
-      },
-      {
-        "detail_copy_age": {
-          "cache_status": "cached",
-          "copy_age_seconds": 6.1,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:40.093406+00:00",
-          "reading_age_seconds": 18.1,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-          "summary": "copy 6s (cached), read 18s"
-        },
-        "event_id": 15351517,
-        "fetch_gap_seconds": 2.0,
-        "initial_diffs": [
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:03:33.037810+00:00",
-              "reading_age_seconds": 11.1,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-              "summary": "copy 0s (fresh), read 11s"
-            },
-            "detail_value": 35,
-            "event_id": 15351517,
-            "fetch_gap_seconds": 441.0,
+            "detail_value": 41,
+            "event_id": 15355002,
+            "fetch_gap_seconds": 133.4,
             "field": "headline_percent",
-            "matchup": "Buffalo Bulls @ Akron Zips",
-            "sport_key": "americanfootball_ncaaf",
+            "matchup": "Kryon Esports @ GodLike Esports",
+            "sport_key": "esports_other",
             "surface": "GET /api/events?status=live",
             "surface_copy_age": {
               "cache_status": null,
               "copy_age_seconds": null,
               "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:12.038103+00:00",
-              "reading_age_seconds": 4.9,
+              "fetched_at": "2026-11-28T10:19:22.381149+00:00",
+              "reading_age_seconds": 6.9,
               "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:56:03.092404+00:00",
-              "summary": "copy ?, read 5s"
-            },
-            "surface_value": 40
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:03:33.037810+00:00",
-              "reading_age_seconds": 11.1,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-              "summary": "copy 0s (fresh), read 11s"
-            },
-            "detail_value": 37,
-            "event_id": 15351517,
-            "fetch_gap_seconds": 441.0,
-            "field": "source.betting",
-            "matchup": "Buffalo Bulls @ Akron Zips",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/events?status=live",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:12.038103+00:00",
-              "reading_age_seconds": 4.9,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:56:03.092404+00:00",
-              "summary": "copy ?, read 5s"
+              "reading_observed_at": "2026-11-28T10:19:15.054285+00:00",
+              "summary": "copy ?, read 7s"
             },
             "surface_value": 38
           },
@@ -1758,58 +600,88 @@
               "cache_status": "fresh",
               "copy_age_seconds": 0.0,
               "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:03:33.037810+00:00",
-              "reading_age_seconds": 11.1,
+              "fetched_at": "2026-11-28T10:21:35.782575+00:00",
+              "reading_age_seconds": 13.1,
               "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-              "summary": "copy 0s (fresh), read 11s"
+              "reading_observed_at": "2026-11-28T10:21:21.869444+00:00",
+              "summary": "copy 0s (fresh), read 13s"
             },
-            "detail_value": 30,
-            "event_id": 15351517,
-            "fetch_gap_seconds": 441.0,
-            "field": "source.espn",
-            "matchup": "Buffalo Bulls @ Akron Zips",
-            "sport_key": "americanfootball_ncaaf",
+            "detail_value": 42,
+            "event_id": 15355002,
+            "fetch_gap_seconds": 133.4,
+            "field": "source.kalshi",
+            "matchup": "Kryon Esports @ GodLike Esports",
+            "sport_key": "esports_other",
             "surface": "GET /api/events?status=live",
             "surface_copy_age": {
               "cache_status": null,
               "copy_age_seconds": null,
               "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:12.038103+00:00",
-              "reading_age_seconds": 4.9,
+              "fetched_at": "2026-11-28T10:19:22.381149+00:00",
+              "reading_age_seconds": 6.9,
               "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:56:03.092404+00:00",
-              "summary": "copy ?, read 5s"
+              "reading_observed_at": "2026-11-28T10:19:15.054285+00:00",
+              "summary": "copy ?, read 7s"
             },
-            "surface_value": 31
-          },
+            "surface_value": 39
+          }
+        ],
+        "is_live": true,
+        "matchup": "Kryon Esports @ GodLike Esports",
+        "sport_key": "esports_other",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:39.129772+00:00",
+          "reading_age_seconds": 16.1,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:21:21.869444+00:00",
+          "summary": "copy ?, read 16s"
+        }
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:25:00.645776+00:00",
+          "reading_age_seconds": 10.9,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:24:49.146920+00:00",
+          "summary": "copy 6s (cached), read 11s"
+        },
+        "event_id": 15355349,
+        "fetch_gap_seconds": 3.5,
+        "initial_diffs": [
           {
             "detail_copy_age": {
               "cache_status": "fresh",
               "copy_age_seconds": 0.0,
               "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:03:33.037810+00:00",
-              "reading_age_seconds": 11.1,
+              "fetched_at": "2026-11-28T10:24:53.785915+00:00",
+              "reading_age_seconds": 3.9,
               "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-              "summary": "copy 0s (fresh), read 11s"
+              "reading_observed_at": "2026-11-28T10:24:49.146920+00:00",
+              "summary": "copy 0s (fresh), read 4s"
             },
-            "detail_value": 37,
-            "event_id": 15351517,
-            "fetch_gap_seconds": 441.0,
-            "field": "source.polymarket",
-            "matchup": "Buffalo Bulls @ Akron Zips",
-            "sport_key": "americanfootball_ncaaf",
+            "detail_value": 45,
+            "event_id": 15355349,
+            "fetch_gap_seconds": 331.4,
+            "field": "headline_percent",
+            "matchup": "Direborn @ Ryvex Esports",
+            "sport_key": "esports",
             "surface": "GET /api/events?status=live",
             "surface_copy_age": {
               "cache_status": null,
               "copy_age_seconds": null,
               "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:12.038103+00:00",
-              "reading_age_seconds": 4.9,
+              "fetched_at": "2026-11-28T10:19:22.381149+00:00",
+              "reading_age_seconds": 7.6,
               "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:56:03.092404+00:00",
-              "summary": "copy ?, read 5s"
+              "reading_observed_at": "2026-11-28T10:19:14.354545+00:00",
+              "summary": "copy ?, read 8s"
             },
             "surface_value": 46
           },
@@ -1818,148 +690,88 @@
               "cache_status": "fresh",
               "copy_age_seconds": 0.0,
               "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:03:33.037810+00:00",
-              "reading_age_seconds": 11.1,
+              "fetched_at": "2026-11-28T10:24:53.785915+00:00",
+              "reading_age_seconds": 3.9,
               "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-              "summary": "copy 0s (fresh), read 11s"
+              "reading_observed_at": "2026-11-28T10:24:49.146920+00:00",
+              "summary": "copy 0s (fresh), read 4s"
             },
-            "detail_value": 33,
-            "event_id": 15351517,
-            "fetch_gap_seconds": 441.0,
-            "field": "source.stat_model",
-            "matchup": "Buffalo Bulls @ Akron Zips",
-            "sport_key": "americanfootball_ncaaf",
+            "detail_value": 46,
+            "event_id": 15355349,
+            "fetch_gap_seconds": 331.4,
+            "field": "source.kalshi",
+            "matchup": "Direborn @ Ryvex Esports",
+            "sport_key": "esports",
             "surface": "GET /api/events?status=live",
             "surface_copy_age": {
               "cache_status": null,
               "copy_age_seconds": null,
               "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:12.038103+00:00",
-              "reading_age_seconds": 4.9,
+              "fetched_at": "2026-11-28T10:19:22.381149+00:00",
+              "reading_age_seconds": 7.6,
               "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:56:03.092404+00:00",
-              "summary": "copy ?, read 5s"
+              "reading_observed_at": "2026-11-28T10:19:14.354545+00:00",
+              "summary": "copy ?, read 8s"
             },
-            "surface_value": 45
+            "surface_value": 47
           }
         ],
         "is_live": true,
-        "matchup": "Buffalo Bulls @ Akron Zips",
-        "sport_key": "americanfootball_ncaaf",
+        "matchup": "Direborn @ Ryvex Esports",
+        "sport_key": "esports",
         "surface": "GET /api/events?status=live",
         "surface_copy_age": {
           "cache_status": null,
           "copy_age_seconds": null,
           "copy_age_source": null,
-          "fetched_at": "2026-11-27T19:03:38.060216+00:00",
-          "reading_age_seconds": 15.1,
+          "fetched_at": "2026-11-28T10:24:57.144847+00:00",
+          "reading_age_seconds": 6.9,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-          "summary": "copy ?, read 15s"
+          "reading_observed_at": "2026-11-28T10:24:49.146920+00:00",
+          "summary": "copy ?, read 7s"
         }
       },
       {
         "detail_copy_age": {
           "cache_status": "cached",
-          "copy_age_seconds": 13.1,
+          "copy_age_seconds": 6.1,
           "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:03:47.291322+00:00",
-          "reading_age_seconds": 25.1,
+          "fetched_at": "2026-11-28T10:25:15.045492+00:00",
+          "reading_age_seconds": 169.6,
           "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-          "summary": "copy 13s (cached), read 25s"
+          "reading_observed_at": "2026-11-28T10:22:24.431261+00:00",
+          "summary": "copy 6s (cached), read 2.8m"
         },
-        "event_id": 15351517,
-        "fetch_gap_seconds": 3.3,
+        "event_id": 15355162,
+        "fetch_gap_seconds": 3.5,
         "initial_diffs": [
           {
             "detail_copy_age": {
               "cache_status": "fresh",
               "copy_age_seconds": 0.0,
               "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:03:33.037810+00:00",
-              "reading_age_seconds": 11.1,
+              "fetched_at": "2026-11-28T10:25:07.895835+00:00",
+              "reading_age_seconds": 162.6,
               "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-              "summary": "copy 0s (fresh), read 11s"
-            },
-            "detail_value": 35,
-            "event_id": 15351517,
-            "fetch_gap_seconds": 440.4,
-            "field": "headline_percent",
-            "matchup": "Buffalo Bulls @ Akron Zips",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 31.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.847818+00:00",
-              "summary": "copy 23s (page_base_hit), read 31s"
-            },
-            "surface_value": 41
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:03:33.037810+00:00",
-              "reading_age_seconds": 11.1,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-              "summary": "copy 0s (fresh), read 11s"
-            },
-            "detail_value": 37,
-            "event_id": 15351517,
-            "fetch_gap_seconds": 440.4,
-            "field": "source.betting",
-            "matchup": "Buffalo Bulls @ Akron Zips",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
-            "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 31.2,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.847818+00:00",
-              "summary": "copy 23s (page_base_hit), read 31s"
-            },
-            "surface_value": 38
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:03:33.037810+00:00",
-              "reading_age_seconds": 11.1,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-              "summary": "copy 0s (fresh), read 11s"
+              "reading_observed_at": "2026-11-28T10:22:24.431261+00:00",
+              "summary": "copy 0s (fresh), read 2.7m"
             },
             "detail_value": 30,
-            "event_id": 15351517,
-            "fetch_gap_seconds": 440.4,
-            "field": "source.espn",
-            "matchup": "Buffalo Bulls @ Akron Zips",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
+            "event_id": 15355162,
+            "fetch_gap_seconds": 345.9,
+            "field": "headline_percent",
+            "matchup": "Henning @ Bailly",
+            "sport_key": "tennis_atp",
+            "surface": "GET /api/events?status=scheduled",
             "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 31.2,
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.041830+00:00",
+              "reading_age_seconds": 272.9,
               "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.847818+00:00",
-              "summary": "copy 23s (page_base_hit), read 31s"
+              "reading_observed_at": "2026-11-28T10:14:43.093852+00:00",
+              "summary": "copy ?, read 4.5m"
             },
             "surface_value": 31
           },
@@ -1968,103 +780,97 @@
               "cache_status": "fresh",
               "copy_age_seconds": 0.0,
               "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:03:33.037810+00:00",
-              "reading_age_seconds": 11.1,
+              "fetched_at": "2026-11-28T10:25:07.895835+00:00",
+              "reading_age_seconds": 162.6,
               "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-              "summary": "copy 0s (fresh), read 11s"
+              "reading_observed_at": "2026-11-28T10:22:24.431261+00:00",
+              "summary": "copy 0s (fresh), read 2.7m"
             },
-            "detail_value": 37,
-            "event_id": 15351517,
-            "fetch_gap_seconds": 440.4,
-            "field": "source.polymarket",
-            "matchup": "Buffalo Bulls @ Akron Zips",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
+            "detail_value": 30,
+            "event_id": 15355162,
+            "fetch_gap_seconds": 345.9,
+            "field": "source.kalshi",
+            "matchup": "Henning @ Bailly",
+            "sport_key": "tennis_atp",
+            "surface": "GET /api/events?status=scheduled",
             "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 31.2,
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.041830+00:00",
+              "reading_age_seconds": 272.9,
               "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.847818+00:00",
-              "summary": "copy 23s (page_base_hit), read 31s"
+              "reading_observed_at": "2026-11-28T10:14:43.093852+00:00",
+              "summary": "copy ?, read 4.5m"
             },
-            "surface_value": 49
+            "surface_value": 27
           },
           {
             "detail_copy_age": {
               "cache_status": "fresh",
               "copy_age_seconds": 0.0,
               "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:03:33.037810+00:00",
-              "reading_age_seconds": 11.1,
+              "fetched_at": "2026-11-28T10:25:07.895835+00:00",
+              "reading_age_seconds": 162.6,
               "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T19:03:20.906402+00:00",
-              "summary": "copy 0s (fresh), read 11s"
+              "reading_observed_at": "2026-11-28T10:22:24.431261+00:00",
+              "summary": "copy 0s (fresh), read 2.7m"
             },
-            "detail_value": 33,
-            "event_id": 15351517,
-            "fetch_gap_seconds": 440.4,
-            "field": "source.stat_model",
-            "matchup": "Buffalo Bulls @ Akron Zips",
-            "sport_key": "americanfootball_ncaaf",
-            "surface": "GET /api/feed?mode=sports",
+            "detail_value": 31,
+            "event_id": 15355162,
+            "fetch_gap_seconds": 345.9,
+            "field": "source.polymarket",
+            "matchup": "Henning @ Bailly",
+            "sport_key": "tennis_atp",
+            "surface": "GET /api/events?status=scheduled",
             "surface_copy_age": {
-              "cache_status": "page_base_hit",
-              "copy_age_seconds": 23.4,
-              "copy_age_source": "envelope_built_at",
-              "fetched_at": "2026-11-27T18:56:12.685156+00:00",
-              "reading_age_seconds": 31.2,
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.041830+00:00",
+              "reading_age_seconds": 272.9,
               "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:55:39.847818+00:00",
-              "summary": "copy 23s (page_base_hit), read 31s"
+              "reading_observed_at": "2026-11-28T10:14:43.093852+00:00",
+              "summary": "copy ?, read 4.5m"
             },
-            "surface_value": 45
+            "surface_value": 36
           }
         ],
-        "is_live": true,
-        "matchup": "Buffalo Bulls @ Akron Zips",
-        "sport_key": "americanfootball_ncaaf",
-        "surface": "GET /api/feed?mode=sports",
+        "is_live": false,
+        "matchup": "Henning @ Bailly",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events?status=scheduled",
         "surface_copy_age": {
-          "cache_status": "page_base_stale_hit",
-          "copy_age_seconds": 43.6,
-          "copy_age_source": "envelope_built_at",
-          "fetched_at": "2026-11-27T19:03:44.019932+00:00",
-          "reading_age_seconds": 69.6,
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:25:11.558952+00:00",
+          "reading_age_seconds": 41.6,
           "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T19:02:32.376829+00:00",
-          "summary": "copy 44s (page_base_stale_hit), read 70s"
+          "reading_observed_at": "2026-11-28T10:24:29.399880+00:00",
+          "summary": "copy ?, read 42s"
         }
       }
     ],
-    "live_tick_drifts_count": 12,
+    "live_tick_drifts_count": 4,
     "sports_covered": [
       "americanfootball_ncaaf",
-      "americanfootball_nfl",
-      "basketball_nba",
+      "americanfootball_ncaaf_fcs",
       "basketball_ncaab",
       "basketball_other",
       "basketball_wncaab",
       "boxing_boxing",
-      "cricket_test_match",
       "esports",
       "esports_other",
       "handball_germany_bundesliga",
-      "icehockey_ahl",
       "icehockey_liiga",
       "icehockey_mestis",
-      "icehockey_nhl",
-      "icehockey_sweden_allsvenskan",
       "icehockey_sweden_hockey_league",
       "mma_mixed_martial_arts",
       "rugby_other",
       "soccer_australia_aleague",
+      "soccer_austria_bundesliga",
       "soccer_belgium_first_div",
-      "soccer_brazil_campeonato",
-      "soccer_brazil_serie_b",
       "soccer_efl_champ",
       "soccer_england_league1",
       "soccer_england_league2",
@@ -2077,8 +883,6 @@
       "soccer_greece_super_league",
       "soccer_italy_serie_a",
       "soccer_italy_serie_b",
-      "soccer_japan_j_league",
-      "soccer_korea_kleague1",
       "soccer_netherlands_eredivisie",
       "soccer_norway_eliteserien",
       "soccer_other",
@@ -2090,123 +894,28 @@
       "soccer_spain_segunda_division",
       "soccer_spl",
       "soccer_sweden_superettan",
+      "soccer_switzerland_superleague",
       "soccer_turkey_super_league",
       "soccer_usa_mls",
       "tennis_atp",
       "tennis_other",
       "tennis_wta"
     ],
-    "surface_comparisons": 95,
-    "unconfirmed_disagreements": [
-      {
-        "detail_copy_age": {
-          "cache_status": "fresh",
-          "copy_age_seconds": 0.0,
-          "copy_age_source": "state_read",
-          "fetched_at": "2026-11-27T19:02:24.576531+00:00",
-          "reading_age_seconds": 12979.5,
-          "reading_age_source": "hero_probability_observed_at",
-          "reading_observed_at": "2026-11-27T15:26:04.506285+00:00",
-          "summary": "copy 0s (fresh), read 3.6h"
-        },
-        "event_id": 15352347,
-        "initial_diffs": [
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:02:24.576531+00:00",
-              "reading_age_seconds": 12979.5,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T15:26:04.506285+00:00",
-              "summary": "copy 0s (fresh), read 3.6h"
-            },
-            "detail_value": [
-              "polymarket"
-            ],
-            "event_id": 15352347,
-            "fetch_gap_seconds": 375.6,
-            "field": "source_keys",
-            "matchup": "Asteras Tripolis @ Volos NPS",
-            "sport_key": "soccer_greece_super_league",
-            "surface": "GET /api/events?status=scheduled",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-              "reading_age_seconds": 243.0,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:51:58.044806+00:00",
-              "summary": "copy ?, read 4.0m"
-            },
-            "surface_value": [
-              "betting",
-              "polymarket"
-            ]
-          },
-          {
-            "detail_copy_age": {
-              "cache_status": "fresh",
-              "copy_age_seconds": 0.0,
-              "copy_age_source": "state_read",
-              "fetched_at": "2026-11-27T19:02:24.576531+00:00",
-              "reading_age_seconds": 12979.5,
-              "reading_age_source": "hero_probability_observed_at",
-              "reading_observed_at": "2026-11-27T15:26:04.506285+00:00",
-              "summary": "copy 0s (fresh), read 3.6h"
-            },
-            "detail_value": 0,
-            "event_id": 15352347,
-            "fetch_gap_seconds": 375.6,
-            "field": "bookmaker_count",
-            "matchup": "Asteras Tripolis @ Volos NPS",
-            "sport_key": "soccer_greece_super_league",
-            "surface": "GET /api/events?status=scheduled",
-            "surface_copy_age": {
-              "cache_status": null,
-              "copy_age_seconds": null,
-              "copy_age_source": null,
-              "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-              "reading_age_seconds": 243.0,
-              "reading_age_source": "newest_source_updated_at",
-              "reading_observed_at": "2026-11-27T18:51:58.044806+00:00",
-              "summary": "copy ?, read 4.0m"
-            },
-            "surface_value": 8
-          }
-        ],
-        "is_live": false,
-        "matchup": "Asteras Tripolis @ Volos NPS",
-        "reason": "list_reread_failed",
-        "sport_key": "soccer_greece_super_league",
-        "surface": "GET /api/events?status=scheduled",
-        "surface_copy_age": {
-          "cache_status": null,
-          "copy_age_seconds": null,
-          "copy_age_source": null,
-          "fetched_at": "2026-11-27T18:56:08.930466+00:00",
-          "reading_age_seconds": 243.0,
-          "reading_age_source": "newest_source_updated_at",
-          "reading_observed_at": "2026-11-27T18:51:58.044806+00:00",
-          "summary": "copy ?, read 4.0m"
-        }
-      }
-    ],
-    "unconfirmed_disagreements_count": 1
+    "surface_comparisons": 89,
+    "unconfirmed_disagreements": [],
+    "unconfirmed_disagreements_count": 0
   },
-  "live_commit": "7272c455",
+  "live_commit": "bb8cec45",
   "overall_status": "FAIL",
   "pace_seconds": 3.6,
-  "requests_made": 132,
+  "requests_made": 108,
   "schema_version": 1,
   "stale_sportsbook_census": {
-    "scheduled_total": 481,
-    "scheduled_with_betting": 159,
+    "scheduled_total": 467,
+    "scheduled_with_betting": 150,
     "stale_games": [],
     "stale_over_threshold_count": 0,
     "stale_threshold_hours": 72.0
   },
-  "status_summary": "23 list-vs-page disagreement(s); 1 re-read(s) unconfirmed across 60 game(s) read."
+  "status_summary": "16 list-vs-page disagreement(s) across 60 game(s) read."
 }

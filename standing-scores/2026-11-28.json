@@ -1,0 +1,921 @@
+{
+  "base_url": "https://api.bainluck.com",
+  "date": "2026-11-28",
+  "generated_at": "2026-11-28T10:19:13.292119+00:00",
+  "http_errors": [],
+  "http_errors_count": 0,
+  "list_vs_page": {
+    "disagreements": [
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:06.637208+00:00",
+          "reading_age_seconds": 8.5,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:20:57.476929+00:00",
+          "summary": "copy 6s (cached), read 8s"
+        },
+        "detail_value": 96,
+        "event_id": 15352551,
+        "fetch_gap_seconds": 3.2,
+        "field": "source.polymarket",
+        "matchup": "Persijap Jepara @ Psim Yogyakarta",
+        "sport_key": "soccer_other",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:03.416550+00:00",
+          "reading_age_seconds": 70.7,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:19:51.272992+00:00",
+          "summary": "copy ? (hit), read 71s"
+        },
+        "surface_value": 94
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:24.635659+00:00",
+          "reading_age_seconds": 7.2,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:16.769363+00:00",
+          "summary": "copy 6s (cached), read 7s"
+        },
+        "detail_value": 48,
+        "event_id": 15354942,
+        "fetch_gap_seconds": 3.1,
+        "field": "headline_percent",
+        "matchup": "MeatZn @ Finishers",
+        "sport_key": "esports",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:21.505788+00:00",
+          "reading_age_seconds": 59.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:20.371400+00:00",
+          "summary": "copy ? (hit), read 60s"
+        },
+        "surface_value": 46
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:24.635659+00:00",
+          "reading_age_seconds": 7.2,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:16.769363+00:00",
+          "summary": "copy 6s (cached), read 7s"
+        },
+        "detail_value": 51,
+        "event_id": 15354942,
+        "fetch_gap_seconds": 3.1,
+        "field": "source.polymarket",
+        "matchup": "MeatZn @ Finishers",
+        "sport_key": "esports",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:21.505788+00:00",
+          "reading_age_seconds": 59.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:20.371400+00:00",
+          "summary": "copy ? (hit), read 60s"
+        },
+        "surface_value": 46
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:31.837136+00:00",
+          "reading_age_seconds": 14.2,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:16.769363+00:00",
+          "summary": "copy 14s (cached), read 14s"
+        },
+        "detail_value": 48,
+        "event_id": 15354942,
+        "fetch_gap_seconds": 3.5,
+        "field": "headline_percent",
+        "matchup": "MeatZn @ Finishers",
+        "sport_key": "esports",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:28.314387+00:00",
+          "reading_age_seconds": 0.2,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:21:26.820676+00:00",
+          "summary": "copy ?, read 0s"
+        },
+        "surface_value": 51
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:31.837136+00:00",
+          "reading_age_seconds": 14.2,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:16.769363+00:00",
+          "summary": "copy 14s (cached), read 14s"
+        },
+        "detail_value": 51,
+        "event_id": 15354942,
+        "fetch_gap_seconds": 3.5,
+        "field": "source.polymarket",
+        "matchup": "MeatZn @ Finishers",
+        "sport_key": "esports",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:28.314387+00:00",
+          "reading_age_seconds": 0.2,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:21:26.820676+00:00",
+          "summary": "copy ?, read 0s"
+        },
+        "surface_value": 57
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:53.436391+00:00",
+          "reading_age_seconds": 7.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 7s (cached), read 8s"
+        },
+        "detail_value": 32,
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.4,
+        "field": "headline_percent",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:50.054312+00:00",
+          "reading_age_seconds": 83.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:26.047371+00:00",
+          "summary": "copy ? (hit), read 83s"
+        },
+        "surface_value": 26
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:53.436391+00:00",
+          "reading_age_seconds": 7.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 7s (cached), read 8s"
+        },
+        "detail_value": 33,
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.4,
+        "field": "source.kalshi",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:50.054312+00:00",
+          "reading_age_seconds": 83.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:26.047371+00:00",
+          "summary": "copy ? (hit), read 83s"
+        },
+        "surface_value": 27
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:53.436391+00:00",
+          "reading_age_seconds": 7.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 7s (cached), read 8s"
+        },
+        "detail_value": 33,
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.4,
+        "field": "source.polymarket",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:50.054312+00:00",
+          "reading_age_seconds": 83.0,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:26.047371+00:00",
+          "summary": "copy ? (hit), read 83s"
+        },
+        "surface_value": 27
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:00.638972+00:00",
+          "reading_age_seconds": 14.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 14s (cached), read 15s"
+        },
+        "detail_value": 32,
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.5,
+        "field": "headline_percent",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:57.138296+00:00",
+          "reading_age_seconds": 2.4,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:21:53.611607+00:00",
+          "summary": "copy ?, read 2s"
+        },
+        "surface_value": 27
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:00.638972+00:00",
+          "reading_age_seconds": 14.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 14s (cached), read 15s"
+        },
+        "detail_value": 33,
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.5,
+        "field": "source.kalshi",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:57.138296+00:00",
+          "reading_age_seconds": 2.4,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:21:53.611607+00:00",
+          "summary": "copy ?, read 2s"
+        },
+        "surface_value": 28
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:00.638972+00:00",
+          "reading_age_seconds": 14.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:45.410475+00:00",
+          "summary": "copy 14s (cached), read 15s"
+        },
+        "detail_value": 33,
+        "event_id": 15355161,
+        "fetch_gap_seconds": 3.5,
+        "field": "source.polymarket",
+        "matchup": "Faurel @ Dedura",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:57.138296+00:00",
+          "reading_age_seconds": 2.4,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:21:53.611607+00:00",
+          "summary": "copy ?, read 2s"
+        },
+        "surface_value": 28
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:11.438148+00:00",
+          "reading_age_seconds": 12.3,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:58.657183+00:00",
+          "summary": "copy 7s (cached), read 12s"
+        },
+        "detail_value": 16,
+        "event_id": 15352125,
+        "fetch_gap_seconds": 3.2,
+        "field": "headline_percent",
+        "matchup": "Auckland FC @ Central Coast Mariners",
+        "sport_key": "soccer_australia_aleague",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:22:08.251097+00:00",
+          "reading_age_seconds": 119.1,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:07.878395+00:00",
+          "summary": "copy ? (hit), read 119s"
+        },
+        "surface_value": 17
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:11.438148+00:00",
+          "reading_age_seconds": 12.3,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:58.657183+00:00",
+          "summary": "copy 7s (cached), read 12s"
+        },
+        "detail_value": 16,
+        "event_id": 15352125,
+        "fetch_gap_seconds": 3.2,
+        "field": "source.betting",
+        "matchup": "Auckland FC @ Central Coast Mariners",
+        "sport_key": "soccer_australia_aleague",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:22:08.251097+00:00",
+          "reading_age_seconds": 119.1,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:07.878395+00:00",
+          "summary": "copy ? (hit), read 119s"
+        },
+        "surface_value": 17
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:11.438148+00:00",
+          "reading_age_seconds": 12.3,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:58.657183+00:00",
+          "summary": "copy 7s (cached), read 12s"
+        },
+        "detail_value": 16,
+        "event_id": 15352125,
+        "fetch_gap_seconds": 3.2,
+        "field": "source.polymarket",
+        "matchup": "Auckland FC @ Central Coast Mariners",
+        "sport_key": "soccer_australia_aleague",
+        "surface": "GET /api/events/search",
+        "surface_copy_age": {
+          "cache_status": "hit",
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:22:08.251097+00:00",
+          "reading_age_seconds": 119.1,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:07.878395+00:00",
+          "summary": "copy ? (hit), read 119s"
+        },
+        "surface_value": 17
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:18.639916+00:00",
+          "reading_age_seconds": 19.3,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:58.657183+00:00",
+          "summary": "copy 14s (cached), read 19s"
+        },
+        "detail_value": 16,
+        "event_id": 15352125,
+        "fetch_gap_seconds": 3.5,
+        "field": "headline_percent",
+        "matchup": "Auckland FC @ Central Coast Mariners",
+        "sport_key": "soccer_australia_aleague",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:22:15.158053+00:00",
+          "reading_age_seconds": 8.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:22:05.399014+00:00",
+          "summary": "copy ?, read 9s"
+        },
+        "surface_value": 15
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.7,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:22:18.639916+00:00",
+          "reading_age_seconds": 19.3,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:58.657183+00:00",
+          "summary": "copy 14s (cached), read 19s"
+        },
+        "detail_value": 16,
+        "event_id": 15352125,
+        "fetch_gap_seconds": 3.5,
+        "field": "source.polymarket",
+        "matchup": "Auckland FC @ Central Coast Mariners",
+        "sport_key": "soccer_australia_aleague",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:22:15.158053+00:00",
+          "reading_age_seconds": 8.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:22:05.399014+00:00",
+          "summary": "copy ?, read 9s"
+        },
+        "surface_value": 15
+      }
+    ],
+    "disagreements_count": 16,
+    "games_selected": 60,
+    "games_verified": 60,
+    "live_tick_drifts": [
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 13.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:13.836924+00:00",
+          "reading_age_seconds": 15.5,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:20:57.476929+00:00",
+          "summary": "copy 14s (cached), read 16s"
+        },
+        "event_id": 15352551,
+        "fetch_gap_seconds": 3.4,
+        "initial_diffs": [
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-28T10:21:00.919794+00:00",
+              "reading_age_seconds": 1.5,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-28T10:20:57.476929+00:00",
+              "summary": "copy 0s (fresh), read 2s"
+            },
+            "detail_value": 96,
+            "event_id": 15352551,
+            "fetch_gap_seconds": 98.5,
+            "field": "source.polymarket",
+            "matchup": "Persijap Jepara @ Psim Yogyakarta",
+            "sport_key": "soccer_other",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.381149+00:00",
+              "reading_age_seconds": 32.1,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-28T10:18:49.939776+00:00",
+              "summary": "copy ?, read 32s"
+            },
+            "surface_value": 92
+          }
+        ],
+        "is_live": true,
+        "matchup": "Persijap Jepara @ Psim Yogyakarta",
+        "sport_key": "soccer_other",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:10.449903+00:00",
+          "reading_age_seconds": 12.5,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:20:57.476929+00:00",
+          "summary": "copy ?, read 12s"
+        }
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:21:42.637969+00:00",
+          "reading_age_seconds": 20.1,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:21:21.869444+00:00",
+          "summary": "copy 6s (cached), read 20s"
+        },
+        "event_id": 15355002,
+        "fetch_gap_seconds": 3.5,
+        "initial_diffs": [
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-28T10:21:35.782575+00:00",
+              "reading_age_seconds": 13.1,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-28T10:21:21.869444+00:00",
+              "summary": "copy 0s (fresh), read 13s"
+            },
+            "detail_value": 41,
+            "event_id": 15355002,
+            "fetch_gap_seconds": 133.4,
+            "field": "headline_percent",
+            "matchup": "Kryon Esports @ GodLike Esports",
+            "sport_key": "esports_other",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.381149+00:00",
+              "reading_age_seconds": 6.9,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-28T10:19:15.054285+00:00",
+              "summary": "copy ?, read 7s"
+            },
+            "surface_value": 38
+          },
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-28T10:21:35.782575+00:00",
+              "reading_age_seconds": 13.1,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-28T10:21:21.869444+00:00",
+              "summary": "copy 0s (fresh), read 13s"
+            },
+            "detail_value": 42,
+            "event_id": 15355002,
+            "fetch_gap_seconds": 133.4,
+            "field": "source.kalshi",
+            "matchup": "Kryon Esports @ GodLike Esports",
+            "sport_key": "esports_other",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.381149+00:00",
+              "reading_age_seconds": 6.9,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-28T10:19:15.054285+00:00",
+              "summary": "copy ?, read 7s"
+            },
+            "surface_value": 39
+          }
+        ],
+        "is_live": true,
+        "matchup": "Kryon Esports @ GodLike Esports",
+        "sport_key": "esports_other",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:21:39.129772+00:00",
+          "reading_age_seconds": 16.1,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:21:21.869444+00:00",
+          "summary": "copy ?, read 16s"
+        }
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.5,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:25:00.645776+00:00",
+          "reading_age_seconds": 10.9,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:24:49.146920+00:00",
+          "summary": "copy 6s (cached), read 11s"
+        },
+        "event_id": 15355349,
+        "fetch_gap_seconds": 3.5,
+        "initial_diffs": [
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-28T10:24:53.785915+00:00",
+              "reading_age_seconds": 3.9,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-28T10:24:49.146920+00:00",
+              "summary": "copy 0s (fresh), read 4s"
+            },
+            "detail_value": 45,
+            "event_id": 15355349,
+            "fetch_gap_seconds": 331.4,
+            "field": "headline_percent",
+            "matchup": "Direborn @ Ryvex Esports",
+            "sport_key": "esports",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.381149+00:00",
+              "reading_age_seconds": 7.6,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-28T10:19:14.354545+00:00",
+              "summary": "copy ?, read 8s"
+            },
+            "surface_value": 46
+          },
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-28T10:24:53.785915+00:00",
+              "reading_age_seconds": 3.9,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-28T10:24:49.146920+00:00",
+              "summary": "copy 0s (fresh), read 4s"
+            },
+            "detail_value": 46,
+            "event_id": 15355349,
+            "fetch_gap_seconds": 331.4,
+            "field": "source.kalshi",
+            "matchup": "Direborn @ Ryvex Esports",
+            "sport_key": "esports",
+            "surface": "GET /api/events?status=live",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.381149+00:00",
+              "reading_age_seconds": 7.6,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-28T10:19:14.354545+00:00",
+              "summary": "copy ?, read 8s"
+            },
+            "surface_value": 47
+          }
+        ],
+        "is_live": true,
+        "matchup": "Direborn @ Ryvex Esports",
+        "sport_key": "esports",
+        "surface": "GET /api/events?status=live",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:24:57.144847+00:00",
+          "reading_age_seconds": 6.9,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:24:49.146920+00:00",
+          "summary": "copy ?, read 7s"
+        }
+      },
+      {
+        "detail_copy_age": {
+          "cache_status": "cached",
+          "copy_age_seconds": 6.1,
+          "copy_age_source": "state_read",
+          "fetched_at": "2026-11-28T10:25:15.045492+00:00",
+          "reading_age_seconds": 169.6,
+          "reading_age_source": "hero_probability_observed_at",
+          "reading_observed_at": "2026-11-28T10:22:24.431261+00:00",
+          "summary": "copy 6s (cached), read 2.8m"
+        },
+        "event_id": 15355162,
+        "fetch_gap_seconds": 3.5,
+        "initial_diffs": [
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-28T10:25:07.895835+00:00",
+              "reading_age_seconds": 162.6,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-28T10:22:24.431261+00:00",
+              "summary": "copy 0s (fresh), read 2.7m"
+            },
+            "detail_value": 30,
+            "event_id": 15355162,
+            "fetch_gap_seconds": 345.9,
+            "field": "headline_percent",
+            "matchup": "Henning @ Bailly",
+            "sport_key": "tennis_atp",
+            "surface": "GET /api/events?status=scheduled",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.041830+00:00",
+              "reading_age_seconds": 272.9,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-28T10:14:43.093852+00:00",
+              "summary": "copy ?, read 4.5m"
+            },
+            "surface_value": 31
+          },
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-28T10:25:07.895835+00:00",
+              "reading_age_seconds": 162.6,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-28T10:22:24.431261+00:00",
+              "summary": "copy 0s (fresh), read 2.7m"
+            },
+            "detail_value": 30,
+            "event_id": 15355162,
+            "fetch_gap_seconds": 345.9,
+            "field": "source.kalshi",
+            "matchup": "Henning @ Bailly",
+            "sport_key": "tennis_atp",
+            "surface": "GET /api/events?status=scheduled",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.041830+00:00",
+              "reading_age_seconds": 272.9,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-28T10:14:43.093852+00:00",
+              "summary": "copy ?, read 4.5m"
+            },
+            "surface_value": 27
+          },
+          {
+            "detail_copy_age": {
+              "cache_status": "fresh",
+              "copy_age_seconds": 0.0,
+              "copy_age_source": "state_read",
+              "fetched_at": "2026-11-28T10:25:07.895835+00:00",
+              "reading_age_seconds": 162.6,
+              "reading_age_source": "hero_probability_observed_at",
+              "reading_observed_at": "2026-11-28T10:22:24.431261+00:00",
+              "summary": "copy 0s (fresh), read 2.7m"
+            },
+            "detail_value": 31,
+            "event_id": 15355162,
+            "fetch_gap_seconds": 345.9,
+            "field": "source.polymarket",
+            "matchup": "Henning @ Bailly",
+            "sport_key": "tennis_atp",
+            "surface": "GET /api/events?status=scheduled",
+            "surface_copy_age": {
+              "cache_status": null,
+              "copy_age_seconds": null,
+              "copy_age_source": null,
+              "fetched_at": "2026-11-28T10:19:22.041830+00:00",
+              "reading_age_seconds": 272.9,
+              "reading_age_source": "newest_source_updated_at",
+              "reading_observed_at": "2026-11-28T10:14:43.093852+00:00",
+              "summary": "copy ?, read 4.5m"
+            },
+            "surface_value": 36
+          }
+        ],
+        "is_live": false,
+        "matchup": "Henning @ Bailly",
+        "sport_key": "tennis_atp",
+        "surface": "GET /api/events?status=scheduled",
+        "surface_copy_age": {
+          "cache_status": null,
+          "copy_age_seconds": null,
+          "copy_age_source": null,
+          "fetched_at": "2026-11-28T10:25:11.558952+00:00",
+          "reading_age_seconds": 41.6,
+          "reading_age_source": "newest_source_updated_at",
+          "reading_observed_at": "2026-11-28T10:24:29.399880+00:00",
+          "summary": "copy ?, read 42s"
+        }
+      }
+    ],
+    "live_tick_drifts_count": 4,
+    "sports_covered": [
+      "americanfootball_ncaaf",
+      "americanfootball_ncaaf_fcs",
+      "basketball_ncaab",
+      "basketball_other",
+      "basketball_wncaab",
+      "boxing_boxing",
+      "esports",
+      "esports_other",
+      "handball_germany_bundesliga",
+      "icehockey_liiga",
+      "icehockey_mestis",
+      "icehockey_sweden_hockey_league",
+      "mma_mixed_martial_arts",
+      "rugby_other",
+      "soccer_australia_aleague",
+      "soccer_austria_bundesliga",
+      "soccer_belgium_first_div",
+      "soccer_efl_champ",
+      "soccer_england_league1",
+      "soccer_england_league2",
+      "soccer_epl",
+      "soccer_france_coupe_de_france",
+      "soccer_france_ligue_one",
+      "soccer_germany_bundesliga",
+      "soccer_germany_bundesliga2",
+      "soccer_germany_liga3",
+      "soccer_greece_super_league",
+      "soccer_italy_serie_a",
+      "soccer_italy_serie_b",
+      "soccer_netherlands_eredivisie",
+      "soccer_norway_eliteserien",
+      "soccer_other",
+      "soccer_poland_ekstraklasa",
+      "soccer_portugal_primeira_liga",
+      "soccer_russia_premier_league",
+      "soccer_saudi_arabia_pro_league",
+      "soccer_spain_la_liga",
+      "soccer_spain_segunda_division",
+      "soccer_spl",
+      "soccer_sweden_superettan",
+      "soccer_switzerland_superleague",
+      "soccer_turkey_super_league",
+      "soccer_usa_mls",
+      "tennis_atp",
+      "tennis_other",
+      "tennis_wta"
+    ],
+    "surface_comparisons": 89,
+    "unconfirmed_disagreements": [],
+    "unconfirmed_disagreements_count": 0
+  },
+  "live_commit": "bb8cec45",
+  "overall_status": "FAIL",
+  "pace_seconds": 3.6,
+  "requests_made": 108,
+  "schema_version": 1,
+  "stale_sportsbook_census": {
+    "scheduled_total": 467,
+    "scheduled_with_betting": 150,
+    "stale_games": [],
+    "stale_over_threshold_count": 0,
+    "stale_threshold_hours": 72.0
+  },
+  "status_summary": "16 list-vs-page disagreement(s) across 60 game(s) read."
+}
