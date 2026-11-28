@@ -1,9 +1,13 @@
 import {
   buildSubmissionPayload,
+  COUNTRY_OPTIONS,
   DEFAULT_CLAIM_COMPARATORS,
   DEFAULT_CLAIM_HORIZON_KINDS,
   DEFAULT_CLAIM_MEASURES,
   emptyCuDraft,
+  formatPayoutDateSentence,
+  formatPeerClaimFrame,
+  MEASURE_GROUPS,
   normalizeRaterName,
 } from "../cuLabeling";
 
@@ -81,5 +85,25 @@ describe("cuLabeling", () => {
       });
       expect(validTiebreak.payload.evidence_note).toBe("State house seat -> local.");
     }
+  });
+
+  it("covers all 47 measures in grouped plain-English choices without duplicates", () => {
+    const groupedValues = MEASURE_GROUPS.flatMap((g) => g.options.map((o) => o.value));
+    expect(new Set(groupedValues).size).toBe(groupedValues.length);
+    expect(groupedValues.slice().sort()).toEqual([...DEFAULT_CLAIM_MEASURES].sort());
+  });
+
+  it("provides ISO country codes for the country picker and plain payout dates", () => {
+    const codes = new Set(COUNTRY_OPTIONS.map((c) => c.code));
+    expect(codes.has("CA")).toBe(true);
+    expect(codes.has("GB")).toBe(true);
+    expect(codes.has("US")).toBe(false);
+
+    expect(formatPayoutDateSentence("2026-11-30T15:00:00+00:00")).toBe(
+      "The site pays out on Nov 30, 2026. That is often not the day of the event."
+    );
+    expect(formatPeerClaimFrame({ measure: "price_high", value: "100,000", unit: "$" })).toBe(
+      "measure: price_high · value: 100,000 · unit: $"
+    );
   });
 });

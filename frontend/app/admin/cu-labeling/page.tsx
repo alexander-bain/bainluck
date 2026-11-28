@@ -7,12 +7,17 @@ import { adminFetchJSON } from "@/lib/adminFetch";
 import {
   buildSubmissionPayload,
   COMPARATOR_LABELS,
+  COUNTRY_OPTIONS,
   DEFAULT_CLAIM_COMPARATORS,
   DEFAULT_CLAIM_HORIZON_KINDS,
   DEFAULT_CLAIM_MEASURES,
   emptyCuDraft,
   formatMeasureChoiceLabel,
+  formatPayoutDateSentence,
+  formatPeerClaimFrame,
   HORIZON_LABELS,
+  MEASURE_GROUPS,
+  MEASURE_LABELS,
   normalizeRaterName,
   RATER_STORAGE_KEY,
   type CuAgreementResponse,
@@ -154,9 +159,20 @@ export default function CuFactLabelingPage() {
 
   const items = queue?.items || [];
   const current = items[index] || null;
-  const measures = queue?.claim_vocabulary?.measures || [...DEFAULT_CLAIM_MEASURES];
+  const measures = useMemo(
+    () => queue?.claim_vocabulary?.measures || [...DEFAULT_CLAIM_MEASURES],
+    [queue]
+  );
+  const extraMeasures = useMemo(
+    () => measures.filter((m) => !MEASURE_LABELS[m]),
+    [measures]
+  );
   const comparators = queue?.claim_vocabulary?.comparators || [...DEFAULT_CLAIM_COMPARATORS];
   const horizonKinds = queue?.claim_vocabulary?.horizon_kinds || [...DEFAULT_CLAIM_HORIZON_KINDS];
+  const payoutDateSentence = useMemo(
+    () => formatPayoutDateSentence(current?.resolution_date),
+    [current?.resolution_date]
+  );
 
   const currentGeography = useMemo(() => {
     if (geoPreset === "country") {
@@ -357,19 +373,22 @@ export default function CuFactLabelingPage() {
       {showAgreement && agreement && (
         <div className="bg-surface-card border border-surface-border rounded-xl p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-            <span className="font-semibold">Dual-Rater Agreement ({SPLIT_LABELS[split]})</span>
+            <span className="font-semibold">
+              How often the two labelers agreed ({SPLIT_LABELS[split]})
+            </span>
             <span className="text-xs text-text-secondary">
-              Paired: {agreement.paired_markets} · Needs tie-breaker: {agreement.needs_tiebreak} · Resolved: {agreement.resolved_tiebreaks}
+              Double-checked: {agreement.paired_markets} · Waiting for tie-breaker:{" "}
+              {agreement.needs_tiebreak} · Resolved: {agreement.resolved_tiebreaks}
             </span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="border-b border-surface-border text-text-secondary text-left">
-                  <th className="py-1.5 pr-3">Field</th>
+                  <th className="py-1.5 pr-3">Question</th>
                   <th className="py-1.5 pr-3">Rule</th>
                   <th className="py-1.5 pr-3">Agreed</th>
-                  <th className="py-1.5 pr-3">Total</th>
+                  <th className="py-1.5 pr-3">Checked</th>
                   <th className="py-1.5 pr-3">Rate</th>
                   <th className="py-1.5">Status</th>
                 </tr>
@@ -390,10 +409,12 @@ export default function CuFactLabelingPage() {
                     </td>
                     <td className="py-1.5">
                       {f.below_80_pct ? (
-                        <span className="text-accent-danger font-semibold">Below 80% — send to Alex</span>
+                        <span className="text-accent-danger font-semibold">
+                          Below 80% — held back for Alex
+                        </span>
                       ) : (
                         <span className="text-text-secondary">
-                          {f.tiebreak_allowed ? "Fact (tie-break ok)" : "Opinion (Alex owns)"}
+                          {f.tiebreak_allowed ? "Fact (tie-breaker allowed)" : "Opinion (Alex decides)"}
                         </span>
                       )}
                     </td>
@@ -452,12 +473,10 @@ export default function CuFactLabelingPage() {
               </span>
             </div>
             <h2 className="text-lg font-semibold text-text-primary">{current.title}</h2>
-            {current.resolution_date && (
-              <div className="text-xs text-text-muted">
-                Site payout timestamp (settlement metadata): {current.resolution_date}
-              </div>
+            {payoutDateSentence && (
+              <div className="text-sm text-text-primary">{payoutDateSentence}</div>
             )}
-            {current.outcomes.length > 0 && (
+            {current.outcomes.length > 0 ? (
               <div className="flex flex-wrap gap-1.5 pt-1">
                 {current.outcomes.slice(0, 16).map((o, idx) => (
                   <span
@@ -465,10 +484,11 @@ export default function CuFactLabelingPage() {
                     className="px-2 py-0.5 text-xs rounded-md bg-surface-elevated border border-surface-border text-text-primary"
                   >
                     {o.name}
-                    {typeof o.prob === "number" ? ` (${Math.round(o.prob * 100)}%)` : ""}
                   </span>
                 ))}
               </div>
+            ) : (
+              <div className="text-sm text-text-secondary pt-1">No options listed</div>
             )}
             {current.rules_text && (
               <p className="text-xs text-text-secondary bg-surface-deep p-3 rounded-lg border border-surface-border whitespace-pre-wrap">
@@ -501,7 +521,10 @@ export default function CuFactLabelingPage() {
                     <div>Day: {peer.no_single_day ? "No single day" : peer.event_date_answer || "blank"}</div>
                     <div>Where: {peer.geography_answer || "blank"}</div>
                     <div>Format: {peer.structure_answer || "blank"}</div>
-                    <div>Number &amp; comparison: {peer.claim_frame ? JSON.stringify(peer.claim_frame) : "blank"}</div>
+                    <div>
+                      Number &amp; comparison:{" "}
+                      {formatPeerClaimFrame(peer.claim_frame as Record<string, unknown> | null)}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -613,13 +636,19 @@ export default function CuFactLabelingPage() {
                 One country
               </button>
               {geoPreset === "country" && (
-                <input
-                  type="text"
+                <select
+                  aria-label="Country"
                   value={countryInput}
                   onChange={(e) => setCountryInput(e.target.value)}
-                  placeholder="e.g. country:GB or Canada"
-                  className="px-3 py-1.5 text-xs bg-surface-deep border border-surface-border rounded-lg"
-                />
+                  className="px-3 py-1.5 text-sm bg-surface-deep border border-surface-border rounded-lg text-text-primary"
+                >
+                  <option value="">Choose a country...</option>
+                  {COUNTRY_OPTIONS.map((c) => (
+                    <option key={c.code} value={`country:${c.code}`}>
+                      {c.name} ({c.code})
+                    </option>
+                  ))}
+                </select>
               )}
             </div>
           </div>
@@ -633,14 +662,18 @@ export default function CuFactLabelingPage() {
                   key={opt.value}
                   type="button"
                   onClick={() => setDraft((d) => ({ ...d, structure: opt.value }))}
-                  className={`p-2.5 text-left rounded-lg border text-xs ${
+                  className={`p-3 text-left rounded-lg border text-sm ${
                     draft.structure === opt.value
                       ? "bg-accent-brand text-text-inverse border-accent-brand"
                       : "bg-surface-deep text-text-primary border-surface-border"
                   }`}
                 >
                   <div className="font-semibold">{opt.label}</div>
-                  <div className={draft.structure === opt.value ? "opacity-90" : "text-text-secondary"}>
+                  <div
+                    className={`mt-1 text-sm ${
+                      draft.structure === opt.value ? "text-text-inverse" : "text-text-primary"
+                    }`}
+                  >
                     {opt.help}
                   </div>
                 </button>
@@ -653,6 +686,9 @@ export default function CuFactLabelingPage() {
             <div className="text-sm font-semibold">
               5. Number and comparison (if the title states a specific figure; otherwise leave blank)
             </div>
+            <p className="text-xs text-text-secondary">
+              Put currency signs ($, £, €) or % in Unit, and the plain number in Exact number.
+            </p>
             <div className="grid sm:grid-cols-3 gap-2.5">
               <div className="space-y-1">
                 <label className="block text-xs text-text-secondary">What is measured</label>
@@ -665,11 +701,26 @@ export default function CuFactLabelingPage() {
                 >
                   <option value="">Blank (no numeric claim)</option>
                   <option value="none_of_these">None of these</option>
-                  {measures.map((m) => (
-                    <option key={m} value={m}>
-                      {formatMeasureChoiceLabel(m)}
-                    </option>
+                  {MEASURE_GROUPS.map((grp) => (
+                    <optgroup key={grp.group} label={grp.group}>
+                      {grp.options
+                        .filter((opt) => measures.includes(opt.value))
+                        .map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                    </optgroup>
                   ))}
+                  {extraMeasures.length > 0 && (
+                    <optgroup label="Other">
+                      {extraMeasures.map((m) => (
+                        <option key={m} value={m}>
+                          {formatMeasureChoiceLabel(m)}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
 
@@ -777,7 +828,7 @@ export default function CuFactLabelingPage() {
                       </button>
                     ))}
                   </div>
-                  <ul className="space-y-0.5 text-xs text-text-secondary">
+                  <ul className="space-y-1 text-sm text-text-primary">
                     {STAKES_ANCHORS.map((item) => (
                       <li key={item.score}>{item.label}</li>
                     ))}
@@ -802,7 +853,7 @@ export default function CuFactLabelingPage() {
                       </button>
                     ))}
                   </div>
-                  <ul className="space-y-0.5 text-xs text-text-secondary">
+                  <ul className="space-y-1 text-sm text-text-primary">
                     {BREADTH_ANCHORS.map((item) => (
                       <li key={item.score}>{item.label}</li>
                     ))}

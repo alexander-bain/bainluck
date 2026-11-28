@@ -13,17 +13,17 @@ Applies to the dual-rater labeling pass on the frozen sealed (`300`) and practic
 
 ## Matching Rules (Frozen Before First Label)
 
-> **Freeze rule:** This table is frozen before the first human label is read. Any matching rule changed afterwards must be reported explicitly as changed afterwards alongside any published scorecard numbers.
+> **Freeze rule:** This table is frozen before the first human label is read. Any matching rule changed afterwards must be reported explicitly as changed afterwards alongside any published scorecard numbers. If dual-rater agreement on **any** field (fact or opinion, measured after cleaning) falls below `80%`, that field is withheld from the scorecard and sent to Alex with disagreement examples.
 
 | Field | What the labeler answers | What counts as a match |
 |---|---|---|
-| **Named subjects** (`entities`) | Pick candidate chips, type custom names, `"None of these"`, or `"Not sure"` | Ignore entity `type`. Lowercase and strip punctuation (`'` removed, punctuation normalized to spaces). A labeled subject is matched when either name contains the other as contiguous whole words. The row is right only when **every** labeled subject is matched. Extra writer-only names are counted separately, not marked wrong. `"None of these"` matches an empty writer list; `"Not sure"` omits the row from scoring. |
+| **Named subjects** (`entities`) | Pick candidate chips, type custom names, `"None of these"`, or `"Not sure"` | Ignore entity `type` and ignore whether the name came from a chip or Custom. Lowercase and strip punctuation (`'` removed, punctuation normalized to spaces). A labeled subject is matched when either name contains the other as contiguous whole words. The row is right only when **every** labeled subject is matched. Extra writer-only names are counted separately, not marked wrong. `"None of these"` matches an empty writer list; `"Not sure"` omits the row from scoring. |
 | **The event's own day** (`event_date`) | Calendar day `YYYY-MM-DD`, or check `"No single day"` | Exact calendar day match (`YYYY-MM-DD`), or both `null` when `"No single day"` is checked. |
-| **Where** (`geography`) | `us`, `global`, `local`, or `country:<XX>` | Case-insensitive exact match. |
+| **Where** (`geography`) | `us`, `global`, `local`, or country picker storing `country:<XX>` | Case-insensitive exact match (`country:XX` two-letter ISO code). |
 | **Market format** (`junk_flags`) | `"Ladder of one number"`, `"Set of dated options"`, or `"Neither"` | Compare only `"ladder"` and `"dated_bucket"`. Ignore unasked writer flags such as `"duplicate_phrasing"` so extra unasked flags never fail the row. |
-| **Number and comparison** (`frame`) | Fixed dropdown choices (`measure`, `comparator`, `horizon_kind`, each with `"None of these"`), plus verbatim `value`, `unit`, and `window_date` | Exact 6-slot match (`measure`, `comparator`, `value`, `unit`, `horizon_kind`, `window_date`, lowercased with thousands commas stripped from numeric `value`, or all `null` when left blank). `"None of these"` on optional `comparator` or `horizon_kind` matches writer `null`. |
-| **How much it matters** (`stakes`) | Integer `1–5` (asked last; never tie-broken) | Writer matches within `±1` step. On `shared_100` where two people rated, right when within `±1` of **either** labeler's score. If dual-rater within-1 agreement falls below `80%`, `stakes` goes to Alex and is withheld from the scorecard. |
-| **How many people care** (`breadth`) | Integer `1–5` (asked last; never tie-broken) | Writer matches within `±1` step. On `shared_100` where two people rated, right when within `±1` of **either** labeler's score. If dual-rater within-1 agreement falls below `80%`, `breadth` goes to Alex and is withheld from the scorecard. |
+| **Number and comparison** (`frame`) | Fixed dropdown choices (`measure`, `comparator`, `horizon_kind`, each with `"None of these"`), plus `value` (plain number), `unit` (currency sign like `$`/`£`/`€` or `%` or unit word), and `window_date` | Put currency signs (`$`, `£`, `€`, `¥`, `₹`, `₩`) and `%` in **`unit`**, and the plain number in **`value`** (e.g. `value: "100,000"`, `unit: "$"`). On save, typed text is preserved beside cleaned slots run through the writer's own cleaners against the market title (`"December 31, 2027"` -> `2027-12-31`, `"June 2027"` -> `2027-06`, `"$100,000"` -> `value="100,000"` + `unit="$"`, blank currency recovered from `$` in title). Exact 6-slot match on cleaned slots (or all `null` when left blank). `"None of these"` on optional `comparator` or `horizon_kind` matches writer `null`. `"None of these"` on **`measure`** leaves that row out of the `frame` score and counts it on its own `unlisted_measure_count` line. |
+| **How much it matters** (`stakes`) | Integer `1–5` (asked last; never tie-broken) | Writer matches within `±1` step. On `shared_100` where two people rated, right when within `±1` of **either** labeler's score. |
+| **How many people care** (`breadth`) | Integer `1–5` (asked last; never tie-broken) | Writer matches within `±1` step. On `shared_100` where two people rated, right when within `±1` of **either** labeler's score. |
 
 ---
 
@@ -51,12 +51,13 @@ Applies to the dual-rater labeling pass on the frozen sealed (`300`) and practic
 - **`neither`**: plain Yes/No, two-sided game/matchup, or multi-contender field (`Winner of ...` with team/candidate options). Check the options list carefully—ladders often look like plain questions until you read the options.
 
 ### 5. Number and comparison (`frame`: `measure`, `comparator`, `value`, `unit`, `horizon_kind`, `window_date`)
-- Choose `measure`, `comparator`, and `horizon_kind` from the writer's dropdown lists (or `"None of these"` if none fits).
-- Copy `value`, `unit`, and `window_date` **verbatim from the title or options** — never expand abbreviations or invent unprinted numbers:
+- Choose `measure`, `comparator`, and `horizon_kind` from the dropdown lists (or `"None of these"` if none fits). Picking `"None of these"` for `measure` leaves that row out of the frame score and counts it on its own line (`unlisted_measure_count`).
+- **Where a currency sign goes:** Put currency symbols (`$`, `£`, `€`, `¥`, `₹`, `₩`) and `%` in **`unit`**, and put the plain number (without `$` or `%`) in **`value`** (e.g., for `"$100,000"`, `value` is `"100,000"` and `unit` is `"$"`). On save, typed inputs are preserved beside the writer-cleaned slots (`"$100,000"` in `value` splits out `"$"`, a blank unit recovers `"$"` from the title, and `"December 31, 2027"` / `"June 2027"` clean to `2027-12-31` / `2027-06`).
+- Copy numbers **verbatim from the title or options** — never expand abbreviations or invent unprinted numbers:
   - Season strings like `"2026-27"` are **not** a numeric threshold `value: "27"`.
   - Team/brand substrings like `"W7M"` are **not** `value: "7M"`.
   - If the title says `"13M subscribers"`, copy `"13M"` verbatim (do not rewrite `"13000000"`).
-  - If the title ends `"by December 31, 2027"`, copy `"December 31, 2027"` into `window_date`.
+  - If the title ends `"by December 31, 2027"`, copy `"December 31, 2027"` into `window_date` (or enter `2027-12-31` directly; both clean to `2027-12-31`).
 - Leave all 6 claim fields **blank** on qualitative winner / yes-no questions without an explicit numeric threshold (`"Will Commanders advance?"`).
 
 ### 6. How much it matters & how many people care (`1–5`, asked last)

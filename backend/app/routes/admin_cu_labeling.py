@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -30,6 +31,7 @@ from app.utils.cu_fact_labeling import (
     visible_labels_for_rater,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 DEFAULT_DATASET_MISSING_MESSAGE = (
@@ -107,7 +109,6 @@ class SealedScorecardPayload(BaseModel):
     model: str | None = None
     cost: dict[str, Any] | None = None
     run_id: str | None = None
-    allow_missing_predictions: bool = False
 
 
 def _run_sealed_scorecard(
@@ -232,16 +233,23 @@ async def cu_labeling_submit(
     """Store one blind label or fact-only tiebreak row into cu_fact_labels."""
     _check_admin_secret(secret, request=request)
 
-    market_exists = (
+    market_name = (
         await db.execute(
-            select(FuturesMarket.id).where(FuturesMarket.id == int(payload.market_id))
+            select(FuturesMarket.name).where(FuturesMarket.id == int(payload.market_id))
         )
     ).scalar_one_or_none()
-    if market_exists is None:
+    if market_name is None:
         raise HTTPException(
             status_code=404,
             detail=f"Market {payload.market_id} does not exist in futures_markets",
         )
+
+    market_title = str(market_name)
+    if payload.dataset_split in VALID_SPLITS and frozen_split_exists(payload.dataset_split):
+        for item in load_frozen_split(payload.dataset_split):
+            if int(item["market_id"]) == int(payload.market_id) and item.get("title"):
+                market_title = str(item["title"])
+                break
 
     existing_rows = [
         _row_to_dict(r)
@@ -261,6 +269,7 @@ async def cu_labeling_submit(
         clean = validate_label_submission(
             payload.model_dump(),
             existing_market_rows=existing_rows,
+            market_title=market_title,
         )
     except ValueError as validation_err:
         raise HTTPException(status_code=422, detail=str(validation_err)) from validation_err
@@ -311,12 +320,14 @@ async def cu_labeling_agreement(
     split: str = Query("sealed"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Report per-field dual-rater agreement (exact for facts, +/-1 for taste)."""
+    """Report per-field dual-rater agreement (exact/normalized for facts, +/-1 for taste)."""
     _check_admin_secret(secret, request=request)
     if split not in VALID_SPLITS:
         raise HTTPException(status_code=400, detail=f"Invalid split {split!r}")
+    markets = load_frozen_split(split) if frozen_split_exists(split) else []
+    markets_by_id = {int(m["market_id"]): m for m in markets}
     rows = await _db_rows_for_split(db, split)
-    return compute_cu_fact_agreement(rows, split=split)
+    return compute_cu_fact_agreement(rows, split=split, markets_by_id=markets_by_id)
 
 
 @router.get("/cu-labeling/export-answer-key")
@@ -342,7 +353,10 @@ async def cu_labeling_export_answer_key(
     return {
         "dataset": split,
         "count": len(bundle["rows"]),
+        "withheld_fields": bundle["withheld_fields"],
         "withheld_taste_fields": bundle["withheld_taste_fields"],
+        "withheld_examples": bundle["withheld_examples"],
+        "unlisted_measure_count": bundle["unlisted_measure_count"],
         "agreement": bundle["agreement"],
         "rows": bundle["rows"],
     }
@@ -362,7 +376,28 @@ async def cu_labeling_score_sealed(
     rows = await _db_rows_for_split(db, "sealed")
     bundle = build_answer_key_bundle(markets_by_id, rows, split="sealed")
     answer_rows = bundle["rows"]
-    withheld = bundle["withheld_taste_fields"]
+    withheld = bundle["withheld_fields"]
+
+    logger.info(
+        "cu_sealed_scorecard_call run_id=%s writer_rev=%s market_count=%d prediction_count=%d",
+        payload.run_id or "none",
+        payload.writer_rev if payload.writer_rev is not None else "none",
+        len(answer_rows),
+        len(payload.predictions),
+    )
+
+    if not answer_rows or all(not r.get("answers") for r in answer_rows):
+        return {
+            "status": "no_labels_yet",
+            "message": "No resolved sealed labels yet.",
+            "scorecard": None,
+            "agreement": bundle["agreement"],
+            "withheld_fields": withheld,
+            "withheld_taste_fields": bundle["withheld_taste_fields"],
+            "withheld_examples": bundle["withheld_examples"],
+            "unlisted_measure_count": bundle["unlisted_measure_count"],
+        }
+
     as_of = payload.as_of or datetime.now(timezone.utc).date().isoformat()
 
     try:
@@ -383,14 +418,18 @@ async def cu_labeling_score_sealed(
         ) from import_err
 
     missing = int(scorecard.get("missing_predictions", 0) or 0)
-    if missing > 0 and not payload.allow_missing_predictions:
+    if missing > 0:
         raise HTTPException(
             status_code=422,
             detail=f"Refusing sealed scorecard: {missing} sealed market(s) lack predictions.",
         )
 
     return {
+        "status": "measured",
         "scorecard": scorecard,
         "agreement": bundle["agreement"],
-        "withheld_taste_fields": withheld,
+        "withheld_fields": withheld,
+        "withheld_taste_fields": bundle["withheld_taste_fields"],
+        "withheld_examples": bundle["withheld_examples"],
+        "unlisted_measure_count": bundle["unlisted_measure_count"],
     }
