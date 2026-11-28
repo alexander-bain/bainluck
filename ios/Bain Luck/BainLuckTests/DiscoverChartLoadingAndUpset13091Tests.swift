@@ -210,6 +210,150 @@ final class DiscoverChartLoadingAndUpset13091Tests: XCTestCase {
         XCTAssertEqual(favModel.finishedSummaryLabel, "64% pregame · Won")
     }
 
+    func testLiveJazz13092RowAndChartBadgeAgreeWhenServerRoundsHalfDown() throws {
+        // Live #13092 payload shape: Jazz 109 @ Lakers 97 where server paired rounding
+        // gives 0.175 -> 17% and 0.825 -> 83%. Chart header and leftEndLabel must match
+        // the card row's 17% instead of independently rounding 0.175 to 18%.
+        let liveJazzEvent = try decodeEvent(#"""
+        {
+          "id": 15350792,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "away_team": "Utah Jazz",
+          "home_team": "Los Angeles Lakers",
+          "commence_time": "2026-11-19T03:00:00Z",
+          "status": "completed",
+          "away_score": 109,
+          "home_score": 97,
+          "away_team_data": {"primary_color": "#002B5C", "secondary_color": "#F9A01B", "abbreviation": "UTA"},
+          "home_team_data": {"primary_color": "#552583", "secondary_color": "#FDB927", "abbreviation": "LAL"},
+          "prematch_odds": {
+            "away_probability": 0.175,
+            "home_probability": 0.825,
+            "away_rendered_percent": 17,
+            "home_rendered_percent": 83,
+            "source": "kalshi"
+          },
+          "pregame_projection": {
+            "projected_away_score": 109.0,
+            "projected_home_score": 121.0,
+            "source": "sportsbooks",
+            "unit": "points",
+            "period": "full_game"
+          }
+        }
+        """#)
+        let liveJazzHistory = try decodeHistory(#"""
+        {
+          "event_id": 15350792,
+          "home_team": "Los Angeles Lakers",
+          "away_team": "Utah Jazz",
+          "status": "completed",
+          "completed_at": "2026-11-19T05:35:00Z",
+          "history": [],
+          "win_prob_history": {
+            "kalshi": [
+              {"timestamp": "2026-11-19T02:58:00Z", "home_probability": 0.825},
+              {"timestamp": "2026-11-19T05:32:00Z", "home_probability": 0.0}
+            ]
+          },
+          "aggregate_line": [
+            {"timestamp": "2026-11-19T02:58:00Z", "home_probability": 0.825},
+            {"timestamp": "2026-11-19T04:00:00Z", "home_probability": 0.70},
+            {"timestamp": "2026-11-19T05:32:00Z", "home_probability": 0.0}
+          ]
+        }
+        """#)
+        let prematch = try XCTUnwrap(PrematchReading.resolve(prematch: liveJazzEvent.prematchOdds, opening: liveJazzEvent.openingOdds))
+        let cardModel = DiscoverSingleGameCard190C.build(
+            event: liveJazzEvent,
+            prematch: prematch,
+            showsInlinePregame: true,
+            usesPictureLayout: true
+        )
+        XCTAssertEqual(cardModel.rows.map(\.pregameText), ["17%", "83%"])
+
+        let chartModel = DiscoverPictureChart191A.build(
+            event: liveJazzEvent,
+            prematch: prematch,
+            history: liveJazzHistory
+        )
+        XCTAssertEqual(chartModel.leftEndLabel, "Pregame 17% UTA")
+        XCTAssertEqual(chartModel.finishedSummaryLabel, "Upset · 17% pregame")
+
+        // Sub-1% upset & rally never print 0%
+        let subOneEvent = try decodeEvent(#"""
+        {
+          "id": 15350999,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "away_team": "Utah Jazz",
+          "home_team": "Los Angeles Lakers",
+          "away_team_data": {"abbreviation": "UTA"},
+          "commence_time": "2026-11-19T03:00:00Z",
+          "status": "completed",
+          "away_score": 109,
+          "home_score": 97,
+          "prematch_odds": {
+            "away_probability": 0.004,
+            "home_probability": 0.996,
+            "away_rendered_percent": 0,
+            "home_rendered_percent": 100,
+            "source": "kalshi"
+          }
+        }
+        """#)
+        let subOnePrematch = try XCTUnwrap(PrematchReading.resolve(prematch: subOneEvent.prematchOdds, opening: nil))
+        let subOneChart = DiscoverPictureChart191A.build(event: subOneEvent, prematch: subOnePrematch, history: liveJazzHistory)
+        XCTAssertEqual(subOneChart.leftEndLabel, "Pregame <1% UTA")
+        XCTAssertEqual(subOneChart.finishedSummaryLabel, "Upset · <1% pregame")
+
+        let deepRallyEvent = try decodeEvent(#"""
+        {
+          "id": 15351000,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "away_team": "Boston Celtics",
+          "home_team": "Denver Nuggets",
+          "commence_time": "2026-11-19T02:00:00Z",
+          "status": "completed",
+          "away_score": 101,
+          "home_score": 105,
+          "prematch_odds": {
+            "away_probability": 0.45,
+            "home_probability": 0.55,
+            "away_rendered_percent": 45,
+            "home_rendered_percent": 55,
+            "source": "kalshi"
+          }
+        }
+        """#)
+        let deepRallyHistory = try decodeHistory(#"""
+        {
+          "event_id": 15351000,
+          "home_team": "Denver Nuggets",
+          "away_team": "Boston Celtics",
+          "status": "completed",
+          "completed_at": "2026-11-19T04:32:00Z",
+          "history": [],
+          "win_prob_history": {
+            "kalshi": [
+              {"timestamp": "2026-11-19T02:00:00Z", "home_probability": 0.55},
+              {"timestamp": "2026-11-19T04:30:00Z", "home_probability": 1.0}
+            ]
+          },
+          "aggregate_line": [
+            {"timestamp": "2026-11-19T02:00:00Z", "home_probability": 0.55},
+            {"timestamp": "2026-11-19T03:55:00Z", "home_probability": 0.004},
+            {"timestamp": "2026-11-19T04:30:00Z", "home_probability": 1.0}
+          ]
+        }
+        """#)
+        let rallyPrematch = try XCTUnwrap(PrematchReading.resolve(prematch: deepRallyEvent.prematchOdds, opening: nil))
+        let rallyChart = DiscoverPictureChart191A.build(event: deepRallyEvent, prematch: rallyPrematch, history: deepRallyHistory)
+        XCTAssertEqual(rallyChart.finishedSummaryLabel, "Rallied from <1%")
+    }
+
     #if canImport(UIKit)
     func testLoadingStateHoldsSameHeightAndCardsRenderWithoutEllipsisAt390DefaultAndAX3() throws {
         let nuggetsEvent = try decodeEvent(#"""
@@ -444,6 +588,153 @@ final class DiscoverChartLoadingAndUpset13091Tests: XCTestCase {
                         try png.write(to: dirURL.appendingPathComponent("13091-13092-discover-chart-\(typeTag)-\(schemeTag)-390.png"))
                     }
                 }
+            }
+        }
+    }
+
+    func testLiveJazz13092RenderParity390LightAndDark() throws {
+        let liveJazzEvent = try decodeEvent(#"""
+        {
+          "id": 15350792,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "away_team": "Utah Jazz",
+          "home_team": "Los Angeles Lakers",
+          "commence_time": "2026-11-19T03:00:00Z",
+          "status": "completed",
+          "away_score": 109,
+          "home_score": 97,
+          "away_team_data": {"primary_color": "#0e2240", "secondary_color": "#fec524", "abbreviation": "UTA"},
+          "home_team_data": {"primary_color": "#552583", "secondary_color": "#FDB927", "abbreviation": "LAL"},
+          "prematch_odds": {
+            "away_probability": 0.175,
+            "home_probability": 0.825,
+            "away_rendered_percent": 17,
+            "home_rendered_percent": 83,
+            "source": "kalshi"
+          },
+          "pregame_projection": {
+            "projected_away_score": 109.0,
+            "projected_home_score": 121.0,
+            "source": "sportsbooks",
+            "unit": "points",
+            "period": "full_game"
+          }
+        }
+        """#)
+        let liveJazzHistory = try decodeHistory(#"""
+        {
+          "event_id": 15350792,
+          "home_team": "Los Angeles Lakers",
+          "away_team": "Utah Jazz",
+          "status": "completed",
+          "completed_at": "2026-11-19T05:35:00Z",
+          "history": [],
+          "win_prob_history": {
+            "kalshi": [
+              {"timestamp": "2026-11-19T02:58:00Z", "home_probability": 0.825},
+              {"timestamp": "2026-11-19T05:32:00Z", "home_probability": 0.0}
+            ]
+          },
+          "aggregate_line": [
+            {"timestamp": "2026-11-19T03:00:00Z", "home_probability": 0.812},
+            {"timestamp": "2026-11-19T03:16:00Z", "home_probability": 0.7354},
+            {"timestamp": "2026-11-19T03:40:00Z", "home_probability": 0.8530},
+            {"timestamp": "2026-11-19T03:48:00Z", "home_probability": 0.8771},
+            {"timestamp": "2026-11-19T04:12:00Z", "home_probability": 0.7198},
+            {"timestamp": "2026-11-19T04:37:00Z", "home_probability": 0.6330},
+            {"timestamp": "2026-11-19T04:45:00Z", "home_probability": 0.7927},
+            {"timestamp": "2026-11-19T05:09:00Z", "home_probability": 0.4816},
+            {"timestamp": "2026-11-19T05:17:00Z", "home_probability": 0.2333},
+            {"timestamp": "2026-11-19T05:25:00Z", "home_probability": 0.0255},
+            {"timestamp": "2026-11-19T05:32:00Z", "home_probability": 0.0}
+          ]
+        }
+        """#)
+
+        let pinDefaults = UserDefaults(suiteName: "test.13092.parity.\(UUID().uuidString)")!
+        let pinManager = PinManager(defaults: pinDefaults, allowLegacyGuestPins: false)
+
+        for scheme in [ColorScheme.light, ColorScheme.dark] {
+            let uiStyle: UIUserInterfaceStyle = scheme == .dark ? .dark : .light
+            let surface = scheme == .dark ? Color.black : Color(white: 0.955)
+            let sheet = NativeEventDiscoverCard(
+                event: liveJazzEvent,
+                feedContext: nil,
+                expandedContext: nil,
+                navigationPath: .constant(NavigationPath()),
+                chartHistory: liveJazzHistory
+            )
+            .environment(\.discoverCardLikeAction420D, DiscoverCardLikeAction420D(
+                itemKey: "event-15350792",
+                isLiked: false,
+                pinType: "event",
+                pinId: 15350792,
+                shareURL: URL(string: "https://bainluck.com/discover"),
+                shareTitle: "Utah Jazz at Los Angeles Lakers",
+                onToggle: {},
+                onShare: {}
+            ))
+            .padding(16)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(width: 422, alignment: .topLeading)
+            .background(surface)
+            .environmentObject(pinManager)
+            .environment(\.colorScheme, scheme)
+
+            let host = hostForMeasurement(sheet, at: .large)
+            host.overrideUserInterfaceStyle = uiStyle
+            let fitting = host.sizeThatFits(in: CGSize(width: 422, height: 1400))
+            let bounds = CGRect(origin: .zero, size: CGSize(width: 422, height: ceil(fitting.height) + 4))
+            host.view.frame = bounds
+
+            let window: UIWindow
+            if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+                window = UIWindow(windowScene: scene)
+            } else {
+                window = UIWindow(frame: bounds)
+            }
+            window.frame = bounds
+            window.overrideUserInterfaceStyle = uiStyle
+            window.rootViewController = host
+            window.isHidden = false
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+
+            for _ in 0..<4 {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            }
+
+            let fmt = UIGraphicsImageRendererFormat()
+            fmt.scale = 2.0
+            let img = UIGraphicsImageRenderer(bounds: bounds, format: fmt).image { ctx in
+                if !host.view.drawHierarchy(in: bounds, afterScreenUpdates: true) {
+                    host.view.layer.render(in: ctx.cgContext)
+                }
+            }
+
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            try VNImageRequestHandler(cgImage: XCTUnwrap(img.cgImage), options: [:]).perform([req])
+            let spaceJoined = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+
+            XCTAssertTrue(spaceJoined.contains("17%"), "Expected 17% pregame row in \(scheme); got: \(spaceJoined)")
+            XCTAssertTrue(spaceJoined.contains("83%"), "Expected 83% pregame row in \(scheme); got: \(spaceJoined)")
+            XCTAssertTrue(spaceJoined.contains("17% pregame"), "Expected Upset · 17% pregame pill in \(scheme); got: \(spaceJoined)")
+            XCTAssertFalse(spaceJoined.contains("18% pregame"), "Must not show 18% pregame mismatch in \(scheme); got: \(spaceJoined)")
+
+            if let outDir = ProcessInfo.processInfo.environment["BAINLUCK_13092_FIX_RENDER_DIR"], !outDir.isEmpty {
+                let dirURL = URL(fileURLWithPath: outDir, isDirectory: true)
+                try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+                let schemeTag = scheme == .dark ? "dark" : "light"
+                try XCTUnwrap(img.pngData()).write(
+                    to: dirURL.appendingPathComponent("13092-after-\(schemeTag).png"),
+                    options: .atomic
+                )
             }
         }
     }

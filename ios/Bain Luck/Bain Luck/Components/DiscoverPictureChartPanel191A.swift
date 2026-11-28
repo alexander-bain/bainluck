@@ -202,6 +202,15 @@ enum DiscoverPictureChart191A {
             return CompactGameCard12616.usableProbability(raw)
         }()
 
+        // Keep chart endpoints and upset/won badges aligned with the card's
+        // paired server-rounded `PrematchReading.percents` (e.g. 0.175 -> 17%
+        // alongside 83%) instead of re-rounding one side in isolation (#13092).
+        let pregameSideRenderedPercent: Int? = {
+            guard pregameSideProb != nil, let prematch else { return nil }
+            let idx = (pricesADraw || perspective == .home) ? 1 : 0
+            return idx < prematch.percents.count ? prematch.percents[idx] : nil
+        }()
+
         let currentSideProb: Double? = {
             guard isLive else { return nil }
             let raw = perspective == .home
@@ -229,7 +238,7 @@ enum DiscoverPictureChart191A {
 
         let leftEndLabel: String = {
             if let preP = pregameSideProb {
-                return "Pregame \(formatProbability(preP)) \(plottedTeamCode)"
+                return "Pregame \(formatProbability(preP, renderedPercent: pregameSideRenderedPercent)) \(plottedTeamCode)"
             }
             if let first = extractedPoints.first {
                 return "Start \(formatProbability(first.probability)) \(plottedTeamCode)"
@@ -326,28 +335,30 @@ enum DiscoverPictureChart191A {
             }
             let openingProb = pregameSideProb
                 ?? extractedPoints.first(where: { !$0.isEndpoint }).flatMap { CompactGameCard12616.usableProbability($0.probability) }
+            let openRendered: Int? = pregameSideProb != nil ? pregameSideRenderedPercent : nil
             let lowestInPlayProb = extractedPoints
                 .dropLast()
                 .compactMap { CompactGameCard12616.usableProbability($0.probability) }
                 .min()
 
             if let openP = openingProb {
-                let openPct = Int((openP * 100.0).rounded())
+                let openText = formatProbability(openP, renderedPercent: openRendered)
+                let openPct = openRendered ?? Int((openP * 100.0).rounded())
                 if openPct <= 40 {
-                    return "Upset \u{00B7} \(openPct)% pregame"
+                    return "Upset \u{00B7} \(openText) pregame"
                 }
                 if let minP = lowestInPlayProb {
                     let minPct = Int((minP * 100.0).rounded())
                     if minPct <= 25 {
-                        return "Rallied from \(minPct)%"
+                        return "Rallied from \(formatProbability(minP))"
                     }
                 }
-                return "\(openPct)% pregame \u{00B7} Won"
+                return "\(openText) pregame \u{00B7} Won"
             }
             if let minP = lowestInPlayProb {
                 let minPct = Int((minP * 100.0).rounded())
                 if minPct <= 25 {
-                    return "Rallied from \(minPct)%"
+                    return "Rallied from \(formatProbability(minP))"
                 }
             }
             return nil
