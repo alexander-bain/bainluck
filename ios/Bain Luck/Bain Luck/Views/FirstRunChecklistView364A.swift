@@ -8,9 +8,12 @@ private enum ChecklistColumn364A {
 }
 
 private extension View {
-    func checklistReadableColumn364A(alignment: Alignment = .leading) -> some View {
+    func checklistReadableColumn364A(
+        alignment: Alignment = .leading,
+        maxWidth: CGFloat = ChecklistColumn364A.maxWidth
+    ) -> some View {
         self
-            .frame(maxWidth: ChecklistColumn364A.maxWidth, alignment: alignment)
+            .frame(maxWidth: maxWidth, alignment: alignment)
             .frame(maxWidth: .infinity)
     }
 }
@@ -85,7 +88,10 @@ struct FirstRunChecklistView364A: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @ScaledMetric(relativeTo: .subheadline) private var rowTitleSizeAX: CGFloat = 15
+
+    private var columnMaxWidth: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 800 : ChecklistColumn364A.maxWidth
+    }
 
     private var solidButtonForeground: Color {
         colorScheme == .dark ? Color(hex: "#0F172A") : .white
@@ -102,13 +108,13 @@ struct FirstRunChecklistView364A: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 8)
-            .frame(maxWidth: 680, alignment: .leading)
+            .frame(maxWidth: columnMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
             .background(DS.surface)
 
             #if os(iOS)
             GeometryReader { proxy in
-                checklistScrollBody(columnWidth: min(680, max(1, proxy.size.width)))
+                checklistScrollBody(columnWidth: min(columnMaxWidth, max(1, proxy.size.width)))
             }
             #else
             checklistScrollBody(columnWidth: nil)
@@ -144,7 +150,7 @@ struct FirstRunChecklistView364A: View {
                     .frame(maxWidth: .infinity)
             } else {
                 column
-                    .frame(maxWidth: 680, alignment: .leading)
+                    .frame(maxWidth: columnMaxWidth, alignment: .leading)
                     .frame(maxWidth: .infinity)
             }
         }
@@ -343,7 +349,7 @@ struct FirstRunChecklistView364A: View {
                         }
 
                         Text(row.title)
-                            .font(.system(size: min(rowTitleSizeAX, 28), weight: .semibold))
+                            .font(.headline.weight(.semibold))
                             .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
@@ -451,7 +457,7 @@ struct FirstRunChecklistView364A: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
-            .checklistReadableColumn364A(alignment: .center)
+            .checklistReadableColumn364A(alignment: .center, maxWidth: columnMaxWidth)
             .accessibilityIdentifier("checklist364A.goToDiscoverButton")
         }
         .background(DS.surface)
