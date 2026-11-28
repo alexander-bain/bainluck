@@ -2508,6 +2508,16 @@ struct DiscoverView: View {
 
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverLayoutIsPhone13914) private var discoverLayoutIsPhoneOverride
+
+    private var isPhoneDiscoverLayout: Bool {
+        if let override = discoverLayoutIsPhoneOverride { return override }
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .phone && sizeClass == .compact
+        #else
+        return false
+        #endif
+    }
 
     /// Max content width — phone-style on compact, wider on iPad/Mac
     private var contentMaxWidth: CGFloat {
@@ -2677,7 +2687,8 @@ struct DiscoverView: View {
                 let columnCount = DiscoverMasonry.discoverColumnCount(
                     availableWidth: effectiveGridWidth,
                     horizontalSizeClass: sizeClass,
-                    dynamicTypeSize: dynamicTypeSize
+                    dynamicTypeSize: dynamicTypeSize,
+                    isPhone: isPhoneDiscoverLayout
                 )
 
                 // #12288 (`252: A`): Owner-only machinery groupings preview (Alex + Preferences switch ON),

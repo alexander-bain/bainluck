@@ -8,12 +8,13 @@ import XCTest
 
 /// #13914 — Upright iPad Discover must keep two columns of cards (matching the
 /// website's `sm:grid-cols-2` breakpoint) instead of collapsing into one oversized
-/// column when split-view/sidebar panes narrow the detail area below 616 pt, while
-/// keeping iPhone unchanged in one column.
+/// column across upright split-view / sidebar / machinery-preview layouts on
+/// iPad (`iPad16,6` `1032 x 1376 pt` and `834 pt` Display Zoom), while leaving
+/// iPhone completely unchanged in one column.
 @MainActor
 final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
 
-    // MARK: - Breakpoint & Size-Class Unit Tests
+    // MARK: - Breakpoint, Idiom & Dynamic Type Unit Tests
 
     func testIPhoneCompactWidthsRemainSingleColumnUnchanged() {
         for width in [320.0, 375.0, 390.0, 402.0, 430.0, 440.0] {
@@ -25,7 +26,8 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
                 DiscoverMasonry.discoverColumnCount(
                     availableWidth: area,
                     horizontalSizeClass: .compact,
-                    dynamicTypeSize: .large
+                    dynamicTypeSize: .large,
+                    isPhone: true
                 ),
                 DiscoverMasonry.columnCount(availableWidth: area),
                 "iPhone \(width) pt (.compact, area \(area)) must match legacy columnCount"
@@ -33,56 +35,63 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
             XCTAssertEqual(
                 DiscoverMasonry.discoverColumnCount(
                     availableWidth: area,
-                    horizontalSizeClass: .compact
+                    horizontalSizeClass: .compact,
+                    isPhone: true
                 ),
                 1,
                 "iPhone \(width) pt portrait must stay 1 column"
             )
         }
-        // Compact landscape behaves identically to legacy `columnCount`.
-        XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(
-                availableWidth: 700,
-                horizontalSizeClass: .compact
-            ),
-            DiscoverMasonry.columnCount(availableWidth: 700)
-        )
-    }
-
-    func testIPadPortraitRegularWidthsResolveToTwoColumns() {
-        // Upright iPad portrait with sidebar open (220-320 pt) or windowed/split panes,
-        // plus web `sm:` 640 px equivalent (`608 pt` card area), must all resolve to 2 columns.
-        let portraitDetailWidths: [CGFloat] = [500, 514, 560, 574, 600, 614, 640]
-        for detailWidth in portraitDetailWidths {
-            let area = DiscoverMasonry.cardAreaWidth(
-                containerWidth: detailWidth,
-                maxContentWidth: 800
-            )
+        // iPhone compact landscape (`540`, `600`, `700`) behaves identically to legacy `columnCount`.
+        for landscapeWidth: CGFloat in [540, 600, 700] {
             XCTAssertEqual(
                 DiscoverMasonry.discoverColumnCount(
-                    availableWidth: area,
-                    horizontalSizeClass: .regular,
-                    dynamicTypeSize: .large
+                    availableWidth: landscapeWidth,
+                    horizontalSizeClass: .compact,
+                    dynamicTypeSize: .large,
+                    isPhone: true
                 ),
-                2,
-                "Regular iPad detail \(detailWidth) pt (card area \(area) pt) should show 2 columns"
+                DiscoverMasonry.columnCount(availableWidth: landscapeWidth),
+                "iPhone compact width \(landscapeWidth) must match legacy columnCount"
             )
         }
+    }
 
-        // Full-width upright iPad portrait (iPad mini 744, Air 820, Pro 11 834, Pro 13 1032)
-        // clamped at Discover's 800 pt `contentMaxWidth` stays 2 columns.
-        for fullWidth: CGFloat in [744, 820, 834, 1032, 1194] {
+    func testIPadPortraitFullScreenSplitAndSidebarWidthsResolveToTwoColumns() {
+        // `iPad16,6` (`iPad Pro 13-inch`) upright full-screen (`1032`), sidebar open (`712`),
+        // `2/3` Split View (`639`, `.compact`), `1/2` Split View (`507`, `.compact`), web `sm:`
+        // `640` window, and Display Zoom / 11" iPad `834` with `320 pt` sidebar (`514` detail).
+        let cases: [(width: CGFloat, sizeClass: UserInterfaceSizeClass, expected: Int, label: String)] = [
+            (1032, .regular, 2, "iPad Pro 13 full screen upright (768 pt area)"),
+            (712, .regular, 2, "iPad Pro 13 w/ 320 pt sidebar open (680 pt area)"),
+            (639, .compact, 2, "iPad Pro 13 upright 2/3 Split View (.compact, 607 pt area)"),
+            (507, .compact, 2, "iPad Pro 13 upright 1/2 Split View (.compact, 475 pt area)"),
+            (640, .regular, 2, "640 pt window matching web sm:grid-cols-2 (608 pt area)"),
+            (514, .regular, 2, "834 pt upright iPad w/ 320 pt sidebar (482 pt area)"),
+            (744, .regular, 2, "iPad mini upright full screen"),
+            (820, .regular, 2, "iPad Air 11 upright full screen"),
+            (834, .regular, 2, "iPad Pro 11 upright full screen"),
+            (1376, .regular, 2, "iPad Pro 13 landscape full screen (768 pt clamped area)"),
+            (1056, .regular, 2, "iPad Pro 13 landscape w/ 320 pt sidebar (768 pt clamped area)"),
+            (375, .compact, 1, "iPad Pro 13 upright 1/3 Split View (343 pt area -> 1 col)"),
+            (320, .compact, 1, "iPad Slide Over (288 pt area -> 1 col)"),
+        ]
+
+        for entry in cases {
+            let maxW: CGFloat = entry.sizeClass == .regular ? 800 : .infinity
             let area = DiscoverMasonry.cardAreaWidth(
-                containerWidth: fullWidth,
-                maxContentWidth: 800
+                containerWidth: entry.width,
+                maxContentWidth: maxW
             )
             XCTAssertEqual(
                 DiscoverMasonry.discoverColumnCount(
                     availableWidth: area,
-                    horizontalSizeClass: .regular
+                    horizontalSizeClass: entry.sizeClass,
+                    dynamicTypeSize: .large,
+                    isPhone: false
                 ),
-                2,
-                "Full-width regular canvas \(fullWidth) pt (card area \(area) pt) should show 2 columns"
+                entry.expected,
+                "\(entry.label) (detail \(entry.width), area \(area))"
             )
         }
     }
@@ -92,58 +101,72 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
         XCTAssertEqual(DiscoverMasonry.regularTwoColumnMinimumCardWidth, 225)
         XCTAssertEqual(DiscoverMasonry.regularTwoColumnMinimumAreaWidth, 466)
 
-        XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(availableWidth: 465, horizontalSizeClass: .regular),
-            1
-        )
-        XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(availableWidth: 466, horizontalSizeClass: .regular),
-            2
-        )
-        XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(availableWidth: 615, horizontalSizeClass: .regular),
-            2
-        )
-        XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(availableWidth: 616, horizontalSizeClass: .regular),
-            2
-        )
-        XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(availableWidth: 931, horizontalSizeClass: .regular),
-            2
-        )
-        XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(availableWidth: 932, horizontalSizeClass: .regular),
-            3
-        )
+        for sc in [UserInterfaceSizeClass.regular, .compact] {
+            XCTAssertEqual(
+                DiscoverMasonry.discoverColumnCount(availableWidth: 465, horizontalSizeClass: sc, isPhone: false),
+                1
+            )
+            XCTAssertEqual(
+                DiscoverMasonry.discoverColumnCount(availableWidth: 466, horizontalSizeClass: sc, isPhone: false),
+                2
+            )
+            XCTAssertEqual(
+                DiscoverMasonry.discoverColumnCount(availableWidth: 615, horizontalSizeClass: sc, isPhone: false),
+                2
+            )
+            XCTAssertEqual(
+                DiscoverMasonry.discoverColumnCount(availableWidth: 616, horizontalSizeClass: sc, isPhone: false),
+                2
+            )
+            XCTAssertEqual(
+                DiscoverMasonry.discoverColumnCount(availableWidth: 931, horizontalSizeClass: sc, isPhone: false),
+                2
+            )
+            XCTAssertEqual(
+                DiscoverMasonry.discoverColumnCount(availableWidth: 932, horizontalSizeClass: sc, isPhone: false),
+                3
+            )
+        }
 
         // Unknown / non-positive width never returns < 1 column.
         XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(availableWidth: 0, horizontalSizeClass: .regular),
+            DiscoverMasonry.discoverColumnCount(availableWidth: 0, horizontalSizeClass: .regular, isPhone: false),
             1
         )
         XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(availableWidth: -20, horizontalSizeClass: .regular),
+            DiscoverMasonry.discoverColumnCount(availableWidth: -20, horizontalSizeClass: .regular, isPhone: false),
             1
         )
 
-        // Narrow regular panes (< 616 pt) fall back to 1 column at Accessibility Dynamic Type sizes
-        // so oversized text never squeezes into 233-283 pt columns; wider panes (>= 616 pt) stay 2.
+        // Narrow iPad panes (< 616 pt) fall back to 1 column at Accessibility Dynamic Type sizes
+        // so oversized text never squeezes into 229-299 pt columns; wider panes (>= 616 pt) stay 2.
         for ax in [DynamicTypeSize.accessibility1, .accessibility3, .accessibility5] {
             XCTAssertEqual(
                 DiscoverMasonry.discoverColumnCount(
-                    availableWidth: 542,
+                    availableWidth: 482,
                     horizontalSizeClass: .regular,
-                    dynamicTypeSize: ax
+                    dynamicTypeSize: ax,
+                    isPhone: false
                 ),
                 1,
-                "Narrow regular 542 pt card area must stay 1 column at \(ax)"
+                "Narrow 482 pt card area must stay 1 column at \(ax)"
+            )
+            XCTAssertEqual(
+                DiscoverMasonry.discoverColumnCount(
+                    availableWidth: 607,
+                    horizontalSizeClass: .compact,
+                    dynamicTypeSize: ax,
+                    isPhone: false
+                ),
+                1,
+                "2/3 split 607 pt card area must stay 1 column at \(ax)"
             )
             XCTAssertEqual(
                 DiscoverMasonry.discoverColumnCount(
                     availableWidth: 768,
                     horizontalSizeClass: .regular,
-                    dynamicTypeSize: ax
+                    dynamicTypeSize: ax,
+                    isPhone: false
                 ),
                 2,
                 "Full 768 pt card area stays 2 columns at \(ax)"
@@ -153,7 +176,7 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
 
     #if os(iOS)
 
-    // MARK: - Deterministic Feed Stubs & Window Helpers
+    // MARK: - Deterministic Feed & Machinery Stubs
 
     private nonisolated struct StubDiscoverProvider13914: DiscoverFeedProviding {
         let response: FeedResponse
@@ -169,6 +192,11 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
 
     private nonisolated struct EmptyMachineryLoader13914: MachineryPreviewLoading12288 {
         func loadPreview(user: AuthUser?) async throws -> [MachineryPreviewEntry] { [] }
+    }
+
+    private nonisolated struct StubMachineryLoader13914: MachineryPreviewLoading12288 {
+        let entries: [MachineryPreviewEntry]
+        func loadPreview(user: AuthUser?) async throws -> [MachineryPreviewEntry] { entries }
     }
 
     private func makeTestFeed() throws -> (response: FeedResponse, cardTitles: [String]) {
@@ -370,8 +398,84 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
         return (resp, titles)
     }
 
-    /// Renders a realistic iPad sidebar rail beside the detail canvas in its own
-    /// child UIViewController so `NavigationStack` keeps native iPad bar margins.
+    private func makeMachineryEntries() throws -> [MachineryPreviewEntry] {
+        let json = """
+        {
+          "public_switch_enabled": false,
+          "count": 2,
+          "items": [
+            {
+              "slug": "machinery-fed-and-macro",
+              "definition": {
+                "slug": "machinery-fed-and-macro",
+                "name": "Fed & U.S. Macro",
+                "category": "economics",
+                "kicker": "ECONOMICS · FEDERAL RESERVE",
+                "footer": ""
+              },
+              "feed_item": {
+                "data": {
+                  "roundup": {
+                    "machinery_card": {
+                      "slug": "machinery-fed-and-macro",
+                      "form_id": "contender_spotlight",
+                      "kicker": "ECONOMICS · FEDERAL RESERVE",
+                      "title": "January FOMC Rate Decision",
+                      "subtitle": "Policy-move odds along the ladder.",
+                      "footer": "",
+                      "scale_ordered": true,
+                      "section_count": 2,
+                      "destination_href": "/collections/machinery-fed-and-macro",
+                      "rows": [
+                        {"outcome_id": 1, "name": "Cut 25 bps", "probability": 0.31, "rendered_percent": 31},
+                        {"outcome_id": 2, "name": "No change", "probability": 0.58, "rendered_percent": 58}
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "slug": "machinery-ai-race",
+              "definition": {
+                "slug": "machinery-ai-race",
+                "name": "AI Models",
+                "category": "tech",
+                "kicker": "TECH · BENCHMARKS",
+                "footer": ""
+              },
+              "feed_item": {
+                "data": {
+                  "roundup": {
+                    "machinery_card": {
+                      "slug": "machinery-ai-race",
+                      "form_id": "contender_spotlight",
+                      "kicker": "TECH · BENCHMARKS",
+                      "title": "Best Frontier Model Q4",
+                      "subtitle": "Head-to-head frontier leaderboard odds.",
+                      "footer": "",
+                      "scale_ordered": false,
+                      "section_count": 2,
+                      "destination_href": "/collections/machinery-ai-race",
+                      "rows": [
+                        {"outcome_id": 11, "name": "Gemini", "probability": 0.52, "rendered_percent": 52},
+                        {"outcome_id": 12, "name": "Claude", "probability": 0.34, "rendered_percent": 34}
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(MachineryPreviewResponse.self, from: Data(json.utf8)).items
+    }
+
+    // MARK: - Sidebar & Legacy Pre-Fix Comparison Harnesses
+
     private struct IPadSidebarRail13914: View {
         let colorScheme: ColorScheme
 
@@ -423,10 +527,11 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
         }
     }
 
-    /// Pre-fix (`300 pt` minimum card width -> `DiscoverMasonry.columnCount(availableWidth:)`)
-    /// masonry harness used strictly for BEFORE comparison panels beside real `DiscoverView`.
+    /// Pre-fix (`300 pt` minimum card width -> `DiscoverMasonry.columnCount(availableWidth:)`,
+    /// plus 1-column `VStack` for owner machinery previews) harness used strictly for BEFORE panels.
     private struct LegacyBeforeDiscoverCanvas13914: View {
         let items: [FeedItem]
+        var previewEntries: [MachineryPreviewEntry] = []
         let detailWidth: CGFloat
         let totalHeight: CGFloat
         let colorScheme: ColorScheme
@@ -442,6 +547,21 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
             NavigationStack {
                 ScrollView {
                     VStack(spacing: 0) {
+                        if !previewEntries.isEmpty {
+                            VStack(spacing: DiscoverMasonry.spacing) {
+                                ForEach(previewEntries) { entry in
+                                    if let card = entry.machineryCard {
+                                        MachineryDiscoverEntryCardView(
+                                            card: card,
+                                            pairedMetricSet: entry.pairedMetricSet
+                                        )
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
+                            .padding(.bottom, DiscoverMasonry.spacing)
+                        }
+
                         Group {
                             if legacyCols <= 1 {
                                 LazyVStack(spacing: DiscoverMasonry.spacing) {
@@ -536,17 +656,20 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
         private let sidebarChild: UIViewController?
         private let sidebarWidth: CGFloat
         private let detailChild: UIViewController
+        private let outerSize: CGSize
         private let traits: UITraitCollection
 
         init(
             sidebarChild: UIViewController?,
             sidebarWidth: CGFloat,
             detailChild: UIViewController,
+            outerSize: CGSize,
             traits: UITraitCollection
         ) {
             self.sidebarChild = sidebarChild
             self.sidebarWidth = sidebarWidth
             self.detailChild = detailChild
+            self.outerSize = outerSize
             self.traits = traits
             super.init(nibName: nil, bundle: nil)
         }
@@ -558,35 +681,38 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
 
         override func viewDidLoad() {
             super.viewDidLoad()
-            let totalH = view.bounds.height
-            let totalW = view.bounds.width
+            applyLayoutFrames()
             if let sidebarChild, sidebarWidth > 0 {
                 addChild(sidebarChild)
-                sidebarChild.view.frame = CGRect(x: 0, y: 0, width: sidebarWidth, height: totalH)
-                sidebarChild.view.autoresizingMask = [.flexibleHeight]
                 view.addSubview(sidebarChild.view)
                 setOverrideTraitCollection(traits, forChild: sidebarChild)
                 sidebarChild.didMove(toParent: self)
 
-                let divider = UIView(frame: CGRect(x: sidebarWidth, y: 0, width: 1, height: totalH))
+                let divider = UIView(frame: CGRect(x: sidebarWidth, y: 0, width: 1, height: outerSize.height))
                 divider.backgroundColor = UIColor.separator
-                divider.autoresizingMask = [.flexibleHeight]
                 view.addSubview(divider)
+            }
+            addChild(detailChild)
+            view.addSubview(detailChild.view)
+            setOverrideTraitCollection(traits, forChild: detailChild)
+            detailChild.didMove(toParent: self)
+            applyLayoutFrames()
+        }
 
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            applyLayoutFrames()
+        }
+
+        private func applyLayoutFrames() {
+            let totalH = outerSize.height
+            let totalW = outerSize.width
+            if let sidebarChild, sidebarWidth > 0 {
+                sidebarChild.view.frame = CGRect(x: 0, y: 0, width: sidebarWidth, height: totalH)
                 let detailX = sidebarWidth + 1
-                addChild(detailChild)
                 detailChild.view.frame = CGRect(x: detailX, y: 0, width: max(1, totalW - detailX), height: totalH)
-                detailChild.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-                view.addSubview(detailChild.view)
-                setOverrideTraitCollection(traits, forChild: detailChild)
-                detailChild.didMove(toParent: self)
             } else {
-                addChild(detailChild)
-                detailChild.view.frame = view.bounds
-                detailChild.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-                view.addSubview(detailChild.view)
-                setOverrideTraitCollection(traits, forChild: detailChild)
-                detailChild.didMove(toParent: self)
+                detailChild.view.frame = CGRect(x: 0, y: 0, width: totalW, height: totalH)
             }
         }
     }
@@ -596,20 +722,31 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
         sidebarWidth: CGFloat = 0,
         outerSize: CGSize,
         detailSizeClass: UserInterfaceSizeClass,
+        isPhone: Bool,
         colorScheme: ColorScheme,
-        cardTitles: [String]
+        authManager: AuthManager? = nil,
+        cardTitles: [String],
+        extraTicks: Int = 0
     ) async -> (image: UIImage, titleFrames: [String: CGRect]) {
         let uiStyle: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
         let uiSizeClass: UIUserInterfaceSizeClass = detailSizeClass == .compact ? .compact : .regular
         let detailW = sidebarWidth > 0 ? max(1, outerSize.width - sidebarWidth - 1) : outerSize.width
 
+        let resolvedAuth: AuthManager = authManager ?? {
+            let a = AuthManager(restoreOnInit: false)
+            a.user = nil
+            a.isLoading = false
+            return a
+        }()
+
         let styledDetail = detailView
             .environment(\.colorScheme, colorScheme)
             .environment(\.dynamicTypeSize, .large)
             .environment(\.horizontalSizeClass, detailSizeClass)
+            .environment(\.discoverLayoutIsPhone13914, isPhone)
             .environmentObject(NavigationCoordinator())
             .environmentObject(PinManager(allowLegacyGuestPins: false))
-            .environmentObject(AuthManager(restoreOnInit: false))
+            .environmentObject(resolvedAuth)
             .frame(width: detailW, height: outerSize.height, alignment: .topLeading)
 
         let traits = UITraitCollection(traitsFrom: [
@@ -633,6 +770,7 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
             sidebarChild: sidebarHost,
             sidebarWidth: sidebarWidth,
             detailChild: detailHost,
+            outerSize: outerSize,
             traits: traits
         )
         let bounds = CGRect(origin: .zero, size: outerSize)
@@ -645,12 +783,14 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
         window.backgroundColor = colorScheme == .dark ? .black : .systemGroupedBackground
         window.rootViewController = container
         window.makeKeyAndVisible()
+        window.frame = bounds
+        container.view.frame = bounds
         defer {
             window.isHidden = true
             window.rootViewController = nil
         }
 
-        for _ in 0..<10 {
+        for _ in 0..<(10 + extraTicks) {
             container.view.setNeedsLayout()
             container.view.layoutIfNeeded()
             RunLoop.current.run(until: Date().addingTimeInterval(0.03))
@@ -714,15 +854,27 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
         let hadSwipeHintKey = UserDefaults.standard.object(forKey: swipeHintKey) != nil
         let prevSwipeHintValue = UserDefaults.standard.bool(forKey: swipeHintKey)
         UserDefaults.standard.set(true, forKey: swipeHintKey)
+
+        let onboardedKey = FirstRunStorageKeys212A.onboardedKey
+        let hadOnboardedKey = UserDefaults.standard.object(forKey: onboardedKey) != nil
+        let prevOnboardedValue = UserDefaults.standard.bool(forKey: onboardedKey)
+        UserDefaults.standard.set(true, forKey: onboardedKey)
+
         defer {
             if hadSwipeHintKey {
                 UserDefaults.standard.set(prevSwipeHintValue, forKey: swipeHintKey)
             } else {
                 UserDefaults.standard.removeObject(forKey: swipeHintKey)
             }
+            if hadOnboardedKey {
+                UserDefaults.standard.set(prevOnboardedValue, forKey: onboardedKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: onboardedKey)
+            }
         }
 
         let (feedResp, titles) = try makeTestFeed()
+        let machineryEntries = try makeMachineryEntries()
         let renderDir = ProcessInfo.processInfo.environment["DISCOVER_IPAD_13914_RENDER_DIR"]
         let dirURL = renderDir.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
         if let dirURL {
@@ -746,10 +898,117 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
             try image.pngData()?.write(to: dirURL.appendingPathComponent("\(name).png"))
         }
 
-        // 1. iPad Portrait with Sidebar (834 x 1194 -> 260 pt sidebar + 573 pt detail -> 541 pt card area)
-        //    BEFORE: 1 wide column; AFTER: 2 equal columns (Light & Dark).
+        // 1. iPad16,6 (iPad Pro 13-inch) Upright 2/3 Split View (639 x 1376, .compact) — Light & Dark
+        //    BEFORE: 1 oversized column (607 pt < 616 pt); AFTER: 2 equal columns (~295.5 pt ea).
         for (scheme, schemeName) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
-            let sidebarW: CGFloat = 260
+            let size = CGSize(width: 639, height: 1376)
+            let midX = size.width * 0.5
+
+            let beforeView = LegacyBeforeDiscoverCanvas13914(
+                items: feedResp.items,
+                detailWidth: size.width,
+                totalHeight: size.height,
+                colorScheme: scheme,
+                horizontalSizeClass: .compact
+            )
+            let (beforeImg, beforeFrames) = await renderAndMeasure(
+                beforeView,
+                outerSize: size,
+                detailSizeClass: .compact,
+                isPhone: false,
+                colorScheme: scheme,
+                cardTitles: Array(titles.prefix(4))
+            )
+            try savePNG(beforeImg, name: "before_ipad_2_3_split_639_\(schemeName)")
+
+            let b0 = try XCTUnwrap(beforeFrames[titles[0]])
+            let b1 = try XCTUnwrap(beforeFrames[titles[1]])
+            XCTAssertLessThan(b0.minX, midX)
+            XCTAssertLessThan(b1.minX, midX)
+            XCTAssertGreaterThan(b1.minY, b0.maxY, "BEFORE iPad 2/3 split stacks in 1 column")
+
+            let place = await makeDiscoverPlace()
+            let (afterImg, afterFrames) = await renderAndMeasure(
+                DiscoverView(macPlace: place, machineryPreviewLoader: EmptyMachineryLoader13914()),
+                outerSize: size,
+                detailSizeClass: .compact,
+                isPhone: false,
+                colorScheme: scheme,
+                cardTitles: Array(titles.prefix(4))
+            )
+            try savePNG(afterImg, name: "after_ipad_2_3_split_639_\(schemeName)")
+
+            let a0 = try XCTUnwrap(afterFrames[titles[0]])
+            let a1 = try XCTUnwrap(afterFrames[titles[1]])
+            let a2 = try XCTUnwrap(afterFrames[titles[2]])
+            let a3 = try XCTUnwrap(afterFrames[titles[3]])
+            XCTAssertLessThan(a0.minX, midX, "AFTER 2/3 split card 0 in left column")
+            XCTAssertGreaterThan(a1.minX, midX, "AFTER 2/3 split card 1 in right column")
+            XCTAssertGreaterThan(a1.minX - a0.minX, 240, "AFTER iPad 2/3 split \(schemeName) uses 2 columns")
+            XCTAssertGreaterThan(a3.minX - a2.minX, 240, "AFTER iPad 2/3 split row 2 uses 2 columns")
+            XCTAssertLessThanOrEqual(max(a1.maxX, a3.maxX), size.width - 14)
+            try assertNoTruncatedOCR(
+                in: afterImg,
+                label: "after_ipad_2_3_split_639_\(schemeName)",
+                requiredTokens: ["Discover", "year-end?", "Chiefs", "Riemann", "76%", "59%"]
+            )
+        }
+
+        // 2. iPad16,6 Upright 1/2 Split View (507 x 1376, .compact) — Light BEFORE (1 col) vs AFTER (2 cols)
+        do {
+            let size = CGSize(width: 507, height: 1376)
+            let midX = size.width * 0.5
+
+            let beforeHalf = LegacyBeforeDiscoverCanvas13914(
+                items: feedResp.items,
+                detailWidth: size.width,
+                totalHeight: size.height,
+                colorScheme: .light,
+                horizontalSizeClass: .compact
+            )
+            let (beforeImg, beforeFrames) = await renderAndMeasure(
+                beforeHalf,
+                outerSize: size,
+                detailSizeClass: .compact,
+                isPhone: false,
+                colorScheme: .light,
+                cardTitles: Array(titles.prefix(4))
+            )
+            try savePNG(beforeImg, name: "before_ipad_1_2_split_507_light")
+            let bh0 = try XCTUnwrap(beforeFrames[titles[0]])
+            let bh1 = try XCTUnwrap(beforeFrames[titles[1]])
+            XCTAssertLessThan(bh0.minX, midX)
+            XCTAssertLessThan(bh1.minX, midX)
+            XCTAssertGreaterThan(bh1.minY, bh0.maxY, "BEFORE iPad 1/2 split is 1 column")
+
+            let place = await makeDiscoverPlace()
+            let (afterImg, afterFrames) = await renderAndMeasure(
+                DiscoverView(macPlace: place, machineryPreviewLoader: EmptyMachineryLoader13914()),
+                outerSize: size,
+                detailSizeClass: .compact,
+                isPhone: false,
+                colorScheme: .light,
+                cardTitles: Array(titles.prefix(4))
+            )
+            try savePNG(afterImg, name: "after_ipad_1_2_split_507_light")
+
+            let h0 = try XCTUnwrap(afterFrames[titles[0]])
+            let h1 = try XCTUnwrap(afterFrames[titles[1]])
+            let h2 = try XCTUnwrap(afterFrames[titles[2]])
+            let h3 = try XCTUnwrap(afterFrames[titles[3]])
+            XCTAssertGreaterThan(h1.minX - h0.minX, 180, "507 pt 1/2 split must render 2 columns")
+            XCTAssertGreaterThan(h3.minX - h2.minX, 180, "507 pt 1/2 split row 2 must render 2 columns")
+            XCTAssertLessThanOrEqual(max(h1.maxX, h3.maxX), size.width - 14)
+            try assertNoTruncatedOCR(
+                in: afterImg,
+                label: "after_ipad_1_2_split_507_light",
+                requiredTokens: ["Discover", "year-end?", "Chiefs", "Riemann", "76%", "59%"]
+            )
+        }
+
+        // 3. Upright iPad w/ 320 pt Sidebar (834 x 1194 -> 513 pt detail -> 481 pt card area, .regular) — Light & Dark
+        for (scheme, schemeName) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
+            let sidebarW: CGFloat = 320
             let detailW: CGFloat = 834 - sidebarW - 1
             let detailMidX = sidebarW + 1 + detailW * 0.5
             let size = CGSize(width: 834, height: 1194)
@@ -766,113 +1025,131 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
                 sidebarWidth: sidebarW,
                 outerSize: size,
                 detailSizeClass: .regular,
+                isPhone: false,
                 colorScheme: scheme,
                 cardTitles: Array(titles.prefix(4))
             )
-            try savePNG(beforeImg, name: "before_ipad_portrait_sidebar_\(schemeName)")
+            try savePNG(beforeImg, name: "before_ipad_sidebar_834_\(schemeName)")
+            let b0 = try XCTUnwrap(beforeFrames[titles[0]])
+            let b1 = try XCTUnwrap(beforeFrames[titles[1]])
+            XCTAssertLessThan(b0.minX, detailMidX)
+            XCTAssertLessThan(b1.minX, detailMidX)
+            XCTAssertGreaterThan(b1.minY, b0.maxY, "BEFORE 834 w/ 320 sidebar stacks in 1 column")
 
-            let card0Before = try XCTUnwrap(beforeFrames[titles[0]], "before portrait missing card 0")
-            let card1Before = try XCTUnwrap(beforeFrames[titles[1]], "before portrait missing card 1")
-            // BEFORE places every card stacked vertically inside column 0 (left side of detail).
-            XCTAssertLessThan(card0Before.minX, detailMidX, "BEFORE card 0 left-aligned in 1 column")
-            XCTAssertLessThan(card1Before.minX, detailMidX, "BEFORE card 1 left-aligned in same 1 column")
-            XCTAssertLessThan(
-                abs(card1Before.minX - card0Before.minX),
-                60,
-                "BEFORE iPad portrait \(schemeName) expected 1 column, got X=\(card0Before.minX) vs \(card1Before.minX)"
+            let place = await makeDiscoverPlace()
+            let (afterImg, afterFrames) = await renderAndMeasure(
+                DiscoverView(macPlace: place, machineryPreviewLoader: EmptyMachineryLoader13914()),
+                sidebarWidth: sidebarW,
+                outerSize: size,
+                detailSizeClass: .regular,
+                isPhone: false,
+                colorScheme: scheme,
+                cardTitles: Array(titles.prefix(4))
             )
-            XCTAssertGreaterThan(card1Before.minY, card0Before.maxY, "BEFORE iPad portrait stacks vertically")
+            try savePNG(afterImg, name: "after_ipad_sidebar_834_\(schemeName)")
+
+            let a0 = try XCTUnwrap(afterFrames[titles[0]])
+            let a1 = try XCTUnwrap(afterFrames[titles[1]])
+            let a2 = try XCTUnwrap(afterFrames[titles[2]])
+            let a3 = try XCTUnwrap(afterFrames[titles[3]])
+            XCTAssertLessThan(a0.minX, detailMidX)
+            XCTAssertGreaterThan(a1.minX, detailMidX)
+            XCTAssertGreaterThan(a1.minX - a0.minX, 180, "AFTER 834 w/ 320 sidebar \(schemeName) is 2 columns")
+            XCTAssertGreaterThan(a3.minX - a2.minX, 180, "AFTER 834 w/ 320 sidebar row 2 is 2 columns")
+            try assertNoTruncatedOCR(
+                in: afterImg,
+                label: "after_ipad_sidebar_834_\(schemeName)",
+                requiredTokens: ["Discover", "year-end?", "Chiefs", "Riemann", "76%", "59%"]
+            )
+        }
+
+        // 4. iPad16,6 Full-Screen Upright (1032 x 1376, .regular) w/ Owner Machinery Previews
+        //    BEFORE: unservedPreviewItems stacked in 1 giant column (768 pt wide);
+        //    AFTER: unservedPreviewItems + regular cards both render in 2 columns!
+        do {
+            let suiteName = "Discover13914Machinery.\(UUID().uuidString)"
+            let isolatedDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+            GroupingMachineryGate12288.setOverrideDefaultsForTesting(isolatedDefaults)
+            defer {
+                GroupingMachineryGate12288.setOverrideDefaultsForTesting(nil)
+                GroupingMachineryGate12288.setActiveUser(nil)
+                isolatedDefaults.removePersistentDomain(forName: suiteName)
+            }
+
+            let ownerAlex = AuthUser(
+                id: 364,
+                email: "alex@example.com",
+                displayName: "Alex",
+                photoUrl: nil,
+                onboardingCompleted: true,
+                createdAt: nil
+            )
+            GroupingMachineryGate12288.setSwitchEnabled(true, for: ownerAlex, defaults: isolatedDefaults)
+            let ownerAuth = AuthManager(restoreOnInit: false)
+            ownerAuth.user = ownerAlex
+            ownerAuth.isLoading = false
+
+            let size = CGSize(width: 1032, height: 1376)
+            let machineryTokens = ["January FOMC", "Best Frontier"] + Array(titles.prefix(2))
+
+            let beforeMachinery = LegacyBeforeDiscoverCanvas13914(
+                items: feedResp.items,
+                previewEntries: machineryEntries,
+                detailWidth: size.width,
+                totalHeight: size.height,
+                colorScheme: .light,
+                horizontalSizeClass: .regular
+            )
+            let (beforeImg, beforeFrames) = await renderAndMeasure(
+                beforeMachinery,
+                outerSize: size,
+                detailSizeClass: .regular,
+                isPhone: false,
+                colorScheme: .light,
+                authManager: ownerAuth,
+                cardTitles: machineryTokens
+            )
+            try savePNG(beforeImg, name: "before_ipad_1032_machinery_light")
+            let bm0 = try XCTUnwrap(beforeFrames["January FOMC"])
+            let bm1 = try XCTUnwrap(beforeFrames["Best Frontier"])
+            XCTAssertLessThan(abs(bm1.minX - bm0.minX), 24, "BEFORE machinery preview stacks in 1 column")
+            XCTAssertGreaterThan(bm1.minY, bm0.maxY)
 
             let place = await makeDiscoverPlace()
             let (afterImg, afterFrames) = await renderAndMeasure(
                 DiscoverView(
                     macPlace: place,
-                    machineryPreviewLoader: EmptyMachineryLoader13914()
+                    machineryPreviewLoader: StubMachineryLoader13914(entries: machineryEntries)
                 ),
-                sidebarWidth: sidebarW,
                 outerSize: size,
                 detailSizeClass: .regular,
-                colorScheme: scheme,
-                cardTitles: Array(titles.prefix(4))
+                isPhone: false,
+                colorScheme: .light,
+                authManager: ownerAuth,
+                cardTitles: machineryTokens,
+                extraTicks: 8
             )
-            try savePNG(afterImg, name: "after_ipad_portrait_sidebar_\(schemeName)")
-
-            let card0After = try XCTUnwrap(afterFrames[titles[0]], "after portrait missing card 0")
-            let card1After = try XCTUnwrap(afterFrames[titles[1]], "after portrait missing card 1")
-            let card2After = try XCTUnwrap(afterFrames[titles[2]], "after portrait missing card 2")
-            let card3After = try XCTUnwrap(afterFrames[titles[3]], "after portrait missing card 3")
-
-            // AFTER places card 0 & 2 in column 0 (left) and card 1 & 3 in column 1 (right), side by side!
-            XCTAssertLessThan(card0After.minX, detailMidX, "AFTER card 0 stays in left column")
-            XCTAssertGreaterThan(card1After.minX, detailMidX, "AFTER card 1 moves into right column")
-            XCTAssertGreaterThan(
-                card1After.minX - card0After.minX,
-                200,
-                "AFTER iPad portrait \(schemeName) must put card 1 in right column (0: \(card0After.minX), 1: \(card1After.minX))"
-            )
-            XCTAssertGreaterThan(
-                card3After.minX - card2After.minX,
-                200,
-                "AFTER iPad portrait \(schemeName) row 2 must also use two columns"
-            )
-            XCTAssertLessThanOrEqual(
-                max(card1After.maxX, card3After.maxX),
-                size.width - 14,
-                "Right column cards must fit cleanly inside detail area without clipping"
-            )
+            try savePNG(afterImg, name: "after_ipad_1032_machinery_light")
+            let am0 = try XCTUnwrap(afterFrames["January FOMC"])
+            let am1 = try XCTUnwrap(afterFrames["Best Frontier"])
+            let ar0 = try XCTUnwrap(afterFrames[titles[0]])
+            let ar1 = try XCTUnwrap(afterFrames[titles[1]])
+            XCTAssertLessThan(am0.minX, size.width * 0.5)
+            XCTAssertGreaterThan(am1.minX, size.width * 0.5)
+            XCTAssertGreaterThan(am1.minX - am0.minX, 320, "AFTER machinery preview renders 2 columns at 1032 pt")
+            XCTAssertGreaterThan(ar1.minX - ar0.minX, 320, "AFTER regular feed keeps 2 columns below machinery preview")
             try assertNoTruncatedOCR(
                 in: afterImg,
-                label: "after_ipad_portrait_\(schemeName)",
-                requiredTokens: ["Discover", "year-end?", "Chiefs", "Riemann", "76%", "59%"]
+                label: "after_ipad_1032_machinery_light",
+                requiredTokens: ["Discover", "January FOMC", "Best Frontier", "year-end?", "Chiefs"]
             )
         }
 
-        // 2. Narrowest upright iPad split (514 pt detail -> 482 pt card area -> ~233 pt per card)
-        //    + Full-width upright iPad portrait (834 x 1194 -> 768 pt card area -> 2 columns)
-        do {
-            let narrowSize = CGSize(width: 514, height: 1080)
-            let narrowPlace = await makeDiscoverPlace()
-            let (narrowImg, narrowFrames) = await renderAndMeasure(
-                DiscoverView(macPlace: narrowPlace, machineryPreviewLoader: EmptyMachineryLoader13914()),
-                outerSize: narrowSize,
-                detailSizeClass: .regular,
-                colorScheme: .light,
-                cardTitles: Array(titles.prefix(4))
-            )
-            try savePNG(narrowImg, name: "after_ipad_portrait_narrow_514_light")
-            let n0 = try XCTUnwrap(narrowFrames[titles[0]])
-            let n1 = try XCTUnwrap(narrowFrames[titles[1]])
-            let n2 = try XCTUnwrap(narrowFrames[titles[2]])
-            let n3 = try XCTUnwrap(narrowFrames[titles[3]])
-            XCTAssertGreaterThan(n1.minX - n0.minX, 180, "514 pt upright detail must render 2 columns")
-            XCTAssertGreaterThan(n3.minX - n2.minX, 180, "514 pt upright detail row 2 must render 2 columns")
-            XCTAssertLessThanOrEqual(max(n1.maxX, n3.maxX), narrowSize.width - 14)
-            try assertNoTruncatedOCR(
-                in: narrowImg,
-                label: "after_ipad_portrait_narrow_514_light",
-                requiredTokens: ["Discover", "year-end?", "Chiefs", "Riemann", "76%", "59%"]
-            )
-
-            let fullSize = CGSize(width: 834, height: 1194)
-            let fullPlace = await makeDiscoverPlace()
-            let (fullImg, fullFrames) = await renderAndMeasure(
-                DiscoverView(macPlace: fullPlace, machineryPreviewLoader: EmptyMachineryLoader13914()),
-                outerSize: fullSize,
-                detailSizeClass: .regular,
-                colorScheme: .light,
-                cardTitles: Array(titles.prefix(4))
-            )
-            try savePNG(fullImg, name: "after_ipad_portrait_full_834_light")
-            let f0 = try XCTUnwrap(fullFrames[titles[0]])
-            let f1 = try XCTUnwrap(fullFrames[titles[1]])
-            XCTAssertGreaterThan(f1.minX - f0.minX, 320, "834 pt full-width upright iPad shows 2 columns")
-        }
-
-        // 3. iPad Landscape with Sidebar (1194 x 834 -> 220 pt sidebar + 973 pt detail -> 2 columns BEFORE & AFTER)
+        // 5. iPad16,6 Landscape w/ 320 pt Sidebar (1376 x 1032, .regular) — Light & Dark (2 cols unchanged)
         for (scheme, schemeName) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
-            let sidebarW: CGFloat = 220
-            let detailW: CGFloat = 1194 - sidebarW - 1
-            let size = CGSize(width: 1194, height: 834)
+            let sidebarW: CGFloat = 320
+            let detailW: CGFloat = 1376 - sidebarW - 1
+            let size = CGSize(width: 1376, height: 1032)
 
             let beforeLandscape = LegacyBeforeDiscoverCanvas13914(
                 items: feedResp.items,
@@ -886,10 +1163,11 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
                 sidebarWidth: sidebarW,
                 outerSize: size,
                 detailSizeClass: .regular,
+                isPhone: false,
                 colorScheme: scheme,
                 cardTitles: Array(titles.prefix(4))
             )
-            try savePNG(beforeImg, name: "before_ipad_landscape_\(schemeName)")
+            try savePNG(beforeImg, name: "before_ipad_landscape_1376_\(schemeName)")
 
             let place = await makeDiscoverPlace()
             let (afterImg, afterFrames) = await renderAndMeasure(
@@ -897,10 +1175,11 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
                 sidebarWidth: sidebarW,
                 outerSize: size,
                 detailSizeClass: .regular,
+                isPhone: false,
                 colorScheme: scheme,
                 cardTitles: Array(titles.prefix(4))
             )
-            try savePNG(afterImg, name: "after_ipad_landscape_\(schemeName)")
+            try savePNG(afterImg, name: "after_ipad_landscape_1376_\(schemeName)")
 
             let lb0 = try XCTUnwrap(beforeFrames[titles[0]])
             let lb1 = try XCTUnwrap(beforeFrames[titles[1]])
@@ -912,7 +1191,7 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
             XCTAssertEqual(la1.minX, lb1.minX, accuracy: 24, "iPad landscape right column unchanged")
         }
 
-        // 4. iPhone Portrait (390 x 844, .compact) — BEFORE & AFTER stay 1 column identically.
+        // 6. iPhone Portrait (390 x 844, .compact, isPhone = true) — BEFORE & AFTER stay 1 column identically.
         for (scheme, schemeName) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
             let size = CGSize(width: 390, height: 844)
             let beforePhone = LegacyBeforeDiscoverCanvas13914(
@@ -926,6 +1205,7 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
                 beforePhone,
                 outerSize: size,
                 detailSizeClass: .compact,
+                isPhone: true,
                 colorScheme: scheme,
                 cardTitles: Array(titles.prefix(2))
             )
@@ -936,13 +1216,13 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
                 DiscoverView(macPlace: place, machineryPreviewLoader: EmptyMachineryLoader13914()),
                 outerSize: size,
                 detailSizeClass: .compact,
+                isPhone: true,
                 colorScheme: scheme,
                 cardTitles: Array(titles.prefix(2))
             )
             try savePNG(afterImg, name: "after_iphone_390_\(schemeName)")
 
             let pb0 = try XCTUnwrap(beforeFrames[titles[0]])
-            let pb1 = try XCTUnwrap(beforeFrames[titles[1]])
             let pa0 = try XCTUnwrap(afterFrames[titles[0]])
             let pa1 = try XCTUnwrap(afterFrames[titles[1]])
             XCTAssertLessThan(pa0.minX, size.width * 0.35, "AFTER iPhone 390 \(schemeName) card 0 stays in column 0")

@@ -138,28 +138,31 @@ enum DiscoverMasonry {
         return max(1, n)
     }
 
-    /// Narrowest per-card width for keeping two columns on regular-width iPad
-    /// Discover surfaces when split-view/sidebar panes narrow the detail area
-    /// below `2 * 300 + 16 = 616 pt` (matching web's `sm:grid-cols-2` at 640 px,
-    /// #13914). Two columns require `2 * 225 + 16 = 466 pt` card area.
+    /// Narrowest per-card width for keeping two columns on iPad Discover surfaces
+    /// when split-view/sidebar panes narrow the detail area below
+    /// `2 * 300 + 16 = 616 pt` (matching web's `sm:grid-cols-2` at 640 px, #13914).
+    /// Covers both `.regular` sidebar/window widths (e.g. `834` with `320 pt` sidebar)
+    /// and `.compact` iPad upright split views (`2/3` `639 pt`, `1/2` `507 pt`).
+    /// Two columns require `2 * 225 + 16 = 466 pt` card area (`498 pt` pane width).
     static let regularTwoColumnMinimumCardWidth: CGFloat = 225
     static let regularTwoColumnMinimumAreaWidth: CGFloat = 2 * regularTwoColumnMinimumCardWidth + spacing
 
     /// Column count for `DiscoverView`.
     ///
-    /// Keeps `.compact` (iPhone) and Accessibility Dynamic Type at narrow
-    /// widths identical to `columnCount(availableWidth:)`, while allowing
-    /// `.regular` iPad/Mac canvases down to `regularTwoColumnMinimumAreaWidth`
-    /// (`466 pt` card area) to stay two columns rather than collapsing into a
-    /// single oversized column in upright portrait split view (#13914).
+    /// Keeps iPhone (`isPhone == true`, `.compact`) and Accessibility Dynamic Type
+    /// at narrow widths identical to `columnCount(availableWidth:)`, while allowing
+    /// iPad/Mac canvases down to `regularTwoColumnMinimumAreaWidth` (`466 pt` card
+    /// area) to stay two columns rather than collapsing into a single oversized
+    /// column in upright portrait split view or with the sidebar open (#13914).
     nonisolated static func discoverColumnCount(
         availableWidth: CGFloat,
         horizontalSizeClass: UserInterfaceSizeClass?,
-        dynamicTypeSize: DynamicTypeSize = .large
+        dynamicTypeSize: DynamicTypeSize = .large,
+        isPhone: Bool = false
     ) -> Int {
         guard availableWidth > 0 else { return 1 }
         let base = columnCount(availableWidth: availableWidth)
-        guard horizontalSizeClass != .compact else { return base }
+        guard !isPhone else { return base }
         if base >= 2 { return base }
         guard !dynamicTypeSize.isAccessibilitySize else { return 1 }
         return availableWidth >= regularTwoColumnMinimumAreaWidth ? 2 : 1
@@ -418,5 +421,16 @@ struct LazyMasonryColumns<CardContent: View>: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .top)
+    }
+}
+
+private struct DiscoverLayoutIsPhoneKey13914: EnvironmentKey {
+    static let defaultValue: Bool? = nil
+}
+
+extension EnvironmentValues {
+    var discoverLayoutIsPhone13914: Bool? {
+        get { self[DiscoverLayoutIsPhoneKey13914.self] }
+        set { self[DiscoverLayoutIsPhoneKey13914.self] = newValue }
     }
 }
