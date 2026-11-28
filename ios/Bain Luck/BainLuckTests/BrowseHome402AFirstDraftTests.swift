@@ -491,16 +491,341 @@ final class BrowseHome402AFirstDraftTests: XCTestCase {
         }
     }
 
+    private static func loadJPEGImage(atPath path: String) -> UIImage? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+        return UIImage(data: data)
+    }
+
+    func testSearchTrendingQueryLabelPreservesAcronyms() throws {
+        XCTAssertEqual(SearchView.formatTrendingQueryLabel("nba"), "NBA")
+        XCTAssertEqual(SearchView.formatTrendingQueryLabel("nba finals"), "NBA Finals")
+        XCTAssertEqual(SearchView.formatTrendingQueryLabel("nfl draft"), "NFL Draft")
+        XCTAssertEqual(SearchView.formatTrendingQueryLabel("us open"), "US Open")
+        XCTAssertEqual(SearchView.formatTrendingQueryLabel("fed rate cut"), "Fed Rate Cut")
+        XCTAssertEqual(SearchView.formatTrendingQueryLabel("ai coding models"), "AI Coding Models")
+        XCTAssertEqual(SearchView.formatTrendingQueryLabel("chi"), "Chi")
+    }
+
+    func testEntertainmentPlaceholderInitialsStripLeadingQuotes() throws {
+        XCTAssertEqual(
+            EntertainmentView.placeholderInitials(for: "\"Hexed\" 5-Day Opening Weekend Box Office"),
+            "HE"
+        )
+        XCTAssertEqual(
+            EntertainmentView.placeholderInitials(for: "\"The Angry Birds Movie 3\" Rotten Tomatoes Score?"),
+            "TH"
+        )
+        XCTAssertEqual(
+            EntertainmentView.placeholderInitials(for: "‘Wicked: For Good’ Box Office"),
+            "WI"
+        )
+        XCTAssertEqual(
+            EntertainmentView.placeholderInitials(for: "The Odyssey"),
+            "TH"
+        )
+    }
+
+    func testSearchEmptyStateFourSetsWithAllSetsPillOptionAndTrendingAcronyms() async throws {
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+        let emptyDiscovery = try dec.decode(ContainerDiscoveryResponse.self, from: Data(#"{"collections":[]}"#.utf8))
+        let svc = StaticDiscovery402A(response: emptyDiscovery)
+        let sets = (1...8).map { i in
+            BrowsePublicSet402A(slug: "machinery-set-\(i)", title: "Live Set \(i)", subtitle: "Culture · \(i) markets", imageURL: nil)
+        }
+        let trending = [
+            TrendingQuery(query: "nba", count: 12),
+            TrendingQuery(query: "nba finals", count: 8),
+        ]
+
+        let fourPlusOneImg = await renderViewport(
+            view: NavigationStack {
+                SearchView(
+                    discoveryService: svc,
+                    previewSets: [],
+                    publicSetsService: StaticPublicSets402A(sets: sets),
+                    maxSetPillsInEmptyState: 4,
+                    preloadedTrendingSearches: trending
+                )
+            },
+            width: 390,
+            scheme: .light,
+            height: 1100
+        )
+        let ocr4 = try ocrLines(fourPlusOneImg).joined(separator: " ")
+        XCTAssertTrue(ocr4.contains("Live Set 1") && ocr4.contains("Live Set 4"), "First 4 set pills missing: \(ocr4)")
+        XCTAssertFalse(ocr4.contains("Live Set 5") || ocr4.contains("Live Set 8"), "5th-8th set pills should collapse behind All sets: \(ocr4)")
+        XCTAssertTrue(ocr4.contains("All sets"), "Missing 'All sets' pill: \(ocr4)")
+        XCTAssertTrue(ocr4.contains("NBA") && ocr4.contains("NBA Finals"), "Trending acronyms not uppercased: \(ocr4)")
+        XCTAssertFalse(ocr4.contains("Nba"), "Lowercase-tailed 'Nba' leaked into Trending: \(ocr4)")
+
+        let eightPillImg = await renderViewport(
+            view: NavigationStack {
+                SearchView(
+                    discoveryService: svc,
+                    previewSets: [],
+                    publicSetsService: StaticPublicSets402A(sets: sets),
+                    maxSetPillsInEmptyState: nil,
+                    preloadedTrendingSearches: trending
+                )
+            },
+            width: 390,
+            scheme: .light,
+            height: 1220
+        )
+        let ocr8 = try ocrLines(eightPillImg).joined(separator: " ")
+        XCTAssertTrue(ocr8.contains("Live Set 1") && ocr8.contains("Live Set 8"), "8-pill option missing sets: \(ocr8)")
+        XCTAssertFalse(ocr8.contains("All sets"), "8-pill option should not show 'All sets': \(ocr8)")
+    }
+
+    func testMondayWalkExport402ALiveDataIfRequested() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let outPath = env["TEST_RUNNER_LIVE_402A_DIR"] ?? env["LIVE_402A_DIR"], !outPath.isEmpty,
+              let dataDir = env["TEST_RUNNER_LIVE_402A_DATA_DIR"] ?? env["LIVE_402A_DATA_DIR"], !dataDir.isEmpty else {
+            return
+        }
+        try FileManager.default.createDirectory(atPath: outPath, withIntermediateDirectories: true)
+
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+        let machineryFeed = try dec.decode(FeedResponse.self, from: Data(contentsOf: URL(fileURLWithPath: "\(dataDir)/discover_machinery.json")))
+        let containersResp = try dec.decode(ContainerDiscoveryResponse.self, from: Data(contentsOf: URL(fileURLWithPath: "\(dataDir)/containers_discover.json")))
+        let trendingResp = try dec.decode(TrendingSearchesResponse.self, from: Data(contentsOf: URL(fileURLWithPath: "\(dataDir)/trending_search.json")))
+        let entResp = try dec.decode(EntertainmentResponse.self, from: Data(contentsOf: URL(fileURLWithPath: "\(dataDir)/entertainment.json")))
+        let techFeed = try dec.decode(FeedResponse.self, from: Data(contentsOf: URL(fileURLWithPath: "\(dataDir)/tech_feed.json")))
+
+        let emptyDiscovery = try dec.decode(ContainerDiscoveryResponse.self, from: Data(#"{"collections":[]}"#.utf8))
+        let emptySvc = StaticDiscovery402A(response: emptyDiscovery)
+        let liveSets = BrowsePublicSet402A.extractFromFeedItems(machineryFeed.items, limit: 8)
+        var liveImages: [String: Image] = [:]
+        for setItem in liveSets {
+            let coverPath = "\(dataDir)/covers/\(setItem.slug).jpg"
+            if let uiImg = Self.loadJPEGImage(atPath: coverPath) {
+                liveImages[setItem.slug] = Image(uiImage: uiImg)
+            }
+        }
+        let setsSvc = StaticPublicSets402A(sets: liveSets)
+        let techVM = SportCategoryViewModel(categoryKey: "tech")
+        techVM.setItemsForTesting(techFeed.items, leagueMarkets: nil)
+
+        @ViewBuilder
+        func masterBeforeBrowse(isRegular: Bool) -> some View {
+            let featureCols: [GridItem] = isRegular
+                ? [GridItem(.adaptive(minimum: 230, maximum: 360), spacing: 14)]
+                : [GridItem(.flexible())]
+            let leagueCols: [GridItem] = isRegular
+                ? [GridItem(.adaptive(minimum: 185, maximum: 360), spacing: 10)]
+                : [GridItem(.adaptive(minimum: 150, maximum: 360), spacing: 10)]
+            let activeContainers = ContainerDiscoveryRequest(league: .nfl, season: ContainerDiscoveryLeague.nfl.season(asOf: Date()))
+                .entries(in: containersResp, asOf: Date())
+
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 26) {
+                        Text("Markets, sports, and tools")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        LazyVGrid(columns: featureCols, spacing: 14) {
+                            ForEach([
+                                ("Futures Markets", "All prediction markets", "chart.line.uptrend.xyaxis", Color.indigo),
+                                (CalibrationView.readerTitle, "Market track record", "chart.dots.scatter", Color.teal),
+                                ("About Bain Luck", "Sources and methodology", "info.circle.fill", Color.gray),
+                            ], id: \.0) { title, sub, icon, tint in
+                                HStack(spacing: 13) {
+                                    Image(systemName: icon)
+                                        .font(.title3.weight(.semibold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 44, height: 44)
+                                        .background(tint.gradient, in: RoundedRectangle(cornerRadius: 10))
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(title).font(.subheadline.weight(.bold)).foregroundStyle(.primary)
+                                        Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                    Spacer(minLength: 4)
+                                    Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                                }
+                                .padding(14)
+                                .frame(minHeight: 76)
+                                .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 14))
+                                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.35), lineWidth: 0.5))
+                            }
+                        }
+                        if !activeContainers.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("LIVE SETS").font(.caption.weight(.bold)).foregroundStyle(.secondary).tracking(0.6)
+                                ForEach(activeContainers) { entry in
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "square.stack.3d.up.fill")
+                                            .foregroundStyle(.white)
+                                            .frame(width: 40, height: 40)
+                                            .background(DS.emerald.gradient, in: RoundedRectangle(cornerRadius: 10))
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(entry.collection.name).font(.headline)
+                                            Text(entry.subtitle).font(.subheadline).foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                                    }
+                                    .padding(14)
+                                    .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 14))
+                                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.border, lineWidth: 1))
+                                }
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("MAJOR US LEAGUES").font(.caption.weight(.bold)).foregroundStyle(.secondary).tracking(0.6)
+                            LazyVGrid(columns: leagueCols, spacing: 10) {
+                                ForEach([
+                                    ("NBA", "Basketball", "basketball.fill", Color.orange),
+                                    ("NFL", "Football", "football.fill", Color.green),
+                                    ("MLB", "Baseball", "baseball.fill", Color.red),
+                                    ("NHL", "Hockey", "hockey.puck.fill", Color.blue),
+                                ], id: \.0) { label, sub, icon, tint in
+                                    HStack(spacing: 10) {
+                                        Image(systemName: icon).font(.subheadline.weight(.semibold)).foregroundStyle(tint)
+                                            .frame(width: 34, height: 34).background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(label).font(.subheadline.weight(.bold))
+                                            Text(sub).font(.caption2).foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                    .padding(11)
+                                    .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 12))
+                                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.barTrack.opacity(0.25), lineWidth: 0.5))
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 18)
+                    .frame(maxWidth: 1100, alignment: .leading)
+                }
+                .background(Color.groupedBackground.opacity(0.35))
+                .navigationTitle("Browse")
+            }
+        }
+
+        let dir = URL(fileURLWithPath: outPath, isDirectory: true)
+        for (scheme, sTag) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
+            for (width, beforeH, afterH) in [(CGFloat(390), CGFloat(920), CGFloat(1420)), (CGFloat(834), CGFloat(820), CGFloat(1320))] {
+                let wTag = "\(Int(width))"
+                let beforeImg = await renderViewport(view: masterBeforeBrowse(isRegular: width >= 700), width: width, scheme: scheme, height: beforeH)
+                try XCTUnwrap(beforeImg.pngData()).write(to: dir.appendingPathComponent("browse-before-\(sTag)-\(wTag).png"))
+
+                let afterImg = await renderViewport(
+                    view: LeaguesView(
+                        previewDiscoveryService: emptySvc,
+                        previewSets: [],
+                        preloadedSetImages: liveImages,
+                        previewPublicSetsService: setsSvc
+                    ),
+                    width: width,
+                    scheme: scheme,
+                    height: afterH
+                )
+                try XCTUnwrap(afterImg.pngData()).write(to: dir.appendingPathComponent("browse-after-\(sTag)-\(wTag).png"))
+            }
+        }
+
+        for (width, h8, h4) in [(CGFloat(390), CGFloat(1100), CGFloat(980)), (CGFloat(834), CGFloat(880), CGFloat(820))] {
+            let wTag = "\(Int(width))"
+            let s8 = await renderViewport(
+                view: NavigationStack {
+                    SearchView(
+                        discoveryService: emptySvc,
+                        previewSets: [],
+                        publicSetsService: setsSvc,
+                        maxSetPillsInEmptyState: nil,
+                        preloadedTrendingSearches: trendingResp.trending
+                    )
+                },
+                width: width,
+                scheme: .light,
+                height: h8
+            )
+            try XCTUnwrap(s8.pngData()).write(to: dir.appendingPathComponent("search-8sets-light-\(wTag).png"))
+
+            let s4 = await renderViewport(
+                view: NavigationStack {
+                    SearchView(
+                        discoveryService: emptySvc,
+                        previewSets: [],
+                        publicSetsService: setsSvc,
+                        maxSetPillsInEmptyState: 4,
+                        preloadedTrendingSearches: trendingResp.trending
+                    )
+                },
+                width: width,
+                scheme: .light,
+                height: h4
+            )
+            try XCTUnwrap(s4.pngData()).write(to: dir.appendingPathComponent("search-4plus1-light-\(wTag).png"))
+        }
+
+        let nbaFixedImg = await renderViewport(
+            view: NavigationStack {
+                SearchView(
+                    discoveryService: emptySvc,
+                    previewSets: [],
+                    publicSetsService: setsSvc,
+                    maxSetPillsInEmptyState: 4,
+                    preloadedTrendingSearches: [
+                        TrendingQuery(query: "nba", count: 10),
+                        TrendingQuery(query: "nba finals", count: 8),
+                        TrendingQuery(query: "fed rate cut", count: 6),
+                    ]
+                )
+            },
+            width: 390,
+            scheme: .light,
+            height: 980
+        )
+        try XCTUnwrap(nbaFixedImg.pngData()).write(to: dir.appendingPathComponent("search-trending-nba-fixed-390-light.png"))
+
+        for (width, entH, techH) in [(CGFloat(390), CGFloat(920), CGFloat(920)), (CGFloat(834), CGFloat(920), CGFloat(920))] {
+            let wTag = "\(Int(width))"
+            let entImg = await renderViewport(
+                view: NavigationStack { EntertainmentView(preloadedData: entResp) },
+                width: width,
+                scheme: .light,
+                height: entH
+            )
+            try XCTUnwrap(entImg.pngData()).write(to: dir.appendingPathComponent("entertainment-live-light-\(wTag).png"))
+
+            let techImg = await renderViewport(
+                view: NavigationStack {
+                    SportCategoryView(categoryKey: "tech", categoryName: "Tech and business", preloadedViewModel: techVM)
+                },
+                width: width,
+                scheme: .light,
+                height: techH
+            )
+            try XCTUnwrap(techImg.pngData()).write(to: dir.appendingPathComponent("tech-live-light-\(wTag).png"))
+        }
+    }
+
     private func render390<V: View>(
         view: V,
         scheme: ColorScheme,
         height: CGFloat
     ) async -> UIImage {
+        await renderViewport(view: view, width: 390, scheme: scheme, height: height)
+    }
+
+    private func renderViewport<V: View>(
+        view: V,
+        width: CGFloat,
+        scheme: ColorScheme,
+        height: CGFloat
+    ) async -> UIImage {
+        let sizeClass: UserInterfaceSizeClass = width >= 700 ? .regular : .compact
+        let uiSizeClass: UIUserInterfaceSizeClass = width >= 700 ? .regular : .compact
         let bg = scheme == .dark ? Color.black : Color(UIColor.systemGroupedBackground)
         let wrapped = view
-            .frame(width: 390, height: height, alignment: .topLeading)
+            .frame(width: width, height: height, alignment: .topLeading)
             .background(bg)
-            .environment(\.horizontalSizeClass, .compact)
+            .environment(\.horizontalSizeClass, sizeClass)
             .environment(\.colorScheme, scheme)
             .environment(\.dynamicTypeSize, .large)
             .environmentObject(NavigationCoordinator())
@@ -509,12 +834,12 @@ final class BrowseHome402AFirstDraftTests: XCTestCase {
 
         let host = hostForMeasurement(wrapped, at: .large)
         let traits = UITraitCollection(traitsFrom: [
-            UITraitCollection(horizontalSizeClass: .compact),
+            UITraitCollection(horizontalSizeClass: uiSizeClass),
             UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light),
             UITraitCollection(preferredContentSizeCategory: .large),
         ])
         let container = Browse402ATraitContainer(child: host, traits: traits)
-        let frame = CGRect(x: 0, y: 0, width: 390, height: height)
+        let frame = CGRect(x: 0, y: 0, width: width, height: height)
         container.view.frame = frame
 
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
@@ -536,7 +861,7 @@ final class BrowseHome402AFirstDraftTests: XCTestCase {
         }
 
         let fmt = UIGraphicsImageRendererFormat()
-        fmt.scale = 2.0
+        fmt.scale = height > 1800 ? 1.5 : 2.0
         fmt.opaque = true
         return UIGraphicsImageRenderer(size: frame.size, format: fmt).image { _ in
             container.view.drawHierarchy(in: container.view.bounds, afterScreenUpdates: true)

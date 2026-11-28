@@ -87,6 +87,8 @@ struct SearchView: View {
     private let macPlace: MacReadingPlace<SearchViewModel>?
     private let previewSets: [BrowsePublicSet402A]
     private let publicSetsService: (any BrowsePublicSetsLoading)?
+    private let maxSetPillsInEmptyState: Int?
+    private let hasPreloadedTrending: Bool
     @State private var loadedPublicSets: [BrowsePublicSet402A] = []
     /// #10878 / #4940 — the result row the Mac arrow keys have picked, by its
     /// canonical route. Never set anywhere else, so iPhone and iPad draw and
@@ -97,10 +99,14 @@ struct SearchView: View {
         macPlace: MacReadingPlace<SearchViewModel>? = nil,
         discoveryService: any ContainerDiscoveryLoading = ContainerDiscoveryService(),
         previewSets: [BrowsePublicSet402A] = [],
-        publicSetsService: (any BrowsePublicSetsLoading)? = nil
+        publicSetsService: (any BrowsePublicSetsLoading)? = nil,
+        maxSetPillsInEmptyState: Int? = nil,
+        preloadedTrendingSearches: [TrendingQuery] = []
     ) {
         self.macPlace = macPlace
         self.previewSets = previewSets
+        self.maxSetPillsInEmptyState = maxSetPillsInEmptyState
+        self.hasPreloadedTrending = !preloadedTrendingSearches.isEmpty
         if let publicSetsService {
             self.publicSetsService = publicSetsService
         } else if discoveryService is ContainerDiscoveryService && previewSets.isEmpty {
@@ -108,7 +114,11 @@ struct SearchView: View {
         } else {
             self.publicSetsService = nil
         }
-        _viewModel = StateObject(wrappedValue: macPlace?.models(orMake: { SearchViewModel() }) ?? SearchViewModel())
+        let vm = macPlace?.models(orMake: { SearchViewModel() }) ?? SearchViewModel()
+        if !preloadedTrendingSearches.isEmpty {
+            vm.setTrendingSearchesForTesting(preloadedTrendingSearches)
+        }
+        _viewModel = StateObject(wrappedValue: vm)
         _discoveryVM = StateObject(wrappedValue: ContainerDiscoveryViewModel(service: discoveryService))
         _path = State(initialValue: macPlace?.path ?? NavigationPath())
     }
@@ -244,7 +254,9 @@ struct SearchView: View {
         .task {
             consumePendingSearchQuery()
             consumeSearchFocusRequest()
-            await viewModel.loadTrending()
+            if !hasPreloadedTrending {
+                await viewModel.loadTrending()
+            }
             await discoveryVM.load()
             if let publicSetsService,
                let sets = try? await publicSetsService.loadPublicSets(),
@@ -567,10 +579,23 @@ struct SearchView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         emptySectionHeader13672("Sets")
 
+                        let visibleSets: [BrowsePublicSet402A] = {
+                            if let limit = maxSetPillsInEmptyState, limit > 0, combinedSetPills.count > limit {
+                                return Array(combinedSetPills.prefix(limit))
+                            }
+                            return combinedSetPills
+                        }()
+                        let showsAllSetsPill = maxSetPillsInEmptyState.map { $0 > 0 && combinedSetPills.count > $0 } ?? false
+
                         FlowLayout(spacing: 8) {
-                            ForEach(combinedSetPills) { setItem in
+                            ForEach(visibleSets) { setItem in
                                 quickSearchChip(icon: "square.stack.3d.up.fill", label: setItem.title) {
                                     path.append(setItem.route)
+                                }
+                            }
+                            if showsAllSetsPill {
+                                quickSearchChip(icon: "square.grid.2x2.fill", label: "All sets") {
+                                    navCoordinator.selectedTab = .leagues
                                 }
                             }
                         }
@@ -618,7 +643,7 @@ struct SearchView: View {
                             }
                         } else {
                             ForEach(viewModel.trendingSearches) { trend in
-                                quickSearchChip(icon: "flame.fill", label: trend.query.capitalized) {
+                                quickSearchChip(icon: "flame.fill", label: Self.formatTrendingQueryLabel(trend.query)) {
                                     viewModel.query = trend.query
                                     Task { await viewModel.search() }
                                 }
@@ -691,6 +716,39 @@ struct SearchView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("search.quickChip.\(label)")
+    }
+
+    private nonisolated static let preservedTrendingUpperTokens: Set<String> = [
+        "NBA", "NFL", "NHL", "MLB", "MLS", "EPL", "UCL", "UFC", "PGA", "ATP", "WTA",
+        "F1", "NCAA", "NCAAB", "NCAAF", "WNBA", "WNCAAB", "MVP", "AI", "GDP", "CPI",
+        "US", "USA", "UK", "EU", "UN", "GOP", "CEO", "IPO", "SEC", "FOMC", "NASCAR",
+        "LIV", "LPGA", "FIFA"
+    ]
+
+    /// Preserves league & macro acronyms (`NBA`, `NFL`, `US`, `AI`, etc.) when formatting
+    /// trending search queries so `"nba"` -> `"NBA"` and `"nba finals"` -> `"NBA Finals"`.
+    nonisolated static func formatTrendingQueryLabel(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return raw }
+        return trimmed
+            .split(whereSeparator: \.isWhitespace)
+            .map { token -> String in
+                let word = String(token)
+                let alnum = word.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+                let upperAlnum = alnum.uppercased()
+                if !alnum.isEmpty, preservedTrendingUpperTokens.contains(upperAlnum) {
+                    return word.replacingOccurrences(of: alnum, with: upperAlnum)
+                }
+                let lower = word.lowercased()
+                guard let firstLetterIdx = lower.firstIndex(where: \.isLetter) else {
+                    return word
+                }
+                let chars = Array(lower)
+                let pos = lower.distance(from: lower.startIndex, to: firstLetterIdx)
+                let upperFirst = String(chars[pos]).uppercased()
+                return String(chars[..<pos]) + upperFirst + String(chars[(pos + 1)...])
+            }
+            .joined(separator: " ")
     }
 
     // MARK: - Suggestions

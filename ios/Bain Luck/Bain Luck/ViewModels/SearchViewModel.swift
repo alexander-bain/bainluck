@@ -171,6 +171,11 @@ final class SearchViewModel: ObservableObject {
     }
 
     @MainActor
+    func setTrendingSearchesForTesting(_ items: [TrendingQuery]) {
+        trendingSearches = items
+    }
+
+    @MainActor
     private func fetchTypeahead(_ q: String) async {
         do {
             let response = try await APIClient.shared.fetchTypeahead(query: q)
