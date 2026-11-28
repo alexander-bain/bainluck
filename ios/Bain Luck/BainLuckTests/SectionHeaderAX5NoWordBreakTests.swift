@@ -352,7 +352,7 @@ final class SectionHeaderAX5NoWordBreakTests: XCTestCase {
                 .environment(\.gameAlertsPrompt295A, alertsPrompt),
                 into: window,
                 width: cfg.width,
-                height: 1150,
+                height: 1450,
                 colorScheme: cfg.scheme
             )
             try maybeSave(img, name: "league_\(cfg.tag)")
