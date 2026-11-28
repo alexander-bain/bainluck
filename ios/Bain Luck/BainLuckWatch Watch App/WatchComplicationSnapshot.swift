@@ -112,9 +112,22 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
                 awayAbbreviation: awayAbbr,
                 isThreeWay: matchup?.isThreeWay == true,
                 drawPercent: matchup?.drawPercent,
-                awayPercent: matchup?.awayPercent
+                awayPercent: matchup?.awayPercent,
+                homeSubOne: reading.subOnePercent == true,
+                homeAboveNinetyNine: reading.aboveNinetyNinePercent == true,
+                drawSubOne: matchup?.drawSubOne == true,
+                drawAboveNinetyNine: matchup?.drawAboveNinetyNine == true,
+                awaySubOne: matchup?.awaySubOne == true,
+                awayAboveNinetyNine: matchup?.awayAboveNinetyNine == true
             )
-            let pct = Int(out.bigText.dropLast()) ?? homePct
+            let isSubOne = out.bigText == "<1%"
+            let isAbove99 = out.bigText == ">99%"
+            let parsedPct = isSubOne ? 0 : (isAbove99 ? 100 : (Int(out.bigText.dropLast()) ?? homePct))
+            let share = ExternalSurfaceProbabilityFormat.gaugeShare(
+                parsedPct,
+                subOne: isSubOne,
+                aboveNinetyNine: isAbove99
+            )
             let fitted = LockScreenSmallSlotFit13430.ringValue(
                 phase: .current,
                 headlineExists: true,
@@ -126,7 +139,7 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
                 subjectLabel: out.ownerAbbr,
                 cornerLabel: out.ownerAbbr,
                 value: fitted,
-                gaugeShare: Double(pct) / 100.0,
+                gaugeShare: share,
                 isGame: true,
                 accessibilityText: spokenTextExpandingProbabilitySymbols("\(out.ownerName) \(fitted). \(reading.stateLabel). Open your game in Bain Luck.")
             )
@@ -254,6 +267,40 @@ nonisolated struct WatchCircularReading: Codable, Sendable, Equatable {
     let awayScore: Int?
     let stateLabel: String
     let observedAt: Date
+    let subOnePercent: Bool?
+    let aboveNinetyNinePercent: Bool?
+
+    init(
+        version: Int,
+        eventID: Int,
+        kind: Kind,
+        homeName: String,
+        awayName: String,
+        home: WatchCompactTeamIdentity?,
+        away: WatchCompactTeamIdentity?,
+        percent: Int?,
+        homeScore: Int?,
+        awayScore: Int?,
+        stateLabel: String,
+        observedAt: Date,
+        subOnePercent: Bool? = nil,
+        aboveNinetyNinePercent: Bool? = nil
+    ) {
+        self.version = version
+        self.eventID = eventID
+        self.kind = kind
+        self.homeName = homeName
+        self.awayName = awayName
+        self.home = home
+        self.away = away
+        self.percent = percent
+        self.homeScore = homeScore
+        self.awayScore = awayScore
+        self.stateLabel = stateLabel
+        self.observedAt = observedAt
+        self.subOnePercent = subOnePercent
+        self.aboveNinetyNinePercent = aboveNinetyNinePercent
+    }
 
     func matches(_ snapshot: WatchComplicationSnapshot) -> Bool {
         guard snapshot.isValid(now: snapshot.savedAt), version == 1, eventID == snapshot.eventID, observedAt == snapshot.observedAt,
@@ -264,7 +311,11 @@ nonisolated struct WatchCircularReading: Codable, Sendable, Equatable {
                   homeScore == nil, awayScore == nil,
                   ["Live", "Scheduled", "Upcoming", "Pregame"].contains(stateLabel) else { return false }
             if let away, away.teamID == home?.teamID || away.abbreviation == home?.abbreviation { return false }
-            let probability = (Double(percent) / 100).formatted(.percent.precision(.fractionLength(0)))
+            guard let probability = ExternalSurfaceProbabilityFormat.openWholePercent(
+                percent,
+                subOne: subOnePercent == true,
+                aboveNinetyNine: aboveNinetyNinePercent == true
+            ) else { return false }
             return snapshot.title == "\(homeName) win" && snapshot.detail == "\(probability) · \(stateLabel)"
         case .score, .final:
             guard home?.isValid == true, away?.isValid == true,
@@ -300,8 +351,11 @@ nonisolated struct WatchCircularReading: Codable, Sendable, Equatable {
     var value: String {
         switch kind {
         case .forecast:
-            guard let percent, (0...100).contains(percent) else { return "" }
-            return (Double(percent) / 100).formatted(.percent.precision(.fractionLength(0)))
+            return ExternalSurfaceProbabilityFormat.openWholePercent(
+                percent,
+                subOne: subOnePercent == true,
+                aboveNinetyNine: aboveNinetyNinePercent == true
+            ) ?? ""
         case .score:
             guard let homeScore, let awayScore else { return "" }
             return "Score \(awayScore)–\(homeScore)"
@@ -408,14 +462,14 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
                       sClock <= snapshot.savedAt,
                       abs(sClock.timeIntervalSince(observedAt)) <= Self.liveAgeThresholdSeconds else { return false }
             }
-            let probability = (Double(homePercent) / 100).formatted(.percent.precision(.fractionLength(0)))
+            guard let probability = formattedHomePercent else { return false }
             return snapshot.title == "\(homeName) win" && snapshot.detail == "\(probability) · Live"
         case .scheduledForecast:
             guard ["Scheduled", "Upcoming", "Pregame"].contains(stateLabel),
                   let homePercent, (0...100).contains(homePercent),
                   homeScore == nil, awayScore == nil, scoreObservedAt == nil else { return false }
             if let start = commenceTime, !start.timeIntervalSinceReferenceDate.isFinite { return false }
-            let probability = (Double(homePercent) / 100).formatted(.percent.precision(.fractionLength(0)))
+            guard let probability = formattedHomePercent else { return false }
             return snapshot.title == "\(homeName) win" && snapshot.detail == "\(probability) · \(stateLabel)"
         case .finalResult:
             guard stateLabel == "Final",
@@ -439,10 +493,11 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
     }
 
     var formattedHomePercent: String? {
-        if subOnePercent == true { return "<1%" }
-        if aboveNinetyNinePercent == true { return ">99%" }
-        guard let homePercent, (0...100).contains(homePercent) else { return nil }
-        return (Double(homePercent) / 100).formatted(.percent.precision(.fractionLength(0)))
+        ExternalSurfaceProbabilityFormat.openWholePercent(
+            homePercent,
+            subOne: subOnePercent == true,
+            aboveNinetyNine: aboveNinetyNinePercent == true
+        )
     }
 
     /// Matchup or market header line (Line 1), appending verified live score when present on a live probability reading.
@@ -475,11 +530,11 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
     func primaryLine(preferCompact: Bool = false, at now: Date) -> String {
         switch kind {
         case .liveForecast, .scheduledForecast:
-            guard let pct = formattedHomePercent else { return "Win probability unavailable" }
+            guard let pct = formattedHomePercent else { return ExternalSurfaceProbabilityFormat.missingProbabilityText }
             let team = home?.abbreviation ?? homeName
             return "\(team) \(pct)"
         case .futureForecast:
-            guard let pct = formattedHomePercent else { return "Probability unavailable" }
+            guard let pct = formattedHomePercent else { return ExternalSurfaceProbabilityFormat.missingProbabilityText }
             return "\(awayName) \(pct)"
         case .finalResult:
             guard let hs = homeScore, let ascore = awayScore else { return "Final score unavailable" }
@@ -663,7 +718,7 @@ nonisolated enum WatchFaceUnavailableReason13339: String, Codable, Sendable, Equ
     var complicationHeadline: String {
         switch self {
         case .finalEnded: return "Game ended"
-        case .noLiveOdds: return "Waiting for odds"
+        case .noLiveOdds: return ExternalSurfaceProbabilityFormat.missingProbabilityText
         case .statusUnsupported: return "Cannot show game"
         case .waitingForUpdate: return "Needs refresh"
         case .sharedStorageUnavailable: return "Cannot show game"

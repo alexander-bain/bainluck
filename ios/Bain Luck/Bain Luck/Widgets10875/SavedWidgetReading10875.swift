@@ -214,7 +214,7 @@ enum SavedWidgetReadingRules10875 {
         else {
             return reading(.unavailable, status: status,
                            rows: [row(false, figure: nil), row(true, figure: nil)], headline: nil,
-                           spoken: "\(subject). Bain Luck has no chance to show right now. \(status).")
+                           spoken: "\(subject). \(ExternalSurfaceProbabilityFormat.missingProbabilityText). \(status).")
         }
 
         var awayFigure: String?
@@ -409,7 +409,7 @@ enum SavedWidgetReadingRules10875 {
             let row = SavedWidgetReading10875.Row(label: outcome.name, shortLabel: outcome.name, figure: nil,
                                                   verdict: nil, emphasized: false)
             return reading(.unavailable, status: standing, rows: [row], headline: row,
-                           spoken: "\(market.name): Bain Luck has no price for \(outcome.name) right now.")
+                           spoken: "\(market.name): \(ExternalSurfaceProbabilityFormat.missingProbabilityText) for \(outcome.name).")
         }
 
         let printed = renderedPercents(market.outcomes)[outcome.id]

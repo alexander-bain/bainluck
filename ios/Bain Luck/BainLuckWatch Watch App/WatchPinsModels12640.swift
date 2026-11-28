@@ -35,14 +35,20 @@ nonisolated enum WatchPinsPercent12640 {
         guard let probability, probability.isFinite, probability > 0, probability < 1 else {
             return nil
         }
-        if probability < 0.005 {
+        if ExternalSurfaceProbabilityFormat.isSubOne(probability) {
             return Formatted(display: "<1%", rounded: 1, subOne: true, aboveNinetyNine: false)
         }
-        if probability > 0.995 {
+        if ExternalSurfaceProbabilityFormat.isAboveNinetyNine(probability) {
             return Formatted(display: ">99%", rounded: 99, subOne: false, aboveNinetyNine: true)
         }
-        let rounded = min(99, max(1, Int((probability * 100).rounded())))
-        return Formatted(display: "\(rounded)%", rounded: rounded, subOne: false, aboveNinetyNine: false)
+        let whole = renderedPercent(probability) ?? {
+            let scaled = probability * 100.0
+            return Int(scaled.rounded())
+        }()
+        let rounded = min(99, max(1, whole))
+        let display = ExternalSurfaceProbabilityFormat.openWholePercent(rounded, probability: probability)
+            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+        return Formatted(display: display, rounded: rounded, subOne: false, aboveNinetyNine: false)
     }
 }
 

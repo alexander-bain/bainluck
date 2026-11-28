@@ -159,7 +159,9 @@ actor WidgetAPIClient {
                 homeColor: resolvedHexes.home,
                 awayColor: resolvedHexes.away,
                 homeDarkColor: resolvedDarkHexes.home,
-                awayDarkColor: resolvedDarkHexes.away
+                awayDarkColor: resolvedDarkHexes.away,
+                homeProbability: homeProbability,
+                awayProbability: awayIsWithheld ? nil : awayProbability
             )
         }
         }
@@ -190,15 +192,20 @@ actor WidgetAPIClient {
                 return nil
             }
 
+            let pct = renderedPercent(probability) ?? Int((probability * 100.0).rounded())
             return WidgetDiscoverItem(
                 id: futures.id,
                 name: futures.name,
                 category: futures.llmSportCategory ?? futures.sport ?? "Prediction",
                 leader: leader.name,
-                probability: Int((probability * 100).rounded()),
-                movement: leader.movement.map { Int(($0 * 100).rounded()) },
+                probability: pct,
+                movement: leader.movement.map {
+                    let delta = $0 * 100.0
+                    return Int(delta.rounded())
+                },
                 hookDescription: futures.hookDescription,
-                headline: item.headline
+                headline: item.headline,
+                rawProbability: probability
             )
         }
         }

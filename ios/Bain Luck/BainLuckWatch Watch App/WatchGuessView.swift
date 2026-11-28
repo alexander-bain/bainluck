@@ -72,7 +72,7 @@ struct WatchGuessView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
 
-                Text("\(q.threshold)%")
+                Text(q.thresholdText)
                     .font(.system(size: 44, weight: .heavy, design: .rounded))
                     .foregroundStyle(.blue)
                     .padding(.vertical, 2)
@@ -136,7 +136,7 @@ struct WatchGuessView: View {
             Text(result.correct ? "Correct!" : "Not quite!")
                 .font(.system(size: 14, weight: .bold))
 
-            Text("\(q.actualPct)%")
+            Text(q.actualProbabilityText)
                 .font(.system(size: 38, weight: .heavy, design: .rounded))
                 .accessibilityLabel(spokenProbabilityText("\(q.actualPct)%"))
 

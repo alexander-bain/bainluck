@@ -34,12 +34,27 @@ nonisolated struct WatchMatchupFacts217: Codable, Sendable, Equatable {
     let awayPercent: Int?
     let pregameDrawPercent: Int?
     let isThreeWay: Bool?
+    let drawSubOne: Bool?
+    let drawAboveNinetyNine: Bool?
+    let awaySubOne: Bool?
+    let awayAboveNinetyNine: Bool?
+    let pregameHomeSubOne: Bool?
+    let pregameHomeAboveNinetyNine: Bool?
+    let pregameAwaySubOne: Bool?
+    let pregameAwayAboveNinetyNine: Bool?
+    let pregameDrawSubOne: Bool?
+    let pregameDrawAboveNinetyNine: Bool?
 
     init(homePrimary: String? = nil, homeSecondary: String? = nil, awayPrimary: String? = nil,
          awaySecondary: String? = nil, homeLogo: String? = nil, awayLogo: String? = nil,
          pregameHomePercent: Int? = nil, pregameAwayPercent: Int? = nil, clock: String? = nil,
          drawPercent: Int? = nil, awayPercent: Int? = nil, pregameDrawPercent: Int? = nil,
-         isThreeWay: Bool? = nil) {
+         isThreeWay: Bool? = nil,
+         drawSubOne: Bool? = nil, drawAboveNinetyNine: Bool? = nil,
+         awaySubOne: Bool? = nil, awayAboveNinetyNine: Bool? = nil,
+         pregameHomeSubOne: Bool? = nil, pregameHomeAboveNinetyNine: Bool? = nil,
+         pregameAwaySubOne: Bool? = nil, pregameAwayAboveNinetyNine: Bool? = nil,
+         pregameDrawSubOne: Bool? = nil, pregameDrawAboveNinetyNine: Bool? = nil) {
         self.homePrimary = homePrimary
         self.homeSecondary = homeSecondary
         self.awayPrimary = awayPrimary
@@ -53,6 +68,16 @@ nonisolated struct WatchMatchupFacts217: Codable, Sendable, Equatable {
         self.awayPercent = awayPercent
         self.pregameDrawPercent = pregameDrawPercent
         self.isThreeWay = isThreeWay
+        self.drawSubOne = drawSubOne
+        self.drawAboveNinetyNine = drawAboveNinetyNine
+        self.awaySubOne = awaySubOne
+        self.awayAboveNinetyNine = awayAboveNinetyNine
+        self.pregameHomeSubOne = pregameHomeSubOne
+        self.pregameHomeAboveNinetyNine = pregameHomeAboveNinetyNine
+        self.pregameAwaySubOne = pregameAwaySubOne
+        self.pregameAwayAboveNinetyNine = pregameAwayAboveNinetyNine
+        self.pregameDrawSubOne = pregameDrawSubOne
+        self.pregameDrawAboveNinetyNine = pregameDrawAboveNinetyNine
     }
 }
 
@@ -361,33 +386,59 @@ extension WatchMatchupReading217 {
         awayAbbreviation: String,
         isThreeWay: Bool,
         drawPercent: Int?,
-        awayPercent: Int?
+        awayPercent: Int?,
+        homeSubOne: Bool = false,
+        homeAboveNinetyNine: Bool = false,
+        drawSubOne: Bool = false,
+        drawAboveNinetyNine: Bool = false,
+        awaySubOne: Bool = false,
+        awayAboveNinetyNine: Bool = false
     ) -> (bigText: String, bigIsHome: Bool, ownerAbbr: String, ownerName: String, threeWay: ThreeWay?) {
+        let homeText = ExternalSurfaceProbabilityFormat.openWholePercent(
+            homePercent,
+            subOne: homeSubOne,
+            aboveNinetyNine: homeAboveNinetyNine
+        ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
         if isThreeWay {
             if let drawPct = drawPercent, (0...100).contains(drawPct),
                let awayPct = awayPercent, (0...100).contains(awayPct) {
+                let drawText = ExternalSurfaceProbabilityFormat.openWholePercent(
+                    drawPct,
+                    subOne: drawSubOne,
+                    aboveNinetyNine: drawAboveNinetyNine
+                ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+                let awayText = ExternalSurfaceProbabilityFormat.openWholePercent(
+                    awayPct,
+                    subOne: awaySubOne,
+                    aboveNinetyNine: awayAboveNinetyNine
+                ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
                 let threeWay = ThreeWay(
                     homeLabel: homeAbbreviation,
-                    homeText: "\(homePercent)%",
-                    drawText: "\(drawPct)%",
+                    homeText: homeText,
+                    drawText: drawText,
                     awayLabel: awayAbbreviation,
-                    awayText: "\(awayPct)%"
+                    awayText: awayText
                 )
                 if awayPct > homePercent && awayPct >= drawPct {
-                    return ("\(awayPct)%", false, awayAbbreviation, awayName, threeWay)
+                    return (awayText, false, awayAbbreviation, awayName, threeWay)
                 }
                 if drawPct > homePercent && drawPct > awayPct {
-                    return ("\(drawPct)%", true, "Draw", "Draw", threeWay)
+                    return (drawText, true, "Draw", "Draw", threeWay)
                 }
-                return ("\(homePercent)%", true, homeAbbreviation, homeName, threeWay)
+                return (homeText, true, homeAbbreviation, homeName, threeWay)
             }
             // #5271: Draw-priced without explicit draw/away — home stands alone, never invent 1 - home.
-            return ("\(homePercent)%", true, homeAbbreviation, homeName, nil)
+            return (homeText, true, homeAbbreviation, homeName, nil)
         }
         let homeLeads = homePercent >= 50
         let pct = homeLeads ? homePercent : 100 - homePercent
+        let leadText = ExternalSurfaceProbabilityFormat.openWholePercent(
+            pct,
+            subOne: homeLeads ? homeSubOne : awaySubOne,
+            aboveNinetyNine: homeLeads ? homeAboveNinetyNine : awayAboveNinetyNine
+        ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
         return (
-            "\(pct)%",
+            leadText,
             homeLeads,
             homeLeads ? homeAbbreviation : awayAbbreviation,
             homeLeads ? homeName : awayName,
@@ -428,7 +479,13 @@ extension WatchMatchupReading217 {
                 awayAbbreviation: awayID.abbreviation,
                 isThreeWay: facts.isThreeWay == true,
                 drawPercent: facts.drawPercent,
-                awayPercent: facts.awayPercent
+                awayPercent: facts.awayPercent,
+                homeSubOne: r.subOnePercent == true,
+                homeAboveNinetyNine: r.aboveNinetyNinePercent == true,
+                drawSubOne: facts.drawSubOne == true,
+                drawAboveNinetyNine: facts.drawAboveNinetyNine == true,
+                awaySubOne: facts.awaySubOne == true,
+                awayAboveNinetyNine: facts.awayAboveNinetyNine == true
             )
             let smallLine = when
             let speech: String = {
@@ -461,7 +518,13 @@ extension WatchMatchupReading217 {
                 awayAbbreviation: awayID.abbreviation,
                 isThreeWay: facts.isThreeWay == true,
                 drawPercent: facts.drawPercent,
-                awayPercent: facts.awayPercent
+                awayPercent: facts.awayPercent,
+                homeSubOne: r.subOnePercent == true,
+                homeAboveNinetyNine: r.aboveNinetyNinePercent == true,
+                drawSubOne: facts.drawSubOne == true,
+                drawAboveNinetyNine: facts.drawAboveNinetyNine == true,
+                awaySubOne: facts.awaySubOne == true,
+                awayAboveNinetyNine: facts.awayAboveNinetyNine == true
             )
             let smallLine = when
             let score: String = {
@@ -484,17 +547,27 @@ extension WatchMatchupReading217 {
             guard let h = r.homeScore, let a = r.awayScore,
                   now.timeIntervalSince(r.observedAt) < finalHoldSeconds else { return nil }
             if h == a {
-                guard let drawPre = facts.pregameDrawPercent, (0...100).contains(drawPre) else { return nil }
+                guard let drawPre = facts.pregameDrawPercent, (0...100).contains(drawPre),
+                      let drawText = ExternalSurfaceProbabilityFormat.openWholePercent(
+                        drawPre,
+                        subOne: facts.pregameDrawSubOne == true,
+                        aboveNinetyNine: facts.pregameDrawAboveNinetyNine == true
+                      ) else { return nil }
                 return WatchMatchupReading217(
                     stage: .after,
                     away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: a, winner: false),
                     home: side(homeID, facts.homePrimary, facts.homeSecondary, score: h, winner: false),
-                    bigText: "\(drawPre)%", bigOwnerLabel: "Draw", bigIsHome: true, smallLine: "Pregame · Final",
-                    accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(r.awayName) \(a), \(r.homeName) \(h). Draw had \(drawPre)% before the game. Open your game in Bain Luck."))
+                    bigText: drawText, bigOwnerLabel: "Draw", bigIsHome: true, smallLine: "Pregame · Final",
+                    accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(r.awayName) \(a), \(r.homeName) \(h). Draw had \(drawText) before the game. Open your game in Bain Luck."))
             }
             let homeWon = h > a
             guard let pct = homeWon ? facts.pregameHomePercent : facts.pregameAwayPercent,
-                  (0...100).contains(pct) else { return nil }
+                  (0...100).contains(pct),
+                  let pregameText = ExternalSurfaceProbabilityFormat.openWholePercent(
+                    pct,
+                    subOne: homeWon ? (facts.pregameHomeSubOne == true) : (facts.pregameAwaySubOne == true),
+                    aboveNinetyNine: homeWon ? (facts.pregameHomeAboveNinetyNine == true) : (facts.pregameAwayAboveNinetyNine == true)
+                  ) else { return nil }
             let abbr = homeWon ? homeID.abbreviation : awayID.abbreviation
             let name = homeWon ? r.homeName : r.awayName
             let loser = homeWon ? r.awayName : r.homeName
@@ -502,8 +575,8 @@ extension WatchMatchupReading217 {
                 stage: .after,
                 away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: a, winner: !homeWon),
                 home: side(homeID, facts.homePrimary, facts.homeSecondary, score: h, winner: homeWon),
-                bigText: "\(pct)%", bigOwnerLabel: abbr, bigIsHome: homeWon, smallLine: "Pregame · Final",
-                accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(name) \(max(h, a)), \(loser) \(min(h, a)). \(name) had \(pct)% before the game. Open your game in Bain Luck."))
+                bigText: pregameText, bigOwnerLabel: abbr, bigIsHome: homeWon, smallLine: "Pregame · Final",
+                accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(name) \(max(h, a)), \(loser) \(min(h, a)). \(name) had \(pregameText) before the game. Open your game in Bain Luck."))
         case .futureForecast:
             return nil
         }

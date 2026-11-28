@@ -89,12 +89,11 @@ struct WatchLiveView: View {
                         Text("\(score)")
                             .font(.system(size: 24, weight: .heavy, design: .rounded))
                     }
-                    if let chance = game.awayProb {
-                        let printed = "\(chance)%"
-                        Text(printed)
+                    if let probText = game.awayProbText {
+                        Text(probText)
                             .font(.system(size: 18, weight: .bold, design: .rounded))
                             .foregroundStyle(Color(hex: game.awayColor ?? "#888"))
-                            .accessibilityLabel(spokenProbabilityText(printed))
+                            .accessibilityLabel(spokenProbabilityText(probText))
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -112,30 +111,34 @@ struct WatchLiveView: View {
                         Text("\(score)")
                             .font(.system(size: 24, weight: .heavy, design: .rounded))
                     }
-                    if let chance = game.homeProb {
-                        let printed = "\(chance)%"
-                        Text(printed)
+                    if let probText = game.homeProbText {
+                        Text(probText)
                             .font(.system(size: 18, weight: .bold, design: .rounded))
                             .foregroundStyle(Color(hex: game.homeColor ?? "#888"))
-                            .accessibilityLabel(spokenProbabilityText(printed))
+                            .accessibilityLabel(spokenProbabilityText(probText))
                     }
                 }
                 .frame(maxWidth: .infinity)
             }
 
             if let awayChance = game.awayProb {
+                let awayShare = ExternalSurfaceProbabilityFormat.gaugeShare(
+                    awayChance,
+                    subOne: ExternalSurfaceProbabilityFormat.isSubOne(game.rawAwayProb),
+                    aboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(game.rawAwayProb)
+                )
                 GeometryReader { geo in
                     HStack(spacing: 1) {
                         RoundedRectangle(cornerRadius: 2)
                             .fill(Color(hex: game.awayColor ?? "#888"))
-                            .frame(width: geo.size.width * CGFloat(awayChance) / 100)
+                            .frame(width: geo.size.width * CGFloat(awayShare))
                         RoundedRectangle(cornerRadius: 2)
                             .fill(Color(hex: game.homeColor ?? "#888"))
                     }
                 }
                 .frame(height: 4)
             } else {
-                Text("Win chance unavailable")
+                Text(ExternalSurfaceProbabilityFormat.missingProbabilityText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -160,6 +163,16 @@ struct WatchLiveGame: Identifiable {
     let awayColor: String?
     let gameClock: String?
     let sportLabel: String
+    var rawHomeProb: Double? = nil
+    var rawAwayProb: Double? = nil
+
+    var homeProbText: String? {
+        ExternalSurfaceProbabilityFormat.openWholePercent(homeProb, probability: rawHomeProb)
+    }
+
+    var awayProbText: String? {
+        ExternalSurfaceProbabilityFormat.openWholePercent(awayProb, probability: rawAwayProb)
+    }
 }
 
 @MainActor
@@ -194,18 +207,22 @@ final class WatchLiveViewModel: ObservableObject {
                 // #4880 — see `PeriodLabel.liveStatusText`.
                 let clockText = PeriodLabel.liveStatusText(
                     period: e.espn?.period, gameClock: e.espn?.gameClock)
+                let rawAwayProb = homeProb.map { 1.0 - $0 }
+                let duel = homeProb.map { renderedDuelPercents(away: 1.0 - $0, home: $0) }
                 return WatchLiveGame(
                     id: e.id,
                     homeAbbrev: homeAbbrev,
                     awayAbbrev: awayAbbrev,
-                    homeProb: homeProb.map { Int(($0 * 100).rounded()) },
-                    awayProb: homeProb.map { Int(((1.0 - $0) * 100).rounded()) },
+                    homeProb: duel?[1] ?? renderedPercent(homeProb),
+                    awayProb: duel?[0] ?? renderedPercent(rawAwayProb),
                     homeScore: e.homeScore,
                     awayScore: e.awayScore,
                     homeColor: e.homeTeamData?.primaryColor,
                     awayColor: e.awayTeamData?.primaryColor,
                     gameClock: clockText,
-                    sportLabel: e.sportName ?? e.sport ?? ""
+                    sportLabel: e.sportName ?? e.sport ?? "",
+                    rawHomeProb: homeProb,
+                    rawAwayProb: rawAwayProb
                 )
             }
             if !newGames.isEmpty || games.isEmpty {

@@ -81,7 +81,11 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
             let matchup = "\(event.awayTeam) at \(event.homeTeam)"
             if homeScore == awayScore {
                 guard let drawPre = renderedPercent(event.prematchOdds?.drawProbability),
-                      (0...100).contains(drawPre) else {
+                      (0...100).contains(drawPre),
+                      let drawText = ExternalSurfaceProbabilityFormat.openWholePercent(
+                        drawPre,
+                        probability: event.prematchOdds?.drawProbability
+                      ) else {
                     return .fallbackText
                 }
                 return .matchup(
@@ -89,17 +93,22 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                         stage: .after,
                         away: buildSide(short: art.away.short, primaryHex: art.away.primaryHex, secondaryHex: art.away.secondaryHex, logo: awayLogo, score: awayScore, isWinner: false),
                         home: buildSide(short: art.home.short, primaryHex: art.home.primaryHex, secondaryHex: art.home.secondaryHex, logo: homeLogo, score: homeScore, isWinner: false),
-                        bigText: "\(drawPre)%",
+                        bigText: drawText,
                         bigOwnerLabel: "Draw",
                         bigIsHome: true,
                         smallLine: "Pregame · Final",
-                        accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(matchup), \(awayScore)–\(homeScore). Draw had \(drawPre)% pregame. Open your game in Bain Luck.")
+                        accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(matchup), \(awayScore)–\(homeScore). Draw had \(drawText) pregame. Open your game in Bain Luck.")
                     )
                 )
             }
             let homeWon = homeScore > awayScore
             guard let pct = homeWon ? art.pregameChances?.homePercent : art.pregameChances?.awayPercent,
-                  (0...100).contains(pct) else {
+                  (0...100).contains(pct),
+                  let pregameText = (homeWon ? art.pregameChances?.homeText : art.pregameChances?.awayText)
+                    ?? ExternalSurfaceProbabilityFormat.openWholePercent(
+                        pct,
+                        probability: homeWon ? event.prematchOdds?.homeProbability : event.prematchOdds?.awayProbability
+                    ) else {
                 return .fallbackText
             }
             let winnerAbbr = homeWon ? art.home.short : art.away.short
@@ -110,11 +119,11 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                     stage: .after,
                     away: buildSide(short: art.away.short, primaryHex: art.away.primaryHex, secondaryHex: art.away.secondaryHex, logo: awayLogo, score: awayScore, isWinner: !homeWon),
                     home: buildSide(short: art.home.short, primaryHex: art.home.primaryHex, secondaryHex: art.home.secondaryHex, logo: homeLogo, score: homeScore, isWinner: homeWon),
-                    bigText: "\(pct)%",
+                    bigText: pregameText,
                     bigOwnerLabel: winnerAbbr,
                     bigIsHome: homeWon,
                     smallLine: "Pregame · Final",
-                    accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(winnerName) \(max(homeScore, awayScore)), \(loserName) \(min(homeScore, awayScore)). \(winnerName) had \(pct)% pregame. Open your game in Bain Luck.")
+                    accessibilityText: spokenTextExpandingProbabilitySymbols("Final. \(winnerName) \(max(homeScore, awayScore)), \(loserName) \(min(homeScore, awayScore)). \(winnerName) had \(pregameText) pregame. Open your game in Bain Luck.")
                 )
             )
         }
@@ -202,6 +211,9 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
         let ownerAbbr: String
         let ownerName: String
 
+        let effectiveAwayProb = isThreeWaySport
+            ? odds.awayProbability
+            : (odds.awayProbability.flatMap { $0.isFinite ? $0 : nil } ?? (1.0 - homeProb))
         if side == nil, isThreeWaySport, let drawPct = drawPercentInt, let awayPct = awayPercentInt {
             let out = WatchMatchupReading217.resolveOutcomePresentation(
                 homePercent: homePct,
@@ -211,7 +223,13 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                 awayAbbreviation: art.away.short,
                 isThreeWay: true,
                 drawPercent: drawPct,
-                awayPercent: awayPct
+                awayPercent: awayPct,
+                homeSubOne: ExternalSurfaceProbabilityFormat.isSubOne(homeProb),
+                homeAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(homeProb),
+                drawSubOne: ExternalSurfaceProbabilityFormat.isSubOne(odds.drawProbability),
+                drawAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(odds.drawProbability),
+                awaySubOne: ExternalSurfaceProbabilityFormat.isSubOne(odds.awayProbability),
+                awayAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(odds.awayProbability)
             )
             threeWay = out.threeWay
             bigText = out.bigText
@@ -220,13 +238,19 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
             ownerName = out.ownerName
         } else if side == .away, let awayPct = awayPercentInt {
             threeWay = nil
-            bigText = "\(awayPct)%"
+            bigText = ExternalSurfaceProbabilityFormat.openWholePercent(
+                awayPct,
+                probability: effectiveAwayProb
+            ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
             bigIsHome = false
             ownerAbbr = art.away.short
             ownerName = event.awayTeam
         } else if side == .home || isThreeWaySport {
             threeWay = nil
-            bigText = "\(homePct)%"
+            bigText = ExternalSurfaceProbabilityFormat.openWholePercent(
+                homePct,
+                probability: homeProb
+            ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
             bigIsHome = true
             ownerAbbr = art.home.short
             ownerName = event.homeTeam
@@ -239,7 +263,11 @@ nonisolated enum SavedLockScreenMatchupAdapter13432 {
                 awayAbbreviation: art.away.short,
                 isThreeWay: false,
                 drawPercent: nil,
-                awayPercent: awayPercentInt
+                awayPercent: awayPercentInt,
+                homeSubOne: ExternalSurfaceProbabilityFormat.isSubOne(homeProb),
+                homeAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(homeProb),
+                awaySubOne: ExternalSurfaceProbabilityFormat.isSubOne(effectiveAwayProb),
+                awayAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(effectiveAwayProb)
             )
             threeWay = nil
             bigText = out.bigText

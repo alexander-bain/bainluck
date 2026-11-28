@@ -489,7 +489,7 @@ struct WatchSelectedGameView: View {
                 .accessibilityIdentifier("watch.home-probability")
                 .accessibilityLabel("\(game.homeTeam) win probability, \(spokenProbabilityText(probabilityText))")
             } else {
-                Text("\(game.homeTeam) win chance unavailable")
+                Text(ExternalSurfaceProbabilityFormat.missingProbabilityText)
                     .font(.footnote).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("watch.home-probability-unavailable")
@@ -1070,7 +1070,7 @@ struct WatchSelectedGameView: View {
                         }
                     }
                 } else {
-                    Text(compactUnavailable ? "Probability unavailable" : reading).font(.footnote.weight(.semibold))
+                    Text(compactUnavailable ? ExternalSurfaceProbabilityFormat.missingProbabilityText : reading).font(.footnote.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if dynamicTypeSize.isAccessibilitySize && game.showsForecast && game.homeProbabilityText != nil {
@@ -1116,7 +1116,7 @@ struct WatchSelectedGameView: View {
     private func currentPickerReading(_ game: WatchSelectedGame) -> String {
         if game.showsForecast {
             return game.homeProbabilityText.map { "\(game.homeTeam) win probability, \($0)" }
-                ?? "Win probability unavailable"
+                ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
         }
         guard let away = game.awayScore, let home = game.homeScore, away >= 0, home >= 0 else {
             return game.isFinal ? "Final score unavailable" : "Last reported score unavailable"

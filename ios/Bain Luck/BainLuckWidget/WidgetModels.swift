@@ -1,10 +1,13 @@
 import Foundation
 import SwiftUI
 import WidgetKit
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 // MARK: - Timeline Entry
 
-struct BainLuckWidgetEntry: TimelineEntry {
+struct BainLuckWidgetEntry: WidgetKit.TimelineEntry {
     let date: Date
     let liveGames: [WidgetGame]
     let discoverItems: [WidgetDiscoverItem]
@@ -120,6 +123,33 @@ struct WidgetGame: Identifiable {
     let awayColor: String?
     var homeDarkColor: String? = nil
     var awayDarkColor: String? = nil
+    var homeProbability: Double? = nil
+    var awayProbability: Double? = nil
+
+    var homeProbText: String {
+        ExternalSurfaceProbabilityFormat.openWholePercent(homeProb, probability: homeProbability)
+            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+    }
+
+    var awayProbText: String? {
+        guard let awayProb else { return nil }
+        return ExternalSurfaceProbabilityFormat.openWholePercent(awayProb, probability: awayProbability)
+    }
+
+    var compactProbHeaderText: String {
+        guard let awayProb else {
+            return "\(homeAbbrev) \(homeProbText)"
+        }
+        let awayCompact = ExternalSurfaceProbabilityFormat.openCompactValue(awayProb, probability: awayProbability)
+            ?? "\(awayProb)"
+        let homeCompact = ExternalSurfaceProbabilityFormat.openCompactValue(homeProb, probability: homeProbability)
+            ?? "\(homeProb)"
+        if awayCompact.hasPrefix("<") || awayCompact.hasPrefix(">")
+            || homeCompact.hasPrefix("<") || homeCompact.hasPrefix(">") {
+            return "\(awayProbText ?? awayCompact)·\(homeProbText)"
+        }
+        return "\(awayCompact)-\(homeCompact)"
+    }
 
     func resolvedHomeColor(for colorScheme: ColorScheme) -> String? {
         guard colorScheme == .dark else { return homeColor }
@@ -158,4 +188,10 @@ struct WidgetDiscoverItem: Identifiable {
     let movement: Int?
     let hookDescription: String?
     let headline: String?
+    var rawProbability: Double? = nil
+
+    var probabilityText: String {
+        ExternalSurfaceProbabilityFormat.openWholePercent(probability, probability: rawProbability)
+            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+    }
 }

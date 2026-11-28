@@ -141,6 +141,7 @@
 				Utilities/StoryContinuation.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/ProbabilityBarPalette.swift,
+				Utilities/ExternalSurfaceProbabilityFormat.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/SportVocab.swift,
 				Utilities/HeadlineStyleTable199.swift,
@@ -163,6 +164,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				WatchComplicationSnapshot.swift,
+				WatchComplicationPublisher.swift,
 				WatchFeedModels.swift,
 				WatchGuessPool.swift,
 				WatchGuessBackend.swift,
@@ -176,6 +178,7 @@
 				WatchMatchupReading217.swift,
 				WatchMatchupComplication217.swift,
 				WatchMatchupGamePageHero297A.swift,
+				WatchSavedComplicationContent.swift,
 				WatchComplicationRelevance254A.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
@@ -191,6 +194,9 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				WidgetFeedDecoding.swift,
+				WidgetModels.swift,
+				WidgetLinkTagging13261.swift,
+				LiveGamesWidget.swift,
 				SavedLockScreenMatchup13432.swift,
 				GameLiveActivity.swift,
 			);
@@ -216,6 +222,7 @@
 				Utilities/DrawPricedWinner.swift,
 				Utilities/FormattingUtilities.swift,
 				Utilities/HeadlineStyleTable199.swift,
+				Utilities/ExternalSurfaceProbabilityFormat.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/SportVocab.swift,
 				Utilities/WidgetRelevanceRule254A.swift,
@@ -243,6 +250,7 @@
 				Utilities/GameContinuation.swift,
 				Utilities/HeadlineStyleTable199.swift,
 				Utilities/LockScreenSmallSlotFit13430.swift,
+				Utilities/ExternalSurfaceProbabilityFormat.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/SportVocab.swift,
