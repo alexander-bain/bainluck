@@ -220,24 +220,26 @@ struct WatchSavedCornerComplicationContent: View {
 /// never look the same.
 struct WatchUnavailableComplicationContent13339: View {
     let status: WatchFaceStatusPayload13339
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        let isA11y = dynamicTypeSize.isAccessibilitySize
         HStack(alignment: .center, spacing: 6) {
             Image(systemName: "exclamationmark.circle")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(status.title)
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(isA11y ? .system(size: 10.5, weight: .semibold) : .caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Text(status.reason.complicationHeadline)
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.75)
+                    .font(isA11y ? .system(size: 13.5, weight: .semibold) : .headline)
+                    .lineLimit(isA11y ? 2 : 1)
+                    .minimumScaleFactor(isA11y ? 0.75 : 0.8)
                 Text(status.reason.complicationDetail)
-                    .font(.system(size: 11))
+                    .font(isA11y ? .system(size: 11) : .caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)

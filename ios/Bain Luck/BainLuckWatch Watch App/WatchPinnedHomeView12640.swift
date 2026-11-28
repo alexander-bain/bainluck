@@ -253,8 +253,8 @@ struct WatchPinnedHomeView12640: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .font(.footnote.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 10 : 8)
+                .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 8 : 0)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             }
@@ -498,8 +498,8 @@ struct WatchPinnedHomeView12640: View {
                         Image(systemName: "list.bullet")
                     }
                     .font(.footnote.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 10 : 8)
+                    .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 8 : 0)
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                 }
@@ -519,8 +519,8 @@ struct WatchPinnedHomeView12640: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .font(.footnote.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 10 : 8)
+                .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 8 : 0)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             }
@@ -531,14 +531,22 @@ struct WatchPinnedHomeView12640: View {
             Button {
                 choosingFromPins = true
             } label: {
-                Text("Choose another pin")
-                    .font(.footnote.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                if dynamicTypeSize.isAccessibilitySize {
+                    Text("Choose another pin")
+                        .font(.footnote.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                } else {
+                    Text("Choose another pin")
+                        .font(.footnote.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                }
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("watch.pins.choose-another")
@@ -609,8 +617,8 @@ struct WatchPinnedHomeView12640: View {
                     Image(systemName: showingMoreActions ? "chevron.up" : "chevron.down")
                 }
                 .font(.footnote.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 10 : 8)
+                .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 8 : 0)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             }
@@ -622,34 +630,49 @@ struct WatchPinnedHomeView12640: View {
                     Button {
                         showingHandoffHelp = true
                     } label: {
-                        Text("Continue on iPhone")
-                            .font(.footnote.weight(.semibold))
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                        if dynamicTypeSize.isAccessibilitySize {
+                            Text("Continue on iPhone")
+                                .font(.footnote.weight(.semibold))
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                        } else {
+                            Text("Continue on iPhone")
+                                .font(.footnote.weight(.semibold))
+                                .padding(.horizontal, 8)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                        }
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("watch.pins.continue-on-phone")
                 }
             }
 
-            NavigationLink {
-                WatchDiagnosticsView().dynamicTypeSize(dynamicTypeSize)
-            } label: {
-                Text("Diagnostics")
-                    .font(.footnote.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+            if dynamicTypeSize.isAccessibilitySize {
+                NavigationLink {
+                    WatchDiagnosticsView().dynamicTypeSize(dynamicTypeSize)
+                } label: {
+                    Text("Diagnostics")
+                        .font(.footnote.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("watch.diagnostics")
+            } else {
+                NavigationLink("Diagnostics") {
+                    WatchDiagnosticsView().dynamicTypeSize(dynamicTypeSize)
+                }
+                .accessibilityIdentifier("watch.diagnostics")
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("watch.diagnostics")
 
             if store.selectedTarget != nil {
                 Divider()
@@ -660,15 +683,24 @@ struct WatchPinnedHomeView12640: View {
                     showingHandoffHelp = false
                     store.clearSelection()
                 } label: {
-                    Text("Clear selection")
-                        .font(.footnote).foregroundStyle(.primary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .contentShape(RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary, lineWidth: 1))
+                    if dynamicTypeSize.isAccessibilitySize {
+                        Text("Clear selection")
+                            .font(.footnote).foregroundStyle(.primary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary, lineWidth: 1))
+                    } else {
+                        Text("Clear selection")
+                            .font(.footnote).foregroundStyle(.primary)
+                            .padding(.horizontal, 8)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary, lineWidth: 1))
+                    }
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("watch.pins.clear-selection")
@@ -684,16 +716,29 @@ struct WatchPinsFacePreviewFixture12640: View {
 
     var body: some View {
         let now = Date()
-        let snapshot = makeSnapshot(now: now)
         VStack(spacing: 8) {
-            WatchSavedComplicationContent(snapshot: snapshot, now: now)
-                .frame(width: 156, height: 76, alignment: .leading)
-                .padding(6)
-                .background(Color.black)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(.gray.opacity(0.5), lineWidth: 1))
+            Group {
+                if scenario == "unavailable" {
+                    WatchUnavailableComplicationContent13339(
+                        status: WatchFaceStatusPayload13339(
+                            targetID: 15349272,
+                            title: "NYK at BOS",
+                            reason: .finalEnded,
+                            updatedAt: now
+                        )
+                    )
+                } else {
+                    WatchSavedComplicationContent(snapshot: makeSnapshot(now: now), now: now)
+                }
+            }
+            .frame(width: 156, height: 76, alignment: .leading)
+            .padding(6)
+            .background(Color.black)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.gray.opacity(0.5), lineWidth: 1))
             Text("Face slot · \(scenario)")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .environment(\.widgetRenderingMode, .fullColor)
         .navigationTitle("Watch face")
