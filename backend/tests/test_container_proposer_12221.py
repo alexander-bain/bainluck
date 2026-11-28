@@ -1980,7 +1980,7 @@ def test_13696_fable_nov27_v5_four_guards(monkeypatch) -> None:
     class FailingSession:
         async def execute(self, stmt):
             sql_text = str(stmt)
-            if "SELECT slug, title FROM containers" in sql_text:
+            if "SELECT slug, name FROM containers" in sql_text:
                 class _Res:
                     def all(self):
                         return []
@@ -2019,3 +2019,113 @@ def test_13696_fable_nov27_v5_four_guards(monkeypatch) -> None:
     assert preview_resp["status"] == "ready"
     assert preview_resp["coverage_partial"] is True
     assert set(preview_resp["coverage_failed_reads"]) == {"graph_sql", "definition_coverage"}
+    assert isinstance(preview_resp["ranked_audit"], list)
+    assert len(preview_resp["ranked_audit"]) == len(partial_run["ranked_audit"])
+
+
+def test_load_covered_public_set_names_uses_containers_name_and_active_roundups(monkeypatch):
+    import app.tasks.container_proposer as cp_task
+
+    class _Row:
+        def __init__(self, slug: str, name: str):
+            self.slug = slug
+            self.name = name
+
+    class _ContainerSession:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        async def execute(self, stmt):
+            self.queries.append(str(stmt))
+
+            class _Res:
+                def all(self):
+                    return [_Row("ai", "AI"), _Row("sample-public-hub", "Sample Public Hub")]
+
+            return _Res()
+
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    sess = _ContainerSession()
+    failed: list[str] = []
+    names = asyncio.run(cp_task.load_covered_public_set_names(sess, failed_reads=failed))
+    assert failed == []
+    assert any("SELECT slug, name FROM containers" in q for q in sess.queries)
+    assert {"ai", "AI", "sample-public-hub", "Sample Public Hub"} <= names
+    # Active public machinery sets must be present once optional roundup candidates register.
+    assert "roundup-cfp-picture" in names
+    assert "Fed & U.S. Macro" in names or any("macro" in n.lower() for n in names)
+
+
+def test_territorial_acquire_countdown_and_mixed_scoreboard_headings_12221():
+    # 1. Territorial acquisition countdown rows never get tagged "Corporate Milestones", and 1-day stays singular.
+    territorial = [
+        _bin(97101, "Mayor announce infrastructure plan Before Dec 4 2026", 12, category="politics", series="KXMA", res_days=6),
+        _bin(97102, "Mayor announce infrastructure plan Before Feb 1 2027", 65, category="politics", series="KXMA", res_days=65),
+        _bin(97103, "Mayor sign transit treaty Before Dec 31 2026", 35, category="politics", series="KXMA", res_days=33),
+        _bin(97104, "Mayor sign transit treaty Before Jun 30 2027", 55, category="politics", series="KXMA", res_days=210),
+        _bin(97105, "Mayor try to acquire northern province?", 4, category="politics", series="KXMA", res_days=1),
+        _bin(97106, "Mayor acquire coastal island before 2027?", 2, category="politics", series="KXMA", res_days=1),
+        _bin(97107, "Mayor visit neighboring capital in 2027?", 8, category="politics", series="KXMA", res_days=180),
+        _bin(97108, "Mayor leave office before 2028?", 5, category="politics", series="KXMA", res_days=240),
+    ]
+    res_t = propose_container_page_for_family(
+        "Mayor Outlook",
+        territorial,
+        now=REF_NOW,
+        kicker="POLITICS",
+        family_fingerprint="fp-mayor-outlook",
+    )
+    assert res_t["accepted"], res_t
+    headlines = [str(sec.get("common_headline") or "") for sec in res_t["page"]["sections"]]
+    assert all("corporate" not in h.lower() for h in headlines), headlines
+    countdown_secs = [s for s in res_t["page"]["sections"] if s.get("variant") == "countdown"]
+    if countdown_secs:
+        assert "1 days left" not in str(countdown_secs[0].get("stat_caption") or "")
+
+    # 2. Multi-row scoreboard grid must not promote one row's unique word ("Winner") as section heading.
+    nation_election = [
+        _multi(
+            97201,
+            "Nation General Election Winner",
+            {"Party A": 71.0, "Party B": 28.0, "Party C": 1.0},
+            category="politics",
+            series="KXNAT",
+        ),
+        _multi(
+            97202,
+            "Nation General Election: Capital 2nd Place",
+            {"Party A": 1.0, "Party B": 89.0, "Party C": 10.0},
+            category="politics",
+            series="KXNAT",
+        ),
+        _bin(97203, "Majority", 87, category="politics", series="KXNAT", res_days=1),
+        _bin(97204, "Nation General Election: Coalition gets 50%+ of Vote", 30, category="politics", series="KXNAT", res_days=1),
+        _multi(
+            97205,
+            "Election: Turnout",
+            {"70%+": 50.0, "68-70%": 34.0, "66-68%": 14.0, "64-66%": 2.0},
+            category="politics",
+            series="KXNAT",
+        ),
+    ]
+    res_e = propose_container_page_for_family(
+        "Nation General Election",
+        nation_election,
+        now=REF_NOW,
+        kicker="POLITICS",
+        family_fingerprint="fp-nation-election",
+    )
+    assert res_e["accepted"], res_e
+    sb_secs = [s for s in res_e["page"]["sections"] if s.get("variant") == "scoreboard_grid"]
+    assert len(sb_secs) == 1
+    sb_hl = str(sb_secs[0]["common_headline"])
+    assert "winner" not in sb_hl.lower(), sb_hl
+    assert sb_hl.lower() != "nation general election", sb_hl
+    for s in res_e["page"]["sections"]:
+        assert "1 days left" not in str(s.get("stat_caption") or "")
+
+    # 3. Persisted preview store bounds ranked_audit cleanly.
+    fake_audit = [{"rank": i, "label": f"Fam {i}", "kicker": "TECH", "family_size": 5, "interest_score": 100 - i, "accepted": False, "selected_for_preview": False, "refusal_reason": "refused_core_already_in_public_set"} for i in range(1, 35)]
+    store = merge_preview_store(None, [res_e["page"]], now=REF_NOW, ranked_audit=fake_audit)
+    assert len(store["ranked_audit"]) == 25
+    assert store["ranked_audit"][0]["refusal_reason"] == "refused_core_already_in_public_set"
