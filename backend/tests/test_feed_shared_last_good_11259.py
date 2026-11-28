@@ -450,7 +450,11 @@ async def test_a_copy_whose_game_kicked_off_since_the_build_is_not_served(
     )
     stored = json.loads(wire_decode(redis.store[key]))
     assert "commence_time" in json.dumps(stored)
-    assert [it["data"]["id"] for it in stored["items"]] == [1, 2]
+    # `cards[1]` (id=2) carries a commence_time within 6h while `_upcoming(1)` has
+    # none, so Ruling 256: B places imminent `id=2` first on Sports "All" while
+    # Discover preserves `[1, 2]`.
+    expected_stored = [2, 1] if path == SPORTS else [1, 2]
+    assert [it["data"]["id"] for it in stored["items"]] == expected_stored
     # Advance the clock 4 minutes past the build (210 s past kick-off for the
     # kicked-off case; still 56 min before kick-off for the control).
     monkeypatch.setattr(time, "time", lambda: t_build + 240)
@@ -469,7 +473,7 @@ async def test_a_copy_whose_game_kicked_off_since_the_build_is_not_served(
         assert _ids(body) == [1]
     else:
         assert body["cache"]["status"] == "last_good"
-        assert _ids(body) == [1, 2]
+        assert [it["data"]["id"] for it in body["items"]] == expected_stored
     assert rig.remembered == [] and rig.published == [] and redis.setex_keys == []
 
 
