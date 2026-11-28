@@ -4,7 +4,7 @@ The columns are nullable with no defaults, so the existing rows stay in
 place. The scheduled maintainer fills them after release.
 
 Revision ID: poll_open_outcomes_13673
-Revises: retired_team_redirects_13229
+Revises: metrickit_payloads_12309
 Create Date: 2026-11-26
 """
 
@@ -13,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "poll_open_outcomes_13673"
-down_revision = "retired_team_redirects_13229"
+down_revision = "metrickit_payloads_12309"
 branch_labels = None
 depends_on = None
 
