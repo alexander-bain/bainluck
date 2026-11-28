@@ -197,6 +197,10 @@
 				LiveGamesWidget.swift,
 				SavedLockScreenMatchup13432.swift,
 				GameLiveActivity.swift,
+				RefreshSavedWidgetIntent12305.swift,
+				SavedItemWidget10875.swift,
+				SavedItemWidgetIntent10875.swift,
+				SavedWidgetLooks12466.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};

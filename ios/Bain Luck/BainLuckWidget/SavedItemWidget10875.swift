@@ -1,11 +1,14 @@
 import SwiftUI
 import WidgetKit
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 // #10875 — one saved game or market, chosen per widget, on the Home Screen
 // (small, medium) and the iPhone Lock Screen (rectangular, circular). The
 // general live-games widget is unchanged beside it.
 
-struct SavedItemWidgetEntry10875: TimelineEntry {
+struct SavedItemWidgetEntry10875: WidgetKit.TimelineEntry {
     let date: Date
     let selection: SavedWidgetSelection10875?
     let content: SavedWidgetContent10875
@@ -362,6 +365,7 @@ struct SavedSmall10875: View {
 }
 
 struct SavedMedium10875: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let reading: SavedWidgetReading10875
     let entry: SavedItemWidgetEntry10875
 
@@ -374,11 +378,13 @@ struct SavedMedium10875: View {
         // #12305: with no bottom caption line, the last row is the bottom line,
         // so the rows keep clear of the ↻ button there.
         let clearsRefresh = caption == nil && !showsUnavailableLine && entry.isRefreshable12305
-        VStack(alignment: .leading, spacing: 6) {
+        let tightVertical = dynamicTypeSize >= .xxLarge || (showsUnavailableLine && reading.rows.count >= 3)
+        VStack(alignment: .leading, spacing: tightVertical ? 3 : 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(reading.subject)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(2)
+                    .minimumScaleFactor(0.85)
                 Spacer(minLength: 4)
                 Text(reading.status)
                     .font(.caption2.weight(.medium))
@@ -391,6 +397,7 @@ struct SavedMedium10875: View {
                     Text(row.label)
                         .font(.footnote.weight(row.emphasized ? .semibold : .regular))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                     Spacer(minLength: 4)
                     if let figure = row.figure {
                         Text(figure).font(.footnote.weight(.semibold).monospacedDigit())

@@ -1,6 +1,9 @@
 import AppIntents
 import Foundation
 import WidgetKit
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 // #10875 — how a reader chooses what one widget follows: one of THEIR saved
 // games or markets (read from the app's bridge, never from a public catalog or

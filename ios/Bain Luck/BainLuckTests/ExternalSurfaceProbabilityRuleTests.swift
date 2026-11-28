@@ -1061,6 +1061,54 @@ final class ExternalSurfaceProbabilityRuleTests: XCTestCase {
         print("EXPORTED_ITEM7_SHEET=\(outURL.path) bytes=\(png.count)")
     }
 
+    func testSavedLockScreenMatchupAdapterRoutesUnpricedGamesToFallbackText() throws {
+        let iso = ISO8601DateFormatter()
+        let futureKickoff = iso.string(from: fixedNow.addingTimeInterval(7200))
+        let pastKickoff = iso.string(from: fixedNow.addingTimeInterval(-1800))
+
+        let preEvent = try SavedWidgetDetailDecoding10875.decoder().decode(
+            SavedWidgetEventDetail10875.self,
+            from: Data("""
+            {"id": 950, "sport": "basketball_nba", "home_team": "Miami Heat", "away_team": "Orlando Magic",
+             "status": "scheduled", "commence_time": "\(futureKickoff)",
+             "home_team_data": {"abbreviation": "MIA"}, "away_team_data": {"abbreviation": "ORL"}}
+            """.utf8)
+        )
+        let preReading = SavedWidgetReadingRules10875.game(preEvent, side: nil, now: fixedNow)
+        XCTAssertEqual(preReading.unavailableProbabilityText, "No probability yet")
+        let preState = SavedLockScreenMatchupAdapter13432.resolve(
+            event: preEvent,
+            reading: preReading,
+            art: SavedWidgetArt12466.game(preEvent),
+            logos: .init(),
+            side: nil,
+            isOffline: false,
+            now: fixedNow
+        )
+        XCTAssertEqual(preState, .fallbackText)
+
+        let liveEvent = try SavedWidgetDetailDecoding10875.decoder().decode(
+            SavedWidgetEventDetail10875.self,
+            from: Data("""
+            {"id": 951, "sport": "basketball_nba", "home_team": "Miami Heat", "away_team": "Orlando Magic",
+             "status": "live", "commence_time": "\(pastKickoff)", "home_score": 46, "away_score": 44,
+             "home_team_data": {"abbreviation": "MIA"}, "away_team_data": {"abbreviation": "ORL"}}
+            """.utf8)
+        )
+        let liveReading = SavedWidgetReadingRules10875.game(liveEvent, side: nil, now: fixedNow)
+        XCTAssertEqual(liveReading.unavailableProbabilityText, "No recent probability")
+        let liveState = SavedLockScreenMatchupAdapter13432.resolve(
+            event: liveEvent,
+            reading: liveReading,
+            art: SavedWidgetArt12466.game(liveEvent),
+            logos: .init(),
+            side: nil,
+            isOffline: false,
+            now: fixedNow
+        )
+        XCTAssertEqual(liveState, .fallbackText)
+    }
+
     private func tile<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
@@ -1123,18 +1171,63 @@ final class ExternalSurfaceProbabilityRuleTests: XCTestCase {
             SavedWidgetEventDetail10875.self,
             from: Data("""
             {"id": 940, "sport": "basketball_nba", "home_team": "Miami Heat", "away_team": "Orlando Magic",
-             "status": "scheduled", "commence_time": "\(futureKickoff)"}
+             "status": "scheduled", "commence_time": "\(futureKickoff)",
+             "home_team_data": {"abbreviation": "MIA", "primary_color": "#98002E"},
+             "away_team_data": {"abbreviation": "ORL", "primary_color": "#0077C0"}}
             """.utf8)
         )
         let startedSavedEvent = try SavedWidgetDetailDecoding10875.decoder().decode(
             SavedWidgetEventDetail10875.self,
             from: Data("""
             {"id": 941, "sport": "basketball_nba", "home_team": "Miami Heat", "away_team": "Orlando Magic",
-             "status": "live", "commence_time": "\(pastKickoff)", "home_score": 46, "away_score": 44}
+             "status": "live", "commence_time": "\(pastKickoff)", "home_score": 46, "away_score": 44,
+             "home_team_data": {"abbreviation": "MIA", "primary_color": "#98002E"},
+             "away_team_data": {"abbreviation": "ORL", "primary_color": "#0077C0"}}
             """.utf8)
         )
-        let preStartSavedReading = SavedWidgetReadingRules10875.game(preStartSavedEvent, side: nil, now: fixedNow)
-        let startedSavedReading = SavedWidgetReadingRules10875.game(startedSavedEvent, side: nil, now: fixedNow)
+        let preStart3WayEvent = try SavedWidgetDetailDecoding10875.decoder().decode(
+            SavedWidgetEventDetail10875.self,
+            from: Data("""
+            {"id": 942, "sport": "soccer_epl", "home_team": "Chelsea", "away_team": "Arsenal",
+             "status": "scheduled", "commence_time": "\(futureKickoff)",
+             "home_team_data": {"abbreviation": "CHE", "primary_color": "#034694"},
+             "away_team_data": {"abbreviation": "ARS", "primary_color": "#EF0107"}}
+            """.utf8)
+        )
+        let started3WayEvent = try SavedWidgetDetailDecoding10875.decoder().decode(
+            SavedWidgetEventDetail10875.self,
+            from: Data("""
+            {"id": 943, "sport": "soccer_epl", "home_team": "Chelsea", "away_team": "Arsenal",
+             "status": "live", "commence_time": "\(pastKickoff)", "home_score": 1, "away_score": 1,
+             "home_team_data": {"abbreviation": "CHE", "primary_color": "#034694"},
+             "away_team_data": {"abbreviation": "ARS", "primary_color": "#EF0107"}}
+            """.utf8)
+        )
+
+        func makeWidgetEntry(_ event: SavedWidgetEventDetail10875) -> SavedItemWidgetEntry10875 {
+            SavedItemWidgetEntry10875(
+                date: fixedNow,
+                selection: SavedWidgetSelection10875(
+                    scope: "guest",
+                    subject: SavedWidgetSubject10875(kind: .game, id: event.id),
+                    side: nil,
+                    outcomeID: nil
+                ),
+                content: .detail(.game(event), offline: false),
+                art: SavedWidgetArt12466.game(event),
+                logos: .init(),
+                look: .matchup
+            )
+        }
+
+        let preEntry = makeWidgetEntry(preStartSavedEvent)
+        let startedEntry = makeWidgetEntry(startedSavedEvent)
+        let pre3WayEntry = makeWidgetEntry(preStart3WayEvent)
+        let started3WayEntry = makeWidgetEntry(started3WayEvent)
+        let preStartSavedReading = try XCTUnwrap(preEntry.reading)
+        let startedSavedReading = try XCTUnwrap(startedEntry.reading)
+        let pre3WayReading = try XCTUnwrap(pre3WayEntry.reading)
+        let started3WayReading = try XCTUnwrap(started3WayEntry.reading)
 
         let preStartWatchGame = try JSONDecoder().decode(WatchSelectedGame.self, from: Data("""
         {"id": 940, "away_team": "Orlando Magic", "home_team": "Miami Heat",
@@ -1152,29 +1245,139 @@ final class ExternalSurfaceProbabilityRuleTests: XCTestCase {
         let preWatchHero = WatchMatchupGameHeroModel297A.build(from: preStartWatchGame, now: fixedNow, crestForTeamID: { _ in nil })
         let startedWatchHero = WatchMatchupGameHeroModel297A.build(from: startedWatchGame, now: fixedNow, crestForTeamID: { _ in nil })
 
+        let preLockMatchup = WatchMatchupReading217(
+            stage: .before,
+            away: .init(abbreviation: "ORL", inkHex: "#0077C0", crestPNG: nil, score: nil, isWinner: false),
+            home: .init(abbreviation: "MIA", inkHex: "#98002E", crestPNG: nil, score: nil, isWinner: false),
+            bigText: preStartSavedReading.unavailableProbabilityText,
+            bigOwnerLabel: "MIA",
+            bigIsHome: true,
+            smallLine: "Today 7:00 PM",
+            accessibilityText: "",
+            threeWay: nil
+        )
+        let startedLockMatchup = WatchMatchupReading217(
+            stage: .during,
+            away: .init(abbreviation: "ORL", inkHex: "#0077C0", crestPNG: nil, score: 44, isWinner: false),
+            home: .init(abbreviation: "MIA", inkHex: "#98002E", crestPNG: nil, score: 46, isWinner: false),
+            bigText: startedSavedReading.unavailableProbabilityText,
+            bigOwnerLabel: "MIA",
+            bigIsHome: true,
+            smallLine: "Q2 5:12",
+            accessibilityText: "",
+            threeWay: nil
+        )
+
+        let pre3WayThreeRowReading = SavedWidgetReading10875(
+            phase: .unavailable,
+            subject: pre3WayReading.subject,
+            shortSubject: pre3WayReading.shortSubject,
+            status: pre3WayReading.status,
+            rows: [
+                .init(label: "Arsenal", shortLabel: "ARS", figure: nil, verdict: nil, emphasized: false),
+                .init(label: "Draw", shortLabel: "Draw", figure: nil, verdict: nil, emphasized: false),
+                .init(label: "Chelsea", shortLabel: "CHE", figure: nil, verdict: nil, emphasized: false),
+            ],
+            headline: nil,
+            priceCaption: nil,
+            observedAt: nil,
+            becomesLastRecordedAt: nil,
+            spoken: "Arsenal vs Chelsea. No probability yet.",
+            hasNotStartedWithoutNumber: true
+        )
+        let started3WayThreeRowReading = SavedWidgetReading10875(
+            phase: .unavailable,
+            subject: started3WayReading.subject,
+            shortSubject: started3WayReading.shortSubject,
+            status: started3WayReading.status,
+            rows: [
+                .init(label: "Arsenal", shortLabel: "ARS", figure: nil, verdict: nil, emphasized: false),
+                .init(label: "Draw", shortLabel: "Draw", figure: nil, verdict: nil, emphasized: false),
+                .init(label: "Chelsea", shortLabel: "CHE", figure: nil, verdict: nil, emphasized: false),
+            ],
+            headline: nil,
+            priceCaption: nil,
+            observedAt: nil,
+            becomesLastRecordedAt: nil,
+            spoken: "Arsenal vs Chelsea. No recent probability.",
+            hasNotStartedWithoutNumber: false
+        )
+
         @ViewBuilder
-        func widgetSummaryTile(reading: SavedWidgetReading10875, scheme: ColorScheme) -> some View {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(reading.shortSubject)
-                    .font(.caption.weight(.bold))
-                Text(reading.status)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 4)
-                Text(reading.unavailableProbabilityText)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(width: 156, height: 92, alignment: .leading)
-            .padding(12)
-            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 16))
-            .environment(\.colorScheme, scheme)
+        func realSmallWidget(_ entry: SavedItemWidgetEntry10875, _ reading: SavedWidgetReading10875, scheme: ColorScheme) -> some View {
+            SavedSmall10875(reading: reading, entry: entry)
+                .padding(14)
+                .frame(width: 155, height: 155)
+                .overlay(alignment: .bottomTrailing) {
+                    SavedRefreshButton12305().padding(10)
+                }
+                .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 22))
+                .clipShape(RoundedRectangle(cornerRadius: 22))
+                .environment(\.colorScheme, scheme)
+        }
+
+        @ViewBuilder
+        func realPlainLookWidget(_ entry: SavedItemWidgetEntry10875, _ reading: SavedWidgetReading10875, scheme: ColorScheme) -> some View {
+            let model = SavedLookModel12466(reading: reading, entry: entry)
+            SavedLookPlain12466(model: model)
+                .foregroundStyle(.white)
+                .padding(14)
+                .frame(width: 155, height: 155)
+                .overlay(alignment: .bottomTrailing) {
+                    SavedRefreshButton12305().foregroundStyle(.white).padding(10)
+                }
+                .background {
+                    SavedLookBackground12466(look: .matchup, model: model)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 22))
+                .environment(\.colorScheme, scheme)
+        }
+
+        @ViewBuilder
+        func realMediumWidget(
+            _ entry: SavedItemWidgetEntry10875,
+            _ reading: SavedWidgetReading10875,
+            scheme: ColorScheme,
+            typeSize: DynamicTypeSize = .large
+        ) -> some View {
+            SavedMedium10875(reading: reading, entry: entry)
+                .padding(14)
+                .frame(width: 329, height: 155)
+                .overlay(alignment: .bottomTrailing) {
+                    SavedRefreshButton12305().padding(10)
+                }
+                .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 22))
+                .clipShape(RoundedRectangle(cornerRadius: 22))
+                .environment(\.colorScheme, scheme)
+                .environment(\.dynamicTypeSize, typeSize)
+        }
+
+        @ViewBuilder
+        func realRectangularWidget(_ entry: SavedItemWidgetEntry10875, _ reading: SavedWidgetReading10875, scheme: ColorScheme) -> some View {
+            SavedRectangular10875(reading: reading, entry: entry)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .frame(width: 157, height: 68, alignment: .leading)
+                .background(scheme == .dark ? Color.black : Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 14))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .environment(\.colorScheme, scheme)
+        }
+
+        @ViewBuilder
+        func realLockMatchup(_ reading: WatchMatchupReading217, scheme: ColorScheme) -> some View {
+            WatchMatchupComplication217(reading: reading)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .frame(width: 157, height: 68)
+                .background(scheme == .dark ? Color.black : Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 14))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .environment(\.colorScheme, scheme)
+                .environment(\.widgetRenderingMode, .fullColor)
         }
 
         let sheet = VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Item 3 · Pre-Start vs Post-Start Missing Probability Copy (Light & Dark)")
+                Text("Item 3 · Real External Surfaces: Before Start vs After Start (Light & Dark)")
                     .font(.system(size: 16, weight: .bold))
                 Text("SIMULATOR RENDER SHEET — NOT PHYSICAL HARDWARE · Before Start (No Prior #): \"No probability yet\" · After Start / Prior #: \"No recent probability\"")
                     .font(.system(size: 11, weight: .semibold))
@@ -1182,16 +1385,103 @@ final class ExternalSurfaceProbabilityRuleTests: XCTestCase {
             }
 
             HStack(alignment: .top, spacing: 14) {
-                tile("Saved Widget & Lock Screen Model (Light)") {
+                tile("SavedSmall10875 (155x155) · Light (Pre-Start vs Started)") {
                     HStack(spacing: 10) {
-                        widgetSummaryTile(reading: preStartSavedReading, scheme: .light)
-                        widgetSummaryTile(reading: startedSavedReading, scheme: .light)
+                        realSmallWidget(preEntry, preStartSavedReading, scheme: .light)
+                        realSmallWidget(startedEntry, startedSavedReading, scheme: .light)
                     }
                 }
-                tile("Saved Widget & Lock Screen Model (Dark)") {
+                tile("SavedSmall10875 (155x155) · Dark (Pre-Start vs Started)") {
                     HStack(spacing: 10) {
-                        widgetSummaryTile(reading: preStartSavedReading, scheme: .dark)
-                        widgetSummaryTile(reading: startedSavedReading, scheme: .dark)
+                        realSmallWidget(preEntry, preStartSavedReading, scheme: .dark)
+                        realSmallWidget(startedEntry, startedSavedReading, scheme: .dark)
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                tile("SavedLookPlain12466 (155x155) · Light (Pre-Start vs Started)") {
+                    HStack(spacing: 10) {
+                        realPlainLookWidget(preEntry, preStartSavedReading, scheme: .light)
+                        realPlainLookWidget(startedEntry, startedSavedReading, scheme: .light)
+                    }
+                }
+                tile("SavedLookPlain12466 (155x155) · Dark (Pre-Start vs Started)") {
+                    HStack(spacing: 10) {
+                        realPlainLookWidget(preEntry, preStartSavedReading, scheme: .dark)
+                        realPlainLookWidget(startedEntry, startedSavedReading, scheme: .dark)
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                tile("SavedMedium10875 (2-Way · 329x155) · Light") {
+                    VStack(spacing: 10) {
+                        realMediumWidget(preEntry, preStartSavedReading, scheme: .light)
+                        realMediumWidget(startedEntry, startedSavedReading, scheme: .light)
+                    }
+                }
+                tile("SavedMedium10875 (2-Way · 329x155) · Dark") {
+                    VStack(spacing: 10) {
+                        realMediumWidget(preEntry, preStartSavedReading, scheme: .dark)
+                        realMediumWidget(startedEntry, startedSavedReading, scheme: .dark)
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                tile("SavedMedium10875 (3-Row Soccer · 329x155) · Light") {
+                    VStack(spacing: 10) {
+                        realMediumWidget(pre3WayEntry, pre3WayThreeRowReading, scheme: .light)
+                        realMediumWidget(started3WayEntry, started3WayThreeRowReading, scheme: .light)
+                    }
+                }
+                tile("SavedMedium10875 (3-Row Soccer · 329x155) · Dark") {
+                    VStack(spacing: 10) {
+                        realMediumWidget(pre3WayEntry, pre3WayThreeRowReading, scheme: .dark)
+                        realMediumWidget(started3WayEntry, started3WayThreeRowReading, scheme: .dark)
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                tile("SavedMedium10875 (.xxxLarge WidgetKit max · 329x155) · Light") {
+                    VStack(spacing: 10) {
+                        realMediumWidget(preEntry, preStartSavedReading, scheme: .light, typeSize: .xxxLarge)
+                        realMediumWidget(started3WayEntry, started3WayThreeRowReading, scheme: .light, typeSize: .xxxLarge)
+                    }
+                }
+                tile("SavedMedium10875 (.xxxLarge WidgetKit max · 329x155) · Dark") {
+                    VStack(spacing: 10) {
+                        realMediumWidget(preEntry, preStartSavedReading, scheme: .dark, typeSize: .xxxLarge)
+                        realMediumWidget(started3WayEntry, started3WayThreeRowReading, scheme: .dark, typeSize: .xxxLarge)
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                tile("SavedRectangular10875 (157x68 · Adapter .fallbackText) · Light & Dark") {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 10) {
+                            realRectangularWidget(preEntry, preStartSavedReading, scheme: .light)
+                            realRectangularWidget(startedEntry, startedSavedReading, scheme: .light)
+                        }
+                        HStack(spacing: 10) {
+                            realRectangularWidget(preEntry, preStartSavedReading, scheme: .dark)
+                            realRectangularWidget(startedEntry, startedSavedReading, scheme: .dark)
+                        }
+                    }
+                }
+                tile("Lock Screen Matchup (`WatchMatchupComplication217` '64%' slot · 157x68) · Light & Dark") {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 10) {
+                            realLockMatchup(preLockMatchup, scheme: .light)
+                            realLockMatchup(startedLockMatchup, scheme: .light)
+                        }
+                        HStack(spacing: 10) {
+                            realLockMatchup(preLockMatchup, scheme: .dark)
+                            realLockMatchup(startedLockMatchup, scheme: .dark)
+                        }
                     }
                 }
             }
@@ -1317,7 +1607,7 @@ final class ExternalSurfaceProbabilityRuleTests: XCTestCase {
         renderer.scale = 2.0
         let image = try XCTUnwrap(renderer.uiImage)
         let png = try XCTUnwrap(image.pngData())
-        let outURL = URL(fileURLWithPath: "/tmp/item3-no-prob-yet-sheet.png")
+        let outURL = URL(fileURLWithPath: "/tmp/item3-real-widgets-v2-sheet.png")
         try png.write(to: outURL)
         print("EXPORTED_ITEM3_SHEET=\(outURL.path) bytes=\(png.count)")
     }

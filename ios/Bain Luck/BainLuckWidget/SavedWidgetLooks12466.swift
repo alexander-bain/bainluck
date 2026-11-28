@@ -1,5 +1,8 @@
 import SwiftUI
 import WidgetKit
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 // #12466 — the saved widget's look, Matchup (look A; Alex, Tue Nov 10: "A is
 // the best today"): both teams' colours meeting on a diagonal, crests on white
