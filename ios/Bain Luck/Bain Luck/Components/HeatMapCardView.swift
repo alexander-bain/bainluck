@@ -23,6 +23,7 @@ struct HeatMapCardView: View {
     /// text-size setting instead of a hardcoded 11pt.
     @ScaledMetric(relativeTo: .caption) private var labelFontSize: CGFloat = 12
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
     @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     // MARK: - Derived data
@@ -105,13 +106,14 @@ struct HeatMapCardView: View {
             .padding(.bottom, 3)
 
             // Market name
+            let useStackedRungs = dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn
             Text(data.name)
                 .font(dynamicTypeSize.isAccessibilitySize ? .headline : .system(size: 15, weight: .semibold))
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+                .lineLimit(useStackedRungs ? nil : 3)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 16)
 
-            if dynamicTypeSize.isAccessibilitySize {
+            if useStackedRungs {
                 // At accessibility text sizes, stack each threshold rung on its own
                 // full-width row so 4–5 numeric thresholds ("1430+"…"1460+") never
                 // squeeze into 60pt columns and truncate to identical "14…".
@@ -148,69 +150,118 @@ struct HeatMapCardView: View {
             Divider()
                 .padding(.top, 14)
 
-            HStack(spacing: 6) {
-                if let threshold = lastAbove50Label {
-                    // #4645 — the caption composes with the rung's own words
-                    // instead of prefixing them. "Above 50% through" was written
-                    // for the DATE ladder it shipped with, where the rung label
-                    // is a date and the sentence closes ("Above 50% through
-                    // Before 2027"). Every other ladder's label carries its own
-                    // comparator, so the line stacked two of them on two
-                    // unrelated quantities and stopped mid-sentence: the phone
-                    // printed "Above 50% through ≥$6.40"
-                    // (artifacts-native-091/before-ladder-s9000.png), the web
-                    // twin "Above 50% through Above 67" (#4645). The thing worth
-                    // saying is the same for both ladders — this is the furthest
-                    // rung the market still calls better than even — and saying
-                    // it this way needs no branch. Web says the same words
-                    // (FuturesCard.tsx, PR #4656): one card family, notice 35.
-                    // #8647 — which end of the ladder is "furthest" depends on
-                    // the axis; `heatMapBetterThanEvenRung` says which.
-                    Text("More likely than not:")
-                        .font(.system(size: 12))
-                        .foregroundStyle(DS.textSecondary)
-                    Text(threshold)
-                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundStyle(DS.emerald)
-                } else {
-                    Text("All below 50%")
-                        .font(.system(size: 12))
-                        .foregroundStyle(DS.textSecondary)
+            if useStackedRungs {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let threshold = lastAbove50Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("More likely than not:")
+                                .font(.system(size: 12))
+                                .foregroundStyle(DS.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(threshold)
+                                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                .foregroundStyle(DS.emerald)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else {
+                        Text("All below 50%")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 6) {
+                        if overflowCount > 0 {
+                            Text("+\(overflowCount) more")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(DS.textMuted)
+                        }
+                        SignalBarsView(tier: data.confidenceTier)
+                        if let mark = data.discoverPriceAgeMark(
+                            onReveal: { revealedPriceAge = revealedPriceAge == $0 ? nil : $0 }
+                        ) {
+                            mark
+                        }
+                        if let src = SourceLabels.cardFaceLabel(
+                            for: data.source,
+                            sources: data.sources,
+                            sourceCount: data.sourceCount
+                        ) {
+                            Text(src)
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(.blue)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.blue.opacity(0.10), in: Capsule())
+                        }
+                    }
                 }
-                if overflowCount > 0 {
-                    Text("+\(overflowCount) more")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 12)
+            } else {
+                HStack(spacing: 6) {
+                    if let threshold = lastAbove50Label {
+                        // #4645 — the caption composes with the rung's own words
+                        // instead of prefixing them. "Above 50% through" was written
+                        // for the DATE ladder it shipped with, where the rung label
+                        // is a date and the sentence closes ("Above 50% through
+                        // Before 2027"). Every other ladder's label carries its own
+                        // comparator, so the line stacked two of them on two
+                        // unrelated quantities and stopped mid-sentence: the phone
+                        // printed "Above 50% through ≥$6.40"
+                        // (artifacts-native-091/before-ladder-s9000.png), the web
+                        // twin "Above 50% through Above 67" (#4645). The thing worth
+                        // saying is the same for both ladders — this is the furthest
+                        // rung the market still calls better than even — and saying
+                        // it this way needs no branch. Web says the same words
+                        // (FuturesCard.tsx, PR #4656): one card family, notice 35.
+                        // #8647 — which end of the ladder is "furthest" depends on
+                        // the axis; `heatMapBetterThanEvenRung` says which.
+                        Text("More likely than not:")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.textSecondary)
+                        Text(threshold)
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .foregroundStyle(DS.emerald)
+                    } else {
+                        Text("All below 50%")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.textSecondary)
+                    }
+                    if overflowCount > 0 {
+                        Text("+\(overflowCount) more")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                    }
+                    Spacer()
+                    // #490: confidence signal (1-3 bars) — renders nothing when absent.
+                    SignalBarsView(tier: data.confidenceTier)
+                    // #6343 — the same mark the hero futures card draws, on the same
+                    // rule (`discoverPriceAgeMark`). Four card views render a futures
+                    // card and wiring only one would leave the mark on the MINORITY of
+                    // the feed: in the read this shipped against, 11 of 16 datable
+                    // cards were `outcome_distribution` and the 60.2h PGA ladder — one
+                    // of the two genuinely stale specimens — was one of them.
+                    if let mark = data.discoverPriceAgeMark(
+                        onReveal: { revealedPriceAge = revealedPriceAge == $0 ? nil : $0 }
+                    ) {
+                        mark
+                    }
+                    // #4351: named, or not drawn. Card faces omit Kalshi/Polymarket.
+                    if let src = SourceLabels.cardFaceLabel(
+                        for: data.source,
+                        sources: data.sources,
+                        sourceCount: data.sourceCount
+                    ) {
+                        Text(src)
+                            .font(.system(size: 9, weight: .heavy))
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.blue.opacity(0.10), in: Capsule())
+                    }
                 }
-                Spacer()
-                // #490: confidence signal (1-3 bars) — renders nothing when absent.
-                SignalBarsView(tier: data.confidenceTier)
-                // #6343 — the same mark the hero futures card draws, on the same
-                // rule (`discoverPriceAgeMark`). Four card views render a futures
-                // card and wiring only one would leave the mark on the MINORITY of
-                // the feed: in the read this shipped against, 11 of 16 datable
-                // cards were `outcome_distribution` and the 60.2h PGA ladder — one
-                // of the two genuinely stale specimens — was one of them.
-                if let mark = data.discoverPriceAgeMark(
-                    onReveal: { revealedPriceAge = revealedPriceAge == $0 ? nil : $0 }
-                ) {
-                    mark
-                }
-                // #4351: named, or not drawn. Card faces omit Kalshi/Polymarket.
-                if let src = SourceLabels.cardFaceLabel(
-                    for: data.source,
-                    sources: data.sources,
-                    sourceCount: data.sourceCount
-                ) {
-                    Text(src)
-                        .font(.system(size: 9, weight: .heavy))
-                        .foregroundStyle(.blue)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Color.blue.opacity(0.10), in: Capsule())
-                }
+                .padding(.top, 12)
             }
-            .padding(.top, 12)
 
             // #6343 — the tap reveal, inline under the footer for the reason
             // `LiquidityMarkView` gives: a popover on a phone covers the number
