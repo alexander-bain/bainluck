@@ -63,8 +63,10 @@ _WRONG_START_FIRST_BATCH_MAX_S = 30.0
 _ESM_DETAIL_STMT_TIMEOUT_S = 120
 _ODDS_STMT_TIMEOUT_S = 30
 _INTER_BATCH_PAUSE_S = 1.0
-_MAX_READ_DURATION_S = 1800.0
+_MAX_READ_DURATION_S = 3600.0
+_PHASE_PROJECTION_CHECK_BATCH = 5
 _ODDS_MAX_SINGLE_BATCH_S = 15.0
+_DEFAULT_CHECKPOINT_BASENAME = "measure_12108_step2_checkpoint.json"
 _ODDS_FIRST_N_AVG_COUNT = 0
 _ODDS_FIRST_N_AVG_MAX_S = 3.0
 _NON_PM_ODDS_SAMPLE_LIMIT = 4000
@@ -790,10 +792,257 @@ def _pick_key_source_snapshot(
     return selected, audit
 
 
+def resolve_checkpoint_path(
+    checkpoint_file: Path | None, *, json_out: Path | None, md_out: Path | None
+) -> Path:
+    """Derive a deterministic local checkpoint path from existing CLI arguments."""
+    if checkpoint_file is not None:
+        return checkpoint_file
+    if json_out is not None:
+        return json_out.with_suffix(".checkpoint.json")
+    if md_out is not None:
+        return md_out.with_suffix(".checkpoint.json")
+    return Path(_DEFAULT_CHECKPOINT_BASENAME)
+
+
+def _iso_or_none(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    return _as_utc(dt).isoformat()
+
+
+def _parse_iso_or_none(raw: str | None) -> datetime | None:
+    if raw is None:
+        return None
+    return _as_utc(datetime.fromisoformat(raw))
+
+
+def _eh_key(eid: int, horizon: str) -> str:
+    return f"{int(eid)}|{horizon}"
+
+
+def _parse_eh_key(key: str) -> tuple[int, str]:
+    eid_s, h_name = key.split("|", 1)
+    return int(eid_s), h_name
+
+
+def _serialize_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "event_id": int(ev["event_id"]),
+            "start": _as_utc(ev["start"]).isoformat(),
+            "completed_at": _iso_or_none(ev.get("completed_at")),
+            "score_observed_at": _iso_or_none(ev.get("score_observed_at")),
+            "home_team_name": str(ev["home_team_name"]),
+            "away_team_name": str(ev["away_team_name"]),
+            "home_score": int(ev["home_score"]),
+            "away_score": int(ev["away_score"]),
+            "league": str(ev["league"]),
+            "sport_group": str(ev["sport_group"]),
+        }
+        for ev in events
+    ]
+
+
+def _deserialize_events(raw_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "event_id": int(ev["event_id"]),
+            "start": _parse_iso_or_none(ev["start"]),
+            "completed_at": _parse_iso_or_none(ev.get("completed_at")),
+            "score_observed_at": _parse_iso_or_none(ev.get("score_observed_at")),
+            "home_team_name": str(ev["home_team_name"]),
+            "away_team_name": str(ev["away_team_name"]),
+            "home_score": int(ev["home_score"]),
+            "away_score": int(ev["away_score"]),
+            "league": str(ev["league"]),
+            "sport_group": str(ev["sport_group"]),
+        }
+        for ev in raw_events
+    ]
+
+
+def _serialize_checkpoint_state(
+    *,
+    ordered_events: list[dict[str, Any]],
+    wp_batches_done: int,
+    wp_batches_total: int,
+    wp_batch_sql_durations_s: list[float],
+    wp_by_eh: dict[tuple[int, str], dict[str, dict[str, Any]]],
+    pm_eids: set[int],
+    esm_eids: set[int],
+    wrong_start_batches_done: int,
+    wrong_start_batches_total: int,
+    wrong_start_batch_sql_durations_s: list[float],
+    wrong_start_first_batch_s: float | None,
+    prestart_inplay_eids: set[int],
+    esm_detail_batches_done: int,
+    esm_detail_batches_total: int,
+    esm_detail_batch_sql_durations_s: list[float],
+    esm_rows_by_eid_src: dict[int, dict[str, list[dict[str, Any]]]],
+    odds_batches_done: int,
+    odds_batches_total: int,
+    odds_batch_durations_s: list[float],
+    odds_fetched_eids: set[int],
+    odds_by_eh: dict[tuple[int, str], list[dict[str, Any]]],
+    statements_executed: int,
+) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "ceiling": _PRE_NOV6_ISO,
+        "batch_sizes": {
+            "wp": _BATCH_SIZE,
+            "wrong_start": _WRONG_START_BATCH_SIZE,
+            "esm_detail": _BATCH_SIZE,
+            "odds": _ODDS_BATCH_SIZE,
+        },
+        "statements_executed": statements_executed,
+        "ordered_events": _serialize_events(ordered_events),
+        "wp": {
+            "batches_done": wp_batches_done,
+            "batches_total": wp_batches_total,
+            "batch_sql_durations_s": list(wp_batch_sql_durations_s),
+            "pm_eids": sorted(pm_eids),
+            "esm_eids": sorted(esm_eids),
+            "wp_by_eh": {
+                _eh_key(eid, h_name): {
+                    src: {
+                        "prob": info["prob"],
+                        "captured_at": _as_utc(info["captured_at"]).isoformat(),
+                        "valid_until": _iso_or_none(info["valid_until"]),
+                    }
+                    for src, info in src_map.items()
+                }
+                for (eid, h_name), src_map in wp_by_eh.items()
+            },
+        },
+        "wrong_start": {
+            "batches_done": wrong_start_batches_done,
+            "batches_total": wrong_start_batches_total,
+            "batch_sql_durations_s": list(wrong_start_batch_sql_durations_s),
+            "first_batch_s": wrong_start_first_batch_s,
+            "prestart_inplay_eids": sorted(prestart_inplay_eids),
+        },
+        "esm_detail": {
+            "batches_done": esm_detail_batches_done,
+            "batches_total": esm_detail_batches_total,
+            "batch_sql_durations_s": list(esm_detail_batch_sql_durations_s),
+            "esm_rows_by_eid_src": {
+                str(eid): {
+                    raw_src: [
+                        {
+                            "snap_id": int(item["snap_id"]),
+                            "raw_source": item["raw_source"],
+                            "captured_at": _as_utc(item["captured_at"]).isoformat(),
+                            "valid_until": _iso_or_none(item["valid_until"]),
+                            "prob": float(item["prob"]),
+                            "game_state": item["game_state"],
+                            "flags": dict(item["flags"]),
+                            "excluded": bool(item["excluded"]),
+                        }
+                        for item in items
+                    ]
+                    for raw_src, items in src_map.items()
+                }
+                for eid, src_map in esm_rows_by_eid_src.items()
+            },
+        },
+        "odds": {
+            "batches_done": odds_batches_done,
+            "batches_total": odds_batches_total,
+            "batch_durations_s": list(odds_batch_durations_s),
+            "odds_fetched_eids": sorted(odds_fetched_eids),
+            "odds_by_eh": {
+                _eh_key(eid, h_name): [
+                    {
+                        "home_win_probability": float(row["home_win_probability"]),
+                        "captured_at": _as_utc(row["captured_at"]).isoformat(),
+                        "valid_until": _iso_or_none(row["valid_until"]),
+                    }
+                    for row in rows
+                ]
+                for (eid, h_name), rows in odds_by_eh.items()
+            },
+        },
+    }
+
+
+def _save_checkpoint(path: Path, payload: dict[str, Any]) -> None:
+    """Persist checkpoint state atomically on the local filesystem."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    with tmp_path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, separators=(",", ":"))
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp_path, path)
+
+
+def _load_checkpoint(path: Path) -> dict[str, Any]:
+    """Load and validate a saved Step 2 local checkpoint file."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("version") != 1:
+        raise ValueError(f"Unsupported checkpoint version in {path}: {data.get('version')!r}")
+    if data.get("ceiling") != _PRE_NOV6_ISO:
+        raise ValueError(f"Checkpoint ceiling mismatch in {path}: {data.get('ceiling')!r}")
+    expected_bs = {
+        "wp": _BATCH_SIZE,
+        "wrong_start": _WRONG_START_BATCH_SIZE,
+        "esm_detail": _BATCH_SIZE,
+        "odds": _ODDS_BATCH_SIZE,
+    }
+    if data.get("batch_sizes") != expected_bs:
+        raise ValueError(
+            f"Checkpoint batch sizes mismatch in {path}: {data.get('batch_sizes')!r} != {expected_bs!r}"
+        )
+    return data
+
+
+def _check_phase_projection_stop(
+    *,
+    phase: str,
+    batches_done: int,
+    batches_total: int,
+    batch_sql_durations_s: list[float],
+    batch_pause_s: float,
+    stage_started: float,
+    max_read_duration_s: float,
+) -> dict[str, Any] | None:
+    """Stop after batch 5 of a phase if projected runtime exceeds the stage ceiling."""
+    if batches_done != _PHASE_PROJECTION_CHECK_BATCH or batches_total <= _PHASE_PROJECTION_CHECK_BATCH:
+        return None
+    if len(batch_sql_durations_s) < _PHASE_PROJECTION_CHECK_BATCH:
+        return None
+    sample = batch_sql_durations_s[:_PHASE_PROJECTION_CHECK_BATCH]
+    avg_sql_s = sum(sample) / float(_PHASE_PROJECTION_CHECK_BATCH)
+    per_batch_s = avg_sql_s + batch_pause_s
+    remaining_batches = batches_total - batches_done
+    projected_remaining_s = remaining_batches * per_batch_s
+    stage_elapsed_s = time.monotonic() - stage_started
+    projected_stage_elapsed_s = stage_elapsed_s + projected_remaining_s
+    projected_phase_total_s = (
+        batches_total * avg_sql_s + max(0, batches_total - 1) * batch_pause_s
+    )
+    if projected_stage_elapsed_s <= max_read_duration_s:
+        return None
+    return {
+        "phase": phase,
+        "batches_done": batches_done,
+        "batches_total": batches_total,
+        "avg_sql_s": round(avg_sql_s, 3),
+        "per_batch_s": round(per_batch_s, 3),
+        "stage_elapsed_s": round(stage_elapsed_s, 2),
+        "projected_remaining_s": round(projected_remaining_s, 2),
+        "projected_stage_elapsed_s": round(projected_stage_elapsed_s, 2),
+        "projected_phase_total_s": round(projected_phase_total_s, 2),
+        "stage_ceiling_s": max_read_duration_s,
+    }
+
+
 async def read_step2_observations(
     db_url: str,
     *,
-    batch_pause_s: float = _INTER_BATCH_PAUSE_S,
+    batch_pause_s: float | None = None,
     wp_stmt_timeout_s: int = _WP_STMT_TIMEOUT_S,
     odds_stmt_timeout_s: int = _ODDS_STMT_TIMEOUT_S,
     max_read_duration_s: float = _MAX_READ_DURATION_S,
@@ -803,9 +1052,13 @@ async def read_step2_observations(
     odds_first_n_avg_max_s: float = _ODDS_FIRST_N_AVG_MAX_S,
     non_pm_sample_limit: int = _NON_PM_ODDS_SAMPLE_LIMIT,
     db_role_note: str = _DB_ROLE_NOTE,
+    checkpoint_file: Path | None = None,
     force_stop_after_odds_batches: int | None = None,
+    force_stop_after: tuple[str, int] | None = None,
 ) -> dict[str, Any]:
-    """Read pre-Nov-6 observations under Option B (scoped ODDS_BATCH_SQL on `esm_eids`)."""
+    """Read pre-Nov-6 observations under Option B with optional local batch checkpoint resume."""
+    if batch_pause_s is None:
+        batch_pause_s = _INTER_BATCH_PAUSE_S
     started = time.monotonic()
     deadline = started + max_read_duration_s
     engine = create_async_engine(
@@ -816,28 +1069,44 @@ async def read_step2_observations(
     stopped_early = False
     stop_reason: str | None = None
     stop_stage: str | None = None
+    projection_stop: dict[str, Any] | None = None
+    stage_statements_executed = 0
+    stage_statement_timeouts = 0
+    resumed_from_checkpoint = bool(checkpoint_file is not None and checkpoint_file.exists())
 
     try:
-        async with Session() as s:
-            await s.execute(text("SET LOCAL transaction_read_only = on"))
-            await s.execute(text(f"SET LOCAL statement_timeout = '{_EVENTS_STMT_TIMEOUT_S}s'"))
-            try:
-                res = await s.execute(text(EVENTS_SQL))
-                raw_event_rows = [dict(r) for r in res.mappings()]
-                await s.rollback()
-            except Exception as exc:  # noqa: BLE001
-                await s.rollback()
-                return {
-                    "timed_out": is_statement_timeout(exc),
-                    "stage": "events_scan",
-                    "statement_timeout_s": _EVENTS_STMT_TIMEOUT_S,
-                    "elapsed_s": round(time.monotonic() - started, 2),
-                    "database": db_role_note,
-                    "error": str(exc),
-                }
+        ckpt: dict[str, Any] | None = None
+        if resumed_from_checkpoint and checkpoint_file is not None:
+            ckpt = _load_checkpoint(checkpoint_file)
 
-        cluster_by_eid = assign_series_clusters(raw_event_rows)
-        ordered_events = _stratified_seed_order(raw_event_rows, seed=_BOOTSTRAP_SEED)
+        if ckpt is not None:
+            ordered_events = _deserialize_events(ckpt["ordered_events"])
+            statements_executed = int(ckpt.get("statements_executed", 0))
+        else:
+            async with Session() as s:
+                await s.execute(text("SET LOCAL transaction_read_only = on"))
+                await s.execute(text(f"SET LOCAL statement_timeout = '{_EVENTS_STMT_TIMEOUT_S}s'"))
+                try:
+                    res = await s.execute(text(EVENTS_SQL))
+                    raw_event_rows = [dict(r) for r in res.mappings()]
+                    await s.rollback()
+                except Exception as exc:  # noqa: BLE001
+                    await s.rollback()
+                    return {
+                        "timed_out": is_statement_timeout(exc),
+                        "stage": "events_scan",
+                        "statement_timeout_s": _EVENTS_STMT_TIMEOUT_S,
+                        "elapsed_s": round(time.monotonic() - started, 2),
+                        "stage_elapsed_s": round(time.monotonic() - started, 2),
+                        "stage_statement_timeouts": 1 if is_statement_timeout(exc) else 0,
+                        "database": db_role_note,
+                        "error": str(exc),
+                    }
+            ordered_events = _stratified_seed_order(raw_event_rows, seed=_BOOTSTRAP_SEED)
+            statements_executed = 1
+            stage_statements_executed += 1
+
+        cluster_by_eid = assign_series_clusters(ordered_events)
         event_by_eid = {int(ev["event_id"]): ev for ev in ordered_events}
 
         cutoffs_by_eid: dict[int, list[tuple[str, datetime]]] = {}
@@ -846,10 +1115,9 @@ async def read_step2_observations(
             st = _as_utc(ev["start"])
             cutoffs_by_eid[eid] = [(h_name, st - offset) for h_name, offset in HORIZONS]
 
-        statements_executed = 1
         wp_batches_total = math.ceil(len(ordered_events) / _BATCH_SIZE) if ordered_events else 0
         wp_batches_done = 0
-        wp_events_read: list[dict[str, Any]] = []
+        wp_batch_sql_durations_s: list[float] = []
         wp_by_eh: dict[tuple[int, str], dict[str, dict[str, Any]]] = defaultdict(dict)
         pm_eids: set[int] = set()
         esm_eids: set[int] = set()
@@ -857,6 +1125,7 @@ async def read_step2_observations(
         # Wrong-start map across all 23,307 events.
         prestart_inplay_eids: set[int] = set()
         wrong_start_batches_done = 0
+        wrong_start_batch_sql_durations_s: list[float] = []
         wrong_start_first_batch_s: float | None = None
         wrong_start_batches_total = (
             math.ceil(len(ordered_events) / _WRONG_START_BATCH_SIZE) if ordered_events else 0
@@ -868,6 +1137,7 @@ async def read_step2_observations(
         )
         esm_detail_batches_done = 0
         esm_detail_batches_total = 0
+        esm_detail_batch_sql_durations_s: list[float] = []
 
         odds_fetched_eids: set[int] = set()
         odds_by_eh: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
@@ -880,6 +1150,122 @@ async def read_step2_observations(
         odds_batches_done = 0
         odds_batch_durations_s: list[float] = []
 
+        if ckpt is not None:
+            wp_state = ckpt["wp"]
+            wp_batches_done = int(wp_state["batches_done"])
+            wp_batch_sql_durations_s = [float(x) for x in wp_state.get("batch_sql_durations_s", [])]
+            pm_eids = {int(x) for x in wp_state.get("pm_eids", [])}
+            esm_eids = {int(x) for x in wp_state.get("esm_eids", [])}
+            for eh_s, src_map in wp_state.get("wp_by_eh", {}).items():
+                eid, h_name = _parse_eh_key(eh_s)
+                wp_by_eh[(eid, h_name)] = {
+                    src: {
+                        "prob": float(info["prob"]),
+                        "captured_at": _parse_iso_or_none(info["captured_at"]),
+                        "valid_until": _parse_iso_or_none(info.get("valid_until")),
+                    }
+                    for src, info in src_map.items()
+                }
+
+            ws_state = ckpt["wrong_start"]
+            wrong_start_batches_done = int(ws_state["batches_done"])
+            wrong_start_batch_sql_durations_s = [
+                float(x) for x in ws_state.get("batch_sql_durations_s", [])
+            ]
+            wrong_start_first_batch_s = ws_state.get("first_batch_s")
+            prestart_inplay_eids = {int(x) for x in ws_state.get("prestart_inplay_eids", [])}
+
+            esm_state = ckpt["esm_detail"]
+            esm_detail_batches_done = int(esm_state["batches_done"])
+            esm_detail_batch_sql_durations_s = [
+                float(x) for x in esm_state.get("batch_sql_durations_s", [])
+            ]
+            for eid_s, src_map in esm_state.get("esm_rows_by_eid_src", {}).items():
+                eid_i = int(eid_s)
+                for raw_src, items in src_map.items():
+                    esm_rows_by_eid_src[eid_i][raw_src] = [
+                        {
+                            "snap_id": int(item["snap_id"]),
+                            "raw_source": str(item["raw_source"]),
+                            "captured_at": _parse_iso_or_none(item["captured_at"]),
+                            "valid_until": _parse_iso_or_none(item.get("valid_until")),
+                            "prob": float(item["prob"]),
+                            "game_state": item["game_state"],
+                            "flags": dict(item["flags"]),
+                            "excluded": bool(item["excluded"]),
+                        }
+                        for item in items
+                    ]
+
+            odds_state = ckpt["odds"]
+            odds_batches_done = int(odds_state["batches_done"])
+            odds_batch_durations_s = [float(x) for x in odds_state.get("batch_durations_s", [])]
+            odds_fetched_eids = {int(x) for x in odds_state.get("odds_fetched_eids", [])}
+            for eh_s, rows in odds_state.get("odds_by_eh", {}).items():
+                eid, h_name = _parse_eh_key(eh_s)
+                odds_by_eh[(eid, h_name)] = [
+                    {
+                        "home_win_probability": float(row["home_win_probability"]),
+                        "captured_at": _parse_iso_or_none(row["captured_at"]),
+                        "valid_until": _parse_iso_or_none(row.get("valid_until")),
+                    }
+                    for row in rows
+                ]
+
+        def _persist_checkpoint() -> None:
+            if checkpoint_file is None:
+                return
+            _save_checkpoint(
+                checkpoint_file,
+                _serialize_checkpoint_state(
+                    ordered_events=ordered_events,
+                    wp_batches_done=wp_batches_done,
+                    wp_batches_total=wp_batches_total,
+                    wp_batch_sql_durations_s=wp_batch_sql_durations_s,
+                    wp_by_eh=wp_by_eh,
+                    pm_eids=pm_eids,
+                    esm_eids=esm_eids,
+                    wrong_start_batches_done=wrong_start_batches_done,
+                    wrong_start_batches_total=wrong_start_batches_total,
+                    wrong_start_batch_sql_durations_s=wrong_start_batch_sql_durations_s,
+                    wrong_start_first_batch_s=wrong_start_first_batch_s,
+                    prestart_inplay_eids=prestart_inplay_eids,
+                    esm_detail_batches_done=esm_detail_batches_done,
+                    esm_detail_batches_total=esm_detail_batches_total,
+                    esm_detail_batch_sql_durations_s=esm_detail_batch_sql_durations_s,
+                    esm_rows_by_eid_src=esm_rows_by_eid_src,
+                    odds_batches_done=odds_batches_done,
+                    odds_batches_total=odds_batches_total,
+                    odds_batch_durations_s=odds_batch_durations_s,
+                    odds_fetched_eids=odds_fetched_eids,
+                    odds_by_eh=odds_by_eh,
+                    statements_executed=statements_executed,
+                ),
+            )
+
+        if ckpt is None:
+            _persist_checkpoint()
+
+        did_batch_query_in_stage = False
+
+        async def _pause_before_batch(stage_label: str) -> bool:
+            """Sleep inter-batch pause and return True if stage ceiling already passed."""
+            nonlocal did_batch_query_in_stage, stopped_early, stop_reason, stop_stage
+            if time.monotonic() >= deadline:
+                stopped_early = True
+                stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
+                stop_stage = stage_label
+                return True
+            if did_batch_query_in_stage and batch_pause_s > 0:
+                await asyncio.sleep(batch_pause_s)
+                if time.monotonic() >= deadline:
+                    stopped_early = True
+                    stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
+                    stop_stage = stage_label
+                    return True
+            did_batch_query_in_stage = True
+            return False
+
         async with Session() as s:
             wp_stmt = text(WIN_PROB_BATCH_SQL)
             wrong_start_stmt = text(WRONG_START_BATCH_SQL)
@@ -887,14 +1273,14 @@ async def read_step2_observations(
             odds_stmt = text(ODDS_BATCH_SQL)
 
             # ── Phase 1: win_prob_snapshots across ALL pre-Nov-6 games (exact 411: A query) ──
-            for b_idx in range(wp_batches_total):
-                if time.monotonic() >= deadline:
+            for b_idx in range(wp_batches_done, wp_batches_total):
+                if force_stop_after == ("win_prob_batch", wp_batches_done):
                     stopped_early = True
-                    stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
+                    stop_reason = f"simulated_stop_after_{wp_batches_done}_win_prob_batches"
                     stop_stage = "win_prob_batch"
                     break
-                if b_idx > 0 and batch_pause_s > 0:
-                    await asyncio.sleep(batch_pause_s)
+                if await _pause_before_batch("win_prob_batch"):
+                    break
 
                 batch = ordered_events[b_idx * _BATCH_SIZE : (b_idx + 1) * _BATCH_SIZE]
                 u_eids: list[int] = []
@@ -910,27 +1296,33 @@ async def read_step2_observations(
                 await s.rollback()
                 await s.execute(text("SET LOCAL transaction_read_only = on"))
                 await s.execute(text(f"SET LOCAL statement_timeout = '{wp_stmt_timeout_s}s'"))
+                wp_t0 = time.monotonic()
                 try:
                     wp_res = await s.execute(
                         wp_stmt,
                         {"event_ids": u_eids, "cutoffs": u_cutoffs, "horizons": u_horizons},
                     )
                     wp_rows = wp_res.mappings().all()
+                    wp_elapsed = time.monotonic() - wp_t0
                     statements_executed += 1
+                    stage_statements_executed += 1
                     await s.rollback()
                 except Exception as exc:  # noqa: BLE001
                     await s.rollback()
+                    is_to = is_statement_timeout(exc)
+                    if is_to:
+                        stage_statement_timeouts += 1
                     stopped_early = True
                     stop_reason = (
                         f"statement_timeout_{wp_stmt_timeout_s}s"
-                        if is_statement_timeout(exc)
+                        if is_to
                         else f"error:{type(exc).__name__}"
                     )
                     stop_stage = "win_prob_batch"
                     break
 
                 wp_batches_done += 1
-                wp_events_read.extend(batch)
+                wp_batch_sql_durations_s.append(round(wp_elapsed, 3))
                 for r in wp_rows:
                     eid = int(r["event_id"])
                     h_name = str(r["horizon"])
@@ -950,22 +1342,46 @@ async def read_step2_observations(
                         "captured_at": _as_utc(r["captured_at"]),
                         "valid_until": _as_utc(r["valid_until"]) if r["valid_until"] else None,
                     }
+                _persist_checkpoint()
+
+                proj = _check_phase_projection_stop(
+                    phase="win_prob_batch",
+                    batches_done=wp_batches_done,
+                    batches_total=wp_batches_total,
+                    batch_sql_durations_s=wp_batch_sql_durations_s,
+                    batch_pause_s=batch_pause_s,
+                    stage_started=started,
+                    max_read_duration_s=max_read_duration_s,
+                )
+                if proj is not None:
+                    projection_stop = proj
+                    stopped_early = True
+                    stop_stage = "win_prob_batch"
+                    stop_reason = (
+                        f"phase_projected_over_stage_ceiling_{int(max_read_duration_s)}s "
+                        f"(projected_stage={proj['projected_stage_elapsed_s']:.1f}s, "
+                        f"projected_phase={proj['projected_phase_total_s']:.1f}s, "
+                        f"avg_batch={proj['per_batch_s']:.2f}s)"
+                    )
+                    break
+
+            wp_events_read = ordered_events[
+                : min(len(ordered_events), wp_batches_done * _BATCH_SIZE)
+            ]
 
             # ── Phase 1b: Wrong-start evidence scan across ALL pre-Nov-6 games (Addition 3) ──
             if not stopped_early and wp_events_read:
-                for b_idx in range(wrong_start_batches_total):
-                    if time.monotonic() >= deadline:
+                for b_idx in range(wrong_start_batches_done, wrong_start_batches_total):
+                    if force_stop_after == ("wrong_start_batch", wrong_start_batches_done):
                         stopped_early = True
-                        stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
+                        stop_reason = (
+                            f"simulated_stop_after_{wrong_start_batches_done}_wrong_start_batches"
+                        )
                         stop_stage = "wrong_start_batch"
                         break
-                    if batch_pause_s > 0:
-                        await asyncio.sleep(batch_pause_s)
-                        if time.monotonic() >= deadline:
-                            stopped_early = True
-                            stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
-                            stop_stage = "wrong_start_batch"
-                            break
+                    if await _pause_before_batch("wrong_start_batch"):
+                        break
+
                     batch = ordered_events[
                         b_idx * _WRONG_START_BATCH_SIZE : (b_idx + 1) * _WRONG_START_BATCH_SIZE
                     ]
@@ -992,31 +1408,60 @@ async def read_step2_observations(
                         ws_rows = ws_res.mappings().all()
                         ws_elapsed = time.monotonic() - ws_t0
                         statements_executed += 1
+                        stage_statements_executed += 1
                         await s.rollback()
                     except Exception as exc:  # noqa: BLE001
                         await s.rollback()
+                        is_to = is_statement_timeout(exc)
+                        if is_to:
+                            stage_statement_timeouts += 1
                         stopped_early = True
                         stop_reason = (
                             f"statement_timeout_{ws_stmt_timeout_s}s"
-                            if is_statement_timeout(exc)
+                            if is_to
                             else f"error:{type(exc).__name__}"
                         )
                         stop_stage = "wrong_start_batch"
                         break
+
                     wrong_start_batches_done += 1
+                    wrong_start_batch_sql_durations_s.append(round(ws_elapsed, 3))
                     if b_idx == 0:
                         wrong_start_first_batch_s = round(ws_elapsed, 3)
-                        if ws_elapsed > wrong_start_first_batch_max_s:
-                            stopped_early = True
-                            stop_reason = (
-                                f"wrong_start_first_batch_over_{wrong_start_first_batch_max_s:g}s "
-                                f"({ws_elapsed:.2f}s)"
-                            )
-                            stop_stage = "wrong_start_batch"
-                            break
                     for r in ws_rows:
                         if r["has_prestart_inplay_wp"]:
                             prestart_inplay_eids.add(int(r["event_id"]))
+                    _persist_checkpoint()
+
+                    if b_idx == 0 and ws_elapsed > wrong_start_first_batch_max_s:
+                        stopped_early = True
+                        stop_reason = (
+                            f"wrong_start_first_batch_over_{wrong_start_first_batch_max_s:g}s "
+                            f"({ws_elapsed:.2f}s)"
+                        )
+                        stop_stage = "wrong_start_batch"
+                        break
+
+                    proj = _check_phase_projection_stop(
+                        phase="wrong_start_batch",
+                        batches_done=wrong_start_batches_done,
+                        batches_total=wrong_start_batches_total,
+                        batch_sql_durations_s=wrong_start_batch_sql_durations_s,
+                        batch_pause_s=batch_pause_s,
+                        stage_started=started,
+                        max_read_duration_s=max_read_duration_s,
+                    )
+                    if proj is not None:
+                        projection_stop = proj
+                        stopped_early = True
+                        stop_stage = "wrong_start_batch"
+                        stop_reason = (
+                            f"phase_projected_over_stage_ceiling_{int(max_read_duration_s)}s "
+                            f"(projected_stage={proj['projected_stage_elapsed_s']:.1f}s, "
+                            f"projected_phase={proj['projected_phase_total_s']:.1f}s, "
+                            f"avg_batch={proj['per_batch_s']:.2f}s)"
+                        )
+                        break
 
             # ── Phase 1c: Full ESM snapshot series + game_state for E1..E5b & fallback ──
             esm_sorted_eids = sorted(esm_eids)
@@ -1024,40 +1469,50 @@ async def read_step2_observations(
                 math.ceil(len(esm_sorted_eids) / _BATCH_SIZE) if esm_sorted_eids else 0
             )
             if not stopped_early and esm_sorted_eids:
-                for b_idx in range(esm_detail_batches_total):
-                    if time.monotonic() >= deadline:
+                for b_idx in range(esm_detail_batches_done, esm_detail_batches_total):
+                    if force_stop_after == ("esm_detail_batch", esm_detail_batches_done):
                         stopped_early = True
-                        stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
+                        stop_reason = (
+                            f"simulated_stop_after_{esm_detail_batches_done}_esm_detail_batches"
+                        )
                         stop_stage = "esm_detail_batch"
                         break
-                    if batch_pause_s > 0:
-                        await asyncio.sleep(batch_pause_s)
+                    if await _pause_before_batch("esm_detail_batch"):
+                        break
+
                     batch_eids = esm_sorted_eids[b_idx * _BATCH_SIZE : (b_idx + 1) * _BATCH_SIZE]
                     await s.rollback()
                     await s.execute(text("SET LOCAL transaction_read_only = on"))
                     await s.execute(
                         text(f"SET LOCAL statement_timeout = '{_ESM_DETAIL_STMT_TIMEOUT_S}s'")
                     )
+                    det_t0 = time.monotonic()
                     try:
                         det_res = await s.execute(
                             esm_stmt,
                             {"event_ids": batch_eids, "sources": list(ESM_RAW_SOURCES)},
                         )
                         det_rows = det_res.mappings().all()
+                        det_elapsed = time.monotonic() - det_t0
                         statements_executed += 1
+                        stage_statements_executed += 1
                         await s.rollback()
                     except Exception as exc:  # noqa: BLE001
                         await s.rollback()
+                        is_to = is_statement_timeout(exc)
+                        if is_to:
+                            stage_statement_timeouts += 1
                         stopped_early = True
                         stop_reason = (
                             f"statement_timeout_{_ESM_DETAIL_STMT_TIMEOUT_S}s"
-                            if is_statement_timeout(exc)
+                            if is_to
                             else f"error:{type(exc).__name__}"
                         )
                         stop_stage = "esm_detail_batch"
                         break
 
                     esm_detail_batches_done += 1
+                    esm_detail_batch_sql_durations_s.append(round(det_elapsed, 3))
                     temp_rows: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
                     for r in det_rows:
                         eid = int(r["event_id"])
@@ -1099,9 +1554,31 @@ async def read_step2_observations(
                             item_copy["excluded"] = any(flags.values())
                             annotated.append(item_copy)
                         esm_rows_by_eid_src[eid][raw_src] = annotated
+                    _persist_checkpoint()
+
+                    proj = _check_phase_projection_stop(
+                        phase="esm_detail_batch",
+                        batches_done=esm_detail_batches_done,
+                        batches_total=esm_detail_batches_total,
+                        batch_sql_durations_s=esm_detail_batch_sql_durations_s,
+                        batch_pause_s=batch_pause_s,
+                        stage_started=started,
+                        max_read_duration_s=max_read_duration_s,
+                    )
+                    if proj is not None:
+                        projection_stop = proj
+                        stopped_early = True
+                        stop_stage = "esm_detail_batch"
+                        stop_reason = (
+                            f"phase_projected_over_stage_ceiling_{int(max_read_duration_s)}s "
+                            f"(projected_stage={proj['projected_stage_elapsed_s']:.1f}s, "
+                            f"projected_phase={proj['projected_phase_total_s']:.1f}s, "
+                            f"avg_batch={proj['per_batch_s']:.2f}s)"
+                        )
+                        break
 
             # ── Phase 2: Option B — ODDS_BATCH_SQL ONLY on `esm_eids` ──
-            if not stopped_early and wp_events_read:
+            if wp_batches_done == wp_batches_total and wp_events_read:
                 pm_events = [ev for ev in wp_events_read if int(ev["event_id"]) in pm_eids]
                 non_pm_pool = [ev for ev in wp_events_read if int(ev["event_id"]) not in pm_eids]
                 non_pm_strat = _stratified_seed_order(non_pm_pool, seed=_BOOTSTRAP_SEED + 1)
@@ -1121,24 +1598,23 @@ async def read_step2_observations(
                     else 0
                 )
 
-                for b_idx in range(odds_batches_total):
-                    if force_stop_after_odds_batches is not None and b_idx >= force_stop_after_odds_batches:
+            if not stopped_early and wp_events_read:
+                for b_idx in range(odds_batches_done, odds_batches_total):
+                    if force_stop_after == ("odds_batch", odds_batches_done):
+                        stopped_early = True
+                        stop_reason = f"simulated_stop_after_{odds_batches_done}_odds_batches"
+                        stop_stage = "odds_batch"
+                        break
+                    if (
+                        force_stop_after_odds_batches is not None
+                        and b_idx >= force_stop_after_odds_batches
+                    ):
                         stopped_early = True
                         stop_reason = f"simulated_stop_after_{force_stop_after_odds_batches}_odds_batches"
                         stop_stage = "odds_batch"
                         break
-                    if time.monotonic() >= deadline:
-                        stopped_early = True
-                        stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
-                        stop_stage = "odds_batch"
+                    if await _pause_before_batch("odds_batch"):
                         break
-                    if batch_pause_s > 0:
-                        await asyncio.sleep(batch_pause_s)
-                        if time.monotonic() >= deadline:
-                            stopped_early = True
-                            stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
-                            stop_stage = "odds_batch"
-                            break
 
                     batch = odds_option_b_targets[
                         b_idx * _ODDS_BATCH_SIZE : (b_idx + 1) * _ODDS_BATCH_SIZE
@@ -1153,13 +1629,17 @@ async def read_step2_observations(
                         odds_rows = odds_res.mappings().all()
                         b_elapsed = time.monotonic() - b_t0
                         statements_executed += 1
+                        stage_statements_executed += 1
                         await s.rollback()
                     except Exception as exc:  # noqa: BLE001
                         await s.rollback()
+                        is_to = is_statement_timeout(exc)
+                        if is_to:
+                            stage_statement_timeouts += 1
                         stopped_early = True
                         stop_reason = (
                             f"statement_timeout_{odds_stmt_timeout_s}s"
-                            if is_statement_timeout(exc)
+                            if is_to
                             else f"error:{type(exc).__name__}"
                         )
                         stop_stage = "odds_batch"
@@ -1180,6 +1660,7 @@ async def read_step2_observations(
                                 ),
                             }
                         )
+                    _persist_checkpoint()
 
                     if b_elapsed > odds_max_single_batch_s:
                         stopped_early = True
@@ -1204,6 +1685,27 @@ async def read_step2_observations(
                             )
                             break
 
+                    proj = _check_phase_projection_stop(
+                        phase="odds_batch",
+                        batches_done=odds_batches_done,
+                        batches_total=odds_batches_total,
+                        batch_sql_durations_s=odds_batch_durations_s,
+                        batch_pause_s=batch_pause_s,
+                        stage_started=started,
+                        max_read_duration_s=max_read_duration_s,
+                    )
+                    if proj is not None:
+                        projection_stop = proj
+                        stopped_early = True
+                        stop_stage = "odds_batch"
+                        stop_reason = (
+                            f"phase_projected_over_stage_ceiling_{int(max_read_duration_s)}s "
+                            f"(projected_stage={proj['projected_stage_elapsed_s']:.1f}s, "
+                            f"projected_phase={proj['projected_phase_total_s']:.1f}s, "
+                            f"avg_batch={proj['per_batch_s']:.2f}s)"
+                        )
+                        break
+
         wrong_start_by_eid: dict[int, dict[str, bool]] = {
             int(ev["event_id"]): classify_wrong_start(
                 ev, has_prestart_inplay_wp=(int(ev["event_id"]) in prestart_inplay_eids)
@@ -1221,12 +1723,16 @@ async def read_step2_observations(
         odds_first_5_avg_s = (
             round(sum(first_n_slice) / len(first_n_slice), 3) if first_n_slice else None
         )
+        stage_elapsed_s = round(time.monotonic() - started, 2)
 
         return {
             "timed_out": stopped_early and (stop_reason or "").startswith("statement_timeout"),
             "stopped_early": stopped_early,
             "stop_reason": stop_reason,
             "stop_stage": stop_stage,
+            "projection_stop": projection_stop,
+            "resumed_from_checkpoint": resumed_from_checkpoint,
+            "checkpoint_file": str(checkpoint_file) if checkpoint_file is not None else None,
             "database": db_role_note,
             "ceiling": _PRE_NOV6_ISO,
             "wp_statement_timeout_s": wp_stmt_timeout_s,
@@ -1259,7 +1765,10 @@ async def read_step2_observations(
             "clusters_read": len({cluster_by_eid[int(ev["event_id"])] for ev in wp_events_read}),
             "batches_total": wp_batches_total + odds_batches_total,
             "statements_executed": statements_executed,
-            "elapsed_s": round(time.monotonic() - started, 2),
+            "stage_statements_executed": stage_statements_executed,
+            "stage_statement_timeouts": stage_statement_timeouts,
+            "elapsed_s": stage_elapsed_s,
+            "stage_elapsed_s": stage_elapsed_s,
             "wp_events": wp_events_read,
             "cluster_by_eid": cluster_by_eid,
             "cutoffs_by_eid": cutoffs_by_eid,
@@ -2268,6 +2777,7 @@ def main() -> int:
     parser.add_argument("--json-out", type=Path)
     parser.add_argument("--md-out", type=Path)
     parser.add_argument("--per-game-out", type=Path)
+    parser.add_argument("--checkpoint-file", type=Path)
     parser.add_argument("--max-read-duration-s", type=float, default=_MAX_READ_DURATION_S)
     parser.add_argument("--odds-max-single-batch-s", type=float, default=_ODDS_MAX_SINGLE_BATCH_S)
     args = parser.parse_args()
@@ -2296,15 +2806,22 @@ def main() -> int:
     if args.baseline_411a_json:
         baseline_411a = json.loads(args.baseline_411a_json.read_text(encoding="utf-8"))
 
+    checkpoint_path = resolve_checkpoint_path(
+        args.checkpoint_file, json_out=args.json_out, md_out=args.md_out
+    )
+
     url = os.environ["DATABASE_URL"]
     obs = asyncio.run(
         read_step2_observations(
             url,
             max_read_duration_s=args.max_read_duration_s,
             odds_max_single_batch_s=args.odds_max_single_batch_s,
+            checkpoint_file=checkpoint_path,
         )
     )
-    if "wp_events" not in obs or obs.get("wp_events_read", 0) == 0:
+    if "wp_events" not in obs or (
+        not obs.get("stopped_early") and obs.get("wp_events_read", 0) == 0
+    ):
         out = {
             k: v
             for k, v in obs.items()
@@ -2313,7 +2830,39 @@ def main() -> int:
         print(json.dumps(out, indent=2, default=str))
         return 1
 
+    if obs.get("stopped_early"):
+        stage_summary = {
+            "stage_complete": False,
+            "stopped_early": True,
+            "stop_stage": obs.get("stop_stage"),
+            "stop_reason": obs.get("stop_reason"),
+            "projection_stop": obs.get("projection_stop"),
+            "resumed_from_checkpoint": obs.get("resumed_from_checkpoint"),
+            "checkpoint_file": obs.get("checkpoint_file"),
+            "events_total": obs.get("events_total"),
+            "wp_batches_done": obs.get("wp_batches_done"),
+            "wp_batches_total": obs.get("wp_batches_total"),
+            "wrong_start_batches_done": obs.get("wrong_start_batches_done"),
+            "wrong_start_batches_total": obs.get("wrong_start_batches_total"),
+            "wrong_start_first_batch_s": obs.get("wrong_start_first_batch_s"),
+            "esm_detail_batches_done": obs.get("esm_detail_batches_done"),
+            "esm_detail_batches_total": obs.get("esm_detail_batches_total"),
+            "odds_batches_done": obs.get("odds_batches_done"),
+            "odds_batches_total": obs.get("odds_batches_total"),
+            "stage_elapsed_s": obs.get("stage_elapsed_s"),
+            "stage_statements_executed": obs.get("stage_statements_executed"),
+            "stage_statement_timeouts": obs.get("stage_statement_timeouts"),
+            "statements_executed": obs.get("statements_executed"),
+            "nothing_written": True,
+        }
+        print(json.dumps(stage_summary, indent=2, default=str))
+        return 2
+
     report = compute_step2_report(obs, baseline_411a=baseline_411a)
+    report["meta"]["stage_elapsed_s"] = obs.get("stage_elapsed_s")
+    report["meta"]["stage_statement_timeouts"] = obs.get("stage_statement_timeouts")
+    report["meta"]["resumed_from_checkpoint"] = obs.get("resumed_from_checkpoint")
+    report["meta"]["checkpoint_file"] = obs.get("checkpoint_file")
     per_game = report.pop("_per_game_records", None)
     md = format_step2_markdown(report)
 
@@ -2326,7 +2875,7 @@ def main() -> int:
         write_per_game_jsonl_gz(args.per_game_out, raw_rec, clean_rec)
 
     print(md)
-    return 2 if (report.get("aborted") or obs.get("stopped_early")) else 0
+    return 2 if report.get("aborted") else 0
 
 
 if __name__ == "__main__":

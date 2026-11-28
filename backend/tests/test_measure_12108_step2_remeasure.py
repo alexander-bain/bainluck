@@ -932,7 +932,8 @@ class TestWrongStartBatchSql410B:
 
         assert step2._WRONG_START_BATCH_SIZE == 100
         assert step2._WRONG_START_FIRST_BATCH_MAX_S == 30.0
-        assert step2._MAX_READ_DURATION_S == 1800.0
+        assert step2._MAX_READ_DURATION_S == 3600.0
+        assert step2._PHASE_PROJECTION_CHECK_BATCH == 5
 
         class _FakeMappingsResult:
             def __init__(self, rows):
@@ -1042,3 +1043,498 @@ class TestWrongStartBatchSql410B:
         assert session2.wrong_start_calls == 1
         assert session2.esm_or_odds_calls == 0
         _ = time.monotonic()
+
+
+def _create_temp_pg_db() -> tuple[str, str]:
+    """Create an isolated temporary local PostgreSQL database and return (admin_url, db_name)."""
+    import os
+    from sqlalchemy import create_engine, text
+
+    db_name = f"test_12108_step2_{os.getpid()}"
+    for base_dsn in (
+        "postgresql+psycopg2:///postgres",
+        "postgresql+psycopg2://postgres:postgres@localhost:5432/postgres",
+    ):
+        try:
+            eng = create_engine(base_dsn, isolation_level="AUTOCOMMIT")
+            with eng.connect() as conn:
+                conn.execute(text(f"DROP DATABASE IF EXISTS {db_name}"))
+                conn.execute(text(f"CREATE DATABASE {db_name}"))
+            eng.dispose()
+            target_url = base_dsn.rsplit("/", 1)[0] + f"/{db_name}"
+            if target_url.startswith("postgresql+psycopg2:///"):
+                # asyncpg connects cleanly over TCP localhost on Homebrew PG too
+                async_base = "postgresql://localhost:5432/" + db_name
+                return base_dsn, async_base, target_url, db_name
+            return base_dsn, target_url.replace("+psycopg2", ""), target_url, db_name
+        except Exception:
+            continue
+    raise AssertionError("Local PostgreSQL server is required for 464: A checkpoint tests")
+
+
+class TestStagedCheckpointing464A:
+    def test_checkpoint_stop_and_resume_matches_straight_through_on_local_pg(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import asyncio
+        import sys
+        from sqlalchemy import create_engine, text
+
+        admin_dsn, app_dsn, sync_dsn, db_name = _create_temp_pg_db()
+        engine = create_engine(sync_dsn)
+
+        def _normalize_reports_for_equality(rep: dict) -> dict:
+            cloned = json.loads(json.dumps(rep))
+            meta = cloned["meta"]
+            for transient_key in (
+                "elapsed_s",
+                "stage_elapsed_s",
+                "resumed_from_checkpoint",
+                "checkpoint_file",
+                "stage_statement_timeouts",
+                "odds_batch_max_s",
+                "odds_batch_median_s",
+                "odds_first_5_avg_s",
+            ):
+                meta.pop(transient_key, None)
+            return cloned
+
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE sports (
+                            id integer PRIMARY KEY,
+                            key varchar(64) NOT NULL,
+                            "group" varchar(64) NOT NULL
+                        );
+                        CREATE TABLE events (
+                            id bigint PRIMARY KEY,
+                            sport_id integer NOT NULL REFERENCES sports(id),
+                            status varchar(32) NOT NULL,
+                            commence_time timestamptz NOT NULL,
+                            completed_at timestamptz,
+                            score_observed_at timestamptz,
+                            home_team_name varchar(128) NOT NULL,
+                            away_team_name varchar(128) NOT NULL,
+                            home_score integer,
+                            away_score integer
+                        );
+                        CREATE TABLE win_prob_snapshots (
+                            id bigserial PRIMARY KEY,
+                            event_id bigint NOT NULL,
+                            source varchar(30) NOT NULL,
+                            captured_at timestamptz NOT NULL,
+                            valid_until timestamptz,
+                            home_win_probability double precision,
+                            game_state jsonb
+                        );
+                        CREATE INDEX ix_winprob_event_source_captured
+                            ON win_prob_snapshots (event_id, source, captured_at);
+                        CREATE TABLE odds_snapshots (
+                            id bigserial PRIMARY KEY,
+                            event_id bigint NOT NULL,
+                            bookmaker varchar(64) NOT NULL,
+                            captured_at timestamptz NOT NULL,
+                            valid_until timestamptz,
+                            home_win_probability double precision
+                        );
+                        CREATE INDEX ix_odds_event_bookmaker_captured
+                            ON odds_snapshots (event_id, bookmaker, captured_at);
+                        """
+                    )
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO sports (id, key, \"group\") VALUES "
+                        "(1, 'basketball_nba', 'Basketball'), (2, 'baseball_mlb', 'Baseball')"
+                    )
+                )
+
+                base = _dt(2026, 10, 5, 23, 0)
+                for i in range(9):
+                    eid = 5000 + i
+                    start = base + timedelta(days=i * 2)
+                    is_mlb = i >= 6
+                    home_won = i % 2 == 0
+                    score_obs = (
+                        start - timedelta(minutes=20)
+                        if i == 2
+                        else start + timedelta(minutes=30)
+                    )
+                    completed = start + timedelta(hours=3)
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO events (
+                                id, sport_id, status, commence_time, completed_at,
+                                score_observed_at, home_team_name, away_team_name,
+                                home_score, away_score
+                            ) VALUES (
+                                :id, :sid, 'completed', :st, :comp, :sobs,
+                                :home, :away, :hs, :as
+                            )
+                            """
+                        ),
+                        {
+                            "id": eid,
+                            "sid": 2 if is_mlb else 1,
+                            "st": start,
+                            "comp": completed,
+                            "sobs": score_obs,
+                            "home": f"TeamH{i % 3}",
+                            "away": f"TeamA{i % 3}",
+                            "hs": 108 if home_won else 95,
+                            "as": 95 if home_won else 108,
+                        },
+                    )
+                    pk = 0.64 if home_won else 0.36
+                    pp = 0.61 if home_won else 0.39
+                    pe = 0.67 if home_won else 0.33
+                    pb = 0.69 if home_won else 0.31
+                    wp_inserts = [
+                        (eid, "kalshi", start - timedelta(hours=25), None, pk, None),
+                        (eid, "polymarket", start - timedelta(hours=25), None, pp, None),
+                        (
+                            eid,
+                            "espn",
+                            start - timedelta(hours=25),
+                            None,
+                            pe,
+                            json.dumps({"period": "pre"}),
+                        ),
+                    ]
+                    if i == 0:
+                        # E3 backfilled row at T-70m should fall back to T-25h clean ESPN row.
+                        wp_inserts.append(
+                            (
+                                eid,
+                                "espn",
+                                start - timedelta(minutes=70),
+                                None,
+                                0.96,
+                                json.dumps({"backfilled": True, "seconds_left": 1800}),
+                            )
+                        )
+                    if i == 3:
+                        # Pre-start in-play marker (Addition 3) + E5b stat_model.
+                        wp_inserts.append(
+                            (
+                                eid,
+                                "stat_model",
+                                start - timedelta(hours=2),
+                                None,
+                                0.78,
+                                json.dumps({"period": "Q1"}),
+                            )
+                        )
+                    if is_mlb:
+                        wp_inserts.append(
+                            (eid, "mlb", start - timedelta(hours=2), None, 0.66 if home_won else 0.34, None)
+                        )
+                    for e_row in wp_inserts:
+                        conn.execute(
+                            text(
+                                """
+                                INSERT INTO win_prob_snapshots (
+                                    event_id, source, captured_at, valid_until,
+                                    home_win_probability, game_state
+                                ) VALUES (
+                                    :eid, :src, :cap, :vu, :prob, CAST(:gs AS jsonb)
+                                )
+                                """
+                            ),
+                            {
+                                "eid": e_row[0],
+                                "src": e_row[1],
+                                "cap": e_row[2],
+                                "vu": e_row[3],
+                                "prob": e_row[4],
+                                "gs": e_row[5],
+                            },
+                        )
+                    for bk, offset_p in (("draftkings", 0.0), ("fanduel", 0.01)):
+                        conn.execute(
+                            text(
+                                """
+                                INSERT INTO odds_snapshots (
+                                    event_id, bookmaker, captured_at, valid_until, home_win_probability
+                                ) VALUES (:eid, :bk, :cap, NULL, :prob)
+                                """
+                            ),
+                            {
+                                "eid": eid,
+                                "bk": bk,
+                                "cap": start - timedelta(hours=25),
+                                "prob": min(0.95, max(0.05, pb + offset_p)),
+                            },
+                        )
+
+            # Small batch sizes so every phase has >= 3 batches.
+            monkeypatch.setattr(step2, "_BATCH_SIZE", 3)
+            monkeypatch.setattr(step2, "_WRONG_START_BATCH_SIZE", 2)
+            monkeypatch.setattr(step2, "_ODDS_BATCH_SIZE", 2)
+
+            straight_obs = asyncio.run(
+                step2.read_step2_observations(
+                    app_dsn,
+                    batch_pause_s=0.0,
+                    checkpoint_file=None,
+                )
+            )
+            assert straight_obs["stopped_early"] is False
+            assert straight_obs["events_total"] == 9
+            assert straight_obs["wp_batches_done"] == 3
+            assert straight_obs["wrong_start_batches_done"] == 5
+            assert straight_obs["esm_detail_batches_done"] == 3
+            assert straight_obs["odds_batches_done"] == 5
+
+            straight_report = step2.compute_step2_report(straight_obs, baseline_411a=None)
+            straight_rec = straight_report.pop("_per_game_records")
+
+            ckpt_path = tmp_path / "out.checkpoint.json"
+            # Stage 1: stop after batch 1 of win_prob_batch, then insert a NEW event into DB.
+            st1 = asyncio.run(
+                step2.read_step2_observations(
+                    app_dsn,
+                    batch_pause_s=0.0,
+                    checkpoint_file=ckpt_path,
+                    force_stop_after=("win_prob_batch", 1),
+                )
+            )
+            assert st1["stopped_early"] is True
+            assert st1["stop_stage"] == "win_prob_batch"
+            assert st1["wp_batches_done"] == 1
+            assert ckpt_path.exists()
+
+            # Insert event 5999 AFTER Stage 1 fixed ordered_events -> later stages must read nothing newer.
+            with engine.begin() as conn:
+                late_start = _dt(2026, 10, 19, 20, 0)
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO events (
+                            id, sport_id, status, commence_time, completed_at,
+                            score_observed_at, home_team_name, away_team_name,
+                            home_score, away_score
+                        ) VALUES (
+                            5999, 1, 'completed', :st, :comp, :sobs, 'LateH', 'LateA', 110, 100
+                        )
+                        """
+                    ),
+                    {
+                        "st": late_start,
+                        "comp": late_start + timedelta(hours=3),
+                        "sobs": late_start + timedelta(minutes=20),
+                    },
+                )
+
+            # Stage 2: resume, stop in wrong_start_batch after batch 2.
+            st2 = asyncio.run(
+                step2.read_step2_observations(
+                    app_dsn,
+                    batch_pause_s=0.0,
+                    checkpoint_file=ckpt_path,
+                    force_stop_after=("wrong_start_batch", 2),
+                )
+            )
+            assert st2["stopped_early"] is True
+            assert st2["resumed_from_checkpoint"] is True
+            assert st2["events_total"] == 9
+            assert st2["wp_batches_done"] == 3
+            assert st2["wrong_start_batches_done"] == 2
+
+            # Stage 3: resume, stop in esm_detail_batch after batch 1.
+            st3 = asyncio.run(
+                step2.read_step2_observations(
+                    app_dsn,
+                    batch_pause_s=0.0,
+                    checkpoint_file=ckpt_path,
+                    force_stop_after=("esm_detail_batch", 1),
+                )
+            )
+            assert st3["stopped_early"] is True
+            assert st3["wrong_start_batches_done"] == 5
+            assert st3["esm_detail_batches_done"] == 1
+
+            # Stage 4: resume, stop in odds_batch after batch 2.
+            st4 = asyncio.run(
+                step2.read_step2_observations(
+                    app_dsn,
+                    batch_pause_s=0.0,
+                    checkpoint_file=ckpt_path,
+                    force_stop_after=("odds_batch", 2),
+                )
+            )
+            assert st4["stopped_early"] is True
+            assert st4["esm_detail_batches_done"] == 3
+            assert st4["odds_batches_done"] == 2
+
+            # Stage 5: final CLI run with identical arguments -> finishes clean & matches straight run.
+            json_out = tmp_path / "out.json"
+            md_out = tmp_path / "out.md"
+            pg_out = tmp_path / "per_game.jsonl.gz"
+            assert (
+                step2.resolve_checkpoint_path(None, json_out=json_out, md_out=md_out) == ckpt_path
+            )
+
+            monkeypatch.setenv("DATABASE_URL", app_dsn)
+            monkeypatch.setattr(step2, "_INTER_BATCH_PAUSE_S", 0.0)
+            monkeypatch.setattr(
+                sys,
+                "argv",
+                [
+                    "measure_12108_step2_remeasure.py",
+                    "--production",
+                    "--alex-approved-448a",
+                    "--json-out",
+                    str(json_out),
+                    "--md-out",
+                    str(md_out),
+                    "--per-game-out",
+                    str(pg_out),
+                ],
+            )
+            rc = step2.main()
+            assert rc == 0
+            staged_report = json.loads(json_out.read_text(encoding="utf-8"))
+            assert staged_report["meta"]["resumed_from_checkpoint"] is True
+            assert _normalize_reports_for_equality(staged_report) == _normalize_reports_for_equality(
+                straight_report
+            )
+
+            # Per-game gzip lines also match straight-through run.
+            straight_gz = tmp_path / "straight.jsonl.gz"
+            step2.write_per_game_jsonl_gz(straight_gz, straight_rec[0], straight_rec[1])
+            with gzip.open(straight_gz, "rt", encoding="utf-8") as fh:
+                s_lines = fh.readlines()
+            with gzip.open(pg_out, "rt", encoding="utf-8") as fh:
+                r_lines = fh.readlines()
+            assert r_lines == s_lines
+        finally:
+            engine.dispose()
+            admin_eng = create_engine(admin_dsn, isolation_level="AUTOCOMMIT")
+            with admin_eng.connect() as conn:
+                conn.execute(text(f"DROP DATABASE IF EXISTS {db_name} WITH (FORCE)"))
+            admin_eng.dispose()
+
+    def test_five_batch_projection_stop_rule_saves_and_stops(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import asyncio
+        import sys
+
+        monkeypatch.setattr(step2, "_BATCH_SIZE", 1)
+        monkeypatch.setattr(step2, "_WRONG_START_BATCH_SIZE", 1)
+        monkeypatch.setattr(step2, "_ODDS_BATCH_SIZE", 1)
+
+        class _FakeMappingsResult:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def __iter__(self):
+                return iter(self._rows)
+
+            def mappings(self):
+                return self
+
+            def all(self):
+                return list(self._rows)
+
+        class _SlowPhaseSession:
+            def __init__(self, wp_delay_s: float):
+                self.wp_delay_s = wp_delay_s
+                self.wp_calls = 0
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+            async def rollback(self):
+                return None
+
+            async def execute(self, stmt, params=None):
+                sql = str(stmt)
+                if "SET LOCAL" in sql:
+                    return _FakeMappingsResult([])
+                if "FROM events e" in sql and "ORDER BY e.id" in sql:
+                    base = _dt(2026, 10, 5, 20, 0)
+                    return _FakeMappingsResult(
+                        [
+                            {
+                                "event_id": 2000 + i,
+                                "start": base + timedelta(days=i),
+                                "completed_at": base + timedelta(days=i, hours=3),
+                                "score_observed_at": base + timedelta(days=i, minutes=30),
+                                "home_team_name": f"H{i % 2}",
+                                "away_team_name": f"A{i % 2}",
+                                "home_score": 100,
+                                "away_score": 90,
+                                "league": "basketball_nba",
+                                "sport_group": "Basketball",
+                            }
+                            for i in range(12)
+                        ]
+                    )
+                if "CROSS JOIN LATERAL" in sql and "win_prob_snapshots" in sql and "home_win_probability" in sql:
+                    self.wp_calls += 1
+                    await asyncio.sleep(self.wp_delay_s)
+                    return _FakeMappingsResult([])
+                return _FakeMappingsResult([])
+
+        class _FakeEngine:
+            async def dispose(self):
+                return None
+
+        ckpt = tmp_path / "proj.checkpoint.json"
+        s1 = _SlowPhaseSession(wp_delay_s=0.04)
+        monkeypatch.setattr(step2, "create_async_engine", lambda *_a, **_kw: _FakeEngine())
+        monkeypatch.setattr(step2, "async_sessionmaker", lambda *_a, **_kw: (lambda: s1))
+
+        # 12 batches total * 0.04s = 0.48s > 0.25s stage ceiling -> must save and stop right after batch 5.
+        obs1 = asyncio.run(
+            step2.read_step2_observations(
+                "postgresql://unused/local",
+                batch_pause_s=0.0,
+                max_read_duration_s=0.25,
+                checkpoint_file=ckpt,
+            )
+        )
+        assert obs1["stopped_early"] is True
+        assert obs1["stop_stage"] == "win_prob_batch"
+        assert obs1["stop_reason"].startswith("phase_projected_over_stage_ceiling_")
+        assert obs1["wp_batches_done"] == 5
+        assert obs1["wp_batches_total"] == 12
+        assert obs1["projection_stop"] is not None
+        assert s1.wp_calls == 5
+        assert ckpt.exists()
+
+        # Verify CLI prints summary and writes NO final output files on stopped stage.
+        json_out = tmp_path / "proj.json"
+        monkeypatch.setenv("DATABASE_URL", "postgresql://unused/local")
+        monkeypatch.setattr(step2, "_INTER_BATCH_PAUSE_S", 0.0)
+        s2 = _SlowPhaseSession(wp_delay_s=0.001)
+        monkeypatch.setattr(step2, "async_sessionmaker", lambda *_a, **_kw: (lambda: s2))
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "measure_12108_step2_remeasure.py",
+                "--production",
+                "--alex-approved-448a",
+                "--checkpoint-file",
+                str(ckpt),
+                "--json-out",
+                str(json_out),
+                "--max-read-duration-s",
+                "10.0",
+            ],
+        )
+        rc = step2.main()
+        assert rc == 0
+        # Resumed cleanly from batch 5 -> only remaining 7 batches queried!
+        assert s2.wp_calls == 7
+        assert json_out.exists()
