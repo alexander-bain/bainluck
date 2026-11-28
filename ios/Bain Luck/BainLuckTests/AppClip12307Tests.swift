@@ -251,6 +251,28 @@ final class AppClip12307Tests: XCTestCase {
         XCTAssertEqual(ClipLoader12307.displayCaption(reading, now: t0), "No recent probability")
         XCTAssertEqual(ClipLoader12307.missingValueAccessibilityLabel, "No recent probability")
 
+        let noResultReading = SavedWidgetReading10875(
+            kind: .game, targetID: 1, title: "Test", status: "Settled", phase: .noResult,
+            rows: [
+                SavedWidgetOutcomeRow10875(id: "away", label: "Away", figure: nil, verdict: nil, emphasized: false),
+                SavedWidgetOutcomeRow10875(id: "home", label: "Home", figure: nil, verdict: nil, emphasized: false),
+            ],
+            headline: nil, priceCaption: nil, observedAt: nil, becomesLastRecordedAt: nil,
+            spoken: "", lastRecordedFigure: nil
+        )
+        XCTAssertEqual(ClipLoader12307.displayCaption(noResultReading, now: t0), EventState.suspendedLabel)
+
+        let suspendedSameLabelReading = SavedWidgetReading10875(
+            kind: .game, targetID: 1, title: "Test", status: EventState.suspendedLabel, phase: .noResult,
+            rows: [
+                SavedWidgetOutcomeRow10875(id: "away", label: "Away", figure: nil, verdict: nil, emphasized: false),
+                SavedWidgetOutcomeRow10875(id: "home", label: "Home", figure: nil, verdict: nil, emphasized: false),
+            ],
+            headline: nil, priceCaption: nil, observedAt: nil, becomesLastRecordedAt: nil,
+            spoken: "", lastRecordedFigure: nil
+        )
+        XCTAssertNil(ClipLoader12307.displayCaption(suspendedSameLabelReading, now: t0))
+
         let pageSource = try String(contentsOf: Self.repoFile("BainLuckClip/ClipPageView12307.swift"), encoding: .utf8)
         XCTAssertFalse(pageSource.contains(#".accessibilityLabel("No number")"#))
         XCTAssertTrue(pageSource.contains("ClipLoader12307.displayCaption(reading, now: now)"))
