@@ -317,6 +317,7 @@
 				Utilities/DrawPricedWinner.swift,
 				Utilities/EventOutcome.swift,
 				Utilities/EventState.swift,
+				Utilities/ExternalSurfaceProbabilityFormat.swift,
 				Utilities/FormattingUtilities.swift,
 				Utilities/LockScreenSmallSlotFit13430.swift,
 				Utilities/OutcomeVerdict.swift,
