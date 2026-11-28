@@ -1042,21 +1042,12 @@ struct MyStuffView: View {
                 }
             }
         } header: {
-            HStack(spacing: 6) {
-                Label(title, systemImage: systemImage)
-                    .foregroundStyle(imageColor)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .textCase(nil)
-                Text("\(count ?? items.count)")
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(Capsule())
-            }
+            SectionBandHeaderView(
+                title: title,
+                systemImage: systemImage,
+                imageColor: imageColor,
+                count: count ?? items.count
+            )
         }
     }
 
