@@ -39,16 +39,17 @@ final class DiscoverRightSwipeAndLikeHeart420DTests: XCTestCase {
         XCTAssertNil(repeatSwipe.emittedAction, "repeating right swipe stays liked without duplicate write")
     }
 
-    func testHeartTapLikesAndUndoNeverEmitsUnlike() {
+    func testHeartTapLikesAndUndoSendsLikeUndoNeverUnlike() {
         let liked = DiscoverLikeFeedbackRule420D.resolveHeartTap(wasLiked: false)
         XCTAssertFalse(liked.shouldHideCard)
         XCTAssertTrue(liked.nextLikedState)
         XCTAssertEqual(liked.emittedAction, "like")
 
         let undone = DiscoverLikeFeedbackRule420D.resolveHeartTap(wasLiked: true)
-        XCTAssertFalse(undone.shouldHideCard)
+        XCTAssertFalse(undone.shouldHideCard, "taking a like back must keep the card on screen (#13829)")
         XCTAssertFalse(undone.nextLikedState)
-        XCTAssertNil(undone.emittedAction, "undoing a like must NEVER emit unlike (#13769)")
+        XCTAssertEqual(undone.emittedAction, "like_undo", "taking a like back must emit neutral like_undo (#13829)")
+        XCTAssertNotEqual(undone.emittedAction, "unlike")
     }
 
     func testLeftSwipeIsUnchanged() {
@@ -133,7 +134,7 @@ final class DiscoverRightSwipeAndLikeHeart420DTests: XCTestCase {
             XCTAssertFalse(body.contains("hideForSession"), "Right swipe must NEVER hide card: \(body)")
         }
 
-        // toggleLike must call unmarkLiked on undo and NEVER call .unlike.
+        // toggleLike must call unmarkLiked + emit .likeUndo on undo and NEVER call .unlike or hideForSession.
         guard let toggleRange = source.range(of: "private func toggleLike("),
               let actionHelperRange = source.range(of: "private func likeAction(") else {
             return XCTFail("Missing toggleLike helper in DiscoverView.swift")
@@ -145,7 +146,74 @@ final class DiscoverRightSwipeAndLikeHeart420DTests: XCTestCase {
             .joined(separator: "\n")
         XCTAssertTrue(toggleCodeLines.contains("DiscoverLikeFeedbackRule420D.resolveHeartTap"))
         XCTAssertTrue(toggleCodeLines.contains("likedStore.unmarkLiked(key)"))
-        XCTAssertFalse(toggleCodeLines.contains(".unlike"), "Heart undo must NEVER emit .unlike (#13769)")
+        XCTAssertTrue(toggleCodeLines.contains("resolution.emittedAction == \"like_undo\""))
+        XCTAssertTrue(toggleCodeLines.contains("recordInteraction(for: item, action: .likeUndo, source: source)"))
+        XCTAssertFalse(toggleCodeLines.contains(".unlike"), "Heart undo must NEVER emit .unlike (#13829)")
+        XCTAssertFalse(toggleCodeLines.contains("hideForSession"), "Heart undo must NEVER hide card (#13829)")
+    }
+
+    func testLikeUndoEncodesServerPayloadAndCancelsLocalAffinityWithoutNegativePenalty() throws {
+        // 1. Wire payload matches server `_DISCOVER_ACTIONS` `"like_undo"` contract (#13919 / #13829).
+        let event = DiscoverInteractionEvent(
+            action: "like_undo",
+            itemType: "futures",
+            itemId: "901",
+            category: "politics",
+            itemName: "Who will win?",
+            score: 95,
+            rank: nil,
+            surface: "native",
+            source: "card"
+        )
+        let request = DiscoverInteractionRequest(interactions: [event])
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let payloadData = try encoder.encode(request)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: payloadData) as? [String: Any])
+        let interactions = try XCTUnwrap(json["interactions"] as? [[String: Any]])
+        XCTAssertEqual(interactions.count, 1)
+        XCTAssertEqual(interactions[0]["action"] as? String, "like_undo")
+        XCTAssertEqual(interactions[0]["item_type"] as? String, "futures")
+        XCTAssertEqual(interactions[0]["item_id"] as? String, "901")
+        XCTAssertEqual(interactions[0]["surface"] as? String, "native")
+        XCTAssertEqual(interactions[0]["source"] as? String, "card")
+
+        // 2. Local DiscoverInteractionProfile cancels prior +2.0 like without negative penalty or suppression.
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var profile = DiscoverInteractionProfile.forTesting(scores: [:], recordedAt: now)
+        let savedV2 = UserDefaults.standard.object(forKey: DiscoverInteractionProfile.storageKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: DiscoverInteractionProfile.storageKey)
+            if let savedV2 {
+                UserDefaults.standard.set(savedV2, forKey: DiscoverInteractionProfile.storageKey)
+            }
+        }
+
+        // like (+2.0) -> likeUndo (0.0) -> like (+2.0)
+        profile.record(category: "politics", action: .like, onSportsCard: false, now: now)
+        XCTAssertEqual(profile.score(for: "politics", now: now), 2.0, accuracy: 0.001)
+        profile.record(category: "politics", action: .likeUndo, onSportsCard: false, now: now)
+        XCTAssertEqual(profile.score(for: "politics", now: now), 0.0, accuracy: 0.001)
+        XCTAssertFalse(profile.suppresses(category: "politics", now: now))
+        profile.record(category: "politics", action: .like, onSportsCard: false, now: now)
+        XCTAssertEqual(profile.score(for: "politics", now: now), 2.0, accuracy: 0.001)
+
+        // Unmatched likeUndo on empty or already-negative category is a strict no-op.
+        var emptyProfile = DiscoverInteractionProfile.forTesting(scores: [:], recordedAt: now)
+        emptyProfile.record(category: "weather", action: .likeUndo, onSportsCard: false, now: now)
+        XCTAssertEqual(emptyProfile.score(for: "weather", now: now), 0.0, accuracy: 0.001)
+        XCTAssertFalse(emptyProfile.suppresses(category: "weather", now: now))
+
+        var negativeProfile = DiscoverInteractionProfile.forTesting(scores: ["crypto": -1.0], recordedAt: now)
+        negativeProfile.record(category: "crypto", action: .likeUndo, onSportsCard: false, now: now)
+        XCTAssertEqual(negativeProfile.score(for: "crypto", now: now), -1.0, accuracy: 0.001)
+
+        // Sports card: like (+2.0) -> likeUndo (0.0, never negative).
+        var sportsProfile = DiscoverInteractionProfile.forTesting(scores: [:], recordedAt: now)
+        sportsProfile.record(category: "nfl", action: .like, onSportsCard: true, now: now)
+        XCTAssertEqual(sportsProfile.score(for: "nfl", now: now), 2.0, accuracy: 0.001)
+        sportsProfile.record(category: "nfl", action: .likeUndo, onSportsCard: true, now: now)
+        XCTAssertEqual(sportsProfile.score(for: "nfl", now: now), 0.0, accuracy: 0.001)
     }
 
     // MARK: - 4. All Discover Card Archetypes Render Like Heart Without Clipping

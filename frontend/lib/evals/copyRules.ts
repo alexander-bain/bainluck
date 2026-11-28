@@ -26,7 +26,8 @@ export const EVALS_COPY_RULES: CopyBan[] = [
   },
   {
     id: "evals-soon",
-    pattern: /\b(soon|upcoming|later)\b/i,
+    // Alex 459: A uses "later steps" for downstream epic work (#13897), not "check back later".
+    pattern: /\b(soon|upcoming|later(?!\s+steps\b))\b/i,
     why: "a promise about later, not a statement about now (ruling 142)",
   },
 ];

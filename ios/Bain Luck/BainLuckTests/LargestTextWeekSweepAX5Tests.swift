@@ -527,7 +527,10 @@ final class LargestTextWeekSweepAX5Tests: XCTestCase {
             )
             for (scheme, schemeName) in schemes {
                 let discoverImg = renderIntrinsic(
-                    MachineryDiscoverCardView(card: discoverRaceCard)
+                    MachineryDiscoverCardView(
+                        card: discoverRaceCard,
+                        onOpenContainer: { _, _ in }
+                    )
                         .environmentObject(pinManager)
                         .environmentObject(navCoordinator)
                         .environmentObject(authManager),
@@ -594,7 +597,7 @@ final class LargestTextWeekSweepAX5Tests: XCTestCase {
         )
         for width in widths {
             let consentHeight: CGFloat = width >= 700 ? 1650 : (width <= 320 ? 2420 : 2020)
-            let checklistHeight: CGFloat = width >= 700 ? 1850 : (width <= 320 ? 2550 : 2150)
+            let checklistHeight: CGFloat = width >= 700 ? 2150 : (width <= 320 ? 2680 : 2550)
             let checklistForbidden = ["\u{2026}", "...", "Preferen\u{2026}", "Preferen...", "Go to Disco\u{2026}", "Go to Disco...", "anony-", "analyt-", "Notifica-", "school s", "any-", "ex-", "de-"]
             for (scheme, schemeName) in schemes {
                 let consentImg = renderFixedViewport(

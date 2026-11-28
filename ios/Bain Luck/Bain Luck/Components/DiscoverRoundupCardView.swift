@@ -21,6 +21,7 @@ struct DiscoverRoundupCardView: View {
     var onOpenCollection: ((FeedThemeCollectionRef) -> Void)? = nil
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.discoverCardLikeAction420D) private var likeAction
 
@@ -108,7 +109,7 @@ struct DiscoverRoundupCardView: View {
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if dynamicTypeSize.isAccessibilitySize {
+            if dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn {
                 VStack(alignment: .leading, spacing: 6) {
                     kickerLabel
                     if let tag = model.tag {
@@ -183,7 +184,7 @@ struct DiscoverRoundupCardView: View {
 
         if let divDisplay, isUnpricedOrOut {
             VStack(alignment: .leading, spacing: 6) {
-                if dynamicTypeSize.isAccessibilitySize {
+                if dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(row.label)
                             .font(.subheadline.weight(.medium))
@@ -287,7 +288,7 @@ struct DiscoverRoundupCardView: View {
 
     @ViewBuilder
     private var stripRowsSection: some View {
-        if dynamicTypeSize.isAccessibilitySize {
+        if dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(model.rows) { row in
                     stripTile(row)
@@ -303,19 +304,20 @@ struct DiscoverRoundupCardView: View {
     }
 
     private func stripTile(_ row: DiscoverRoundupRowModel) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let relaxed = dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn
+        return VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.opponentLabel ?? row.label)
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(primaryInk)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    .lineLimit(relaxed ? nil : 2)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let dateLabel = row.dateLabel {
                     Text(dateLabel)
                         .font(.caption2)
                         .foregroundStyle(secondaryReadableInk)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .lineLimit(relaxed ? nil : 1)
                 }
             }
 

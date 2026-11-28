@@ -1,0 +1,482 @@
+{
+  "status": "not_measured_yet",
+  "as_of": "2026-11-27",
+  "dataset": "sealed",
+  "writer_rev": null,
+  "model": null,
+  "sealed_set_size": null,
+  "cost": {
+    "total_usd": null,
+    "per_market_usd": null,
+    "api_calls": null,
+    "input_tokens": null,
+    "output_tokens": null
+  },
+  "market_count": 0,
+  "decider_totals": {
+    "code": {
+      "right": 0,
+      "wrong": 0,
+      "blank": 0,
+      "said_not_known": 0,
+      "total": 0
+    },
+    "model": {
+      "right": 0,
+      "wrong": 0,
+      "blank": 0,
+      "said_not_known": 0,
+      "total": 0
+    }
+  },
+  "fields": [
+    {
+      "field": "topic",
+      "label": "Topic",
+      "decided_by": "model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "subtopic",
+      "label": "Specific area",
+      "decided_by": "model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "geography",
+      "label": "Region",
+      "decided_by": "code_and_model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "temporal_class",
+      "label": "How time works",
+      "decided_by": "model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "event_date",
+      "label": "Day of the event",
+      "decided_by": "code_and_model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "recurrence",
+      "label": "How often it repeats",
+      "decided_by": "model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "stakes",
+      "label": "Real-world stakes",
+      "decided_by": "code_and_model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "breadth",
+      "label": "How wide the audience is",
+      "decided_by": "code_and_model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "oddity",
+      "label": "How unusual it is",
+      "decided_by": "model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "arc",
+      "label": "Kind of story",
+      "decided_by": "model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "junk_flags",
+      "label": "Format warnings",
+      "decided_by": "code_and_model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "liveness",
+      "label": "Trading activity",
+      "decided_by": "code",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "subject_ref",
+      "label": "Main subject link",
+      "decided_by": "code",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "frame",
+      "label": "Number and comparison",
+      "decided_by": "model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "series_key",
+      "label": "Recurring series",
+      "decided_by": "model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "story_key",
+      "label": "Story group",
+      "decided_by": "model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    },
+    {
+      "field": "entities",
+      "label": "Named subjects",
+      "decided_by": "model",
+      "code": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "model": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      },
+      "total": {
+        "right": 0,
+        "wrong": 0,
+        "blank": 0,
+        "said_not_known": 0,
+        "total": 0
+      }
+    }
+  ],
+  "slices": {
+    "by_venue": {},
+    "by_category": {},
+    "by_market_shape": {},
+    "by_exposure": {}
+  }
+}

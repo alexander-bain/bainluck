@@ -170,9 +170,10 @@ struct DiscoverView: View {
     @State private var machineryGateRevision: Int = 0
 
     /// Width available to the card area, in points. 0 until the first
-    /// geometry pass resolves, which `DiscoverMasonry.columnCount` reads as one
-    /// column (#3651).
+    /// geometry pass resolves, which `DiscoverMasonry.discoverColumnCount`
+    /// seeds from `measuredContainerWidth` and falls back to one column (#3651, #13914).
     @State private var gridWidth: CGFloat = 0
+    @State private var measuredContainerWidth: CGFloat = 0
 
     // First-render attribution (L2-206 Item 3 / L2-210 Item 2 / L2-212 Item 2):
     // `lastEmittedRenderGenerationId` guards a single `discover_feed_first_render`
@@ -670,6 +671,7 @@ struct DiscoverView: View {
         switch action {
         case .detailOpen: actionName = "open"
         case .like: actionName = "like"
+        case .likeUndo: actionName = "like_undo"
         case .unlike: actionName = "unlike"
         case .share: actionName = "share"
         case .contextExpand: actionName = "context_expand"
@@ -2506,6 +2508,17 @@ struct DiscoverView: View {
     }
 
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverLayoutIsPhone13914) private var discoverLayoutIsPhoneOverride
+
+    private var isPhoneDiscoverLayout: Bool {
+        if let override = discoverLayoutIsPhoneOverride { return override }
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .phone && sizeClass == .compact
+        #else
+        return false
+        #endif
+    }
 
     /// Max content width — phone-style on compact, wider on iPad/Mac
     private var contentMaxWidth: CGFloat {
@@ -2666,6 +2679,23 @@ struct DiscoverView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
+                let effectiveGridWidth: CGFloat = gridWidth > 0
+                    ? gridWidth
+                    : DiscoverMasonry.cardAreaWidth(
+                        containerWidth: measuredContainerWidth,
+                        maxContentWidth: contentMaxWidth
+                    )
+                let columnCount = DiscoverMasonry.discoverColumnCount(
+                    availableWidth: effectiveGridWidth,
+                    dynamicTypeSize: dynamicTypeSize,
+                    isPhone: isPhoneDiscoverLayout
+                )
+                let isNarrowTwoColumn = DiscoverMasonry.usesNarrowMultiColumn(
+                    availableWidth: effectiveGridWidth,
+                    dynamicTypeSize: dynamicTypeSize,
+                    isPhone: isPhoneDiscoverLayout
+                )
+
                 // #12288 (`252: A`): Owner-only machinery groupings preview (Alex + Preferences switch ON),
                 // deduplicated against any `machinery-*` slugs already served in `vm.items` (`machinery=1`).
                 let servedMachinerySlugs = Set(
@@ -2675,26 +2705,54 @@ struct DiscoverView: View {
                     guard let slug = entry.machineryCard?.slug else { return false }
                     return !servedMachinerySlugs.contains(slug)
                 }
+                let previewEntries = unservedPreviewItems.filter { $0.machineryCard != nil }
                 if GroupingMachineryGate12288.canAccessMachinery(user: authManager.user),
-                   !unservedPreviewItems.isEmpty {
-                    VStack(spacing: DiscoverMasonry.spacing) {
-                        ForEach(unservedPreviewItems) { entry in
-                            if let card = entry.machineryCard {
-                                MachineryDiscoverEntryCardView(
-                                    card: card,
-                                    pairedMetricSet: entry.pairedMetricSet,
-                                    onOpenContainer: { slug, _ in
-                                        navigationPath.append(Route.containerHub(slug: slug, name: entry.displayName))
-                                    },
-                                    onOpenMarket: { marketId in
-                                        navigationPath.append(Route.futuresDetail(id: marketId))
+                   !previewEntries.isEmpty {
+                    Group {
+                        if columnCount <= 1 {
+                            VStack(spacing: DiscoverMasonry.spacing) {
+                                ForEach(previewEntries) { entry in
+                                    if let card = entry.machineryCard {
+                                        MachineryDiscoverEntryCardView(
+                                            card: card,
+                                            pairedMetricSet: entry.pairedMetricSet,
+                                            onOpenContainer: { slug, _ in
+                                                navigationPath.append(Route.containerHub(slug: slug, name: entry.displayName))
+                                            },
+                                            onOpenMarket: { marketId in
+                                                navigationPath.append(Route.futuresDetail(id: marketId))
+                                            }
+                                        )
                                     }
-                                )
+                                }
+                            }
+                        } else {
+                            LazyMasonryColumns(
+                                range: 0..<previewEntries.count,
+                                columnCount: columnCount,
+                                spacing: DiscoverMasonry.spacing,
+                                horizontalAlignment: .center,
+                                cardAlignment: .center
+                            ) { idx in
+                                let entry = previewEntries[idx]
+                                if let card = entry.machineryCard {
+                                    MachineryDiscoverEntryCardView(
+                                        card: card,
+                                        pairedMetricSet: entry.pairedMetricSet,
+                                        onOpenContainer: { slug, _ in
+                                            navigationPath.append(Route.containerHub(slug: slug, name: entry.displayName))
+                                        },
+                                        onOpenMarket: { marketId in
+                                            navigationPath.append(Route.futuresDetail(id: marketId))
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
                     .padding(.horizontal)
                     .padding(.bottom, DiscoverMasonry.spacing)
+                    .environment(\.discoverNarrowTwoColumn13914, isNarrowTwoColumn)
                     .accessibilityIdentifier("discover.ownerMachineryPreview")
                 }
 
@@ -2711,7 +2769,9 @@ struct DiscoverView: View {
                 // `LazyVStack`s, which pack at exactly their spacing. At one
                 // column that is one `LazyVStack` holding every card in feed
                 // order — the phone keeps the single file it always had.
-                let columnCount = DiscoverMasonry.columnCount(availableWidth: gridWidth)
+                // #13914: `columnCount` comes from `DiscoverMasonry.discoverColumnCount`
+                // so upright iPad portrait stays two columns even when split-view/
+                // sidebar width narrows the card area below 616 pt, while iPhone stays one.
                 // #5105: with an accepted seated edition the SAME visible window
                 // is split where the continuation begins: the heading takes no
                 // card slot, and every card keeps its index in the whole window,
@@ -2759,15 +2819,13 @@ struct DiscoverView: View {
                         }
                     }
                 }
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear { gridWidth = geo.size.width }
-                            .onChange(of: geo.size.width) { _, newValue in
-                                gridWidth = newValue
-                            }
+                .frame(maxWidth: .infinity)
+                .environment(\.discoverNarrowTwoColumn13914, isNarrowTwoColumn)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { newWidth in
+                    if newWidth > 0, abs(gridWidth - newWidth) > 0.5 {
+                        gridWidth = newWidth
                     }
-                )
+                }
                 // #6444: the standing refill. The per-card `onAppear` trigger
                 // above runs once per card identity, so a page that lands and is
                 // ALSO filtered short re-mounts nothing and asks for nothing.
@@ -2910,6 +2968,11 @@ struct DiscoverView: View {
             }
             .frame(maxWidth: contentMaxWidth)
             .frame(maxWidth: .infinity)
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { newWidth in
+            if newWidth > 0, abs(measuredContainerWidth - newWidth) > 0.5 {
+                measuredContainerWidth = newWidth
+            }
         }
         .macReadingOffset(macPlace)
         // #7074. HOW A REFRESH ENDED, drawn where the reader is looking whichever
@@ -3449,8 +3512,11 @@ struct DiscoverView: View {
                 recordInteraction(for: item, action: .like, source: source)
             }
         } else {
-            // Undo removes the heart locally only and NEVER sends .unlike (#13769, 420: D).
+            // Undo keeps the card on screen and records neutral `like_undo` (#13829), NEVER `.unlike`.
             likedStore.unmarkLiked(key)
+            if resolution.emittedAction == "like_undo", let item {
+                recordInteraction(for: item, action: .likeUndo, source: source)
+            }
         }
     }
 
@@ -3855,6 +3921,7 @@ struct NativeGroupCard: View {
     @Binding var navigationPath: NavigationPath
     @State private var expanded = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .caption2) private var eyebrowFontSize: CGFloat = 11
     @Environment(\.discoverGroupBundleArt12840) private var envBundleArt
@@ -4052,7 +4119,7 @@ struct NativeGroupCard: View {
                         .font(isAX ? .system(size: min(eyebrowFontSize, 18), weight: .bold) : .caption2.weight(.bold))
                         .tracking(isAX ? 0 : 0.8)
                         .foregroundStyle(secondaryReadableInk)
-                        .lineLimit(isAX ? nil : 2)
+                        .lineLimit((isAX || isNarrowTwoColumn) ? nil : 2)
                         .minimumScaleFactor(isAX ? 0.85 : 1.0)
                         .fixedSize(horizontal: false, vertical: true)
                     if !isAX && sharedQuestion?.isEmpty != false {
@@ -4142,13 +4209,13 @@ struct NativeGroupCard: View {
                 Text(data.name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(primaryInk)
-                    .lineLimit(isAX ? nil : 3)
+                    .lineLimit((isAX || isNarrowTwoColumn) ? nil : 3)
                     .fixedSize(horizontal: false, vertical: true)
                 if let label = summary.label {
                     Text(label)
                         .font(.caption)
                         .foregroundStyle(secondaryInk)
-                        .lineLimit(isAX ? nil : 2)
+                        .lineLimit((isAX || isNarrowTwoColumn) ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -4446,6 +4513,7 @@ private struct NativeCompactFuturesRow: View {
     let data: FeedFuturesData
     @Binding var navigationPath: NavigationPath
     @Environment(\.discoverSwipeTapGuard13668) private var tapGuard
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
 
     /// What a UI test can find a group card's tappable row by (#7074).
     ///
@@ -4461,13 +4529,13 @@ private struct NativeCompactFuturesRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(data.name)
                         .font(.caption.weight(.semibold))
-                        .lineLimit(2)
+                        .lineLimit(isNarrowTwoColumn ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let leader = data.topOutcomes?.first {
                         Text(leader.name)
                             .font(.caption2)
                             .foregroundStyle(DS.textSecondaryReadable)
-                            .lineLimit(2)
+                            .lineLimit(isNarrowTwoColumn ? nil : 2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

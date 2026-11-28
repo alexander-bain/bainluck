@@ -1053,7 +1053,7 @@ def test_repo_gap_targets_json_loads_cleanly_and_backend_mirror_matches():
     assert isinstance(loaded, dict)
     assert loaded.get("project_id") == "PVT_kwHOC0ai9c4Bp5gq"
     entries = bs._iter_gap_target_entries(loaded)
-    assert len(entries) == 8
+    assert len(entries) == 11
 
     backend_dir = Path(bs.__file__).resolve().parents[2]
     repo_root = Path(bs.__file__).resolve().parents[3]

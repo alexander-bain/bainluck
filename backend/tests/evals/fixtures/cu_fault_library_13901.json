@@ -1,0 +1,280 @@
+{
+  "description": "Fixed fault library from Content Understanding grading rounds (#1809, #13896, #13901). Zero model calls.",
+  "district_races": [
+    {
+      "id": "district-vermont-house-orleans-3",
+      "market_id": 70136122,
+      "title": "Vermont House Orleans-3 winner? (2028)",
+      "expected": {
+        "geography": "local",
+        "stakes": 1,
+        "breadth": 1,
+        "event_date": "2028-11-07"
+      }
+    },
+    {
+      "id": "district-alaska-house-11",
+      "market_id": 70149527,
+      "title": "Alaska House District 11 winner? (2028)",
+      "expected": {
+        "geography": "local",
+        "stakes": 1,
+        "breadth": 1,
+        "event_date": "2028-11-07"
+      }
+    },
+    {
+      "id": "district-wv-house-48",
+      "market_id": 70135796,
+      "title": "West Virginia House of Delegates District 48 winner? (2028)",
+      "expected": {
+        "geography": "local",
+        "stakes": 1,
+        "breadth": 1,
+        "event_date": "2028-11-07"
+      }
+    },
+    {
+      "id": "district-ma-house-4-suffolk",
+      "market_id": 70138891,
+      "title": "Massachusetts House 4th Suffolk District winner? (2028)",
+      "expected": {
+        "geography": "local",
+        "stakes": 1,
+        "breadth": 1,
+        "event_date": "2028-11-07"
+      }
+    },
+    {
+      "id": "district-hi-house-41",
+      "market_id": 70139834,
+      "title": "Hawaii House District 41 winner? (2028)",
+      "expected": {
+        "geography": "local",
+        "stakes": 1,
+        "breadth": 1,
+        "event_date": "2028-11-07"
+      }
+    },
+    {
+      "id": "district-ct-senate-36",
+      "market_id": 70140302,
+      "title": "Connecticut Senate District 36 winner? (2028)",
+      "expected": {
+        "geography": "local",
+        "stakes": 1,
+        "breadth": 1,
+        "event_date": "2028-11-07"
+      }
+    }
+  ],
+  "europa_league_geography": [
+    {
+      "id": "europa-celta-bournemouth-no-club-leagues",
+      "market_id": 72070182,
+      "title": "Spread: RC Celta de Vigo (-1.5)",
+      "linked_game_id": 15343257,
+      "linked_league": "soccer_uefa_europa_league",
+      "linked_start": "2026-11-26T17:45:00+00:00",
+      "start_source": "odds_api",
+      "home_team_league": null,
+      "away_team_league": null,
+      "bad_model_geography": "us",
+      "expected_sanitized_geography": null,
+      "expected_event_facts": {
+        "event_date": "2026-11-26"
+      }
+    },
+    {
+      "id": "europa-celta-bournemouth-cross-border-clubs",
+      "market_id": 72070182,
+      "title": "Spread: RC Celta de Vigo (-1.5)",
+      "linked_game_id": 15343257,
+      "linked_league": "soccer_uefa_europa_league",
+      "linked_start": "2026-11-26T17:45:00+00:00",
+      "start_source": "odds_api",
+      "home_team_league": "soccer_spain_la_liga",
+      "away_team_league": "soccer_epl",
+      "bad_model_geography": "country:GB",
+      "expected_sanitized_geography": "country:GB",
+      "expected_event_facts": {
+        "geography": "global",
+        "event_date": "2026-11-26"
+      }
+    }
+  ],
+  "ladders_and_buckets": [
+    {
+      "id": "ladder-ferrari-shipments",
+      "market_id": 52755572,
+      "title": "Ferrari total car shipments in 2026",
+      "outcome_names": [
+        "Above 13100",
+        "Above 13000",
+        "Above 13200",
+        "Above 13300",
+        "Above 13400",
+        "Above 13500",
+        "Above 13600",
+        "Above 13700"
+      ],
+      "model_flags": [],
+      "expected_flags": ["ladder"]
+    },
+    {
+      "id": "ladder-global-remittance-cost",
+      "market_id": 63115854,
+      "title": "Global remittance cost at the end of 2027",
+      "outcome_names": [
+        "Above 5.00%",
+        "Above 5.25%",
+        "Above 5.50%",
+        "Above 5.75%",
+        "Above 6.00%",
+        "Above 6.25%",
+        "Above 6.50%",
+        "Above 6.75%"
+      ],
+      "model_flags": [],
+      "expected_flags": ["ladder"]
+    },
+    {
+      "id": "dated-bucket-omar-dates",
+      "market_id": 65527711,
+      "title": "Ilhan Omar federally charged by...?",
+      "outcome_names": [
+        "December 31",
+        "October 31"
+      ],
+      "model_flags": [],
+      "expected_flags": ["dated_bucket"]
+    },
+    {
+      "id": "control-plain-binary",
+      "market_id": 60087225,
+      "title": "Will Washington Commanders advance to the Divisional Round in the 2027 NFL Playoffs?",
+      "outcome_names": ["Yes", "No"],
+      "model_flags": [],
+      "expected_flags": []
+    }
+  ],
+  "settlement_day_echo": [
+    {
+      "id": "settlement-echo-conference-usa",
+      "market_id": 59164894,
+      "title": "Conference USA Men's Conference Tournament Champion",
+      "model_date": "2027-03-14",
+      "settlement_at": "2027-03-14T21:00:00+00:00",
+      "expected_event_date": null
+    },
+    {
+      "id": "settlement-echo-ct-presidential",
+      "market_id": 70149579,
+      "title": "Connecticut presidential election winner?",
+      "model_date": "2029-05-07",
+      "settlement_at": "2029-05-07T14:00:00+00:00",
+      "expected_event_date": null
+    },
+    {
+      "id": "settlement-echo-commanders-playoffs",
+      "market_id": 60087225,
+      "title": "Will Washington Commanders advance to the Divisional Round in the 2027 NFL Playoffs?",
+      "model_date": "2027-01-19",
+      "settlement_at": "2027-01-19T23:59:00+00:00",
+      "expected_event_date": null
+    },
+    {
+      "id": "control-distinct-event-day-kept",
+      "market_id": 59164894,
+      "title": "Conference USA Men's Conference Tournament Champion",
+      "model_date": "2027-03-13",
+      "settlement_at": "2027-03-14T21:00:00+00:00",
+      "expected_event_date": "2027-03-13"
+    }
+  ],
+  "linked_schedule_boundaries": [
+    {
+      "id": "eastern-day-wake-forest-msst",
+      "market_id": 72319599,
+      "title": "Wake Forest Demon Deacons vs. Mississippi State Bulldogs",
+      "linked_game_id": 15353964,
+      "linked_league": "basketball_ncaab",
+      "linked_start": "2026-11-26T02:05:00+00:00",
+      "start_source": "espn",
+      "expected_event_date": "2026-11-25"
+    },
+    {
+      "id": "eastern-day-stanford-colorado",
+      "market_id": 72233783,
+      "title": "Stanford Cardinal vs. Colorado Buffaloes: O/U 145.5",
+      "linked_game_id": 15353490,
+      "linked_league": "basketball_ncaab",
+      "linked_start": "2026-11-25T04:59:00+00:00",
+      "start_source": "espn",
+      "expected_event_date": "2026-11-24"
+    },
+    {
+      "id": "reject-polymarket-venue-start",
+      "market_id": 71014802,
+      "title": "SAS Épinal vs. Amiens SC",
+      "linked_game_id": 15350485,
+      "linked_league": "soccer_other",
+      "linked_start": "2026-11-28T14:00:00+00:00",
+      "start_source": "polymarket_venue",
+      "expected_event_date": null
+    }
+  ],
+  "frame_sanitizers": [
+    {
+      "id": "drop-season-range-tail-27",
+      "title": "2026-27 Champions League Winner?",
+      "raw_frame": {"measure": "wins", "comparator": "gte", "value": "27", "unit": null},
+      "expected_drop_reason": "value_not_in_title"
+    },
+    {
+      "id": "drop-identifier-substring-w7m",
+      "title": "Will W7M win Six Invitational?",
+      "raw_frame": {"measure": "wins", "comparator": "gte", "value": "7M", "unit": "M"},
+      "expected_drop_reason": "value_not_in_title"
+    },
+    {
+      "id": "drop-expanded-suffix-13m",
+      "title": "Will X reach 13M subscribers?",
+      "raw_frame": {"measure": "subscriber_count", "comparator": "gte", "value": 13000000, "unit": null},
+      "expected_drop_reason": "value_not_in_title"
+    },
+    {
+      "id": "keep-literal-over-goals",
+      "title": "Over 2.5 goals?",
+      "raw_frame": {"measure": "goals", "comparator": "gt", "value": "2.5", "unit": "goals", "horizon_kind": "daily", "window_date": null},
+      "expected_frame": {
+        "measure": "goals",
+        "comparator": "gt",
+        "value": "2.5",
+        "unit": "goals",
+        "horizon_kind": "daily",
+        "window_date": null
+      }
+    }
+  ],
+  "subject_and_liveness": [
+    {
+      "id": "team-ref-resolved-over-unresolved",
+      "mentions": [
+        {"name": "some random venue", "type": "place"},
+        {"name": "wakanda fc", "type": "team"}
+      ],
+      "resolved": {
+        "wakanda fc": {"ref": "team:91", "entity_id": null, "kind": "team", "source": "team_identity"}
+      },
+      "expected_subject_ref": "team:91",
+      "expected_subject_resolved": true
+    },
+    {
+      "id": "bundled-liveness-stays-active",
+      "probs": [1.0, 1.0, 0.0, 0.52, 0.48],
+      "status": "open",
+      "expected_liveness": "active"
+    }
+  ]
+}
