@@ -19,6 +19,7 @@ from app.routes.events import _game_markets_cache, get_game_markets
 from app.routes.futures import _format_market_detail, get_futures_market, get_probability_timeline
 from app.utils.feed_market_quality import FEED_PHANTOM_MIN_SPREAD
 from app.utils.opening_quote_validity import (
+    _detect_dialect_name,
     _fetch_earliest_opening_snapshots,
     _fetch_timed_opening_snapshots,
     is_real_two_sided_quote,
@@ -648,3 +649,110 @@ class TestLoaderAndRoutes:
         assert detail["openings_withheld"] is False
         assert mock_loader.await_count == 1
         assert callable(get_probability_timeline)
+
+    @pytest.mark.asyncio
+    async def test_sync_as_async_wrapper_detects_sqlite_dialect_and_runs_portable_query(self):
+        from sqlalchemy.orm import Session
+
+        engine = sa.create_engine("sqlite:///:memory:")
+        try:
+            FuturesOutcome.__table__.create(engine)
+            FuturesOddsSnapshot.__table__.create(engine)
+            t_cap = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+            with Session(engine) as s:
+                s.execute(
+                    sa.insert(FuturesOutcome).values(
+                        [
+                            dict(
+                                id=11,
+                                market_id=8801,
+                                external_id="K-EMPTY",
+                                name="Yes",
+                                current_probability=0.50,
+                                opening_probability=0.495,
+                                opening_captured_at=t_cap,
+                            ),
+                            dict(
+                                id=12,
+                                market_id=8801,
+                                external_id="K-TIGHT",
+                                name="No",
+                                current_probability=0.50,
+                                opening_probability=0.50,
+                                opening_captured_at=t_cap,
+                            ),
+                        ]
+                    )
+                )
+                s.execute(
+                    sa.insert(FuturesOddsSnapshot).values(
+                        [
+                            dict(
+                                id=201,
+                                outcome_id=11,
+                                bookmaker="consensus",
+                                probability=0.495,
+                                yes_bid=0.0,
+                                yes_ask=0.99,
+                                last_price=None,
+                                captured_at=t_cap,
+                            ),
+                            dict(
+                                id=202,
+                                outcome_id=12,
+                                bookmaker="consensus",
+                                probability=0.50,
+                                yes_bid=0.48,
+                                yes_ask=0.52,
+                                last_price=None,
+                                captured_at=t_cap,
+                            ),
+                        ]
+                    )
+                )
+                s.commit()
+
+                class _SyncAsAsync:
+                    def __init__(self, session):
+                        self._session = session
+
+                    async def execute(self, statement):
+                        return self._session.execute(statement)
+
+                wrapper = _SyncAsAsync(s)
+                assert _detect_dialect_name(wrapper) == "sqlite"
+                outcomes = list(s.execute(sa.select(FuturesOutcome)).scalars().all())
+                market = SimpleNamespace(id=8801, source="kalshi", market_metadata=None)
+                unsupported = await load_unsupported_opening_ids(
+                    wrapper, outcomes, {8801: market}
+                )
+                assert unsupported == {11}
+        finally:
+            engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_finite_async_mock_side_effect_exhaustion_is_caught(self):
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=[])
+        outcomes = [
+            SimpleNamespace(
+                id=31,
+                market_id=8802,
+                opening_probability=Decimal("0.495"),
+                opening_captured_at=datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc),
+            ),
+            SimpleNamespace(
+                id=32,
+                market_id=8802,
+                opening_probability=Decimal("0.50"),
+                opening_captured_at=None,
+            ),
+        ]
+        market = SimpleNamespace(
+            id=8802,
+            source="kalshi",
+            market_metadata={"unpriced_opening_ids": [32]},
+        )
+        unsupported = await load_unsupported_opening_ids(db, outcomes, {8802: market})
+        assert unsupported == {32}
+        assert db.execute.await_count == 1

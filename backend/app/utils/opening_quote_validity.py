@@ -165,6 +165,33 @@ def opening_snapshot_supports_opening(
     )
 
 
+def _detect_dialect_name(db: Any) -> str:
+    """Detect the SQL dialect name across AsyncSessions and sync-wrapped test doubles."""
+    candidates = (
+        db,
+        getattr(db, "sync_session", None),
+        getattr(db, "_session", None),
+        getattr(db, "session", None),
+        getattr(db, "_db", None),
+    )
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        bind = getattr(candidate, "bind", None)
+        if bind is None:
+            get_bind = getattr(candidate, "get_bind", None)
+            if callable(get_bind):
+                try:
+                    bind = get_bind()
+                except Exception:
+                    bind = None
+        dialect = getattr(bind, "dialect", None)
+        raw_name = getattr(dialect, "name", None)
+        if isinstance(raw_name, str) and raw_name:
+            return raw_name
+    return "postgresql"
+
+
 async def load_unsupported_opening_ids(
     db: AsyncSession,
     outcomes: Sequence[Any],
@@ -176,8 +203,8 @@ async def load_unsupported_opening_ids(
     against `futures_odds_snapshots` for prediction-market (`kalshi` /
     `polymarket`) outcomes carrying a numeric `opening_probability`.
 
-    Fail-open on missing snapshots, mock DB sessions, or SQLite/unit harnesses
-    without Postgres `LATERAL` support.
+    Fail-open on missing snapshots, finite `AsyncMock(side_effect=...)` test
+    doubles, or SQLite/unit harnesses without Postgres `LATERAL` support.
     """
     from app.models import FuturesOddsSnapshot, FuturesOutcome
 
@@ -219,16 +246,15 @@ async def load_unsupported_opening_ids(
     if not timed_ids and not untimed_ids:
         return unsupported
 
-    dialect_name = "postgresql"
-    bind = getattr(db, "bind", None)
-    raw_name = getattr(getattr(bind, "dialect", None), "name", None)
-    if isinstance(raw_name, str) and raw_name:
-        dialect_name = raw_name
+    dialect_name = _detect_dialect_name(db)
 
     if timed_ids:
-        rows = await _fetch_timed_opening_snapshots(
-            db, timed_ids, dialect_name=dialect_name, FuturesOddsSnapshot=FuturesOddsSnapshot, FuturesOutcome=FuturesOutcome
-        )
+        try:
+            rows = await _fetch_timed_opening_snapshots(
+                db, timed_ids, dialect_name=dialect_name, FuturesOddsSnapshot=FuturesOddsSnapshot, FuturesOutcome=FuturesOutcome
+            )
+        except StopAsyncIteration:
+            rows = []
         for row in rows:
             parsed = _unpack_snapshot_row(row)
             if parsed is None:
@@ -241,9 +267,12 @@ async def load_unsupported_opening_ids(
                 unsupported.add(oid)
 
     if untimed_ids:
-        rows = await _fetch_earliest_opening_snapshots(
-            db, untimed_ids, dialect_name=dialect_name, FuturesOddsSnapshot=FuturesOddsSnapshot, FuturesOutcome=FuturesOutcome
-        )
+        try:
+            rows = await _fetch_earliest_opening_snapshots(
+                db, untimed_ids, dialect_name=dialect_name, FuturesOddsSnapshot=FuturesOddsSnapshot, FuturesOutcome=FuturesOutcome
+            )
+        except StopAsyncIteration:
+            rows = []
         for row in rows:
             parsed = _unpack_snapshot_row(row)
             if parsed is None:
