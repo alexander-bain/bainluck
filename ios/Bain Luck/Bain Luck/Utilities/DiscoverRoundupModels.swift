@@ -651,7 +651,7 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
         if clamped > 0.0 && clamped < 0.01 {
             return ("<", "1")
         }
-        if clamped > 0.995 && clamped < 1.0 {
+        if clamped > 0.99 && clamped < 1.0 {
             return (">", "99")
         }
         let whole = renderedPercent ?? Int((clamped * 100.0).rounded())

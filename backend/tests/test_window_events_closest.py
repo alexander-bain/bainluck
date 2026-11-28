@@ -691,3 +691,171 @@ def test_window_events_closest_validates_narrative_copy_against_blend(tmp_path):
             footer_template="Bain Luck blend · the 4 closest of {n} games tonight",
         )
 
+
+@pytest.mark.asyncio
+async def test_shortlist_preselects_closest_12_before_hydrating_20_plus_slate(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """#11259: with 20+ eligible games tonight, shortlist the closest 12 before
+    calling ``_hydrate_event_cards``, fold once, preserve exact top-4 order, and
+    report all 20 eligible games in the footer.
+    """
+    from app.routes import events as events_route
+    from app.utils import proven_duplicates as pd_mod
+
+    monkeypatch.setattr(events_route, "_team_cache", {})
+    monkeypatch.setattr(events_route, "_team_cache_time", 0.0)
+
+    now = datetime(2026, 11, 3, 22, 0, tzinfo=timezone.utc)
+    tipoff = now + timedelta(hours=2)
+    hero_read_at = now - timedelta(minutes=2)
+
+    eng = create_engine("sqlite://")
+    Base.metadata.create_all(eng)
+
+    sport_id = 42
+    defn = {
+        **CLOSEST_GAMES_TONIGHT_DEFINITION,
+        "rule": {
+            **CLOSEST_GAMES_TONIGHT_DEFINITION["rule"],
+            "window": {
+                "start": (now - timedelta(hours=1)).isoformat(),
+                "end": (now + timedelta(hours=6)).isoformat(),
+            },
+        },
+    }
+
+    with Session(eng, expire_on_commit=False) as s:
+        s.add(Sport(id=sport_id, key="basketball_nba", name="NBA", group="Basketball"))
+        next_team_id = 1
+        # 20 eligible blended games: event 601 (0.505) through 620 (0.695),
+        # intentionally inserted in reverse closeness so the DB order disagrees
+        # with the closeness shortlist.
+        for idx in range(20):
+            eid = 620 - idx
+            # idx=19 -> eid=601 -> home_prob=0.505; idx=0 -> eid=620 -> 0.695
+            home_prob = round(0.695 - idx * 0.01, 4)
+            home_name = f"HomeTeam{eid}"
+            away_name = f"AwayTeam{eid}"
+            for nm, abbr in ((home_name, f"H{idx:02d}"), (away_name, f"A{idx:02d}")):
+                s.add(
+                    Team(
+                        id=next_team_id,
+                        sport_id=sport_id,
+                        name=nm,
+                        abbreviation=abbr,
+                        primary_color="#112233",
+                        logo_url=f"https://cdn.example/{abbr.lower()}.png",
+                        logo_url_small=f"https://cdn.example/{abbr.lower()}-sm.png",
+                    )
+                )
+                next_team_id += 1
+            sources = {}
+            for src_key in ("betting", "kalshi", "polymarket"):
+                sources = stamp_source_reading(
+                    sources, src_key, home_prob, now=hero_read_at, price_read_at=hero_read_at
+                )
+            s.add(
+                Event(
+                    id=eid,
+                    sport_id=sport_id,
+                    home_team_name=home_name,
+                    away_team_name=away_name,
+                    commence_time=tipoff + timedelta(minutes=idx),
+                    status="scheduled",
+                    win_probability_sources=sources,
+                )
+            )
+
+        # Ineligible / unblended games that must NOT consume the 12-game shortlist:
+        # 701: unblended (no win_probability_sources)
+        # 702: pro_minor league (has crests + 0.501 blend; excluded solely by pro_minor check)
+        # 703: completed game excluded by status filter
+        from app.utils.league_classification import get_league_class
+
+        assert get_league_class("basketball_nbl") == "pro_minor"
+        s.add(Sport(id=43, key="basketball_nbl", name="NBL", group="Basketball"))
+        for nm, abbr in (("HomeTeam702", "H702"), ("AwayTeam702", "A702")):
+            s.add(
+                Team(
+                    id=next_team_id,
+                    sport_id=43,
+                    name=nm,
+                    abbreviation=abbr,
+                    primary_color="#112233",
+                    logo_url=f"https://cdn.example/{abbr.lower()}.png",
+                    logo_url_small=f"https://cdn.example/{abbr.lower()}-sm.png",
+                )
+            )
+            next_team_id += 1
+        for extra_id, sp_id, st, src, c_time in (
+            (701, sport_id, "scheduled", {}, tipoff),
+            (
+                702,
+                43,
+                "scheduled",
+                stamp_source_reading({}, "betting", 0.501, now=hero_read_at, price_read_at=hero_read_at),
+                tipoff,
+            ),
+            (
+                703,
+                sport_id,
+                "completed",
+                stamp_source_reading({}, "betting", 0.501, now=hero_read_at, price_read_at=hero_read_at),
+                tipoff,
+            ),
+        ):
+            s.add(
+                Event(
+                    id=extra_id,
+                    sport_id=sp_id,
+                    home_team_name=f"HomeTeam{extra_id}",
+                    away_team_name=f"AwayTeam{extra_id}",
+                    commence_time=c_time,
+                    status=st,
+                    win_probability_sources=src,
+                )
+            )
+        s.commit()
+
+        fake_db = _AsyncSessionAdapter(s)
+        hydrate_calls: list[list[int]] = []
+        fold_batches: list[list[int]] = []
+
+        orig_fold = pd_mod.folded_card_numbers_batch
+
+        async def _tracked_fold(db_arg: Any, events_arg: Any) -> dict[int, Any]:
+            for obj in list(s.identity_map.values()):
+                for attr in ("commence_time", "captured_at", "completed_at"):
+                    val = getattr(obj, attr, None)
+                    if isinstance(val, datetime) and val.tzinfo is None:
+                        setattr(obj, attr, val.replace(tzinfo=timezone.utc))
+            evs_list = list(events_arg)
+            fold_batches.append([int(getattr(ev, "id", 0)) for ev in evs_list])
+            return await orig_fold(db_arg, evs_list)
+
+        async def _tracked_hydrate(db_arg: Any, ids_arg: list[int]) -> tuple[dict[int, Any], dict]:
+            hydrate_calls.append(list(ids_arg))
+            return await _hydrate_event_cards(db_arg, ids_arg)
+
+        def _portable_odds_query(event_ids):
+            return select(OddsSnapshot).where(OddsSnapshot.event_id.in_(event_ids))
+
+        monkeypatch.setattr("app.utils.proven_duplicates.folded_card_numbers_batch", _tracked_fold)
+        monkeypatch.setattr("app.routes.containers._hydrate_event_cards", _tracked_hydrate)
+        monkeypatch.setattr("app.routes.events._load_gei_percentiles", AsyncMock(return_value={}))
+        monkeypatch.setattr("app.routes.events.latest_odds_per_bookmaker_query", _portable_odds_query)
+
+        outcome = await produce_window_events_closest(defn, fake_db, now=now)
+        assert not isinstance(outcome, RoundupRefusal)
+        # First fold evaluates the 20 pre-eligible events once for shortlist selection;
+        # second fold runs inside _hydrate_event_cards only for the 12 shortlisted IDs.
+        assert [len(b) for b in fold_batches] == [20, 12]
+        assert len(hydrate_calls) == 1
+        assert len(hydrate_calls[0]) == 12
+        # Closest 12 of [601..620] are 601..612, never 613..620 or 701..703:
+        assert set(hydrate_calls[0]) == set(range(601, 613))
+        # Closest 4 ordered highest leader prob first: [604 (0.535), 603 (0.525), 602 (0.515), 601 (0.505)]:
+        assert [r["event_id"] for r in outcome.rows] == [604, 603, 602, 601]
+        assert outcome.footer == "The 4 closest of 20 games tonight"
+

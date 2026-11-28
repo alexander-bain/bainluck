@@ -1,4 +1,7 @@
 import Foundation
+#if DEBUG && canImport(Bain_Luck)
+@testable import Bain_Luck
+#endif
 
 // MARK: - Guess Question
 
@@ -17,7 +20,22 @@ struct GuessQuestion {
     let threshold: Int
     let category: String?
 
-    var actualPct: Int { Int((actualProb * 100).rounded()) }
+    var actualPct: Int {
+        renderedPercent(actualProb) ?? {
+            let scaled = actualProb * 100.0
+            return Int(scaled.rounded())
+        }()
+    }
+
+    var thresholdText: String {
+        ExternalSurfaceProbabilityFormat.openWholePercent(threshold)
+            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+    }
+
+    var actualProbabilityText: String {
+        ExternalSurfaceProbabilityFormat.openWholePercent(actualPct, probability: actualProb)
+            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+    }
 }
 
 /// The graded outcome of a submitted guess. Foundation-only (lives here rather
@@ -74,7 +92,10 @@ enum WatchGuessPool {
     }
 
     static func generateThreshold(_ prob: Double) -> Int {
-        let actual = Int((prob * 100).rounded())
+        let actual = renderedPercent(prob) ?? {
+            let scaled = prob * 100.0
+            return Int(scaled.rounded())
+        }()
         let offset = Int.random(in: 5...20)
         let direction = Bool.random()
         var threshold = direction ? actual + offset : actual - offset

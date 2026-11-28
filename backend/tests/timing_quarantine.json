@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "nodeid": "tests/test_theme_collection_ref_9925.py::test_a_slow_rollback_after_a_timeout_does_not_extend_the_wait",
+    "issue": 13934,
+    "added": "2026-11-28",
+    "expires": "2026-12-05",
+    "reason": "Ruling 241: A — failed on master run 46108123275 shard 9 attempt 1 (5.15s vs 0.5s wall bound), passed on attempt 2, untouched by #13919; repair or delete by 2026-12-05."
+  }
+]

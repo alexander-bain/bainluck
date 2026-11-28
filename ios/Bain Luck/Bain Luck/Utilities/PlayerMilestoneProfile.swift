@@ -80,7 +80,7 @@ enum PlayerMilestoneProfile {
     /// in order, with the same numbers the chips print.
     static func spokenSummary(_ profile: Profile, stat: String) -> String {
         let lines = profile.milestones.map {
-            "\(PlayerPropsFamily.targetLabel($0.threshold)) \(PlayerPropsPricing.displayPercent($0.probability))%"
+            "\(PlayerPropsFamily.targetLabel($0.threshold)) \(formatProbability($0.probability, renderedPercent: PlayerPropsPricing.displayPercent($0.probability)))"
         }
         return "\(stat), chance to reach each line: " + lines.joined(separator: ", ")
     }
