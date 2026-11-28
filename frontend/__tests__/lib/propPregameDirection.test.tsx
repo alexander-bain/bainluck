@@ -266,13 +266,9 @@ describe("the settled card is ranked by surprise and no longer annotated with it
     expect(settledRail).not.toMatch(/\d+\s*pts/);
   });
 
-  it("THE INFORMATION IS STILL THERE, in the sentence — this is a drop, not a loss", () => {
-    // Ruling 5 is "nothing beats unhelpful", not "less is more". If the sentence
-    // stopped carrying the mark and the outcome, the number would have been
-    // removed from a card that then said nothing.
-    expect(settledRail).toContain("was marked 93%");
-    expect(settledRail).toMatch(/and it (hit|missed)\./);
-    expect(settledRail).toContain("marked");
+  it("suppresses opening-value prose on settled rows while keeping HIT/MISS outcomes (#13953)", () => {
+    expect(settledRail).not.toContain("was marked");
+    expect(settledRail).toMatch(/\b(HIT|MISS)\b/);
   });
 
   it("THE RANKING IS UNTOUCHED — the key is still surprise, it is just not printed", () => {
@@ -343,13 +339,12 @@ describe("the first-read bar", () => {
     expect(named).toHaveLength(rail.rows.length * 2); // visible cell + aria-label
   });
 
-  it("and on the settled rail, every number is inside a sentence", () => {
+  it("and on the settled rail, opening-value prose is held across all three states", () => {
     const html = renderToStaticMarkup(
       React.createElement(PropDivergenceRail, { playerProps: DODGERS, status: "completed" }),
     );
     const text = renderedTokens(html).join(" ");
-    for (const m of text.match(/\d+%/g) ?? []) {
-      expect(text).toMatch(new RegExp(`marked ${m}`));
-    }
+    expect(text).not.toContain("was marked");
+    expect(text).not.toContain("opened at");
   });
 });

@@ -1175,11 +1175,11 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     perLadder.set(ladder, (perLadder.get(ladder) ?? 0) + 1);
     perPlayer.set(row.player, n + 1);
     if (!ladderWinner.has(ladder)) ladderWinner.set(ladder, row);
-    selected.push(withSentence(row, settled));
+    selected.push(row);
   }
 
   const ladderPivotContests = pregame
-    ? findLadderPivotContests(candidates, selected, ladderWinner, settled)
+    ? findLadderPivotContests(candidates, selected, ladderWinner)
     : [];
 
   if (selected.length === 0) {
@@ -1241,7 +1241,6 @@ function findLadderPivotContests(
   candidates: DivergenceRow[],
   selected: DivergenceRow[],
   ladderWinner: Map<string, DivergenceRow>,
-  settled: boolean,
 ): LadderPivotContest[] {
   const order = new Map(candidates.map((r, i) => [r.key, i]));
   const contests: LadderPivotContest[] = [];
@@ -1265,31 +1264,12 @@ function findLadderPivotContests(
     // Re-sorted into candidate order because the rail is presented in ranking
     // order, and the pivot does not necessarily rank where the mover did.
     const swapped = selected
-      .map((r) => (r.key === mover.key ? withSentence(pivot as DivergenceRow, settled) : r))
+      .map((r) => (r.key === mover.key ? (pivot as DivergenceRow) : r))
       .sort((a, b) => (order.get(a.key) ?? 0) - (order.get(b.key) ?? 0));
 
     contests.push({ ladder, mover, pivot, counterfactualRows: swapped });
   }
   return contests;
-}
-
-/** V2's escalation, applied identically by all three views. */
-function withSentence(row: DivergenceRow, settled: boolean): DivergenceRow {
-  if (!row.surprising) return row;
-  return {
-    ...row,
-    // #9003: the sentence sits on top of the bar and quotes the bar's own
-    // printed ends, so a paired row cannot say "opened at 9%" over "opened 8%".
-    sentence: divergenceSentence(
-      row.player,
-      row.label,
-      printedMarkPoints(row) / 100,
-      printedCurrentPoints(row) / 100,
-      settled,
-      row.resolution,
-      row.matchup,
-    ),
-  };
 }
 
 /**
@@ -2017,7 +1997,8 @@ export function selectDivergenceDetail(input: DivergenceInput): DivergenceDetail
       : pregame
         ? PROP_SCRIPT_FOLD
         : PROP_OFF_SCRIPT_TRAVEL;
-    if (travelAtOrAbove(distance, fold)) offScript.push(withSentence(row, settled));
+    // Hold opening-value sentences across all three states until the opening-value audit clears them.
+    if (travelAtOrAbove(distance, fold)) offScript.push(row);
     else onScript.push(row);
   }
 

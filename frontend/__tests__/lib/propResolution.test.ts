@@ -306,9 +306,9 @@ describe("the two post-game constants are the measurement, and they are ordered"
       playerProps: [onFold],
       status: "completed",
     });
-    // |0 - 0.8| = 0.8 clears the prose line.
+    // |0 - 0.8| = 0.8 clears the surprise threshold, with prose held until audited.
     expect(foldRow.offScript[0].surprise).toBeCloseTo(0.8, 10);
-    expect(foldRow.offScript[0].sentence).not.toBeNull();
+    expect(foldRow.offScript[0].sentence).toBeNull();
 
     const exactlyOnFold: PlayerPropRow = {
       ...(onFold as object),
@@ -333,7 +333,7 @@ describe("the two post-game constants are the measurement, and they are ordered"
       status: "completed",
     });
     expect(p.offScript[0].surprising).toBe(true);
-    expect(p.offScript[0].sentence).toContain("and it missed");
+    expect(p.offScript[0].sentence).toBeNull();
   });
 });
 
@@ -394,25 +394,16 @@ describe("ONE settled vocabulary — the third one was caught in a screenshot", 
   });
 });
 
-describe("the settled sentence states the OUTCOME, never the last traded price", () => {
-  it("says what happened, and never 'finished at <price>'", () => {
+describe("opening-value sentences are held in both live and settled states (#13953)", () => {
+  it("settled rail omits 'was marked' and 'finished at' sentences while keeping HIT/MISS", () => {
     const rail = selectDivergenceRows({ playerProps: DODGERS, status: "completed" });
-    const sentences = rail.rows.map((r) => r.sentence).filter(Boolean) as string[];
-    expect(sentences.length).toBeGreaterThan(0);
-    for (const s of sentences) {
-      expect(s).not.toContain("finished at");
-      expect(s).toContain("was marked");
-      expect(s).toMatch(/and it (hit|missed)\.$/);
-    }
+    expect(rail.rows.length).toBeGreaterThan(0);
+    expect(rail.rows.every((r) => r.sentence === null)).toBe(true);
   });
 
-  it("keeps the in-game sentence exactly as it was", () => {
+  it("in-game rail omits 'opened at' sentences until opening values are audited", () => {
     const live = selectDivergenceRows({ playerProps: DODGERS, status: "live" });
-    const sentences = live.rows.map((r) => r.sentence).filter(Boolean) as string[];
-    expect(sentences.length).toBeGreaterThan(0);
-    for (const s of sentences) {
-      expect(s).toContain("opened at");
-      expect(s).toMatch(/it's \d+% now\.$/);
-    }
+    expect(live.rows.length).toBeGreaterThan(0);
+    expect(live.rows.every((r) => r.sentence === null)).toBe(true);
   });
 });

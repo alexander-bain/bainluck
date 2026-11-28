@@ -70,13 +70,13 @@ describe("#9178 — the production specimen", () => {
     expect(labels.length).toBe(new Set(labels).size);
   });
 
-  it("Machado's sentence is printed once on the rail, at the Kalshi mark", () => {
+  it("Machado picks the Kalshi mark once on the rail without quoting an opening sentence", () => {
     const res = settled(ROWS);
     const machado = res.rows.filter((r) => r.label === labelOf("Manny Machado"));
     expect(machado).toHaveLength(1);
     expect(machado[0].pregameMark).toBe(0.17);
-    expect(machado[0].sentence).toContain("17%");
-    expect(res.rows.map((r) => r.sentence).join(" ")).not.toContain("marked 10%");
+    expect(machado[0].sentence).toBeNull();
+    expect(res.rows.map((r) => r.sentence ?? "").join(" ")).not.toContain("marked 10%");
   });
 
   it("the row reads the leg whose own line IS the printed question, whichever venue arrives first", () => {
