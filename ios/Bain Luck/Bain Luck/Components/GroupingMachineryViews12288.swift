@@ -1832,7 +1832,8 @@ private struct MachinerySiblingFieldsSectionView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 4)
                             Image(systemName: "chevron.right")
-                                .font(.system(size: min(titleSize * 0.45, 16), weight: .semibold))
+                                .font(.caption.weight(.semibold))
+                                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                                 .foregroundStyle(secondaryInk)
                         }
 
@@ -2184,7 +2185,8 @@ struct MachineryDiscoverCardView: View {
                     Text(card.openContainerCallToAction)
                         .fixedSize(horizontal: false, vertical: true)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: min(subSize * 0.65, 22), weight: .bold))
+                        .font(.caption2.weight(.bold))
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 }
                 .font(.system(size: subSize, weight: .semibold))
                 .foregroundStyle(colorScheme == .dark ? DS.emerald : DS.greenReadable)

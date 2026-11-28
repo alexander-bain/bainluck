@@ -533,12 +533,17 @@ final class LargestTextUncappedChecklistAndDivision13662Tests: XCTestCase {
             let hubCompactRow: CGFloat
             let hubRegularTitle: CGFloat
             let hubRegularRow: CGFloat
+            let hubChevron: CGFloat
+            let openAllChevron: CGFloat
         }
 
         var samples: [Sample] = []
         for entry in levels {
             let isAX = entry.dt.isAccessibilitySize
             let step = MachineryDynamicTypeCurve13662.accessibilityStepIndex(entry.dt) ?? 0
+            let traits = UITraitCollection(preferredContentSizeCategory: entry.ui)
+            let clampedCategory: UIContentSizeCategory = isAX ? .extraExtraExtraLarge : entry.ui
+            let clampedTraits = UITraitCollection(preferredContentSizeCategory: clampedCategory)
 
             let cap13 = scaled(13, style: .caption1, cat: entry.ui)
             let cap2_11 = scaled(11, style: .caption2, cat: entry.ui)
@@ -563,7 +568,12 @@ final class LargestTextUncappedChecklistAndDivision13662Tests: XCTestCase {
             let hubRegularTitle = isAX ? max(sub14, hubCompactTitle) : min(sub14, 22)
             let hubRegularRow = isAX ? max(sub13, hubCompactRow) : min(cap13, 20)
 
-            print(String(format: "CURVE_13662 %@ show=%.1f kicker=%.1f sub=%.1f row=%.1f title=%.1f duel=%.1f hubC=(%.1f,%.1f) hubR=(%.1f,%.1f)", entry.label, showAll, kicker, sub, row, title, duelPct, hubCompactTitle, hubCompactRow, hubRegularTitle, hubRegularRow))
+            let masterHubChevron = UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: traits).pointSize
+            let masterOpenAllChevron = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: traits).pointSize
+            let hubChevron = UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: clampedTraits).pointSize
+            let openAllChevron = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: clampedTraits).pointSize
+
+            print(String(format: "CURVE_13662 %@ show=%.1f kicker=%.1f sub=%.1f row=%.1f title=%.1f duel=%.1f hubC=(%.1f,%.1f) hubR=(%.1f,%.1f) chev=(%.1f,%.1f)", entry.label, showAll, kicker, sub, row, title, duelPct, hubCompactTitle, hubCompactRow, hubRegularTitle, hubRegularRow, hubChevron, openAllChevron))
 
             // Master exact parity across ordinary sizes (.large .. .xxxLarge).
             if !isAX {
@@ -577,6 +587,8 @@ final class LargestTextUncappedChecklistAndDivision13662Tests: XCTestCase {
                 XCTAssertEqual(hubCompactRow, min(cap13, 20), accuracy: 0.001, "\(entry.label) hubCompactRow")
                 XCTAssertEqual(hubRegularTitle, min(sub14, 22), accuracy: 0.001, "\(entry.label) hubRegularTitle")
                 XCTAssertEqual(hubRegularRow, min(cap13, 20), accuracy: 0.001, "\(entry.label) hubRegularRow")
+                XCTAssertEqual(hubChevron, masterHubChevron, accuracy: 0.001, "\(entry.label) hubChevron")
+                XCTAssertEqual(openAllChevron, masterOpenAllChevron, accuracy: 0.001, "\(entry.label) openAllChevron")
             } else {
                 // Visual hierarchy preserved across all accessibility sizes.
                 XCTAssertGreaterThan(duelPct, title, "\(entry.label): duelPct > title")
@@ -585,12 +597,15 @@ final class LargestTextUncappedChecklistAndDivision13662Tests: XCTestCase {
                 XCTAssertGreaterThan(sub, kicker, "\(entry.label): sub > kicker")
                 XCTAssertGreaterThan(hubCompactTitle, hubCompactRow, "\(entry.label): hubCompactTitle > row")
                 XCTAssertGreaterThan(hubRegularTitle, hubRegularRow, "\(entry.label): hubRegularTitle > row")
+                XCTAssertGreaterThanOrEqual(hubChevron, 18.0, "\(entry.label): hubChevron >= 18 pt")
+                XCTAssertGreaterThanOrEqual(openAllChevron, 17.0, "\(entry.label): openAllChevron >= 17 pt")
             }
 
             samples.append(Sample(
                 showAll: showAll, kicker: kicker, title: title, row: row, sub: sub, duelPct: duelPct,
                 hubCompactTitle: hubCompactTitle, hubCompactRow: hubCompactRow,
-                hubRegularTitle: hubRegularTitle, hubRegularRow: hubRegularRow
+                hubRegularTitle: hubRegularTitle, hubRegularRow: hubRegularRow,
+                hubChevron: hubChevron, openAllChevron: openAllChevron
             ))
         }
 
@@ -607,6 +622,8 @@ final class LargestTextUncappedChecklistAndDivision13662Tests: XCTestCase {
             XCTAssertGreaterThanOrEqual(cur.hubCompactRow, prev.hubCompactRow)
             XCTAssertGreaterThanOrEqual(cur.hubRegularTitle, prev.hubRegularTitle)
             XCTAssertGreaterThanOrEqual(cur.hubRegularRow, prev.hubRegularRow)
+            XCTAssertGreaterThanOrEqual(cur.hubChevron, prev.hubChevron)
+            XCTAssertGreaterThanOrEqual(cur.openAllChevron, prev.openAllChevron)
         }
 
         let xxxl = samples[3]
@@ -622,6 +639,8 @@ final class LargestTextUncappedChecklistAndDivision13662Tests: XCTestCase {
         XCTAssertGreaterThan(ax1.hubCompactRow, xxxl.hubCompactRow)
         XCTAssertGreaterThan(ax1.hubRegularTitle, xxxl.hubRegularTitle)
         XCTAssertGreaterThan(ax1.hubRegularRow, xxxl.hubRegularRow)
+        XCTAssertGreaterThanOrEqual(ax1.hubChevron, xxxl.hubChevron)
+        XCTAssertGreaterThanOrEqual(ax1.openAllChevron, xxxl.openAllChevron)
 
         XCTAssertGreaterThan(ax5.showAll, ax1.showAll)
         XCTAssertGreaterThan(ax5.kicker, ax1.kicker)
@@ -633,6 +652,25 @@ final class LargestTextUncappedChecklistAndDivision13662Tests: XCTestCase {
         XCTAssertGreaterThan(ax5.hubCompactRow, ax1.hubCompactRow)
         XCTAssertGreaterThan(ax5.hubRegularTitle, ax1.hubRegularTitle)
         XCTAssertGreaterThan(ax5.hubRegularRow, ax1.hubRegularRow)
+        XCTAssertGreaterThanOrEqual(ax5.hubChevron, xxxl.hubChevron)
+        XCTAssertGreaterThanOrEqual(ax5.openAllChevron, xxxl.openAllChevron)
+
+        // Pin source wiring so both disclosure chevrons preserve master fonts below AX and clamp at .xxxLarge.
+        let groupingSourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Components/GroupingMachineryViews12288.swift")
+        let groupingSource = try String(contentsOf: groupingSourceURL, encoding: .utf8)
+        XCTAssertTrue(
+            groupingSource.contains("Image(systemName: \"chevron.right\")\n                                .font(.caption.weight(.semibold))\n                                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)"),
+            "Hub grid disclosure chevron must preserve master .caption.weight(.semibold) capped at .xxxLarge"
+        )
+        XCTAssertTrue(
+            groupingSource.contains("Image(systemName: \"chevron.right\")\n                        .font(.caption2.weight(.bold))\n                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)"),
+            "Open all N sections chevron must preserve master .caption2.weight(.bold) capped at .xxxLarge"
+        )
+        XCTAssertFalse(groupingSource.contains("titleSize * 0.45"), "Must not replace hub grid chevron with scaled fixed point size")
+        XCTAssertFalse(groupingSource.contains("subSize * 0.65"), "Must not replace Open all chevron with scaled fixed point size")
 
         // Render-verify .xxxLarge at 390 pt Light on Discover division card & Hub grid.
         let suiteName = "xxxl-13662-\(UUID().uuidString)"
