@@ -158,13 +158,12 @@ describe("#9003 — direction follows the printed ends (#8754)", () => {
     expect(printed(row)).toEqual([57, 60]);
   });
 
-  it("a surprising paired row's sentence quotes the bar's own printed ends", () => {
+  it("a surprising paired row prints its pair ends while holding its opening-value sentence", () => {
     // Paired: Under 0.715 is the favourite (72), so the Over mark prints 28 —
     // alone it would print 29. Travel 0.28 makes the row surprising.
     const row = allRows([leg("Over", 0.565, 0.285), leg("Under", 0.565, 0.285)])[0];
     expect(printed(row)).toEqual([28, 57]);
-    expect(row.sentence).toContain("opened at 28%");
-    expect(row.sentence).toContain("57% now");
+    expect(row.sentence).toBeNull();
   });
 });
 

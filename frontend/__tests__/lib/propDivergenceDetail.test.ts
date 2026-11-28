@@ -91,7 +91,7 @@ describe("the fold is the mock's own measurement", () => {
     const d = selectDivergenceDetail({ playerProps: [onTheLine], status: "live" });
     expect(d.offScript[0].travel).toBeCloseTo(PROP_SURPRISE_TRAVEL, 10);
     expect(d.offScript[0].surprising).toBe(true);
-    expect(d.offScript[0].sentence).toBeTruthy();
+    expect(d.offScript[0].sentence).toBeNull();
   });
 
   it("shows every eligible question — the fold splits, it never drops", () => {
@@ -147,12 +147,14 @@ describe("the detail view reaches what the rail cannot", () => {
   });
 });
 
-describe("V2's escalation is unchanged across the fold", () => {
-  it("gives a sentence to exactly the surprising rows, and never below the fold", () => {
+describe("V2's escalation is held across all states until audited (#13953)", () => {
+  it("keeps surprising flags without emitting opening-value sentences on or below the fold", () => {
     const d = selectDivergenceDetail({ playerProps: REDS, status: "live" });
 
+    expect(d.offScript.filter((r) => r.surprising)).toHaveLength(13);
     for (const r of d.offScript) {
-      expect(Boolean(r.sentence)).toBe(r.travel >= PROP_SURPRISE_TRAVEL);
+      expect(r.surprising).toBe(r.travel >= PROP_SURPRISE_TRAVEL);
+      expect(r.sentence).toBeNull();
     }
     // 0.10 < 0.20, so an on-script row cannot be surprising. Asserted rather
     // than assumed — it is the reason there is no second rule down there.
@@ -162,23 +164,19 @@ describe("V2's escalation is unchanged across the fold", () => {
     }
   });
 
-  it("keeps the sentence a minority of the off-script list", () => {
+  it("keeps surprising rows a minority of the off-script list", () => {
     const d = selectDivergenceDetail({ playerProps: REDS, status: "live" });
-    const sentences = d.offScript.filter((r) => r.sentence).length;
-    // 13 of 100 questions clear 0.20 on this payload — p90. If a change makes
-    // most of the list prose, the escalation has stopped meaning anything.
-    expect(sentences).toBe(13);
-    expect(sentences).toBeLessThan(d.offScript.length / 2);
+    const surprisingCount = d.offScript.filter((r) => r.surprising).length;
+    expect(surprisingCount).toBe(13);
+    expect(surprisingCount).toBeLessThan(d.offScript.length / 2);
   });
 
-  it("in-game the sentence says now, not finished", () => {
+  it("in-game suppresses opening-value sentences while keeping rows un-settled", () => {
     const d = selectDivergenceDetail({ playerProps: REDS, status: "live" });
-    const withSentence = d.offScript.filter((r) => r.sentence);
-    expect(withSentence.length).toBeGreaterThan(0);
-    for (const r of withSentence) {
+    expect(d.offScript.length).toBeGreaterThan(0);
+    for (const r of d.offScript) {
       expect(r.settled).toBe(false);
-      expect(r.sentence).toMatch(/it's \d+% now\.$/);
-      expect(r.sentence).not.toMatch(/finished at/);
+      expect(r.sentence).toBeNull();
     }
   });
 });

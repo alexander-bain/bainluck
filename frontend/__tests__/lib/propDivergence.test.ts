@@ -86,10 +86,9 @@ describe("the measured surprise threshold", () => {
     const big = res.rows.find((r) => r.player === "Big Mover")!;
     const small = res.rows.find((r) => r.player === "Small Mover")!;
 
-    // V2: the sentence is an ESCALATION. Every row is a bar; only the
-    // surprising one additionally gets prose.
+    // Hold opening-value sentences across all states until audited (#13953).
     expect(big.surprising).toBe(true);
-    expect(big.sentence).toBeTruthy();
+    expect(big.sentence).toBeNull();
     expect(small.surprising).toBe(false);
     expect(small.sentence).toBeNull();
   });
@@ -354,15 +353,13 @@ describe("the label and the sentence", () => {
     }).rows[0];
 
     expect(live.settled).toBe(false);
-    expect(live.sentence).toContain("now.");
+    expect(live.sentence).toBeNull();
     expect(live.resolution).toBeNull();
 
     expect(done.settled).toBe(true);
     expect(done.resolution).toBe(1);
     expect(done.surprise).toBeCloseTo(0.9, 6); // |1 - 0.10|, not |0.60 - 0.10|
-    expect(done.sentence).toBe("Soto's 2+ hits was marked 10% — and it hit.");
-    expect(done.sentence).not.toContain("finished at");
-    // Travel is still computed — it is simply no longer what settles the rank.
+    expect(done.sentence).toBeNull();
     expect(done.travel).toBeCloseTo(0.5, 6);
   });
 
@@ -450,11 +447,9 @@ describe("the real production payload (gotcha #43, both directions)", () => {
     expect(top.player).toBe("Kyle Schwarber");
     expect(top.travel).toBeCloseTo(0.2767, 3);
     expect(top.surprising).toBe(true);
-    expect(top.sentence).toBe(
-      "Schwarber's 1+ home runs opened at 27% — it's 55% now.",
-    );
+    expect(top.sentence).toBeNull();
 
-    // One sentence, four bare bars — the shape V2 describes.
+    // One mover clearing PROP_SURPRISE_TRAVEL while all sentences stay held.
     expect(res.rows.filter((r) => r.surprising)).toHaveLength(1);
   });
 });

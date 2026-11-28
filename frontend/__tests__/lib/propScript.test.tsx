@@ -375,7 +375,7 @@ describe("the state machine is a triple, not a boolean", () => {
     expect([...detail.offScript, ...detail.onScript].every((r) => r.sentence === null)).toBe(true);
   });
 
-  it("in-game still narrates moved rows while pregame suppresses the opening-value line", () => {
+  it("holds opening-value sentences across pregame, live, and settled while preserving rows", () => {
     const preRows = selectDivergenceRows({
       playerProps: [kalshiRow("Line Moved", 2, 0.5, 0.2)],
       status: "scheduled",
@@ -385,8 +385,14 @@ describe("the state machine is a triple, not a boolean", () => {
       playerProps: [kalshiRow("Line Moved", 2, 0.5, 0.2)],
       status: "live",
     }).rows;
-    expect(liveRows[0].sentence).toContain("opened at 50%");
-    expect(liveRows[0].sentence).toContain("20% now");
+    expect(liveRows[0].sentence).toBeNull();
+    const doneRows = selectDivergenceRows({
+      playerProps: [
+        { ...kalshiRow("Line Moved", 2, 0.5, 0.2), hit: true } as unknown as PlayerPropRow,
+      ],
+      status: "completed",
+    }).rows;
+    expect(doneRows[0].sentence).toBeNull();
   });
 });
 
