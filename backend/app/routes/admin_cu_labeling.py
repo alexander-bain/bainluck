@@ -32,6 +32,7 @@ from app.utils.cu_fact_labeling import (
     load_frozen_split,
     load_repeatability_priority_ids,
     order_queue_markets,
+    sort_outcomes_for_display,
     validate_label_submission,
     visible_labels_for_rater,
 )
@@ -214,6 +215,18 @@ def _build_blind_market_payload(
 
     venue_link = build_venue_market_link(market, db_meta_row)
     rules_text = market.get("rules_text") or (db_meta_row or {}).get("description") or ""
+    raw_outcomes = list(market.get("outcomes") or [])
+    sorted_outcomes = sort_outcomes_for_display(raw_outcomes)
+    raw_outcome_names = list(market.get("outcome_names") or [])
+    sorted_outcome_names = (
+        [
+            o.get("name")
+            for o in sorted_outcomes
+            if isinstance(o, dict) and o.get("name") is not None
+        ]
+        if raw_outcomes
+        else sort_outcomes_for_display(raw_outcome_names)
+    )
     payload = {
         "market_id": int(market["market_id"]),
         "title": market.get("title") or "",
@@ -225,8 +238,8 @@ def _build_blind_market_payload(
         "resolution_date": market.get("resolution_date"),
         "venue_url": venue_link["venue_url"],
         "venue_link_label": venue_link["venue_link_label"],
-        "outcomes": market.get("outcomes") or [],
-        "outcome_names": market.get("outcome_names") or [],
+        "outcomes": sorted_outcomes,
+        "outcome_names": sorted_outcome_names,
         "subject_candidates": extract_subject_candidates(market),
         "own_label": vis["own_label"],
         "pair_complete": vis["pair_complete"],

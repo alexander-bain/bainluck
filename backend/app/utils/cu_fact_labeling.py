@@ -47,6 +47,8 @@ CLAIM_SLOTS: tuple[str, ...] = FRAME_SLOTS
 NONE_OF_THESE = "none_of_these"
 
 # Five curated dev-set practice cards shown before the sealed test set opens (#13900 / 472: A).
+# Swapped 2 cards after Fable's first-time look so practice teaches the hard cases directly
+# without repeating items already shown in card examples.
 PRACTICE_ROUND_CARDS: tuple[dict[str, Any], ...] = (
     {
         "market_id": 72559511,
@@ -57,34 +59,34 @@ PRACTICE_ROUND_CARDS: tuple[dict[str, Any], ...] = (
         "typical_stakes": (1, 2),
         "typical_breadth": (1, 2),
         "explanation": (
-            "A city weather forecast has no named person, team, company, bill, or country, so choose None of these. "
-            "It happens on one calendar day (2026-11-28) and covers one city (Local)."
+            "A city weather forecast has no named person, team, company, bill, or country, so choose None of these "
+            "(a place smaller than a country goes under Where). It happens on one calendar day (2026-11-28) and covers one city (Local)."
         ),
     },
     {
-        "market_id": 72770923,
-        "subjects": {"selection_kind": "candidate", "selected": ["Amazon"]},
-        "accepted_subject_sets": (("Amazon",), ("AMZN",), ("Amazon", "AMZN")),
-        "event_date": {"mode": "date", "value": "2026-11-30"},
-        "geography": "us",
-        "typical_stakes": (2, 4),
-        "typical_breadth": (2, 4),
-        "explanation": (
-            "Amazon is the named company, November 30 is the explicit single calendar day (2026-11-30), "
-            "and a US-listed company stock close belongs under US (nationwide)."
-        ),
-    },
-    {
-        "market_id": 56862751,
-        "subjects": {"selection_kind": "candidate", "selected": ["China"]},
-        "accepted_subject_sets": (("China",),),
+        "market_id": 63119270,
+        "subjects": {"selection_kind": "candidate", "selected": ["San Jose Sharks"]},
+        "accepted_subject_sets": (("San Jose Sharks",),),
         "event_date": {"mode": "no_single_day", "value": None},
-        "geography": "country:CN",
-        "typical_stakes": (3, 5),
-        "typical_breadth": (3, 5),
+        "geography": "us",
+        "typical_stakes": (2, 3),
+        "typical_breadth": (2, 3),
         "explanation": (
-            "Because the options span multi-year deadlines ('Before 2027' through 'Before 2030') rather than one day, "
-            "choose No single day. National policy in one non-US country is One country (outside the US) — China (CN)."
+            "Pick the team (San Jose Sharks), not the competition. Making the playoffs spans a season rather than one day "
+            "(No single day), and a team in a US national league (NHL) belongs under US (nationwide), not Local."
+        ),
+    },
+    {
+        "market_id": 70136122,
+        "subjects": {"selection_kind": "none_of_these", "selected": []},
+        "accepted_subject_sets": (),
+        "event_date": {"mode": "date", "value": "2028-11-07"},
+        "geography": "local",
+        "typical_stakes": (1, 2),
+        "typical_breadth": (1, 2),
+        "explanation": (
+            "When an election market lists only party choices and no named candidates, choose None of these. "
+            "US general Election Day is Nov 7, 2028 (Kalshi settles months later in May 2029), and a state legislative district is Local."
         ),
     },
     {
@@ -96,8 +98,8 @@ PRACTICE_ROUND_CARDS: tuple[dict[str, Any], ...] = (
         "typical_stakes": (4, 5),
         "typical_breadth": (3, 5),
         "explanation": (
-            "Include both Israel and Iran. Phrases like 'through November 30' describe a time window where the outcome can break "
-            "on any day up to the deadline, so choose No single day — and a ceasefire between nations is Global (multiple countries)."
+            "Include both Israel and Iran. Phrases like 'through November 30' describe a window rather than one day "
+            "(No single day), and a ceasefire between nations is Global (multiple countries)."
         ),
     },
     {
@@ -109,8 +111,8 @@ PRACTICE_ROUND_CARDS: tuple[dict[str, Any], ...] = (
         "typical_stakes": (2, 3),
         "typical_breadth": (2, 3),
         "explanation": (
-            "Earnings happen on one day, so it is not 'No single day' — yet the card never gives the release date, "
-            "and the site's payout date (Dec 1) is not proof of the event day. Choose Cannot tell from this card (or click Open on Polymarket on real cards)."
+            "Earnings happen on one day, so it is not 'No single day' — yet neither the card nor the venue date (Dec 1 settlement) "
+            "proves the release day unless the Polymarket page names it. Choose Cannot tell when readable sources still do not settle the day."
         ),
     },
 )
@@ -264,9 +266,28 @@ _TITLE_CANDIDATE_RE = re.compile(
     r"(?:\s+(?:of|the|and|for|in|on|at|vs\.?|v\.|y|de|del|la|el|van|von|al|"
     r"[A-Z][A-Za-z0-9&'.-]*|\d{1,3}(?![\d%$.,])))*)"
 )
+_TICKER_PAREN_RE = re.compile(r"(?<=[A-Za-z.])\s*\([A-Z]{1,6}\)")
+_LOCAL_WEATHER_HOME_PLACE_RE = re.compile(
+    r"\b(?:highest|lowest|high|low|mean|average|median)?\s*"
+    r"(?:temperature|temp|rain|snow(?:fall)?|precipitation|home\s+value)\s+"
+    r"(?:in|at|for)\s+(?:the\s+)?[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){0,3}(?:\s+area)?\b",
+    re.IGNORECASE,
+)
+_ELECTION_SEAT_OR_PARTY_RE = re.compile(
+    r"(?:\b(?:democratic|republican|libertarian|green|independent)\s+party\b"
+    r"|\b(?:house|senate|assembly|district|ward|precinct|legislature)\s+[A-Za-z0-9-]+-\d+\b"
+    r"|\b(?:state\s+house|state\s+senate|house\s+district|senate\s+district|assembly\s+district|city\s+council)\b"
+    r"|^no\s+next\b|^match\s+winner$)",
+    re.IGNORECASE,
+)
+_COMPETITION_STAGE_CHIP_RE = re.compile(
+    r"(?:\bplayoffs?\b|\bpostseason\b|\bfinals?\b|\bplay-?in\b)",
+    re.IGNORECASE,
+)
 _OUTCOME_SKIP_PREFIXES = (
     "above ", "below ", "over ", "under ", "before ", "after ", "by ",
     "more than ", "less than ", "at least ", "at most ", "between ",
+    "spread ", "o/u ", "no next ",
 )
 _ABBREV_END_RE = re.compile(r"(?:^|[.\s])[A-Za-z]\.$")
 
@@ -434,6 +455,8 @@ def _clean_subject_chip(raw: str) -> str | None:
         return None
     if _DATE_ONLY_CHIP_RE.match(s):
         return None
+    if _ELECTION_SEAT_OR_PARTY_RE.search(s):
+        return None
     norm_tokens = [re.sub(r"[^a-z0-9]", "", t.lower()) for t in s.split()]
     norm_tokens = [t for t in norm_tokens if t]
     if not norm_tokens or all(t in _GENERIC_CHIP_WORDS for t in norm_tokens):
@@ -456,9 +479,11 @@ def extract_subject_candidates(market: dict[str, Any]) -> list[str]:
             candidates.append(cleaned)
 
     title = str(market.get("title") or "")
-    # Remove explicit dates before scanning capitalized runs so trailing prepositions/months
-    # like "Rain in Chicago in Nov 2026?" yield "Chicago" rather than "... in Nov".
+    # Remove parenthesized stock tickers (`Amazon (AMZN)` -> `Amazon`), local weather/home-value
+    # places (`temperature in Denver`, `home value in Denver Metro`), and explicit dates.
     dateless_title = _TITLE_DATES.sub(" ", title)
+    dateless_title = _TICKER_PAREN_RE.sub("", dateless_title)
+    dateless_title = _LOCAL_WEATHER_HOME_PLACE_RE.sub(" ", dateless_title)
     for match in _TITLE_CANDIDATE_RE.findall(dateless_title):
         _add(match)
 
@@ -471,10 +496,95 @@ def extract_subject_candidates(market: dict[str, Any]) -> list[str]:
             if (
                 text
                 and not text.lower().startswith(_OUTCOME_SKIP_PREFIXES)
+                and ": o/u " not in text.lower()
                 and not re.match(r"^[$£€¥₹₩+\-<>0-9]", text)
             ):
                 _add(text)
+
+    if any(not _COMPETITION_STAGE_CHIP_RE.search(c) for c in candidates):
+        candidates = [c for c in candidates if not _COMPETITION_STAGE_CHIP_RE.search(c)]
     return candidates[:12]
+
+
+_UNIT_MULTIPLIER = {"k": 1_000.0, "m": 1_000_000.0, "b": 1_000_000_000.0}
+_NUMERIC_OPTION_TOKEN_RE = re.compile(
+    r"^\s*(?:([<>])\s*)?[$£€¥₹₩+]?\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmbKMB])?",
+    re.IGNORECASE,
+)
+
+
+def _scaled_float(num_raw: str, suffix: str | None) -> float:
+    val = float(num_raw.replace(",", ""))
+    if suffix:
+        val *= _UNIT_MULTIPLIER.get(suffix.lower(), 1.0)
+    return val
+
+
+def _numeric_outcome_sort_key(label: str) -> tuple[int, float, float] | None:
+    text = " ".join((label or "").strip().split())
+    if not text:
+        return None
+    low = text.lower()
+    if any(word in low for word in ("yes", "no", "draw", "tie", "party", "minister", "spread", "o/u")):
+        return None
+    clean = re.sub(r"[°$£€¥₹₩%]", " ", text).replace("−", "-")
+    clean_low = clean.lower()
+
+    # Exact lower tail ("41°F or below", "Under 10", "<$458K", "35 or fewer")
+    if re.search(r"\b(?:or\s+below|or\s+fewer|or\s+less|below|under)\b", clean_low) or text.lstrip().startswith("<"):
+        nums = re.findall(r"(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmb])?", clean_low)
+        if len(nums) == 1:
+            n = _scaled_float(nums[0][0], nums[0][1])
+            return (-1, n, n)
+
+    # Exact upper tail ("60°F or higher", "Above 249", "Above 13000", "200 or more", "$482K+")
+    if (
+        re.search(r"\b(?:or\s+higher|or\s+more|above|over|more\s+than|at\s+least)\b", clean_low)
+        or text.rstrip().endswith("+")
+    ):
+        nums = re.findall(r"(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmb])?", clean_low)
+        if len(nums) == 1:
+            n = _scaled_float(nums[0][0], nums[0][1])
+            return (1, n, n)
+
+    # Before / By YYYY deadlines ("Before 2027" .. "Before 2030")
+    m_before = re.match(r"^(?:before|by|through|after)\s+(\d{4})$", clean_low)
+    if m_before:
+        yr = float(m_before.group(1))
+        return (0, yr, yr)
+
+    # Range ("48-49", "3 to 9", "$458K - $463K", "10 to 24")
+    m_range = re.match(
+        r"^\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmb])?f?\s*(?:-|–|to)\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmb])?f?\s*$",
+        clean_low,
+    )
+    if m_range:
+        lo = _scaled_float(m_range.group(1), m_range.group(2))
+        hi = _scaled_float(m_range.group(3), m_range.group(4))
+        return (0, lo, hi)
+
+    # Single bare count/integer ("0", "1", "2")
+    m_single = re.match(r"^\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmb])?\s*$", clean_low)
+    if m_single:
+        n = _scaled_float(m_single.group(1), m_single.group(2))
+        return (0, n, n)
+
+    return None
+
+
+def sort_outcomes_for_display(outcomes: list[Any]) -> list[Any]:
+    """Naturally order numeric bucket/threshold/year options ascending without altering named lists."""
+    if len(outcomes) <= 1:
+        return list(outcomes)
+    keyed: list[tuple[tuple[int, float, float], int, Any]] = []
+    for idx, item in enumerate(outcomes):
+        label = item.get("name") if isinstance(item, dict) else str(item or "")
+        sort_key = _numeric_outcome_sort_key(str(label or ""))
+        if sort_key is None:
+            return list(outcomes)
+        keyed.append((sort_key, idx, item))
+    keyed.sort(key=lambda row: (row[0], row[1]))
+    return [row[2] for row in keyed]
 
 
 def normalize_subjects_answer(raw: Any) -> dict[str, Any]:
@@ -692,7 +802,7 @@ def validate_label_submission(
     event_date_raw = payload.get("event_date_answer")
     event_date_token = str(event_date_raw).strip() if event_date_raw is not None else ""
     if no_single_day and event_date_token.lower() == EVENT_DATE_CANNOT_TELL:
-        raise ValueError("Cannot choose both 'No single day' and 'Cannot tell from this card'")
+        raise ValueError("Cannot choose both 'No single day' and 'Cannot tell'")
 
     event_date: str | None
     if no_single_day:
@@ -701,7 +811,7 @@ def validate_label_submission(
         event_date = EVENT_DATE_CANNOT_TELL
     elif not event_date_token:
         raise ValueError(
-            "event_date_answer is required (YYYY-MM-DD, 'No single day', or 'Cannot tell from this card')"
+            "event_date_answer is required (calendar day, 'No single day', or 'Cannot tell')"
         )
     else:
         event_date = event_date_token
@@ -1142,9 +1252,10 @@ def _row_to_scorecard_answers(
     if row.get("no_single_day"):
         answers["event_date"] = None
     elif event_date_token.lower() == EVENT_DATE_CANNOT_TELL:
-        # "Cannot tell from this card" leaves event_date out of scorecard scoring
-        # (neither right nor wrong, mirrored to a separate bundle counter).
-        pass
+        # Store "cannot_tell" explicitly in the key so a writer that invents a
+        # specific calendar day is scored wrong (rather than omitted), while still
+        # tracking the separate cannot_tell_event_date_count summary counter.
+        answers["event_date"] = EVENT_DATE_CANNOT_TELL
     elif event_date_token:
         answers["event_date"] = event_date_token
 
@@ -1357,6 +1468,26 @@ def build_venue_market_link(
     }
 
 
+def score_event_date_against_key(
+    gold_event_date: str | None,
+    writer_event_date: str | None,
+) -> bool:
+    """Compare a writer event_date against the resolved human key per the 472: A matching rule.
+
+    - Resolved ``cannot_tell``: a writer claiming a specific day is scored wrong
+      (an invented day), while leaving it blank / null / ``cannot_tell`` is right.
+    - Resolved ``None`` (``No single day``): right iff writer returns ``None`` or blank.
+    - Specific ``YYYY-MM-DD``: right on exact normalized match.
+    """
+    gold = (gold_event_date or "").strip()
+    writer = (writer_event_date or "").strip()
+    if gold.lower() == EVENT_DATE_CANNOT_TELL:
+        return writer == "" or writer.lower() == EVENT_DATE_CANNOT_TELL
+    if not gold:
+        return writer == ""
+    return writer == gold
+
+
 def _format_subjects_label(subjects_answer: dict[str, Any] | None) -> str:
     if not isinstance(subjects_answer, dict):
         return "Blank"
@@ -1373,7 +1504,7 @@ def _format_event_date_label(event_date_answer: str | None, no_single_day: bool)
     if no_single_day:
         return "No single day"
     if str(event_date_answer or "").strip().lower() == EVENT_DATE_CANNOT_TELL:
-        return "Cannot tell from this card"
+        return "Cannot tell"
     return str(event_date_answer or "Blank")
 
 

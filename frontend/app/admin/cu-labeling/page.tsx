@@ -33,17 +33,17 @@ const EVENT_DAY_CHOICES: ReadonlyArray<{
   {
     mode: "date",
     label: "Specific day",
-    description: "Happens on one known calendar day (pick YYYY-MM-DD below).",
+    description: "Happens on one known calendar day (pick it below — not the venue settlement date).",
   },
   {
     mode: "no_single_day",
     label: "No single day",
-    description: "Spans weeks, months, or a 'by / before / through' deadline where it could happen on any day.",
+    description: "Not tied to one day — a month, a season, or a 'by / before / through' deadline.",
   },
   {
     mode: "cannot_tell",
-    label: "Cannot tell from this card",
-    description: "Date is unclear or missing here, even if a site payout date is listed.",
+    label: "Cannot tell",
+    description: "Happens on one day and nothing you can read on the card or venue page says which.",
   },
 ];
 
@@ -56,26 +56,30 @@ const WHERE_CHOICES: ReadonlyArray<{
   {
     preset: "local",
     label: "Local",
-    belongs: "One city, county, metro area, or US state house / state senate district — never nationwide US.",
-    example: "Highest temperature in Denver, NYC mayor, or Vermont House Orleans-3.",
+    belongs:
+      "One city or town (anywhere in the world — US or non-US), one metro area, one whole US state, or a US state legislative district.",
+    example: "Chicago rain, Tokyo mayor, California governor, or Ohio House seat.",
   },
   {
     preset: "us",
     label: "US (nationwide)",
-    belongs: "Federal US politics, US-wide business or macro markets, or US national leagues — not one city or state district.",
-    example: "Fed rate move, Amazon stock close, or NFL / NBA / NHL games.",
+    belongs:
+      "Federal US politics, US-wide business or macro releases, or teams and games in a US national league (use the league's country, not the team's city).",
+    example: "Fed rate move, Apple stock close, or Boston Bruins / NFL / NBA.",
   },
   {
     preset: "country",
     label: "One country (outside the US)",
-    belongs: "National politics, economy, weather, or a domestic league inside one single country other than the US.",
-    example: "China birth limits (CN), France credit rating (FR), or Premier League (GB).",
+    belongs:
+      "National politics, economy, a firm mostly inside one non-US country, or a domestic league inside one country other than the US.",
+    example: "Japan tax bill (JP), Italy credit rating (IT), or Premier League (GB).",
   },
   {
     preset: "global",
     label: "Global (multiple countries)",
-    belongs: "Cross-border contests, wars or treaties between nations, or worldwide awards and tech across multiple countries.",
-    example: "Israel–Iran ceasefire, Eurovision, World Cup, or global AI releases.",
+    belongs:
+      "Two or more countries (including players from two countries meeting in a third), worldwide shipments or totals for a global company, or international competitions.",
+    example: "Eurovision, World Cup, French vs Spanish player in Dubai, or Toyota worldwide deliveries.",
   },
 ];
 
@@ -96,7 +100,7 @@ const BREADTH_ANCHORS: ReadonlyArray<{ score: number; label: string }> = [
 ];
 
 const AGREEMENT_FIELD_LABELS: Record<string, string> = {
-  subjects: "Who or what is it about?",
+  subjects: "Which named people, teams, companies or countries is it about?",
   event_date: "The event's own day",
   geography: "Where",
   stakes: "How much this matters",
@@ -152,6 +156,7 @@ export default function CuFactLabelingPage() {
   const [draft, setDraft] = useState<CuFactLabelDraft>(emptyCuDraft);
   const [geoPreset, setGeoPreset] = useState<string>("");
   const [countryInput, setCountryInput] = useState("");
+  const [showExamples, setShowExamples] = useState(true);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -223,8 +228,8 @@ export default function CuFactLabelingPage() {
   const practiceCardNumber = practiceCardIndex >= 0 ? practiceCardIndex + 1 : index + 1;
 
   const payoutDateSentence = useMemo(
-    () => formatPayoutDateSentence(current?.resolution_date),
-    [current?.resolution_date]
+    () => formatPayoutDateSentence(current?.resolution_date, current?.source),
+    [current?.resolution_date, current?.source]
   );
   const eventStartSentence = useMemo(
     () => formatEventStartSentence(current?.linked_start),
@@ -269,6 +274,7 @@ export default function CuFactLabelingPage() {
     setErrorMsg(null);
     setStatusMsg(null);
     setPracticeFeedback(null);
+    setShowExamples(nextSplit === "practice");
     setSplit(nextSplit);
   };
 
@@ -734,12 +740,28 @@ export default function CuFactLabelingPage() {
 
           {/* Blind vs Tiebreak peer panel */}
           {split === "practice" ? (
-            <div className="text-xs text-text-secondary-strong">
-              Practice card {practiceCardNumber} of {practiceRequired}: save your answers to see the right answers and explanation.
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-secondary-strong">
+              <span>
+                Practice card {practiceCardNumber} of {practiceRequired}: click &quot;Check practice answer&quot; below to see the right answer and explanation.
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowExamples((v) => !v)}
+                className="px-2.5 py-1 text-xs font-medium rounded-md border border-surface-border bg-surface-elevated text-text-secondary-strong hover:text-text-primary"
+              >
+                {showExamples ? "Hide examples" : "Show examples"}
+              </button>
             </div>
           ) : role !== "tiebreak" ? (
-            <div className="text-xs text-text-secondary">
-              Blind check active: label on your own — neither labeler ever sees what the other answered.
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-secondary">
+              <span>Please label on your own. Nobody sees another labeler&apos;s answers.</span>
+              <button
+                type="button"
+                onClick={() => setShowExamples((v) => !v)}
+                className="px-2.5 py-1 text-xs font-medium rounded-md border border-surface-border bg-surface-elevated text-text-secondary-strong hover:text-text-primary"
+              >
+                {showExamples ? "Hide examples" : "Show examples"}
+              </button>
             </div>
           ) : (
             <div className="bg-surface-elevated border border-surface-border rounded-lg p-3 space-y-2 text-xs">
@@ -775,16 +797,20 @@ export default function CuFactLabelingPage() {
             </div>
           )}
 
-          {/* Question 1: Who or what is it about? */}
+          {/* Question 1: Which named people, teams, companies or countries is it about? */}
           <div className="space-y-2.5">
             <div className="space-y-1">
-              <div className="text-sm font-semibold text-text-primary">1. Who or what is it about?</div>
+              <div className="text-sm font-semibold text-text-primary">
+                1. Which named people, teams, companies or countries is it about?
+              </div>
               <p className="text-xs text-text-secondary-strong">
-                Pick every specific person, team, company, bill, tournament, or country the outcome turns on — pick None of these for city weather forecasts, market indexes, or unnamed groups.
+                Pick every named person, team, company, agency, bill, tournament, or country the market turns on. Pick only the team beside a league playoff, pick all named actors and targets, choose None of these for city weather or elections with party-only choices, and put places smaller than a country under Where.
               </p>
-              <p className="text-xs text-text-secondary">
-                <strong>Example:</strong> &quot;Israel x Iran ceasefire&quot; → pick <strong>Israel</strong> and <strong>Iran</strong> · &quot;Highest temperature in Denver&quot; → <strong>None of these</strong> · &quot;Amazon (AMZN)&quot; → pick <strong>Amazon</strong>.
-              </p>
+              {showExamples && (
+                <p className="text-xs text-text-secondary">
+                  <strong>Example:</strong> &quot;Brazil vs Chile&quot; → <strong>Brazil</strong> and <strong>Chile</strong> · &quot;Fitch downgrades Portugal&quot; → <strong>Fitch</strong> and <strong>Portugal</strong> · City temperature or party-only house seat → <strong>None of these</strong>.
+                </p>
+              )}
             </div>
             <div className="flex flex-wrap gap-1.5">
               {current.subject_candidates.map((cand) => {
@@ -821,7 +847,7 @@ export default function CuFactLabelingPage() {
                       : "bg-surface-elevated text-text-primary border-surface-border"
                   }`}
                 >
-                  {mode === "custom" ? "Custom" : mode === "none_of_these" ? "None of these" : "Not sure"}
+                  {mode === "custom" ? "Add a name" : mode === "none_of_these" ? "None of these" : "Not sure"}
                 </button>
               ))}
             </div>
@@ -830,7 +856,7 @@ export default function CuFactLabelingPage() {
                 type="text"
                 value={draft.customSubject}
                 onChange={(e) => setDraft((d) => ({ ...d, customSubject: e.target.value }))}
-                placeholder="Comma-separated names from the text"
+                placeholder="Type comma-separated names from the card"
                 className="w-full px-3 py-2 text-sm bg-surface-deep border border-surface-border rounded-lg"
               />
             )}
@@ -841,11 +867,13 @@ export default function CuFactLabelingPage() {
             <div className="space-y-1">
               <div className="text-sm font-semibold text-text-primary">2. The event&apos;s own day</div>
               <p className="text-xs text-text-secondary-strong">
-                The real-world calendar day the event happens — not the site&apos;s payout timestamp, and not a &quot;by / before / through&quot; deadline where it could happen on any day up to then.
+                The real-world day the event happens — read the card, then the venue link, then any fixed public date you are sure of (like an election day). Choose Cannot tell only when none of those settles it.
               </p>
-              <p className="text-xs text-text-secondary">
-                <strong>Example:</strong> Nov 7 election paying out next May → <strong>2028-11-07</strong> · &quot;through November 30&quot; → <strong>No single day</strong> · &quot;Beat quarterly earnings?&quot; (no date on card) → <strong>Cannot tell from this card</strong>.
-              </p>
+              {showExamples && (
+                <p className="text-xs text-text-secondary">
+                  <strong>Example:</strong> Nov 2028 general election settling in May 2029 → <strong>Specific day</strong> · &quot;By Dec 31, 2027&quot; → <strong>No single day</strong> · Undated court ruling with no date in the rules → <strong>Cannot tell</strong>.
+                </p>
+              )}
             </div>
             <div className="grid sm:grid-cols-3 gap-2">
               {EVENT_DAY_CHOICES.map((opt) => {
@@ -881,7 +909,7 @@ export default function CuFactLabelingPage() {
             {draft.eventDateMode === "date" && (
               <div className="pt-1 flex flex-wrap items-center gap-2">
                 <label className="text-xs font-medium text-text-secondary-strong">
-                  Calendar day (YYYY-MM-DD):
+                  Calendar day:
                 </label>
                 <input
                   type="date"
@@ -902,9 +930,11 @@ export default function CuFactLabelingPage() {
               <p className="text-xs text-text-secondary-strong">
                 Pick the single smallest region where the event takes place or applies — these four choices do not overlap.
               </p>
-              <p className="text-xs text-text-secondary">
-                <strong>Example:</strong> State house race or city weather → <strong>Local</strong> · NFL or US federal politics → <strong>US (nationwide)</strong> · France policy → <strong>One country (outside the US)</strong> · Two nations or World Cup → <strong>Global</strong>.
-              </p>
+              {showExamples && (
+                <p className="text-xs text-text-secondary">
+                  <strong>Example:</strong> City or US state race → <strong>Local</strong> · US national league or federal policy → <strong>US (nationwide)</strong> · Japan policy → <strong>One country (outside the US)</strong> · World Cup or Toyota worldwide deliveries → <strong>Global</strong>.
+                </p>
+              )}
             </div>
             <div className="grid sm:grid-cols-2 gap-2.5">
               {WHERE_CHOICES.map((opt) => {
@@ -927,9 +957,11 @@ export default function CuFactLabelingPage() {
                       )}
                     </div>
                     <p className="mt-1 text-xs text-text-secondary-strong">{opt.belongs}</p>
-                    <p className="mt-1 text-xs text-text-secondary">
-                      <strong>Example:</strong> {opt.example}
-                    </p>
+                    {showExamples && (
+                      <p className="mt-1 text-xs text-text-secondary">
+                        <strong>Example:</strong> {opt.example}
+                      </p>
+                    )}
                   </button>
                 );
               })}
@@ -963,11 +995,13 @@ export default function CuFactLabelingPage() {
                       4. How much this matters (1–5)
                     </div>
                     <p className="text-xs text-text-secondary-strong">
-                      Your own judgment of the real-world impact if this happens (answered last, never sent to a tie-breaker).
+                      Your own judgment of the real-world impact if this happens.
                     </p>
-                    <p className="text-xs text-text-secondary">
-                      <strong>Example:</strong> City weather is <strong>1</strong> · regular-season game is <strong>2</strong> · Fed rate decision is <strong>4</strong>.
-                    </p>
+                    {showExamples && (
+                      <p className="text-xs text-text-secondary">
+                        <strong>Example:</strong> City rain is <strong>1</strong> · regular-season NBA game is <strong>2</strong> · Fed rate decision is <strong>4</strong>.
+                      </p>
+                    )}
                   </div>
                   <div className="flex gap-1.5">
                     {STAKES_ANCHORS.map((item) => (
@@ -998,11 +1032,13 @@ export default function CuFactLabelingPage() {
                       5. How many people care (1–5)
                     </div>
                     <p className="text-xs text-text-secondary-strong">
-                      Your own judgment of how wide the audience following this story is (never sent to a tie-breaker).
+                      Your own judgment of how wide the audience following this story is.
                     </p>
-                    <p className="text-xs text-text-secondary">
-                      <strong>Example:</strong> Local district race is <strong>1</strong> · one US sport is <strong>3</strong> · global celebrity or war news is <strong>5</strong>.
-                    </p>
+                    {showExamples && (
+                      <p className="text-xs text-text-secondary">
+                        <strong>Example:</strong> Local council race is <strong>1</strong> · one US league is <strong>3</strong> · global celebrity or war news is <strong>5</strong>.
+                      </p>
+                    )}
                   </div>
                   <div className="flex gap-1.5">
                     {BREADTH_ANCHORS.map((item) => (

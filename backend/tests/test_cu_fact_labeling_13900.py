@@ -31,7 +31,9 @@ from app.utils.cu_fact_labeling import (
     load_practice_markets,
     load_repeatability_priority_ids,
     order_queue_markets,
+    score_event_date_against_key,
     select_shared_100_ids,
+    sort_outcomes_for_display,
     validate_label_submission,
     visible_labels_for_rater,
 )
@@ -585,21 +587,32 @@ def test_blind_subject_candidates_exclude_llm_metadata():
     assert "Arsenal FC" in candidates
     assert "LeakedLLMSubject" not in candidates
 
-    # Strip leading question words, preserve trailing title numbers, drop date/generic chips.
+    # Strip leading question words, competition beside teams, tickers, city weather places, and generic/party chips.
     assert extract_subject_candidates({"title": "Will the St. Louis Blues make the 2026-27 NHL Playoffs?"}) == [
         "St. Louis Blues",
-        "NHL Playoffs",
+    ]
+    assert extract_subject_candidates({"title": "Will the San Jose Sharks make the 2026-27 NHL Playoffs?"}) == [
+        "San Jose Sharks",
     ]
     assert extract_subject_candidates({"title": "Will Half-Life 3 be announced before 2027?"}) == ["Half-Life 3"]
     assert extract_subject_candidates({"title": "Will the U.S. invade Iran before 2027?"}) == ["U.S.", "Iran"]
     assert extract_subject_candidates({"title": "Will Trump praise Allah again by June 30, 2027?"}) == ["Trump", "Allah"]
-    assert extract_subject_candidates({"title": "Rain in Chicago in June 2027?"}) == ["Chicago"]
+    assert extract_subject_candidates({"title": "Rain in Chicago in June 2027?"}) == []
+    assert extract_subject_candidates({"title": "Highest temperature in Denver on July 28?"}) == []
+    assert extract_subject_candidates({"title": "Amazon (AMZN) closes above ___ on July 30?"}) == ["Amazon"]
+    assert extract_subject_candidates({"title": "Will Marvell (MRVL) beat quarterly earnings?"}) == ["Marvell"]
+    assert extract_subject_candidates(
+        {"title": "Vermont House Orleans-3 winner? (2028)", "outcome_names": ["Democratic party", "Republican party"]}
+    ) == []
+    assert extract_subject_candidates(
+        {"title": "Moody's or S&P downgrades France by July 30, 2027?"}
+    ) == ["Moody's", "S&P", "France"]
     assert extract_subject_candidates(
         {"title": "Artist with the most monthly Spotify listeners at the end of June 2027?"}
     ) == ["Spotify"]
     assert extract_subject_candidates({"title": "Best AI this month"}) == []
     micron_chips = extract_subject_candidates({"title": "Will Micron Technology, Inc. (MU) hit (HIGH) $840 in June 2027?"})
-    assert "Micron Technology" in micron_chips
+    assert micron_chips == ["Micron Technology"]
     assert "Inc" not in micron_chips
 
     # Unconditionally check all 500 frozen market titles on master (no silent skip).
@@ -611,6 +624,7 @@ def test_blind_subject_candidates_exclude_llm_metadata():
     corporate_suffixes = {"inc", "corp", "ltd", "llc", "plc"}
     expected_counts = {"sealed": 300, "dev": 200}
     checked_total = 0
+    dev_by_id: dict[int, dict] = {}
     for split_name, expected_n in expected_counts.items():
         path = DEFAULT_DATASET_PATHS[split_name]
         assert path.exists(), f"Missing frozen {split_name} dataset at {path}"
@@ -618,10 +632,16 @@ def test_blind_subject_candidates_exclude_llm_metadata():
         assert len(markets) == expected_n
         checked_total += len(markets)
         for market in markets:
+            if split_name == "dev":
+                dev_by_id[int(market["market_id"])] = market
             for chip in extract_subject_candidates(market):
                 assert chip.split()[0].lower() not in question_starters, (split_name, market["title"], chip)
                 assert chip.rstrip(".").lower() not in corporate_suffixes, (split_name, market["title"], chip)
     assert checked_total == 500
+    assert extract_subject_candidates(dev_by_id[72559511]) == []
+    assert extract_subject_candidates(dev_by_id[63119270]) == ["San Jose Sharks"]
+    assert extract_subject_candidates(dev_by_id[70136122]) == []
+    assert extract_subject_candidates(dev_by_id[65059801]) == ["Moody's", "S&P", "France"]
 
 
 def test_dev_shared_100_ids_checked_in_and_valid():
@@ -943,11 +963,34 @@ def test_cannot_tell_event_date_validation_agreement_tiebreak_and_scorecard():
     assert fact_disagreements(sub_a, sub_b) == []
     assert fact_disagreements(sub_a, sub_nsd) == ["event_date"]
 
-    # Resolved cannot_tell omits "event_date" from scored answers and increments cannot_tell_event_date_count.
+    # Resolved cannot_tell stays in the key as "cannot_tell" so a writer stating a specific day is scored wrong.
     bundle = build_answer_key_bundle({}, [sub_a, sub_b], split="sealed")
     assert bundle["cannot_tell_event_date_count"] == 1
     assert len(bundle["rows"]) == 1
-    assert "event_date" not in bundle["rows"][0]["answers"]
+    assert bundle["rows"][0]["answers"]["event_date"] == EVENT_DATE_CANNOT_TELL
+    assert score_event_date_against_key(EVENT_DATE_CANNOT_TELL, "2026-06-15") is False
+    assert score_event_date_against_key(EVENT_DATE_CANNOT_TELL, None) is True
+    assert score_event_date_against_key(EVENT_DATE_CANNOT_TELL, EVENT_DATE_CANNOT_TELL) is True
+    assert score_event_date_against_key(None, None) is True
+    assert score_event_date_against_key(None, "2026-06-15") is False
+    assert score_event_date_against_key("2028-11-07", "2028-11-07") is True
+    assert score_event_date_against_key("2028-11-07", "2029-05-07") is False
+
+
+def test_sort_outcomes_for_display_numeric_buckets_thresholds_and_years():
+    assert sort_outcomes_for_display(
+        ["60°F or higher", "52-53°F", "48-49°F", "41°F or below", "42-43°F"]
+    ) == ["41°F or below", "42-43°F", "48-49°F", "52-53°F", "60°F or higher"]
+    assert sort_outcomes_for_display(
+        ["1", "2", "3 to 9", "10 to 24", "Above 249", "25 to 99", "0", "100 to 249"]
+    ) == ["0", "1", "2", "3 to 9", "10 to 24", "25 to 99", "100 to 249", "Above 249"]
+    assert sort_outcomes_for_display(
+        ["Above 13100", "Above 13000", "Above 13200"]
+    ) == ["Above 13000", "Above 13100", "Above 13200"]
+    assert sort_outcomes_for_display(
+        ["Before 2030", "Before 2028", "Before 2027", "Before 2029"]
+    ) == ["Before 2027", "Before 2028", "Before 2029", "Before 2030"]
+    assert sort_outcomes_for_display(["Yes", "No"]) == ["Yes", "No"]
 
 
 def test_optional_structure_and_claim_frame_omitted_from_card_submission():

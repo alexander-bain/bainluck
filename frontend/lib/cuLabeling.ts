@@ -349,17 +349,30 @@ const MONTH_SHORT = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ] as const;
 
-export function formatPayoutDateSentence(raw: string | null | undefined): string | null {
+export function formatVenueSourceName(rawSource: string | null | undefined): string {
+  const s = (rawSource || "").trim().toLowerCase();
+  if (s === "polymarket") return "Polymarket";
+  if (s === "kalshi") return "Kalshi";
+  if (s === "odds_api") return "Odds API";
+  if (s === "datagolf") return "DataGolf";
+  return rawSource?.trim() || "The venue";
+}
+
+export function formatPayoutDateSentence(
+  raw: string | null | undefined,
+  source?: string | null | undefined
+): string | null {
   if (!raw || !raw.trim()) return null;
   const trimmed = raw.trim();
+  const venue = formatVenueSourceName(source);
   const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) {
-    return `The site pays out on ${trimmed}. That is often not the day of the event.`;
+    return `${venue} settles this on ${trimmed}. That is often not the day the thing itself happens.`;
   }
   const month = MONTH_SHORT[parsed.getUTCMonth()];
   const day = parsed.getUTCDate();
   const year = parsed.getUTCFullYear();
-  return `The site pays out on ${month} ${day}, ${year}. That is often not the day of the event.`;
+  return `${venue} settles this on ${month} ${day}, ${year}. That is often not the day the thing itself happens.`;
 }
 
 export function formatEventStartSentence(raw: string | null | undefined): string | null {
@@ -381,7 +394,7 @@ export function formatPeerEventDate(
 ): string {
   if (noSingleDay) return "No single day";
   if ((eventDateAnswer || "").trim().toLowerCase() === EVENT_DATE_CANNOT_TELL) {
-    return "Cannot tell from this card";
+    return "Cannot tell";
   }
   return eventDateAnswer || "blank";
 }
@@ -406,7 +419,7 @@ export function buildSubmissionPayload(params: {
     if (selected.length === 0) {
       return {
         ok: false,
-        error: "Select at least one person/team chip, Custom entry, 'None of these', or 'Not sure'.",
+        error: "Select at least one named chip, Add a name, 'None of these', or 'Not sure'.",
       };
     }
   } else if (draft.subjectMode === "custom") {
@@ -415,7 +428,7 @@ export function buildSubmissionPayload(params: {
       .map((s) => s.trim())
       .filter(Boolean);
     if (selected.length === 0) {
-      return { ok: false, error: "Enter at least one custom name." };
+      return { ok: false, error: "Type at least one name after clicking Add a name." };
     }
   }
 
@@ -432,14 +445,14 @@ export function buildSubmissionPayload(params: {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
       return {
         ok: false,
-        error: "Pick a calendar date (YYYY-MM-DD), 'No single day', or 'Cannot tell from this card'.",
+        error: "Pick a calendar day, 'No single day', or 'Cannot tell'.",
       };
     }
     eventDateAnswer = cleaned;
   } else {
     return {
       ok: false,
-      error: "Choose 'Specific day', 'No single day', or 'Cannot tell from this card' for the event's own day.",
+      error: "Choose 'Specific day', 'No single day', or 'Cannot tell' for the event's own day.",
     };
   }
 

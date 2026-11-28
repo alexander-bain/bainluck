@@ -30,7 +30,7 @@ describe("cuLabeling", () => {
     expect(missingName.ok).toBe(false);
   });
 
-  it("supports Specific day, No single day, and Cannot tell from this card without format or claim fields", () => {
+  it("supports Specific day, No single day, and Cannot tell without format or claim fields", () => {
     const draft = emptyCuDraft();
     draft.subjectMode = "candidate";
     draft.selectedCandidates = ["Marvell"];
@@ -114,13 +114,16 @@ describe("cuLabeling", () => {
     expect(codes.has("GB")).toBe(true);
     expect(codes.has("US")).toBe(false);
 
-    expect(formatPayoutDateSentence("2026-11-30T15:00:00+00:00")).toBe(
-      "The site pays out on Nov 30, 2026. That is often not the day of the event."
+    expect(formatPayoutDateSentence("2026-11-30T15:00:00+00:00", "polymarket")).toBe(
+      "Polymarket settles this on Nov 30, 2026. That is often not the day the thing itself happens."
+    );
+    expect(formatPayoutDateSentence("2026-11-30T15:00:00+00:00", "kalshi")).toBe(
+      "Kalshi settles this on Nov 30, 2026. That is often not the day the thing itself happens."
     );
     expect(formatEventStartSentence("2026-11-28T20:30:00+00:00")).toBe(
       "Event starts Nov 28, 2026 (US Eastern)."
     );
-    expect(formatPeerEventDate("cannot_tell", false)).toBe("Cannot tell from this card");
+    expect(formatPeerEventDate("cannot_tell", false)).toBe("Cannot tell");
     expect(formatPeerEventDate(null, true)).toBe("No single day");
   });
 });
