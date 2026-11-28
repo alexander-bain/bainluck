@@ -65,6 +65,19 @@ ASK_ONLY_TRUSTED_MAX = 0.50
 #: :func:`lone_ask_on_empty_book_sql`.
 KALSHI_BOOKMAKER = "kalshi"
 
+# The Kalshi quote rule admits a midpoint only below this spread.
+KALSHI_WIDE_BOOK_SPREAD = 0.50
+
+
+def kalshi_two_sided_book_is_wide(
+    yes_bid: Optional[float], yes_ask: Optional[float]
+) -> bool:
+    """Whether a recorded two-sided book is too wide to support a current quote."""
+    if yes_bid is None or yes_ask is None:
+        return False
+    bid, ask = float(yes_bid), float(yes_ask)
+    return 0 < bid < ask <= 1 and round(ask - bid, 4) >= KALSHI_WIDE_BOOK_SPREAD
+
 
 def ask_with_zero_bid(
     yes_bid: Optional[float], yes_ask: Optional[float]

@@ -31,7 +31,7 @@ from app.utils.futures_unsupported_price import (
     row_carries_a_verdict,
     unsupported_legs_above_the_supported_head,
 )
-from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
+from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER, kalshi_two_sided_book_is_wide
 from app.utils.outcome_display import open_kalshi_yes_bid
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,39 @@ def zero_bid_outcome_ids(market: FuturesMarket) -> set[int]:
         for outcome in getattr(market, "outcomes", None) or ()
         if open_kalshi_yes_bid(market, outcome) == 0
     }
+
+
+def wide_kalshi_book_outcome_ids(market: FuturesMarket) -> set[int]:
+    """A wide Kalshi futures book needs positive volume from the current read."""
+    # The feed already limits its projection to unlinked futures. Detail
+    # and history can also load game-linked or settled markets.
+    columns = getattr(market, "__dict__", {})
+    if (
+        getattr(market, "source", None) != KALSHI_BOOKMAKER
+        or getattr(market, "status", None) not in {"open", "active"}
+        or columns.get("event_id") is not None
+        or columns.get("settled_at") is not None
+    ):
+        return set()
+    withheld = set()
+    for outcome in getattr(market, "outcomes", None) or ():
+        if getattr(outcome, "current_probability", None) is None:
+            continue
+        if not kalshi_two_sided_book_is_wide(
+            open_kalshi_yes_bid(market, outcome), getattr(outcome, "current_yes_ask", None)
+        ):
+            continue
+        volume = getattr(outcome, "volume_24h", None)
+        volume_at = getattr(outcome, "volume_24h_at", None)
+        observed_at = getattr(outcome, "last_updated", None)
+        if (
+            volume is not None and volume > 0
+            and volume_at is not None and observed_at is not None
+            and volume_at >= observed_at
+        ):
+            continue
+        withheld.add(outcome.id)
+    return withheld
 
 
 def _leg_prices_an_empty_book(outcome) -> bool:
@@ -1016,6 +1049,7 @@ async def withheld_price_outcome_ids_for_markets(
             ids |= _book_refuted_outcome_ids(market)
             ids |= _empty_book_outcome_ids(market)
             ids |= zero_bid_outcome_ids(market)
+            ids |= wide_kalshi_book_outcome_ids(market)
             # Match the per-market order so the field rules see the same survivors.
             ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
             ids |= _unsupported_head_outcome_ids(market, ids)

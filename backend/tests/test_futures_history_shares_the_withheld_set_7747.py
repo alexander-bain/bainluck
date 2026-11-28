@@ -162,6 +162,30 @@ async def _history(market, snapshot_rows, trade_rows=()):
     return payload, db
 
 
+def test_kalshi_chart_omits_undated_trade_from_wide_book():
+    observed = datetime.now(timezone.utc)
+    live = _outcome(1, 0.91, bid=0.24, ask=0.91, last_updated=observed)
+    settled = _outcome(2, 0.91, bid=0.24, ask=0.91, last_updated=observed)
+    settled.resolution_source = "api_settlement"
+    settled.is_winner = True
+    tight, wide, graded = _snaps({1: 0.35, 2: 0.91, 3: 0.91}, "kalshi", [observed])
+    # A previous good quote and a later poll that repeated the undated 91% trade.
+    tight.captured_at = observed - timedelta(hours=1)
+    wide.outcome_id = live.id
+    wide.yes_bid, wide.yes_ask = 0.24, 0.91
+    graded.outcome_id = settled.id
+    graded.yes_bid, graded.yes_ask = 0.24, 0.91
+    market = _market([live, settled], source="kalshi")
+
+    assert futures_route._drop_unsupported_snapshot_points(
+        [tight, wide, graded], [live, settled], markets=(market,),
+    ) == [tight, graded]
+    live.volume_24h, live.volume_24h_at = 0.04, observed
+    assert futures_route._drop_unsupported_snapshot_points(
+        [tight, wide, graded], [live, settled], markets=(market,),
+    ) == [tight, wide, graded]
+
+
 def _last_values(payload):
     return {
         entry["outcome_id"]: entry["history"][-1]["probability"]
