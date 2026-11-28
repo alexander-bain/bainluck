@@ -300,13 +300,10 @@ _MALFORMED_CLAIM_RE = re.compile(
 
 CLAIM_TEMPLATES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
-        "total_set_line",
-        re.compile(rf"^The total is set at {_CLAIM_NUM_RE}\s+{_CLAIM_UNIT_RE}$"),
-    ),
-    (
-        "total_ou_moved",
+        "total_ou_line",
         re.compile(
-            rf"^(?:Over|Under)\s+{_CLAIM_NUM_RE}\s+total\s+{_CLAIM_UNIT_RE}{_CLAIM_MOVE_REQ_RE}$"
+            rf"^(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:More|Fewer)\s+than\s+{_CLAIM_NUM_RE})"
+            rf"\s+total\s+{_CLAIM_UNIT_RE}{_CLAIM_MOVE_OPT_RE}$"
         ),
     ),
     (
@@ -318,15 +315,26 @@ CLAIM_TEMPLATES: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
-        "player_expectation_line",
+        "prop_stat_line",
         re.compile(
-            rf"^{_CLAIM_ENTITY_RE}'s?\s+[a-z][a-z\s-]{{1,32}}\s+line\s+is\s+{_CLAIM_NUM_RE}(?:\s+yards)?$"
-        ),
-    ),
-    (
-        "player_prop_moved",
-        re.compile(
-            rf"^{_CLAIM_ENTITY_RE}\s+{_CLAIM_NUM_RE}\+?\s+[a-z][a-z\s-]{{1,32}}{_CLAIM_MOVE_REQ_RE}$"
+            rf"^{_CLAIM_ENTITY_RE}\s+(?:"
+            rf"pass(?:es)?\s+for\s+(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+yards|"
+            rf"rush(?:es)?\s+for\s+(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+yards|"
+            rf"(?:have|has)\s+(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+"
+            rf"(?:receiving\s+yards|receptions|assists|[a-z][a-z\s-]{{1,24}}\s+yards)|"
+            rf"totals?\s+(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+"
+            rf"(?:passing\s+and\s+rushing|rushing\s+and\s+receiving)\s+yards|"
+            rf"throws?\s+(?:an?\s+(?:passing\s+touchdown|interception)|"
+            rf"(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+(?:passing\s+touchdowns?|interceptions?))|"
+            rf"scores?\s+(?:a\s+(?:rushing\s+|receiving\s+)?touchdown|"
+            rf"(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+"
+            rf"(?:(?:rushing\s+|receiving\s+)?touchdowns?|points|goals))|"
+            rf"completes?\s+(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+passes|"
+            rf"makes?\s+(?:a\s+three-pointer|(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+three-pointers?)|"
+            rf"grabs?\s+(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+rebounds|"
+            rf"records?\s+(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+[a-z][a-z\s-]{{1,24}}|"
+            rf"reach(?:es)?\s+(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+[a-z][a-z\s-]{{1,28}}"
+            rf"){_CLAIM_MOVE_OPT_RE}$"
         ),
     ),
     (
@@ -344,26 +352,18 @@ CLAIM_TEMPLATES: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
-        "team_total_set_line",
-        re.compile(rf"^{_CLAIM_ENTITY_RE}\s+team\s+total\s+is\s+set\s+at\s+{_CLAIM_NUM_RE}\s+{_CLAIM_UNIT_RE}$"),
-    ),
-    (
-        "team_total_moved",
+        "team_total_line",
         re.compile(
-            rf"^{_CLAIM_ENTITY_RE}\s+score\s+(?:over|under)\s+{_CLAIM_NUM_RE}\s+{_CLAIM_UNIT_RE}{_CLAIM_MOVE_REQ_RE}$"
+            rf"^{_CLAIM_ENTITY_RE}\s+scores?\s+"
+            rf"(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:more|fewer)\s+than\s+{_CLAIM_NUM_RE})\s+"
+            rf"{_CLAIM_UNIT_RE}{_CLAIM_MOVE_OPT_RE}$"
         ),
     ),
     (
-        "period_total_set_line",
+        "period_total_line",
         re.compile(
-            rf"^(?:The\s+(?:first|second|third|fourth)\s+quarter|The\s+(?:first|second)\s+half|"
-            rf"The\s+(?:first|second|third)\s+period|Overtime)\s+total\s+is\s+set\s+at\s+{_CLAIM_NUM_RE}\s+{_CLAIM_UNIT_RE}$"
-        ),
-    ),
-    (
-        "period_total_moved",
-        re.compile(
-            rf"^(?:Over|Under)\s+{_CLAIM_NUM_RE}\s+{_CLAIM_UNIT_RE}\s+{_CLAIM_PERIOD_IN_RE}{_CLAIM_MOVE_REQ_RE}$"
+            rf"^(?:{_CLAIM_NUM_RE}\s+or\s+(?:more|fewer)|(?:More|Fewer)\s+than\s+{_CLAIM_NUM_RE})"
+            rf"\s+{_CLAIM_UNIT_RE}\s+{_CLAIM_PERIOD_IN_RE}{_CLAIM_MOVE_OPT_RE}$"
         ),
     ),
     (
@@ -651,7 +651,7 @@ def _resolve_known_team(raw: str, *, home_team: str, away_team: str) -> Optional
     kalshi_clause = _extract_kalshi_spread_clause(clean)
     if kalshi_clause is not None:
         clean = kalshi_clause[0]
-    low = clean.lower()
+    low = re.sub(r"(?<=\w\s)st\.?$", "state", clean.lower())
     if low in {"yes", "no", "over", "under", "draw", "tie"}:
         return None
 
@@ -1133,11 +1133,14 @@ def _plain_moment_parts(
     ou_m = _OU_LINE_RE.search(mname_no_side)
     num_str = _format_num(row.get("threshold")) or (ou_m.group(1) if ou_m else "")
     if side_word and num_str:
+        claim = _format_over_under_total_claim(
+            num_str,
+            unit,
+            is_under=(side_word == "Under"),
+            suffix=period_in,
+        )
         if moved and change_points is not None and change_since is not None:
-            claim = f"{side_word} {num_str} {unit} {period_in}, {_format_movement_clause(change_points, change_since)}"
-        else:
-            noun_cap = f"The {period_noun[4:]}" if period_noun.startswith("the ") else period_noun.capitalize()
-            claim = f"{noun_cap} total is set at {num_str} {unit}"
+            claim = f"{claim}, {_format_movement_clause(change_points, change_since)}"
         prefer = 0 if side_word == "Over" else 1
         return claim, (period_noun, "total"), prefer, None
 
@@ -1353,46 +1356,177 @@ def _canonical_player_stat_key(raw: str) -> str:
     return aliases.get(clean, clean)
 
 
+_SINGULAR_TEAM_ENDINGS: frozenset[str] = frozenset({
+    "heat", "magic", "jazz", "thunder", "avalanche", "lightning", "wild", "kraken",
+    "cardinal", "orange", "tide", "irish", "pack", "herd", "wave", "hurricane",
+    "spirit", "reign", "current", "pride", "courage",
+    "texas", "arkansas", "kansas", "illinois", "memphis", "rutgers", "umass",
+    "miss", "dallas", "louis", "juventus", "betis", "santos", "nantes", "reims",
+    "lens", "metz", "paris", "ajax", "fk", "fc", "sc", "cf", "ac",
+    "state", "michigan", "madrid", "barcelona", "arsenal", "chelsea",
+})
+_PLURAL_SOCCER_WORDS: frozenset[str] = frozenset({
+    "wolves", "spurs", "wanderers", "rovers", "rangers", "hibs",
+})
+
+
+def _subject_is_plural_team(name: str, *, is_player: bool = False) -> bool:
+    """True when ``name`` takes a plural English verb (e.g. ``Buckeyes`` vs ``Ohio State``)."""
+    if is_player:
+        return False
+    clean = sanitize_nugget_text(name or "").strip().rstrip(".")
+    if not clean:
+        return False
+    last = clean.rsplit(" ", 1)[-1].lower()
+    if last in _SINGULAR_TEAM_ENDINGS:
+        return False
+    if last == "sox" or last in _PLURAL_SOCCER_WORDS:
+        return True
+    if last.endswith(("'s", "\u2019s", "ss", "us", "is")):
+        return False
+    return last.endswith("s")
+
+
+def _quantity_phrase(
+    val_str: str,
+    *,
+    is_under: bool = False,
+    is_at_least_count: bool = False,
+) -> Optional[str]:
+    """Turn a rung or O/U threshold into plain fan-English bounds."""
+    try:
+        v = float(val_str)
+    except ValueError:
+        return None
+    frac = v - math.floor(v)
+    if abs(frac - 0.5) < 1e-6:
+        base = int(math.floor(v))
+        return f"{base} or fewer" if is_under else f"{base + 1} or more"
+    n_s = _format_num(v) or val_str
+    if is_under:
+        return f"fewer than {n_s}"
+    if is_at_least_count:
+        return f"{n_s} or more"
+    return f"more than {n_s}"
+
+
+def _format_over_under_total_claim(
+    threshold_str: str,
+    unit: str,
+    *,
+    is_under: bool = False,
+    is_total: bool = False,
+    suffix: str = "",
+) -> str:
+    qty = _quantity_phrase(threshold_str, is_under=is_under, is_at_least_count=False)
+    if not qty:
+        return ""
+    if qty.startswith(("more ", "fewer ")):
+        qty = qty[0].upper() + qty[1:]
+    parts = [qty]
+    if is_total:
+        parts.append("total")
+    parts.append(unit)
+    if suffix:
+        parts.append(suffix)
+    return " ".join(parts).strip()
+
+
+def _format_team_total_claim(
+    team_name: str,
+    threshold_str: str,
+    unit: str,
+    *,
+    is_under: bool = False,
+) -> str:
+    qty = _quantity_phrase(threshold_str, is_under=is_under, is_at_least_count=False)
+    if not qty or not team_name:
+        return ""
+    verb = "score" if _subject_is_plural_team(team_name) else "scores"
+    return f"{team_name} {verb} {qty} {unit}"
+
+
 def _format_player_prop_expectation(
-    player_name: str,
+    subject_name: str,
     canonical_stat: str,
     stat_display: str,
     num_str: str,
+    *,
+    is_plural: bool = False,
+    is_under: bool = False,
+    is_at_least_count: bool = True,
 ) -> Optional[str]:
-    poss = f"{player_name}'s"
-    yard_phrases = {
-        "passing_yards": ("passing", True),
-        "rushing_yards": ("rushing", True),
-        "receiving_yards": ("receiving", True),
-        "passing_and_rushing_yards": ("passing and rushing", True),
-        "passing_rushing_yards": ("passing and rushing", True),
-        "rushing_and_receiving_yards": ("rushing and receiving", True),
-        "rushing_receiving_yards": ("rushing and receiving", True),
-        "passing_touchdowns": ("passing touchdown", False),
-        "rushing_touchdowns": ("rushing touchdown", False),
-        "receiving_touchdowns": ("receiving touchdown", False),
-        "touchdowns": ("touchdown", False),
-        "receptions": ("receptions", False),
-        "completions": ("completions", False),
-        "passing_completions": ("completions", False),
-        "interceptions": ("interceptions", False),
-        "passing_interceptions": ("interceptions", False),
-        "three_pointers": ("three-pointers", False),
-    }
-    if canonical_stat == "touchdowns" and num_str == "1":
-        return f"{player_name} scores a touchdown"
-    if canonical_stat in yard_phrases:
-        noun, is_yards = yard_phrases[canonical_stat]
-        return f"{poss} {noun} line is {num_str}{' yards' if is_yards else ''}"
+    clean_stat_key = re.sub(r"^team_", "", canonical_stat or "")
+    qty = _quantity_phrase(
+        num_str, is_under=is_under, is_at_least_count=is_at_least_count
+    )
+    if not subject_name or not qty:
+        return None
 
-    clean_stat = _MULTISPACE_RE.sub(" ", re.sub(r"[^a-z\s-]", "", stat_display.lower())).strip()
+    def v(plural_form: str, singular_form: str) -> str:
+        return plural_form if is_plural else singular_form
+
+    is_exact_one = num_str == "1" and not is_under and is_at_least_count
+    if clean_stat_key == "passing_yards":
+        return f"{subject_name} {v('pass', 'passes')} for {qty} yards"
+    if clean_stat_key == "rushing_yards":
+        return f"{subject_name} {v('rush', 'rushes')} for {qty} yards"
+    if clean_stat_key == "receiving_yards":
+        return f"{subject_name} {v('have', 'has')} {qty} receiving yards"
+    if clean_stat_key in ("passing_and_rushing_yards", "passing_rushing_yards"):
+        return f"{subject_name} {v('total', 'totals')} {qty} passing and rushing yards"
+    if clean_stat_key in ("rushing_and_receiving_yards", "rushing_receiving_yards"):
+        return f"{subject_name} {v('total', 'totals')} {qty} rushing and receiving yards"
+    if clean_stat_key == "passing_touchdowns":
+        if is_exact_one:
+            return f"{subject_name} {v('throw', 'throws')} a passing touchdown"
+        return f"{subject_name} {v('throw', 'throws')} {qty} passing touchdowns"
+    if clean_stat_key == "rushing_touchdowns":
+        if is_exact_one:
+            return f"{subject_name} {v('score', 'scores')} a rushing touchdown"
+        return f"{subject_name} {v('score', 'scores')} {qty} rushing touchdowns"
+    if clean_stat_key == "receiving_touchdowns":
+        if is_exact_one:
+            return f"{subject_name} {v('score', 'scores')} a receiving touchdown"
+        return f"{subject_name} {v('score', 'scores')} {qty} receiving touchdowns"
+    if clean_stat_key == "touchdowns":
+        if is_exact_one:
+            return f"{subject_name} {v('score', 'scores')} a touchdown"
+        return f"{subject_name} {v('score', 'scores')} {qty} touchdowns"
+    if clean_stat_key == "receptions":
+        return f"{subject_name} {v('have', 'has')} {qty} receptions"
+    if clean_stat_key in ("completions", "passing_completions"):
+        return f"{subject_name} {v('complete', 'completes')} {qty} passes"
+    if clean_stat_key in ("interceptions", "passing_interceptions"):
+        if is_exact_one:
+            return f"{subject_name} {v('throw', 'throws')} an interception"
+        return f"{subject_name} {v('throw', 'throws')} {qty} interceptions"
+    if clean_stat_key == "three_pointers":
+        if is_exact_one:
+            return f"{subject_name} {v('make', 'makes')} a three-pointer"
+        return f"{subject_name} {v('make', 'makes')} {qty} three-pointers"
+    if clean_stat_key in ("points", "goals"):
+        return f"{subject_name} {v('score', 'scores')} {qty} {clean_stat_key}"
+    if clean_stat_key == "rebounds":
+        return f"{subject_name} {v('grab', 'grabs')} {qty} rebounds"
+    if clean_stat_key == "assists":
+        return f"{subject_name} {v('have', 'has')} {qty} assists"
+    if clean_stat_key in ("strikeouts", "hits", "saves", "blocks", "steals", "shots"):
+        return f"{subject_name} {v('record', 'records')} {qty} {clean_stat_key}"
+    if clean_stat_key == "shots_on_goal":
+        return f"{subject_name} {v('record', 'records')} {qty} shots on goal"
+
+    clean_stat = _MULTISPACE_RE.sub(
+        " ",
+        re.sub(r"[^a-z\s-]", "", re.sub(r"^team\s+", "", stat_display.lower())),
+    ).strip()
     if not clean_stat or "fantasy" in clean_stat or len(clean_stat) > 28:
         return None
     if clean_stat.endswith(" yards"):
         prefix = clean_stat[: -len(" yards")].strip()
         if prefix:
-            return f"{poss} {prefix} line is {num_str} yards"
-    return f"{poss} {clean_stat} line is {num_str}"
+            return f"{subject_name} {v('have', 'has')} {qty} {prefix} yards"
+    return f"{subject_name} {v('reach', 'reaches')} {qty} {clean_stat}"
 
 
 def _format_binary_player_event(player_name: str, raw_stat: str) -> Optional[str]:
@@ -1450,9 +1584,10 @@ def _extract_candidates(
     for row in game_markets.get("totals") or ():
         if not isinstance(row, Mapping):
             continue
+        over_prob = row.get("over_probability")
         p = _is_fresh_and_priced(
             row,
-            prob=row.get("over_probability", row.get("probability")),
+            prob=over_prob if over_prob is not None else row.get("probability"),
             now=now,
             max_age_hours=max_age,
             excluded_counts=excluded,
@@ -1461,14 +1596,19 @@ def _extract_candidates(
             continue
         thresh = row.get("threshold")
         out_name = sanitize_nugget_text(str(row.get("outcome_name") or "Over")).strip()
-        low_out = out_name.lower()
-        if "under" in low_out:
-            side_word = "Under"
-        elif "over" in low_out:
+        if over_prob is not None:
+            # `events.py` already normalizes `over_probability` onto the Over axis
+            # even when `outcome_name` labels the complementary Under leg.
             side_word = "Over"
         else:
-            excluded["unreadable_claim"] += 1
-            continue
+            low_out = out_name.lower()
+            if "under" in low_out:
+                side_word = "Under"
+            elif "over" in low_out:
+                side_word = "Over"
+            else:
+                excluded["unreadable_claim"] += 1
+                continue
         t_str = _format_num(thresh)
         if not t_str:
             ou_m = _OU_LINE_RE.search(str(row.get("market_name") or ""))
@@ -1485,11 +1625,15 @@ def _extract_candidates(
             allow_pregame_mark=is_post_kickoff,
         )
         moved = _is_moved_rung(chg, since)
-        if moved and chg is not None and since is not None:
-            claim = f"{side_word} {t_str} total {unit}, {_format_movement_clause(chg, since)}".strip()
-        else:
-            claim = f"The total is set at {t_str} {unit}".strip()
-        if match_claim_template(claim) is None:
+        claim = _format_over_under_total_claim(
+            t_str,
+            unit,
+            is_under=(side_word == "Under"),
+            is_total=True,
+        )
+        if moved and chg is not None and since is not None and claim:
+            claim = f"{claim}, {_format_movement_clause(chg, since)}"
+        if not claim or match_claim_template(claim) is None:
             excluded["unreadable_claim"] += 1
             continue
         is_even = _is_even_set_line(p, chg, is_set_line=True)
@@ -1633,9 +1777,11 @@ def _extract_candidates(
         eligible_counts["game_flow"] += 1
         candidates.append(picked_spread)
 
-    # 2. players: numeric ladders grouped by (player, canonical_stat) pick 1 rung nearest 50% (or moved)
+    # 2. players & team-stat props: numeric ladders grouped by (subject, stat) pick 1 rung nearest 50% (or moved)
     prop_ladders: dict[tuple[str, str], list[dict[str, Any]]] = {}
     best_binary_props: dict[tuple[str, str], dict[str, Any]] = {}
+    team_stat_ladders: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    best_binary_team_props: dict[tuple[str, str], dict[str, Any]] = {}
     for row in game_markets.get("player_props") or ():
         if not isinstance(row, Mapping):
             continue
@@ -1737,11 +1883,57 @@ def _extract_candidates(
             excluded["unreadable_claim"] += 1
             continue
 
-        canonical_stat = _canonical_player_stat_key(stat_key or stat_label)
+        mname_after_matchup = _strip_matchup_prefix(str(row.get("market_name") or ""))
+        resolved_team_name = _resolve_known_team(
+            player_name, home_team=home_team, away_team=away_team
+        )
+        has_team_stat_prefix = bool(
+            stat_key.startswith("team_")
+            or stat_label.lower().startswith("team ")
+            or re.match(r"^team\s+", mname_after_matchup, re.IGNORECASE)
+        )
+        is_team_stat = bool(
+            not row.get("player_headshot")
+            and (has_team_stat_prefix or resolved_team_name is not None)
+        )
+        raw_canonical_stat = _canonical_player_stat_key(stat_key or stat_label)
+        canonical_stat = (
+            _canonical_player_stat_key(re.sub(r"^team_", "", raw_canonical_stat))
+            if is_team_stat
+            else raw_canonical_stat
+        )
         if not canonical_stat:
             excluded["unreadable_claim"] += 1
             continue
 
+        if is_team_stat:
+            subj = _team_subject(
+                player_name,
+                home_team=home_team,
+                away_team=away_team,
+                home_logo=home_logo,
+                away_logo=away_logo,
+            )
+            subject_name = subj["name"]
+            subject_key = subject_name.lower()
+            is_plural_subject = _subject_is_plural_team(subject_name)
+        else:
+            subject_name = player_name
+            subject_key = player_key
+            is_plural_subject = False
+            headshot = row.get("player_headshot")
+            if not headshot:
+                side_tag = str(row.get("player_team") or "").lower()
+                fallback_logo = home_logo if side_tag == "home" else (away_logo if side_tag == "away" else None)
+                subj = {"name": player_name, "image_url": fallback_logo, "image_kind": "logo" if fallback_logo else None}
+            else:
+                subj = {"name": player_name, "image_url": headshot, "image_kind": "headshot"}
+
+        is_at_least_count = bool(
+            (isinstance(line_field, Mapping) and line_field.get("kind") == "count_at_least")
+            or "+" in str(disp_line or "")
+            or "+" in str(row.get("outcome_name") or "")
+        )
         pm_src = _normalize_pregame_mark_source(row.get("pregame_mark_source"))
         chg, since, pre = _extract_movement(
             prob=p,
@@ -1752,24 +1944,27 @@ def _extract_candidates(
         )
         moved = _is_moved_rung(chg, since)
         is_ladder_prop = line_num_val is not None
+        clean_stat_display = (
+            re.sub(r"^team\s+", "", stat_label, flags=re.IGNORECASE).strip()
+            if is_team_stat
+            else stat_label
+        )
         if is_ladder_prop and line_num_val is not None:
-            if moved and chg is not None and since is not None:
-                stat_phrase = _MULTISPACE_RE.sub(
-                    " ",
-                    re.sub(r"[^a-z\s-]", "", (stat_label or canonical_stat.replace("_", " ")).lower()),
-                ).strip()
-                line_tok = disp_line or line_num_val
-                claim = f"{player_name} {line_tok} {stat_phrase}, {_format_movement_clause(chg, since)}"
+            exp_claim = _format_player_prop_expectation(
+                subject_name,
+                canonical_stat,
+                clean_stat_display or canonical_stat.replace("_", " "),
+                line_num_val,
+                is_plural=is_plural_subject,
+                is_under=False,
+                is_at_least_count=is_at_least_count,
+            )
+            if exp_claim and moved and chg is not None and since is not None:
+                claim = f"{exp_claim}, {_format_movement_clause(chg, since)}"
             else:
-                exp_claim = _format_player_prop_expectation(
-                    player_name,
-                    canonical_stat,
-                    stat_label or canonical_stat.replace("_", " "),
-                    line_num_val,
-                )
                 claim = exp_claim or ""
         else:
-            bin_claim = _format_binary_player_event(player_name, stat_label or stat_key)
+            bin_claim = _format_binary_player_event(subject_name, clean_stat_display or stat_key)
             if bin_claim and moved and chg is not None and since is not None:
                 claim = f"{bin_claim}, {_format_movement_clause(chg, since)}"
             else:
@@ -1779,20 +1974,14 @@ def _extract_candidates(
             excluded["unreadable_claim"] += 1
             continue
 
-        headshot = row.get("player_headshot")
-        if not headshot:
-            side_tag = str(row.get("player_team") or "").lower()
-            fallback_logo = home_logo if side_tag == "home" else (away_logo if side_tag == "away" else None)
-            subj = {"name": player_name, "image_url": fallback_logo, "image_kind": "logo" if fallback_logo else None}
-        else:
-            subj = {"name": player_name, "image_url": headshot, "image_kind": "headshot"}
-
         is_even = _is_even_set_line(p, chg, is_set_line=True)
         src_cnt = int(row.get("source_count") or 1)
+        has_headshot = bool(not is_team_stat and row.get("player_headshot"))
+        target_kind = "teams" if is_team_stat else "players"
         form = _select_nugget_form(
             change_points=chg,
             change_since=since,
-            default_form="faces_row" if headshot else "ladder",
+            default_form="faces_row" if has_headshot else "ladder",
         )
         sc, why = _compute_score(
             prob=p,
@@ -1800,13 +1989,13 @@ def _extract_candidates(
             change_since=since,
             is_live=is_live,
             source_count=src_cnt,
-            has_picture=bool(headshot),
-            base_bonus=8.0,
+            has_picture=has_headshot,
+            base_bonus=7.8 if is_team_stat else 8.0,
             is_set_line=True,
         )
         cand = _candidate_dict(
-            nid=f"players:{row.get('_market_id') or player_key}:{canonical_stat}:{disp_line or 'bin'}",
-            kind="players",
+            nid=f"{target_kind}:{row.get('_market_id') or subject_key}:{canonical_stat}:{disp_line or 'bin'}",
+            kind=target_kind,
             subject=subj,
             claim=claim,
             prob=p,
@@ -1820,11 +2009,23 @@ def _extract_candidates(
             observed_at=row.get("observed_at"),
             source_surface="game_markets",
             source_market_id=row.get("_market_id"),
-            dedup_key=f"players:{player_key}:{canonical_stat}",
+            dedup_key=f"{target_kind}:{subject_key}:{canonical_stat}",
             is_even_line=is_even,
         )
-        pair = (player_key, canonical_stat)
-        if is_ladder_prop:
+        pair = (subject_key, canonical_stat)
+        if is_team_stat:
+            if is_ladder_prop:
+                team_stat_ladders.setdefault(pair, []).append({
+                    "prob": p,
+                    "score": sc,
+                    "moved": moved,
+                    "abs_chg": abs(chg) if chg is not None else 0,
+                    "prefer_order": 0,
+                    "cand": cand,
+                })
+            elif pair not in best_binary_team_props or cand["score"] > best_binary_team_props[pair]["score"]:
+                best_binary_team_props[pair] = cand
+        elif is_ladder_prop:
             prop_ladders.setdefault(pair, []).append({
                 "prob": p,
                 "score": sc,
@@ -1844,15 +2045,24 @@ def _extract_candidates(
     for cand in best_binary_props.values():
         eligible_counts["players"] += 1
         candidates.append(cand)
+    for ladder_rungs in team_stat_ladders.values():
+        picked_team_stat = _select_ladder_rung(ladder_rungs, excluded=excluded)
+        if picked_team_stat is not None:
+            eligible_counts["teams"] += 1
+            candidates.append(picked_team_stat)
+    for cand in best_binary_team_props.values():
+        eligible_counts["teams"] += 1
+        candidates.append(cand)
 
     # 3. teams: one rung per team total ladder nearest 50% (or moved)
     team_total_ladders: dict[str, list[dict[str, Any]]] = {}
     for row in game_markets.get("team_totals") or ():
         if not isinstance(row, Mapping):
             continue
+        tt_over_prob = row.get("over_probability")
         p = _is_fresh_and_priced(
             row,
-            prob=row.get("over_probability", row.get("probability")),
+            prob=tt_over_prob if tt_over_prob is not None else row.get("probability"),
             now=now,
             max_age_hours=max_age,
             excluded_counts=excluded,
@@ -1874,7 +2084,11 @@ def _extract_candidates(
             home_logo=home_logo,
             away_logo=away_logo,
         )
-        tt_side = "under" if "under" in str(row.get("side") or row.get("outcome_name") or "").lower() else "over"
+        tt_side = (
+            "over"
+            if tt_over_prob is not None
+            else ("under" if "under" in str(row.get("side") or row.get("outcome_name") or "").lower() else "over")
+        )
         pm_src = _normalize_pregame_mark_source(row.get("pregame_mark_source"))
         chg, since, pre = _extract_movement(
             prob=p,
@@ -1884,11 +2098,15 @@ def _extract_candidates(
             allow_pregame_mark=is_post_kickoff,
         )
         moved = _is_moved_rung(chg, since)
-        if moved and chg is not None and since is not None:
-            claim = f"{subj['name']} score {tt_side} {t_str} {unit}, {_format_movement_clause(chg, since)}"
-        else:
-            claim = f"{subj['name']} team total is set at {t_str} {unit}"
-        if match_claim_template(claim) is None:
+        claim = _format_team_total_claim(
+            subj["name"],
+            t_str,
+            unit,
+            is_under=(tt_side == "under"),
+        )
+        if moved and chg is not None and since is not None and claim:
+            claim = f"{claim}, {_format_movement_clause(chg, since)}"
+        if not claim or match_claim_template(claim) is None:
             excluded["unreadable_claim"] += 1
             continue
         is_even = _is_even_set_line(p, chg, is_set_line=True)

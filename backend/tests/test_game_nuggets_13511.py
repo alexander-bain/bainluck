@@ -379,8 +379,8 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
         now=NOW,
     )
     claims = [n["claim"] for n in pre_res["nuggets"]]
-    assert "The total is set at 53.5 points" in claims
-    assert "The third quarter total is set at 13.5 points" in claims
+    assert "54 or more total points" in claims
+    assert "13 or fewer points in the third quarter" in claims
     assert "Mike Gesicki scores the first touchdown" in claims
     assert all("Oddity Foo" not in c for c in claims)
     assert pre_res["excluded_counts"]["unreadable_claim"] >= 1
@@ -402,7 +402,7 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
         now=NOW,
     )
     total_live = next(n for n in live_res["nuggets"] if n["source_market_id"] == 1099)
-    assert total_live["claim"] == "Over 53.5 total points, up 8 points since pregame"
+    assert total_live["claim"] == "54 or more total points, up 8 points since pregame"
     assert total_live["form"] == "pregame_vs_now"
     assert total_live["change_since"] == "pregame"
     assert total_live["pregame_percent"] == 44
@@ -465,7 +465,7 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
         now=NOW,
     )
     untyped_claims = [n["claim"] for n in untyped_res["nuggets"]]
-    assert "Jayden Daniels's rushing line is 50 yards" in untyped_claims
+    assert "Jayden Daniels rushes for 50 or more yards" in untyped_claims
     assert all("props" not in c.lower() for c in untyped_claims)
     assert all("no 18" not in c.lower() for c in untyped_claims)
     assert untyped_claims.count("Ja'Marr Chase scores the first touchdown") == 1
@@ -1037,8 +1037,8 @@ def test_round_three_caps_even_set_lines_drops_close_to_even_and_states_ou_line(
     assert res["excluded_counts"]["far_rung_unmoved"] >= 2
     assert all("close to even" not in n["rank_reason"].lower() for n in res["nuggets"])
     assert all("long shot" not in n["rank_reason"].lower() for n in res["nuggets"])
-    assert any(n["claim"] == "The total is set at 54.5 points" for n in res["nuggets"])
-    assert any(n["claim"] == "Player 0's passing line is 250 yards" for n in res["nuggets"])
+    assert any(n["claim"] == "55 or more total points" for n in res["nuggets"])
+    assert any(n["claim"] == "Player 0 passes for 250 or more yards" for n in res["nuggets"])
     assert any(n["claim"] == "Cincinnati Bengals win the Super Bowl" for n in first8)
 
 
@@ -1203,13 +1203,13 @@ def test_round_four_bengals_commanders_fixture_middle_of_ladder_and_named_templa
     assert all(match_claim_template(c) is not None for c in claims)
     assert all("long shot" not in n["rank_reason"].lower() for n in res["nuggets"])
 
-    assert "The total is set at 53.5 points" in claims
-    assert "Joe Burrow's passing line is 265.5 yards" in claims
-    assert "Joe Burrow's passing touchdown line is 1.5" in claims
+    assert "54 or more total points" in claims
+    assert "Joe Burrow passes for 266 or more yards" in claims
+    assert "Joe Burrow throws 2 or more passing touchdowns" in claims
     assert "Cincinnati Bengals win by 4 or more" in claims
-    assert "Cincinnati Bengals team total is set at 27.5 points" in claims
-    assert "Washington Commanders team total is set at 24.5 points" in claims
-    assert "The first half total is set at 26.5 points" in claims
+    assert "Cincinnati Bengals score 28 or more points" in claims
+    assert "Washington Commanders score 25 or more points" in claims
+    assert "27 or more points in the first half" in claims
     assert "Washington Commanders make the playoffs" in claims
     assert "Cincinnati Bengals make the playoffs" in claims
     assert "Cincinnati Bengals win the Super Bowl" in claims
@@ -1257,8 +1257,8 @@ def test_round_four_bengals_commanders_fixture_middle_of_ladder_and_named_templa
         now=NOW,
     )
     moved_claims = [n["claim"] for n in moved_res["nuggets"]]
-    assert "Over 67.5 total points, up 12 points since pregame" in moved_claims
-    assert "Jayden Daniels 3+ passing touchdowns, up 7 points in 24 hours" in moved_claims
+    assert "68 or more total points, up 12 points since pregame" in moved_claims
+    assert "Jayden Daniels throws 3 or more passing touchdowns, up 7 points in 24 hours" in moved_claims
     assert all(match_claim_template(c) is not None for c in moved_claims)
 
     # Real-data TD edge cases: drop team-first-TD, keep highest-probability 1st TD scorer only,
