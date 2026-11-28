@@ -17,7 +17,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from app.tasks import DISCOVER_BASE_QUEUE, celery_app
+from app.tasks import DISCOVER_BASE_QUEUE, SCOUT_NIGHTLY_QUEUE, celery_app
 
 PROCFILE = pathlib.Path(__file__).resolve().parents[1] / "Procfile"
 
@@ -41,7 +41,11 @@ def test_the_lane_is_declared_and_both_dispatch_paths_name_it():
 
 
 def test_worker_background_serves_the_lane_first_and_alone():
-    assert _queues("worker-background") == [DISCOVER_BASE_QUEUE, "background"]
+    assert _queues("worker-background") == [
+        DISCOVER_BASE_QUEUE,
+        SCOUT_NIGHTLY_QUEUE,
+        "background",
+    ]
     for proc in ("worker-realtime", "worker-heavy"):
         assert DISCOVER_BASE_QUEUE not in _queues(proc), proc
 

@@ -586,6 +586,8 @@ class TestBeatScheduleCompleteness:
         # #12221 / Decision 386: A — nightly uncovered-family Kit container
         # page preview builder (Redis preview only, never auto-published).
         "propose-uncovered-containers-nightly",
+        # #13102 — 09:25 UTC (1:25 AM PST) loud missing-scout watchdog on `heavy`.
+        "discover-fun-scout-watchdog-daily",
     }
 
     def test_no_missing_entries(self):
