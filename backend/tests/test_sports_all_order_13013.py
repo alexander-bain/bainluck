@@ -7,8 +7,17 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.utils.sports_all_order import (
+    GAME_NIGHT_SHELF_COUNT,
+    GAME_NIGHT_SHELF_WINDOW,
     is_sports_all_major_league,
+    mark_sports_all_tucked,
     order_sports_all_feed,
+)
+from tests.test_feed_event_stage_budget_10534 import _enrich, _score, _StageSession
+from tests.test_feed_review_stage_budget_10530 import (
+    _Redis,
+    _get,
+    rig,  # noqa: F401 — pytest fixture used by route-level tests
 )
 
 NOW = datetime(2025, 1, 15, 22, 0, 0, tzinfo=timezone.utc)
@@ -307,3 +316,128 @@ class TestSportsAllFourBlockOrder256B:
             idx for idx, c in enumerate(ordered) if c["data"]["id"] in {4000, 4001, 4002}
         )
         assert last_shelf_pos < first_older_pos
+
+    def test_game_night_first_50_seats_carry_8_shelf_cards_while_first_42_stay_all_games(self):
+        """Fable #13887 item 1: with 60 live + starting-soon games and 40 shelf cards,
+        the first 50 seats keep exactly 8 shelf cards (at seats 43..50) so iPhone's
+        single 50-card Sports page keeps its Futures shelf while website page 1 stays all games."""
+        live = [
+            _event_card(1000 + i, sport="basketball_nba", status="live", score=95.0 - i * 0.2)
+            for i in range(30)
+        ]
+        imminent = [
+            _event_card(
+                2000 + i,
+                sport="icehockey_nhl",
+                status="scheduled",
+                score=85.0 - i * 0.2,
+                commence_offset=timedelta(hours=2),
+            )
+            for i in range(30)
+        ]
+        shelf = [_futures_card(3000 + i, score=99.0 - i * 0.1) for i in range(40)]
+
+        ordered = order_sports_all_feed(shelf + live + imminent, now=NOW)
+        assert len(ordered) == 100
+        assert ordered[0]["type"] == "event" and ordered[0]["data"]["status"] == "live"
+        assert all(c["type"] == "event" for c in ordered[:20])
+
+        insert_at = GAME_NIGHT_SHELF_WINDOW - GAME_NIGHT_SHELF_COUNT  # 42 (0-indexed)
+        assert all(c["type"] == "event" for c in ordered[:insert_at])
+        assert [c["data"]["id"] for c in ordered[insert_at:GAME_NIGHT_SHELF_WINDOW]] == [
+            3000 + i for i in range(GAME_NIGHT_SHELF_COUNT)
+        ]
+        first_50_shelf = [c for c in ordered[:GAME_NIGHT_SHELF_WINDOW] if c["type"] != "event"]
+        assert len(first_50_shelf) == 8
+
+        # Remaining 18 games come next, followed by the remaining 32 shelf cards.
+        assert all(c["type"] == "event" for c in ordered[GAME_NIGHT_SHELF_WINDOW:68])
+        assert [c["data"]["id"] for c in ordered[68:]] == [
+            3000 + i for i in range(GAME_NIGHT_SHELF_COUNT, 40)
+        ]
+
+    def test_game_night_under_threshold_keeps_full_games_then_shelf_order(self):
+        """With 10 games ahead of the shelf and 40 shelf cards, shelf starts right at seat 11."""
+        games = [
+            _event_card(100 + i, sport="basketball_nba", status="live", score=90.0 - i)
+            for i in range(10)
+        ]
+        shelf = [_futures_card(200 + i, score=98.0 - i * 0.1) for i in range(40)]
+        ordered = order_sports_all_feed(shelf + games, now=NOW)
+        assert [c["type"] for c in ordered[:10]] == ["event"] * 10
+        assert [c["data"]["id"] for c in ordered[10:]] == [200 + i for i in range(40)]
+
+    def test_mark_sports_all_tucked_preserves_order_and_does_not_mutate_input(self):
+        minor = _event_card(14, sport="icehockey_ahl", status="live", score=80.0)
+        major = _event_card(15, sport="basketball_nba", status="completed", score=95.0)
+        marked = mark_sports_all_tucked([minor, major])
+        assert [c["data"]["id"] for c in marked] == [14, 15]
+        assert marked[0]["data"]["sports_all_tucked"] is True
+        assert "sports_all_tucked" not in marked[1]["data"]
+        assert "sports_all_tucked" not in minor["data"]
+
+
+@pytest.mark.asyncio
+async def test_route_events_only_sports_request_preserves_display_chain_order_and_marks_tucked(
+    monkeypatch, rig  # noqa: F811
+):
+    """Fable #13887 item 2: `GET /api/feed?mode=sports&include_futures=false&limit=40`
+    (the website's Finished lookup) keeps the display chain's exact order so recent finals
+    are not pushed past seat 40 by 45 live/starting-soon games, while stamping `sports_all_tucked`."""
+    utc_now = datetime.now(timezone.utc)
+
+    def _route_card(oid: int, *, sport: str, status: str, score: float, offset_h: float) -> dict:
+        card = _event_card(
+            oid,
+            sport=sport,
+            status=status,
+            score=score,
+            home_prob=0.55 if status != "completed" else 1.0,
+            away_prob=0.45 if status != "completed" else 0.0,
+        )
+        card["headline"] = "Live" if status == "live" else ("Tonight" if status == "scheduled" else "Final")
+        card["reason"] = "Close game" if status != "completed" else "Final score"
+        card["data"]["sport_key"] = sport
+        card["data"]["commence_time"] = (utc_now + timedelta(hours=offset_h)).isoformat()
+        return card
+
+    finals = [
+        _route_card(9000 + i, sport="basketball_nba", status="completed", score=99.0 - i * 0.1, offset_h=-3)
+        for i in range(10)
+    ]
+    live_major = [
+        _route_card(8000 + i, sport="basketball_nba", status="live", score=80.0 - i * 0.2, offset_h=-1)
+        for i in range(24)
+    ]
+    live_minor = [
+        _route_card(8500, sport="icehockey_ahl", status="live", score=81.0, offset_h=-1)
+    ]
+    imminent = [
+        _route_card(7000 + i, sport="icehockey_nhl", status="scheduled", score=70.0 - i * 0.2, offset_h=2)
+        for i in range(20)
+    ]
+    pool = finals + live_minor + live_major + imminent
+    assert len(pool) == 55
+
+    db = _StageSession(pool)
+    redis = _Redis()
+    resp = await _get(
+        monkeypatch,
+        db,
+        redis,
+        path="/api/feed?mode=sports&include_futures=false&limit=40",
+        score=_score(db),
+        enrich=_enrich,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    items = body["items"]
+    assert len(items) == 40
+
+    # Under #13013 reordering, 45 live/starting-soon games would push all 10 finals past seat 40.
+    # Preserving display-chain order keeps all 10 finals in the 40-card events-only response.
+    returned_finals = [it for it in items if it["data"]["status"] == "completed"]
+    assert len(returned_finals) == 10
+
+    minor_hits = [it for it in items if it["data"]["id"] == 8500]
+    assert minor_hits and minor_hits[0]["data"].get("sports_all_tucked") is True

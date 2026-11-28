@@ -39,6 +39,12 @@ DECIDED_FAVORITE_THRESHOLD = 0.95
 #: Quiet-clock shelf lead cap (#13095): bounds the non-game lead so page 1 (20
 #: cards on web, 50 on iPhone) still carries at least 12 games.
 QUIET_SHELF_LEAD_CAP = 8
+#: Game-night iPhone Sports page window and shelf lead size (#13887): iPhone's
+#: Sports tab reads one page of 50 cards from `mode=sports` with no paging, so
+#: keeping the first 8 shelf cards inside seats 43..50 preserves both the web
+#: first page (20 games) / finished backfill and the iPhone Futures shelf.
+GAME_NIGHT_SHELF_WINDOW = 50
+GAME_NIGHT_SHELF_COUNT = QUIET_SHELF_LEAD_CAP
 #: Quiet-clock recent-finals lead cap when upcoming games exist (#13095): leaves
 #: at least 4 seats inside the first 20 for the next upcoming games by start time.
 QUIET_RECENT_FINALS_LEAD_CAP = 8
@@ -262,6 +268,35 @@ def _with_tucked_marker(item: dict, *, tucked: bool) -> dict:
     return {**item, "data": new_data}
 
 
+def mark_sports_all_tucked(
+    items: list[dict],
+    *,
+    followed_team_ids: Set[int] | None = None,
+    pinned_event_ids: Set[int] | None = None,
+) -> list[dict]:
+    """Stamp present-only ``sports_all_tucked: True`` on minor events without reordering."""
+    if not items:
+        return []
+    out: list[dict] = []
+    for item in items:
+        if item.get("type") != "event":
+            out.append(item)
+            continue
+        data = item.get("data")
+        if not isinstance(data, Mapping):
+            out.append(item)
+            continue
+        sport_key = data.get("sport") if isinstance(data.get("sport"), str) else None
+        is_major = is_sports_all_major_league(
+            sport_key,
+            event_data=data,
+            followed_team_ids=followed_team_ids,
+            pinned_event_ids=pinned_event_ids,
+        )
+        out.append(_with_tucked_marker(item, tucked=not is_major))
+    return out
+
+
 def order_sports_all_feed(
     items: list[dict],
     *,
@@ -384,10 +419,22 @@ def order_sports_all_feed(
             + older_finals_block
         )
 
+    games_before_shelf = live_block + imminent_block + recent_finals_block
+    shelf_lead = shelf_block[:GAME_NIGHT_SHELF_COUNT]
+    shelf_tail = shelf_block[GAME_NIGHT_SHELF_COUNT:]
+    insert_at = GAME_NIGHT_SHELF_WINDOW - len(shelf_lead)
+    if shelf_lead and len(games_before_shelf) > insert_at:
+        return (
+            games_before_shelf[:insert_at]
+            + shelf_lead
+            + games_before_shelf[insert_at:]
+            + shelf_tail
+            + later_upcoming_block
+            + older_finals_block
+        )
+
     return (
-        live_block
-        + imminent_block
-        + recent_finals_block
+        games_before_shelf
         + shelf_block
         + later_upcoming_block
         + older_finals_block

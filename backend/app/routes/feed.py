@@ -6710,7 +6710,10 @@ async def get_feed(
             and not tags
             and not my_teams_only
         ):
-            from app.utils.sports_all_order import order_sports_all_feed
+            from app.utils.sports_all_order import (
+                mark_sports_all_tucked,
+                order_sports_all_feed,
+            )
 
             _followed_ids = (
                 {
@@ -6721,16 +6724,28 @@ async def get_feed(
                 if ctx.team_relations
                 else None
             )
-            feed_items = order_sports_all_feed(
-                feed_items,
-                now=now,
-                followed_team_ids=_followed_ids or None,
-                pinned_event_ids=(
-                    set(ctx.pinned_event_ids) if ctx.pinned_event_ids else None
-                ),
-            )
-            if _capture is not None:
-                _capture.abandon("sports_all_order")
+            if include_futures:
+                feed_items = order_sports_all_feed(
+                    feed_items,
+                    now=now,
+                    followed_team_ids=_followed_ids or None,
+                    pinned_event_ids=(
+                        set(ctx.pinned_event_ids) if ctx.pinned_event_ids else None
+                    ),
+                )
+                if _capture is not None:
+                    _capture.abandon("sports_all_order")
+            else:
+                # #13887 / #4454: `mode=sports&include_futures=false` powers the
+                # website's Finished lookup and keeps display-chain order, while
+                # still stamping minor-league `sports_all_tucked` metadata.
+                feed_items = mark_sports_all_tucked(
+                    feed_items,
+                    followed_team_ids=_followed_ids or None,
+                    pinned_event_ids=(
+                        set(ctx.pinned_event_ids) if ctx.pinned_event_ids else None
+                    ),
+                )
 
         # #12091 (Decide 32-A): movement orders the concept cards. Dark unless
         # DISCOVER_CONCEPT_MOVEMENT is on; Discover deck only. A permutation of
