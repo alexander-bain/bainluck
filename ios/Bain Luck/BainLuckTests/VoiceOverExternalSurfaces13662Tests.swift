@@ -73,6 +73,74 @@ final class VoiceOverExternalSurfaces13662Tests: XCTestCase {
         XCTAssertTrue(discoverSummary.contains("up 2 points"), discoverSummary)
         XCTAssertFalse(discoverSummary.contains("%"), discoverSummary)
 
+        let game = WidgetGame(
+            id: 9306,
+            homeTeam: "Boston Celtics",
+            awayTeam: "Charlotte Hornets",
+            homeAbbrev: "BOS",
+            awayAbbrev: "CHA",
+            homeScore: 108,
+            awayScore: 72,
+            homeProb: 99,
+            awayProb: 1,
+            period: "Q4",
+            sport: "NBA",
+            homeColor: "#007A33",
+            awayColor: "#1D1160",
+            homeProbability: 0.996,
+            awayProbability: 0.004
+        )
+        let extremeGameSummary = liveGamesWidgetGameVoiceOverSummary(
+            sport: game.sport,
+            periodSpoken: PeriodLabel.spoken(game.period),
+            awayTeam: game.awayTeam,
+            awayScore: game.awayScore,
+            awayProb: game.awayProb,
+            awayProbText: game.awayProbText,
+            homeTeam: game.homeTeam,
+            homeScore: game.homeScore,
+            homeProb: game.homeProb,
+            homeProbText: game.homeProbText
+        )
+        XCTAssertTrue(extremeGameSummary.contains("less than 1 percent"), extremeGameSummary)
+        XCTAssertTrue(extremeGameSummary.contains("more than 99 percent"), extremeGameSummary)
+        XCTAssertFalse(extremeGameSummary.contains("%"), extremeGameSummary)
+
+        let item = WidgetDiscoverItem(
+            id: 9307,
+            name: "Championship",
+            category: "NBA",
+            leader: "Hornets",
+            probability: 0,
+            movement: nil,
+            hookDescription: nil,
+            headline: nil,
+            rawProbability: 0.004
+        )
+        let extremeDiscoverSummary = liveGamesWidgetDiscoverVoiceOverSummary(
+            category: item.category,
+            name: item.name,
+            leader: item.leader,
+            probability: item.probability,
+            probabilityText: item.probabilityText,
+            movement: item.movement
+        )
+        XCTAssertTrue(extremeDiscoverSummary.contains("less than 1 percent"), extremeDiscoverSummary)
+        XCTAssertFalse(extremeDiscoverSummary.contains("%"), extremeDiscoverSummary)
+
+        let openZeroRaw = liveGamesWidgetGameVoiceOverSummary(
+            sport: "NBA",
+            periodSpoken: "Q4",
+            awayTeam: "Away",
+            awayScore: 70,
+            awayProb: 0,
+            homeTeam: "Home",
+            homeScore: 100,
+            homeProb: 100
+        )
+        XCTAssertTrue(openZeroRaw.contains("less than 1 percent"), openZeroRaw)
+        XCTAssertTrue(openZeroRaw.contains("more than 99 percent"), openZeroRaw)
+
         XCTAssertEqual(spokenProbabilityText("<1%"), "less than 1 percent")
         XCTAssertEqual(spokenProbabilityText(">99%"), "more than 99 percent")
         XCTAssertEqual(spokenProbabilityText(absentProbabilityMarker), "No recent probability")

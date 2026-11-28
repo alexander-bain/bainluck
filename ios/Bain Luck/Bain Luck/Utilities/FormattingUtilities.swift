@@ -264,15 +264,23 @@ nonisolated func liveGamesWidgetGameVoiceOverSummary(
     awayTeam: String,
     awayScore: Int?,
     awayProb: Int?,
+    awayProbText: String? = nil,
     homeTeam: String,
     homeScore: Int?,
-    homeProb: Int
+    homeProb: Int,
+    homeProbText: String? = nil
 ) -> String {
     let awayScorePart = awayScore.map { " \($0)" } ?? ""
     let homeScorePart = homeScore.map { " \($0)" } ?? ""
-    let homeProbSpoken = spokenProbabilityText("\(homeProb)%")
+    let resolvedHomeText = homeProbText
+        ?? ExternalSurfaceProbabilityFormat.openWholePercent(homeProb)
+        ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+    let homeProbSpoken = spokenProbabilityText(resolvedHomeText)
     if let awayProb {
-        let awayProbSpoken = spokenProbabilityText("\(awayProb)%")
+        let resolvedAwayText = awayProbText
+            ?? ExternalSurfaceProbabilityFormat.openWholePercent(awayProb)
+            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+        let awayProbSpoken = spokenProbabilityText(resolvedAwayText)
         return "\(sport), \(periodSpoken). \(awayTeam)\(awayScorePart), \(awayProbSpoken). \(homeTeam)\(homeScorePart), \(homeProbSpoken)."
     }
     return "\(sport), \(periodSpoken). \(awayTeam)\(awayScorePart). \(homeTeam)\(homeScorePart), \(homeProbSpoken)."
@@ -284,9 +292,13 @@ nonisolated func liveGamesWidgetDiscoverVoiceOverSummary(
     name: String,
     leader: String,
     probability: Int,
+    probabilityText: String? = nil,
     movement: Int?
 ) -> String {
-    let probSpoken = spokenProbabilityText("\(probability)%")
+    let resolvedText = probabilityText
+        ?? ExternalSurfaceProbabilityFormat.openWholePercent(probability)
+        ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+    let probSpoken = spokenProbabilityText(resolvedText)
     let movePart: String = {
         guard let movement, movement != 0 else { return "" }
         let pts = abs(movement) == 1 ? "1 point" : "\(abs(movement)) points"

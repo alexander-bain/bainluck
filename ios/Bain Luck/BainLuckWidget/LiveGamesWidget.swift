@@ -633,9 +633,11 @@ enum LiveGamesWidgetVoiceOver13662 {
             awayTeam: game.awayTeam,
             awayScore: game.awayScore,
             awayProb: game.awayProb,
+            awayProbText: game.awayProbText,
             homeTeam: game.homeTeam,
             homeScore: game.homeScore,
-            homeProb: game.homeProb
+            homeProb: game.homeProb,
+            homeProbText: game.homeProbText
         )
     }
 
@@ -645,6 +647,7 @@ enum LiveGamesWidgetVoiceOver13662 {
             name: item.name,
             leader: item.leader,
             probability: item.probability,
+            probabilityText: item.probabilityText,
             movement: item.movement
         )
     }
