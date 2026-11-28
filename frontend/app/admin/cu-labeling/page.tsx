@@ -400,7 +400,13 @@ export default function CuFactLabelingPage() {
                       {AGREEMENT_FIELD_LABELS[f.field] || f.field}
                     </td>
                     <td className="py-1.5 pr-3 text-text-secondary">
-                      {f.metric === "within_1" ? "Within 1 step" : "Exact match"}
+                      {f.metric === "within_1"
+                        ? "Within 1 step"
+                        : f.field === "subjects"
+                          ? "Same names"
+                          : f.field === "claim_frame"
+                            ? "Same after cleaning"
+                            : "Exact match"}
                     </td>
                     <td className="py-1.5 pr-3">{f.agreed}</td>
                     <td className="py-1.5 pr-3">{f.total}</td>

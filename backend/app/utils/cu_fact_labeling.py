@@ -172,6 +172,7 @@ _GENERIC_CHIP_WORDS = _QUESTION_WORDS | _LEADING_CHIP_STRIP | _TRAILING_CHIP_STR
     "day", "time", "military", "action", "open", "close", "high", "low",
     "home", "away", "tie", "draw", "neither", "both", "two", "three",
     "four", "five", "percent", "points", "goals", "wins", "runs", "votes",
+    "inc", "corp", "ltd", "llc", "plc",
 })
 _DATE_ONLY_CHIP_RE = re.compile(
     r"^(?:(?:before|after|by|on|in|until|through|end of|week of)\s+)?"

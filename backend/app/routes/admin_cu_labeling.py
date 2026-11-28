@@ -378,10 +378,20 @@ async def cu_labeling_score_sealed(
     answer_rows = bundle["rows"]
     withheld = bundle["withheld_fields"]
 
+    safe_run_id = (
+        str(payload.run_id).replace("\r\n", "").replace("\n", "").replace("\r", "")[:64]
+        if payload.run_id
+        else "none"
+    )
+    safe_writer_rev = (
+        str(payload.writer_rev).replace("\r\n", "").replace("\n", "").replace("\r", "")[:32]
+        if payload.writer_rev is not None
+        else "none"
+    )
     logger.info(
         "cu_sealed_scorecard_call run_id=%s writer_rev=%s market_count=%d prediction_count=%d",
-        payload.run_id or "none",
-        payload.writer_rev if payload.writer_rev is not None else "none",
+        safe_run_id,
+        safe_writer_rev,
         len(answer_rows),
         len(payload.predictions),
     )

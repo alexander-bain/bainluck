@@ -1,17 +1,11 @@
 """#13900: create cu_fact_labels table for dual-rater Content Understanding fact labeling.
 
 MIGRATION-CLASS: waits for Alex's own merge line naming the exact head after
-Fable's ACCEPT and after migrations in line (#13691 metrickit_payloads_12309,
-then #13865 poll_open_outcomes_13673) land on master and this migration's
-``down_revision`` is moved onto ``poll_open_outcomes_13673``.
-
-Until `#13865` lands on master, ``down_revision`` temporarily follows
-``metrickit_payloads_12309`` (current master head from ``#13691``) so Alembic
-single-head checks and hosted CI/Vercel preview stay green; once ``#13865`` lands,
-this moves once more onto ``poll_open_outcomes_13673``.
+Fable's ACCEPT and after #13909 / #13908 land on master. Moves onto
+``poll_open_outcomes_13673`` (#13865, now live on master).
 
 Revision ID: cu_fact_labels_13900
-Revises: metrickit_payloads_12309
+Revises: poll_open_outcomes_13673
 """
 
 import sqlalchemy as sa
@@ -19,7 +13,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "cu_fact_labels_13900"
-down_revision = "metrickit_payloads_12309"
+down_revision = "poll_open_outcomes_13673"
 branch_labels = None
 depends_on = None
 

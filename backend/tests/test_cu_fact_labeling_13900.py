@@ -593,6 +593,9 @@ def test_blind_subject_candidates_exclude_llm_metadata():
         {"title": "Artist with the most monthly Spotify listeners at the end of June 2027?"}
     ) == ["Spotify"]
     assert extract_subject_candidates({"title": "Best AI this month"}) == []
+    micron_chips = extract_subject_candidates({"title": "Will Micron Technology, Inc. (MU) hit (HIGH) $840 in June 2027?"})
+    assert "Micron Technology" in micron_chips
+    assert "Inc" not in micron_chips
 
     # Check all frozen market titles when datasets are loaded on this branch.
     question_starters = {
@@ -662,6 +665,7 @@ def test_migration_router_and_sealed_protection(monkeypatch, caplog):
     )
     text = mig_path.read_text(encoding="utf-8")
     assert 'revision = "cu_fact_labels_13900"' in text
+    assert 'down_revision = "poll_open_outcomes_13673"' in text
     assert len("cu_fact_labels_13900") <= 32
     assert "def upgrade():" in text and "def downgrade():" in text
 
@@ -700,16 +704,22 @@ def test_migration_router_and_sealed_protection(monkeypatch, caplog):
         assert dev_export.status_code == 200
         assert dev_export.json()["dataset"] == "dev"
 
-        # With zero resolved sealed labels, return a plain "no_labels_yet" status (not measured).
+        # With zero resolved sealed labels, return a plain "no_labels_yet" status (not measured),
+        # and strip newlines from logged request identifiers.
         with caplog.at_level(logging.INFO):
             empty_sealed = client.post(
                 "/api/admin/cu-labeling/score-sealed",
-                json={"predictions": [], "as_of": "2026-06-15", "run_id": "run-empty", "writer_rev": 10},
+                json={
+                    "predictions": [],
+                    "as_of": "2026-06-15",
+                    "run_id": "run-empty\nFORGED",
+                    "writer_rev": 10,
+                },
             )
         assert empty_sealed.status_code == 200
         assert empty_sealed.json()["status"] == "no_labels_yet"
         assert empty_sealed.json()["scorecard"] is None
-        assert "cu_sealed_scorecard_call run_id=run-empty writer_rev=10 market_count=0" in caplog.text
+        assert "cu_sealed_scorecard_call run_id=run-emptyFORGED writer_rev=10 market_count=0" in caplog.text
 
         # When sealed labels exist, partial predictions unconditionally fail closed with 422,
         # and full predictions succeed with structured response + audit log line.
