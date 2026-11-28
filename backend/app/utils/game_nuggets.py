@@ -1008,10 +1008,6 @@ def _parse_spread_threshold(
         except ValueError:
             pass
 
-    thresh = row.get("threshold")
-    if isinstance(thresh, (int, float)) and not isinstance(thresh, bool):
-        return float(thresh)
-
     mname_clean = _strip_matchup_prefix(str(row.get("market_name") or ""))
     for pattern in (_SPREAD_PAREN_TEAM_RE, _SPREAD_INLINE_TEAM_RE):
         m = pattern.search(mname_clean)
@@ -1032,7 +1028,14 @@ def _parse_spread_threshold(
                 and {named_team.lower(), subj_name.lower()} == {home_team.lower(), away_team.lower()}
             ):
                 return -val
+        thresh_fallback = row.get("threshold")
+        if isinstance(thresh_fallback, (int, float)) and not isinstance(thresh_fallback, bool):
+            return float(thresh_fallback)
         return val
+
+    thresh = row.get("threshold")
+    if isinstance(thresh, (int, float)) and not isinstance(thresh, bool):
+        return float(thresh)
     return None
 
 
