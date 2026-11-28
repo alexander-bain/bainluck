@@ -333,7 +333,25 @@ _PM_TOKEN_KEYS_SQL = (
 )
 
 
-def kalshi_population_sql(open_arm: bool) -> str:
+def _population_outcome_source(use_outcome_copy: bool) -> str:
+    if not use_outcome_copy:
+        return "futures_outcomes"
+    # The maintainer can already have copied rows above the reader floor.
+    # Read them only from the authoritative tail so each leg appears once.
+    return """
+        (
+            SELECT outcome_id AS id, market_id, external_id, is_winner, resolution_source
+              FROM open_futures_outcomes
+             WHERE outcome_id <= :reader_floor
+            UNION ALL
+            SELECT id, market_id, external_id, is_winner, resolution_source
+              FROM futures_outcomes
+             WHERE id > :reader_floor
+        )
+    """
+
+
+def kalshi_population_sql(open_arm: bool, *, use_outcome_copy: bool = False) -> str:
     from app.tasks.kalshi_ws import _kalshi_slate_event_window
     from app.tasks.ws_open_contracts import kalshi_open_contract_stmt
     from app.utils.futures_liveness import (
@@ -376,7 +394,7 @@ def kalshi_population_sql(open_arm: bool) -> str:
                    {open_leg_expr} AS keep_open_leg
               FROM live_markets lm
               JOIN futures_markets fm ON fm.id = lm.fm_id
-              JOIN futures_outcomes fo ON fo.market_id = lm.fm_id
+              JOIN {_population_outcome_source(use_outcome_copy)} fo ON fo.market_id = lm.fm_id
         ),
         settled_winners AS MATERIALIZED (
             {settled_one_winner_markets_sql()}
@@ -395,7 +413,7 @@ def kalshi_population_sql(open_arm: bool) -> str:
     """
 
 
-def polymarket_population_sql(open_arm: bool) -> str:
+def polymarket_population_sql(open_arm: bool, *, use_outcome_copy: bool = False) -> str:
     from app.tasks.polymarket_open_contracts import OUTCOME_TOKEN_METADATA_KEY
     from app.tasks.polymarket_ws import _slate_event_window
     from app.utils.futures_liveness import (
@@ -441,7 +459,7 @@ def polymarket_population_sql(open_arm: bool) -> str:
                    fo.resolution_source AS fo_resolution_source,
                    lm.is_one_winner
               FROM live_markets lm
-              JOIN futures_outcomes fo ON fo.market_id = lm.fm_id
+              JOIN {_population_outcome_source(use_outcome_copy)} fo ON fo.market_id = lm.fm_id
         ),
         settled_winners AS MATERIALIZED (
             {settled_one_winner_markets_sql()}
@@ -650,6 +668,8 @@ async def load_population(
     shared population backoff; until it lapses the last population this process
     read is reused, or :class:`PopulationBackoff` is raised when there is none.
     """
+    from app.utils.open_futures_outcomes import open_outcomes_floor
+
     stats = stats if stats is not None else {}
     cached = _POPULATION.get(venue)
     if cached is not None and now_mono - cached[0] < POPULATION_TTL_S:
@@ -663,10 +683,15 @@ async def load_population(
             raise PopulationBackoff(venue)
         stats["population_stale"] = True
         return cached[1]
+    reader_floor = open_outcomes_floor(require_poll_fields=True)
+    use_outcome_copy = reader_floor is not None
     if venue == "kalshi":
-        sql = kalshi_population_sql(_kalshi_open_arm())
+        sql = kalshi_population_sql(_kalshi_open_arm(), use_outcome_copy=use_outcome_copy)
     else:
-        sql = polymarket_population_sql(_polymarket_open_arm())
+        sql = polymarket_population_sql(_polymarket_open_arm(), use_outcome_copy=use_outcome_copy)
+    stats["population_outcome_source"] = (
+        "open_futures_outcomes" if use_outcome_copy else "futures_outcomes"
+    )
     shared = _read_shared_population(venue, sql)
     if shared is not None:
         age, rows = shared
@@ -677,12 +702,10 @@ async def load_population(
         return units
     started = time.monotonic()
     try:
-        rows = (
-            await session.execute(
-                text(sql),
-                population_binds(shown_market_ids()),
-            )
-        ).fetchall()
+        binds = population_binds(shown_market_ids())
+        if reader_floor is not None:
+            binds["reader_floor"] = reader_floor
+        rows = (await session.execute(text(sql), binds)).fetchall()
     except Exception:
         stats["population_read_s"] = round(time.monotonic() - started, 2)
         fails = _POPULATION_FAILS[venue] = _POPULATION_FAILS.get(venue, 0) + 1
