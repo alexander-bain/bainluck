@@ -100,7 +100,7 @@ class _FakeSyncRedis:
 
 
 EI_ROWS = [("nba", 50, 2.0), ("nfl", 90, 4.5)]
-STAMP = datetime(2026, 11, 27, 20, 0, tzinfo=timezone.utc)
+STAMP = datetime(2025, 1, 15, 20, 0, tzinfo=timezone.utc)
 TEAM_ROWS = [
     (_FakeTeamRow(1, "Los Angeles Lakers", "#552583", STAMP), "basketball_nba"),
     (_FakeTeamRow(2, "San Antonio Spurs", "#000000", STAMP), "basketball_nba"),
