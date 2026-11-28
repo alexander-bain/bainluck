@@ -538,6 +538,7 @@ _DISCOVER_ACTIONS = {
     "open",
     "dismiss",
     "like",
+    "like_undo",
     "unlike",
     "share",
     "group_expand",
@@ -11735,6 +11736,44 @@ async def build_discover_market_trace(
     return trace
 
 
+def _net_active_like_interactions(
+    events,
+) -> tuple[dict[str, int], dict[tuple[str, str, str], int]]:
+    """Reconcile chronological ``like`` and ``like_undo`` events per card.
+
+    ``like_undo`` cancels that reader's prior ``like`` on the same card and does
+    nothing else: ``like -> like_undo`` nets ``0``, ``like -> like_undo -> like``
+    nets ``1``, and an unmatched ``like_undo`` is a no-op (never negative).
+    """
+    active_by_card: dict[tuple[str, str], list[tuple[str, str | None, str | None]]] = {}
+    for item_type, item_id, category, item_name, action in events:
+        card_key = (
+            str(item_type or "").strip(),
+            str(item_id or "").strip(),
+        )
+        if action == "like":
+            active_by_card.setdefault(card_key, []).append(
+                (
+                    str(item_type or "futures"),
+                    item_name,
+                    category,
+                )
+            )
+        elif action == "like_undo":
+            active_by_card.pop(card_key, None)
+
+    category_likes: dict[str, int] = {}
+    feature_likes: dict[tuple[str, str, str], int] = {}
+    for card_likes in active_by_card.values():
+        for itype, iname, cat in card_likes:
+            if cat is not None:
+                category_likes[cat] = category_likes.get(cat, 0) + 1
+            if iname is not None and cat is not None:
+                fkey = (itype, iname, cat)
+                feature_likes[fkey] = feature_likes.get(fkey, 0) + 1
+    return category_likes, feature_likes
+
+
 async def _load_personalization_context(
     db: AsyncSession,
     user: Optional[User],
@@ -11886,6 +11925,49 @@ async def _load_personalization_context(
             )
         )
         feature_interaction_rows = feature_interactions_result.all()
+        if any(
+            action == "like_undo" and int(count or 0) > 0
+            for _, action, count in category_interaction_rows
+        ):
+            like_events_result = await db.execute(
+                select(
+                    DiscoverInteraction.item_type,
+                    DiscoverInteraction.item_id,
+                    DiscoverInteraction.category,
+                    DiscoverInteraction.item_name,
+                    DiscoverInteraction.action,
+                )
+                .where(
+                    DiscoverInteraction.user_id == user.id,
+                    DiscoverInteraction.created_at >= interaction_cutoff,
+                    DiscoverInteraction.action.in_(("like", "like_undo")),
+                )
+                .order_by(
+                    DiscoverInteraction.created_at.asc(),
+                    DiscoverInteraction.id.asc(),
+                )
+            )
+            active_cat_likes, active_feat_likes = _net_active_like_interactions(
+                like_events_result.all()
+            )
+            category_interaction_rows = [
+                (category, action, count)
+                for category, action, count in category_interaction_rows
+                if action not in ("like", "like_undo")
+            ] + [
+                (category, "like", count)
+                for category, count in active_cat_likes.items()
+                if count > 0
+            ]
+            feature_interaction_rows = [
+                (item_type, item_name, category, action, count)
+                for item_type, item_name, category, action, count in feature_interaction_rows
+                if action not in ("like", "like_undo")
+            ] + [
+                (item_type, item_name, category, "like", count)
+                for (item_type, item_name, category), count in active_feat_likes.items()
+                if count > 0
+            ]
     recent_items_result = await db.execute(
         select(
             DiscoverInteraction.item_type,
@@ -12156,7 +12238,11 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
         "unlike": -1.0,
         "dismiss": -2.0,
     }
-    all_rows = list(rows)
+    all_rows = [
+        (category, action, count)
+        for category, action, count in rows
+        if action != "like_undo"
+    ]
     total_interactions = sum(int(count or 0) for _, _, count in all_rows)
     _cold_start = total_interactions < 20
     cold_start_boost = 2.0 if _cold_start else 1.0
