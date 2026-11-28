@@ -59,6 +59,14 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     /// carrying it (ATP Challenger / ITF tennis, etc.), so the Live Activity omits
     /// the Score column rather than showing dashes. Absent on older servers or covered games.
     let scoreSourceUnavailable: Bool?
+    let homeSubOne: Bool?
+    let homeAboveNinetyNine: Bool?
+    let awaySubOne: Bool?
+    let awayAboveNinetyNine: Bool?
+    let pregameHomeSubOne: Bool?
+    let pregameHomeAboveNinetyNine: Bool?
+    let pregameAwaySubOne: Bool?
+    let pregameAwayAboveNinetyNine: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case eventID, homeTeam, awayTeam, homeScore, awayScore, lifecycle
@@ -70,6 +78,10 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         case homeHeadlineTenths, awaySecondaryColorHex
         case sport, pregameAwayPercent, pregameHomePercent
         case scoreSourceUnavailable
+        case homeSubOne, homeAboveNinetyNine
+        case awaySubOne, awayAboveNinetyNine
+        case pregameHomeSubOne, pregameHomeAboveNinetyNine
+        case pregameAwaySubOne, pregameAwayAboveNinetyNine
     }
 
     init(from decoder: Decoder) throws {
@@ -119,6 +131,14 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         pregameHomePercent = pregame?.home
         let decodedUnavailable = (try? c.decodeIfPresent(Bool.self, forKey: .scoreSourceUnavailable)) ?? nil
         scoreSourceUnavailable = (lifecycle == .live && homeScore == nil && awayScore == nil && decodedUnavailable == true) ? true : nil
+        homeSubOne = hasForecast ? ((try? c.decodeIfPresent(Bool.self, forKey: .homeSubOne)) ?? nil) : nil
+        homeAboveNinetyNine = hasForecast ? ((try? c.decodeIfPresent(Bool.self, forKey: .homeAboveNinetyNine)) ?? nil) : nil
+        awaySubOne = (hasForecast && awayRenderedPercent != nil) ? ((try? c.decodeIfPresent(Bool.self, forKey: .awaySubOne)) ?? nil) : nil
+        awayAboveNinetyNine = (hasForecast && awayRenderedPercent != nil) ? ((try? c.decodeIfPresent(Bool.self, forKey: .awayAboveNinetyNine)) ?? nil) : nil
+        pregameHomeSubOne = pregame == nil ? nil : ((try? c.decodeIfPresent(Bool.self, forKey: .pregameHomeSubOne)) ?? nil)
+        pregameHomeAboveNinetyNine = pregame == nil ? nil : ((try? c.decodeIfPresent(Bool.self, forKey: .pregameHomeAboveNinetyNine)) ?? nil)
+        pregameAwaySubOne = pregame == nil ? nil : ((try? c.decodeIfPresent(Bool.self, forKey: .pregameAwaySubOne)) ?? nil)
+        pregameAwayAboveNinetyNine = pregame == nil ? nil : ((try? c.decodeIfPresent(Bool.self, forKey: .pregameAwayAboveNinetyNine)) ?? nil)
         guard eventID > 0,
               !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -146,7 +166,8 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
           projectionLabel: String? = nil, servedResult: String? = nil,
           awaySecondaryColorHex: String? = nil,
           pregameAwayPercent: Int? = nil, pregameHomePercent: Int? = nil,
-          scoreSourceUnavailable: Bool? = nil) {
+          scoreSourceUnavailable: Bool? = nil,
+          pregameAwayProbability: Double? = nil, pregameHomeProbability: Double? = nil) {
         let home = homeTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         let away = awayTeam.trimmingCharacters(in: .whitespacesAndNewlines)
         guard eventID > 0, !home.isEmpty, !away.isEmpty else { return nil }
@@ -173,11 +194,31 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
             homeHeadlineTenths = awayRenderedPercent == nil ? nil
                 : Self.headlineTenths(home: validHome, away: validAway)
             self.probabilityObservedAt = homeRenderedPercent == nil ? nil : observedAt
+            if self.probabilityObservedAt != nil {
+                homeSubOne = ExternalSurfaceProbabilityFormat.isSubOne(validHome) ? true : nil
+                homeAboveNinetyNine = ExternalSurfaceProbabilityFormat.isAboveNinetyNine(validHome) ? true : nil
+                if awayRenderedPercent != nil {
+                    awaySubOne = ExternalSurfaceProbabilityFormat.isSubOne(validAway) ? true : nil
+                    awayAboveNinetyNine = ExternalSurfaceProbabilityFormat.isAboveNinetyNine(validAway) ? true : nil
+                } else {
+                    awaySubOne = nil
+                    awayAboveNinetyNine = nil
+                }
+            } else {
+                homeSubOne = nil
+                homeAboveNinetyNine = nil
+                awaySubOne = nil
+                awayAboveNinetyNine = nil
+            }
         } else {
             homeRenderedPercent = nil
             awayRenderedPercent = nil
             homeHeadlineTenths = nil
             self.probabilityObservedAt = nil
+            homeSubOne = nil
+            homeAboveNinetyNine = nil
+            awaySubOne = nil
+            awayAboveNinetyNine = nil
         }
         self.homeAbbreviation = Self.cleanBadge(homeAbbreviation)
         self.awayAbbreviation = Self.cleanBadge(awayAbbreviation)
@@ -195,6 +236,12 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         let pregame = Self.cleanPregame(away: pregameAwayPercent, home: pregameHomePercent)
         self.pregameAwayPercent = pregame?.away
         self.pregameHomePercent = pregame?.home
+        let validPreHome = Self.validProbability(pregameHomeProbability)
+        let validPreAway = Self.validProbability(pregameAwayProbability)
+        self.pregameHomeSubOne = (pregame != nil && ExternalSurfaceProbabilityFormat.isSubOne(validPreHome)) ? true : nil
+        self.pregameHomeAboveNinetyNine = (pregame != nil && ExternalSurfaceProbabilityFormat.isAboveNinetyNine(validPreHome)) ? true : nil
+        self.pregameAwaySubOne = (pregame != nil && ExternalSurfaceProbabilityFormat.isSubOne(validPreAway)) ? true : nil
+        self.pregameAwayAboveNinetyNine = (pregame != nil && ExternalSurfaceProbabilityFormat.isAboveNinetyNine(validPreAway)) ? true : nil
         self.scoreSourceUnavailable = (lifecycle == .live && self.homeScore == nil && self.awayScore == nil && scoreSourceUnavailable == true) ? true : nil
     }
 
@@ -250,7 +297,11 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
     }
     var matchup: String { "\(awayTeam) at \(homeTeam)" }
     var probabilityText: String? {
-        homeRenderedPercent.map { (Double($0) / 100).formatted(.percent.precision(.fractionLength(0))) }
+        ExternalSurfaceProbabilityFormat.openWholePercent(
+            homeRenderedPercent,
+            subOne: homeSubOne == true,
+            aboveNinetyNine: homeAboveNinetyNine == true
+        )
     }
     var probabilityLabel: String? { probabilityText.map { "\(homeTeam) win · \($0)" } }
     var scoreText: String? {

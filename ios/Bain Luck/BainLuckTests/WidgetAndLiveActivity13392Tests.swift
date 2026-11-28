@@ -18,8 +18,27 @@ final class WidgetAndLiveActivity13392Tests: XCTestCase {
 
     func testMediumLiveGamesThreeWayFallbackIncludesPercentSign() throws {
         let source = try String(contentsOf: Self.repoFile("BainLuckWidget/LiveGamesWidget.swift"), encoding: .utf8)
-        XCTAssertTrue(source.contains(#"?? "\(game.homeAbbrev) \(game.homeProb)%""#))
+        XCTAssertTrue(source.contains("game.compactProbHeaderText"))
         XCTAssertFalse(source.contains(#"?? "\(game.homeAbbrev) \(game.homeProb)""#))
+
+        let fallback = WidgetGame(
+            id: 1,
+            homeTeam: "Real Madrid",
+            awayTeam: "Barcelona",
+            homeAbbrev: "RMA",
+            awayAbbrev: "BAR",
+            homeScore: 2,
+            awayScore: 1,
+            homeProb: 52,
+            awayProb: nil,
+            period: "71'",
+            sport: "La Liga",
+            homeColor: "#FEBE10",
+            awayColor: "#A50044",
+            homeProbability: 0.52,
+            awayProbability: nil
+        )
+        XCTAssertEqual(fallback.compactProbHeaderText, "RMA 52%")
     }
 
     @MainActor

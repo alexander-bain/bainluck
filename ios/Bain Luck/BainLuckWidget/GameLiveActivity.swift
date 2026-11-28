@@ -122,7 +122,18 @@ struct GameActivityReading {
     func pregameText(_ side: Side) -> String? {
         guard phase == .after, let away = snapshot.pregameAwayPercent,
               let home = snapshot.pregameHomePercent else { return nil }
-        return "\(side == .home ? home : away)%"
+        if side == .home {
+            return ExternalSurfaceProbabilityFormat.openWholePercent(
+                home,
+                subOne: snapshot.pregameHomeSubOne == true,
+                aboveNinetyNine: snapshot.pregameHomeAboveNinetyNine == true
+            )
+        }
+        return ExternalSurfaceProbabilityFormat.openWholePercent(
+            away,
+            subOne: snapshot.pregameAwaySubOne == true,
+            aboveNinetyNine: snapshot.pregameAwayAboveNinetyNine == true
+        )
     }
     var hasPregame: Bool { pregameText(.home) != nil }
     /// The side the server's verdict names as the winner (no draw), else none.
@@ -176,7 +187,8 @@ struct GameActivityReading {
     var singleChance: Int? { pair == nil && showsForecast ? snapshot.homeRenderedPercent : nil }
     var singleChanceLabel: String? { singleChance == nil ? nil : snapshot.probabilityLabel }
     func percentText(_ value: Int) -> String {
-        (Double(value) / 100).formatted(.percent.precision(.fractionLength(0)))
+        ExternalSurfaceProbabilityFormat.openWholePercent(value)
+            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
     }
     /// #395 — whole percents across every Live Activity form (Lock Screen,
     /// Dynamic Island Compact/Expanded/Minimal, and Watch Smart Stack):
@@ -184,7 +196,18 @@ struct GameActivityReading {
     /// not a live DNPL stream.
     func nowText(_ side: Side) -> String? {
         guard let value = percent(side) else { return nil }
-        return percentText(value)
+        if side == .home {
+            return ExternalSurfaceProbabilityFormat.openWholePercent(
+                value,
+                subOne: snapshot.homeSubOne == true,
+                aboveNinetyNine: snapshot.homeAboveNinetyNine == true
+            )
+        }
+        return ExternalSurfaceProbabilityFormat.openWholePercent(
+            value,
+            subOne: snapshot.awaySubOne == true,
+            aboveNinetyNine: snapshot.awayAboveNinetyNine == true
+        )
     }
     /// #13392 / #395 — Dynamic Island Minimal shares whole-percent formatting
     /// with the rest of `GameLiveActivity`.
@@ -326,7 +349,7 @@ struct GameActivityReading {
         return parts.joined(separator: ", ")
     }
     var chanceSpoken: String {
-        guard let pair else { return singleChanceLabel ?? "Win probability unavailable" }
+        guard let pair else { return singleChanceLabel ?? ExternalSurfaceProbabilityFormat.missingProbabilityText }
         return "\(name(.away)) \(nowText(.away) ?? percentText(pair.away)), \(name(.home)) \(nowText(.home) ?? percentText(pair.home)) chance to win"
     }
     /// The Dynamic Island's compact and minimal views speak the whole reading.
@@ -456,8 +479,19 @@ struct GameActivityLockScreenView: View {
                 }
                 if let pair = reading.pair {
                     let colors = reading.barColors(onDark: scheme == .dark)
-                    GameActivitySplitBar(away: colors.away, home: colors.home,
-                                         awayShare: Double(pair.away) / 100)
+                    let awayShare = ExternalSurfaceProbabilityFormat.gaugeShare(
+                        pair.away,
+                        subOne: reading.snapshot.awaySubOne == true,
+                        aboveNinetyNine: reading.snapshot.awayAboveNinetyNine == true
+                    )
+                    GameActivitySplitBar(away: colors.away, home: colors.home, awayShare: awayShare)
+                } else if !reading.snapshot.isTerminal && reading.singleChanceLabel == nil {
+                    Text(ExternalSurfaceProbabilityFormat.missingProbabilityText)
+                        .font(HeadlineStyleTable199.quietText(.lockScreen, scaledSize: m.footerSize))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 GameActivityFooter(reading: reading, alignment: .leading, scaledSize: m.footerSize, allowsWrap: true)
             } else {
@@ -764,7 +798,12 @@ struct GameActivityChanceLine: View {
                         .fixedSize(horizontal: true, vertical: false)
                 }
                 .font(HeadlineStyleTable199.now(.island))
-                GameActivitySplitBar(away: colors.away, home: colors.home, awayShare: Double(pair.away) / 100)
+                let awayShare = ExternalSurfaceProbabilityFormat.gaugeShare(
+                    pair.away,
+                    subOne: reading.snapshot.awaySubOne == true,
+                    aboveNinetyNine: reading.snapshot.awayAboveNinetyNine == true
+                )
+                GameActivitySplitBar(away: colors.away, home: colors.home, awayShare: awayShare)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(reading.chanceSpoken)
@@ -789,6 +828,14 @@ struct GameActivityChanceLine: View {
             .foregroundStyle(.secondary)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Before the game: \(reading.name(.away)) \(awayPregame), \(reading.name(.home)) \(homePregame)")
+        } else if !reading.snapshot.isTerminal && reading.singleChanceLabel == nil {
+            Text(ExternalSurfaceProbabilityFormat.missingProbabilityText)
+                .font(HeadlineStyleTable199.quietText(.island))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(reading.chanceSpoken)
         }
     }
 }
@@ -1008,8 +1055,15 @@ struct GameActivitySmallView: View {
 
     @ViewBuilder
     private func trailingChance(fontSize: CGFloat?) -> some View {
-        if let value = reading.percent(reading.lead) {
-            Text("\(reading.badge(reading.lead)) \(reading.percentText(value))")
+        if let now = reading.nowText(reading.lead) {
+            Text("\(reading.badge(reading.lead)) \(now)")
+                .font(fontSize.map { .system(size: $0, weight: .semibold) } ?? .caption2.weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        } else if let single = reading.singleChance {
+            let text = reading.snapshot.probabilityText ?? reading.percentText(single)
+            Text("\(reading.badge(.home)) \(text)")
                 .font(fontSize.map { .system(size: $0, weight: .semibold) } ?? .caption2.weight(.semibold))
                 .monospacedDigit()
                 .lineLimit(1)

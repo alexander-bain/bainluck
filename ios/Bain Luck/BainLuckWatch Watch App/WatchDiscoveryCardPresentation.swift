@@ -22,9 +22,10 @@ nonisolated struct WatchDiscoveryCardPresentation {
             let validProbability = reading.probability.flatMap {
                 $0.isFinite && (0...1).contains($0) ? $0 : nil
             }
-            probability = outcome == nil ? nil : renderedPercent(validProbability).map {
-                (Double($0) / 100).formatted(.percent.precision(.fractionLength(0)))
-            }
+            probability = outcome == nil ? nil : ExternalSurfaceProbabilityFormat.openProbability(
+                validProbability,
+                renderedPercent: renderedPercent(validProbability)
+            )
         }
         let age = WatchObservationAge(observedAt: reading.observedAt, now: now)
         observation = age.compactText.map { "Observed \($0)" }

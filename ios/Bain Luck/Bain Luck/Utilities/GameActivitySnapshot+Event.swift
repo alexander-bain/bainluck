@@ -87,7 +87,7 @@ extension GameActivitySnapshot {
         // object prints nothing here, as it prints nothing on the page.
         var projected: LiveProjectedFinalAdmission2920.Printed?
         if case .admitted(let printed) = LiveProjectedFinal2920.page(event, now: now) { projected = printed }
-        let pregame = pregamePercents(for: event)
+        let pregame = pregameReading(for: event)
         return GameActivitySnapshot(
             eventID: event.id, homeTeam: event.homeTeam, awayTeam: event.awayTeam,
             lifecycle: lifecycle, homeScore: event.homeScore, awayScore: event.awayScore,
@@ -113,7 +113,9 @@ extension GameActivitySnapshot {
             awaySecondaryColorHex: event.awayTeamData?.secondaryColor,
             pregameAwayPercent: pregame?.away,
             pregameHomePercent: pregame?.home,
-            scoreSourceUnavailable: event.scoreSourceUnavailable
+            scoreSourceUnavailable: event.scoreSourceUnavailable,
+            pregameAwayProbability: pregame?.awayProb,
+            pregameHomeProbability: pregame?.homeProb
         )
     }
 
@@ -122,14 +124,20 @@ extension GameActivitySnapshot {
     /// pregame reading (`prematch_odds`, never the opening line), only for a
     /// two-way game, in the pair's served whole percents.
     nonisolated static func pregamePercents(for event: EventDetail) -> (away: Int, home: Int)? {
+        pregameReading(for: event).map { ($0.away, $0.home) }
+    }
+
+    private nonisolated static func pregameReading(for event: EventDetail) -> (away: Int, home: Int, awayProb: Double?, homeProb: Double)? {
         guard let pregame = PrematchReading.resolve(prematch: event.prematchOdds, opening: nil),
               let pair = DrawPricedWinner.printablePair(away: pregame.awayProbability,
                                                         home: pregame.homeProbability, sport: event.sport),
               pair.away != nil else { return nil }
         let served = pregame.percents
-        if served.count > 1, let away = served[0], let home = served[1] { return (away, home) }
+        if served.count > 1, let away = served[0], let home = served[1] {
+            return (away, home, pregame.awayProbability, pregame.homeProbability)
+        }
         let duel = renderedDuelPercents(away: pregame.awayProbability, home: pregame.homeProbability)
         guard let away = duel[0], let home = duel[1] else { return nil }
-        return (away, home)
+        return (away, home, pregame.awayProbability, pregame.homeProbability)
     }
 }

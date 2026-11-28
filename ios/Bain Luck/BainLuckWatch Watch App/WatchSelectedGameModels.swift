@@ -86,9 +86,10 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
 
     /// Format the already-decided integer once for both the screen and VoiceOver.
     var homeProbabilityText: String? {
-        homeRenderedPercent.map {
-            (Double($0) / 100).formatted(.percent.precision(.fractionLength(0)))
-        }
+        ExternalSurfaceProbabilityFormat.openWholePercent(
+            homeRenderedPercent,
+            probability: homeProbability
+        )
     }
 
     static func stateLabel(for status: String?) -> String {

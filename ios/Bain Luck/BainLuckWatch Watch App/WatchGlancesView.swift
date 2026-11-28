@@ -89,14 +89,16 @@ struct WatchGlancesView: View {
             Spacer(minLength: 2)
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text("\(market.probability)%")
+                Text(market.probabilityText)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
 
                 if let movement = market.movement, movement != 0 {
+                    let delta = movement * 100.0
+                    let points = abs(Int(delta.rounded()))
                     HStack(spacing: 1) {
                         Image(systemName: movement > 0 ? "arrow.up" : "arrow.down")
                             .font(.system(size: 11, weight: .bold))
-                        Text("\(abs(Int((movement * 100).rounded())))")
+                        Text("\(points)")
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundStyle(movement > 0 ? .green : .red)
@@ -117,6 +119,12 @@ struct WatchMarket: Identifiable {
     let probability: Int
     let movement: Double?
     let category: String?
+    var rawProbability: Double? = nil
+
+    var probabilityText: String {
+        ExternalSurfaceProbabilityFormat.openWholePercent(probability, probability: rawProbability)
+            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+    }
 
     var dotColor: Color {
         switch category?.lowercased() {
@@ -161,9 +169,13 @@ final class WatchGlancesViewModel: ObservableObject {
                     id: f.id,
                     name: f.name,
                     leader: leader.name,
-                    probability: Int((prob * 100).rounded()),
+                    probability: renderedPercent(prob) ?? {
+                        let scaled = prob * 100.0
+                        return Int(scaled.rounded())
+                    }(),
                     movement: leader.movement,
-                    category: f.llmSportCategory
+                    category: f.llmSportCategory,
+                    rawProbability: prob
                 )
             }
             logger.info("Glances: \(self.markets.count) markets from \(feed.items.count) items")
