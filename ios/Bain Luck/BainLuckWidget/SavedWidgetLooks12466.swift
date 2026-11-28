@@ -249,9 +249,11 @@ struct SavedLookPlain12466: View {
                     .lineLimit(2)
                     .minimumScaleFactor(0.6)
             } else {
-                Text(model.reading.phase == .noResult ? "No result recorded" : "No chance to show")
+                Text(model.reading.phase == .noResult ? "No result recorded" : ExternalSurfaceProbabilityFormat.missingProbabilityText)
                     .font(.subheadline.weight(.semibold))
                     .opacity(0.8)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
             }
             Text(model.footer)
                 .font(.caption2)

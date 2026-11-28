@@ -152,9 +152,15 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
             let tiedFinal = validScores.map { $0.away == $0.home } ?? false
             let pregamePair = game.pregameRenderedPercents
             let drawPregamePct = renderedPercent(game.prematchDrawProbability)
-            let awayPregameText = pregamePair.away.map { "Pregame \($0)%" }
-            let homePregameText = pregamePair.home.map { "Pregame \($0)%" }
-            let drawPregameText = drawPregamePct.map { "Pregame Draw \($0)%" }
+            let awayPregameText = pregamePair.away.flatMap { pct in
+                ExternalSurfaceProbabilityFormat.openWholePercent(pct, probability: game.prematchAwayProbability)
+            }.map { "Pregame \($0)" }
+            let homePregameText = pregamePair.home.flatMap { pct in
+                ExternalSurfaceProbabilityFormat.openWholePercent(pct, probability: game.prematchHomeProbability)
+            }.map { "Pregame \($0)" }
+            let drawPregameText = drawPregamePct.flatMap { pct in
+                ExternalSurfaceProbabilityFormat.openWholePercent(pct, probability: game.prematchDrawProbability)
+            }.map { "Pregame Draw \($0)" }
             return WatchMatchupGameHeroModel297A(
                 stage: .after,
                 topBadgeText: "FINAL",
@@ -265,7 +271,7 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
             centerScoreText: centerScoreText,
             liveScoreExplanation: liveScoreExplanation,
             finalScoreUnavailable: false,
-            probabilityUnavailableText: chances.homeText == nil ? "\(shortPair.home) win chance unavailable" : nil,
+            probabilityUnavailableText: chances.homeText == nil ? ExternalSurfaceProbabilityFormat.missingProbabilityText : nil,
             bottomSummaryText: bottomText,
             scoreAsOfText: (isLive || validAwayScore != nil || validHomeScore != nil) ? scoreAsOf : nil,
             probabilityAsOfText: (stage == .during && chances.homeText != nil) ? probAsOf : nil
@@ -298,11 +304,11 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
             let drawShare = game.drawProbability.map { min(max($0, 0), 1) }
             let awayShare = hasExplicitDraw ? game.awayProbability.map { min(max($0, 0), 1) } : nil
             return ResolvedChances(
-                awayText: awayPct.map { "\($0)%" },
+                awayText: awayPct.flatMap { ExternalSurfaceProbabilityFormat.openWholePercent($0, probability: game.awayProbability) },
                 awayShare: awayShare,
-                drawText: drawPct.map { "\($0)%" },
+                drawText: drawPct.flatMap { ExternalSurfaceProbabilityFormat.openWholePercent($0, probability: game.drawProbability) },
                 drawShare: drawShare,
-                homeText: homePct.map { "\($0)%" },
+                homeText: homePct.flatMap { ExternalSurfaceProbabilityFormat.openWholePercent($0, probability: homeP) },
                 homeShare: homeShare
             )
         }
@@ -314,18 +320,18 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
                 awayShare: nil,
                 drawText: nil,
                 drawShare: nil,
-                homeText: game.homeRenderedPercent.map { "\($0)%" },
+                homeText: game.homeRenderedPercent.flatMap { ExternalSurfaceProbabilityFormat.openWholePercent($0, probability: homeP) },
                 homeShare: min(max(homeP, 0), 1)
             )
         }
         // Two-way non-draw market: keep served pair honest and never invent away from nil.
         let pair = renderedDuelPercents(away: game.awayProbability, home: homeP)
         return ResolvedChances(
-            awayText: pair[0].map { "\($0)%" },
+            awayText: pair[0].flatMap { ExternalSurfaceProbabilityFormat.openWholePercent($0, probability: game.awayProbability) },
             awayShare: game.awayProbability.map { min(max($0, 0), 1) },
             drawText: nil,
             drawShare: nil,
-            homeText: pair[1].map { "\($0)%" },
+            homeText: pair[1].flatMap { ExternalSurfaceProbabilityFormat.openWholePercent($0, probability: homeP) },
             homeShare: min(max(homeP, 0), 1)
         )
     }

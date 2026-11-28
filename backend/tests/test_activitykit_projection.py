@@ -313,3 +313,80 @@ def test_full_headline_fields_project_for_live_and_final_college_game():
     )
     assert opening_only.pregame_away_percent is None
     assert opening_only.pregame_home_percent is None
+
+
+def test_extreme_threshold_marks_project_for_two_way_soccer_and_pregame():
+    # Two-way NBA at 0.6% / 99.4%: whole percents remain 1 / 99, while marks tag extremes.
+    two_way = project_activitykit_snapshot(
+        reading(
+            sport="basketball_nba",
+            hero_probability=0.006,
+            hero_probability_away=0.994,
+        )
+    )
+    assert two_way.home_rendered_percent == 1
+    assert two_way.away_rendered_percent == 99
+    assert two_way.home_headline_tenths == 6
+    assert two_way.home_sub_one is True
+    assert two_way.home_above_ninety_nine is None
+    assert two_way.away_sub_one is None
+    assert two_way.away_above_ninety_nine is True
+    two_way_wire = two_way.content_state()["snapshot"]
+    assert two_way_wire["homeSubOne"] is True
+    assert two_way_wire["awayAboveNinetyNine"] is True
+
+    # Normal 1.0% / 99.0% boundary leaves all extreme marks unset.
+    boundary = project_activitykit_snapshot(
+        reading(
+            sport="basketball_nba",
+            hero_probability=0.01,
+            hero_probability_away=0.99,
+        )
+    )
+    assert boundary.home_rendered_percent == 1
+    assert boundary.away_rendered_percent == 99
+    assert boundary.home_sub_one is None
+    assert boundary.away_above_ninety_nine is None
+
+    # 3-way soccer single-chance reading at 0.6% sets home_sub_one without needing tentacles.
+    soccer = project_activitykit_snapshot(
+        reading(
+            sport="soccer_epl",
+            hero_probability=0.006,
+            hero_probability_away=0.985,
+        )
+    )
+    assert soccer.home_rendered_percent == 1
+    assert soccer.away_rendered_percent is None
+    assert soccer.home_headline_tenths is None
+    assert soccer.home_sub_one is True
+    assert soccer.content_state()["snapshot"]["homeSubOne"] is True
+
+    # Final pregame marks reflect prematch extremes and stay suppressed when non-extreme.
+    final_extreme = project_activitykit_snapshot(
+        reading(
+            sport="basketball_nba",
+            status="completed",
+            hero_settled_result="home",
+            prematch_odds={"home_probability": 0.006, "away_probability": 0.994},
+        )
+    )
+    assert final_extreme.pregame_home_percent == 1
+    assert final_extreme.pregame_away_percent == 99
+    assert final_extreme.pregame_home_sub_one is True
+    assert final_extreme.pregame_away_above_ninety_nine is True
+    assert final_extreme.home_sub_one is None
+    final_wire = final_extreme.content_state()["snapshot"]
+    assert final_wire["pregameHomeSubOne"] is True
+    assert final_wire["pregameAwayAboveNinetyNine"] is True
+
+    final_normal = project_activitykit_snapshot(
+        reading(
+            sport="basketball_nba",
+            status="completed",
+            hero_settled_result="away",
+            prematch_odds={"home_probability": 0.45, "away_probability": 0.55},
+        )
+    )
+    assert final_normal.pregame_home_sub_one is None
+    assert final_normal.pregame_away_above_ninety_nine is None

@@ -107,7 +107,7 @@ final class LiveSelectedGameJourneyTests: XCTestCase {
         }
         let unavailable = app.staticTexts["watch.home-probability-unavailable"]
         XCTAssertTrue(unavailable.exists, "UNPAID: missing probability lacks an honest explanation")
-        XCTAssertEqual(unavailable.label, home + " win chance unavailable")
+        XCTAssertEqual(unavailable.label, "No recent probability")
         try reveal(unavailable, in: app)
         return unavailable.label
     }

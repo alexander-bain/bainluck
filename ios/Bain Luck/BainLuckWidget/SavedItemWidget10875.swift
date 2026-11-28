@@ -344,9 +344,11 @@ struct SavedSmall10875: View {
                     .lineLimit(1)
                 SavedValue10875(row: headline, size: 30)
             } else {
-                Text(reading.phase == .noResult ? "No result recorded" : "No chance to show")
+                Text(reading.phase == .noResult ? "No result recorded" : ExternalSurfaceProbabilityFormat.missingProbabilityText)
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
             }
             Text(SavedClock10875.caption(reading, entry: entry) ?? reading.status)
                 .font(.caption2)
@@ -490,7 +492,9 @@ struct SavedRectangular10875: View {
                         .font(.body.weight(.semibold).monospacedDigit())
                 }
             } else {
-                Text(reading.phase == .noResult ? "No result recorded" : "No chance to show").lineLimit(1)
+                Text(reading.phase == .noResult ? "No result recorded" : ExternalSurfaceProbabilityFormat.missingProbabilityText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
             footerLine
         }

@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+#if DEBUG && canImport(Bain_Luck)
+@testable import Bain_Luck
+#endif
 
 // MARK: - Watch marquee value types + pure selection
 //
@@ -34,6 +37,12 @@ struct WatchTopStory: Identifiable {
     let bigNumber: Int
     let headline: String?
     let split: WatchProbSplit?
+    var rawProbability: Double? = nil
+
+    var bigNumberText: String {
+        ExternalSurfaceProbabilityFormat.openWholePercent(bigNumber, probability: rawProbability)
+            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+    }
 
     var accentColor: Color {
         switch badge {
@@ -109,7 +118,8 @@ enum WatchMarquee {
                 bigLabel: shortName(leader.name),
                 bigNumber: pct,
                 headline: item.headline,
-                split: nil
+                split: nil,
+                rawProbability: p
             )
         }
         return nil
@@ -132,7 +142,8 @@ enum WatchMarquee {
             bigLabel: homeLeads ? homeAbbr : awayAbbr,
             bigNumber: max(homePct, awayPct),
             headline: item.headline,
-            split: eventSplit(e, homePct: homePct, awayAbbr: awayAbbr, homeAbbr: homeAbbr)
+            split: eventSplit(e, homePct: homePct, awayAbbr: awayAbbr, homeAbbr: homeAbbr),
+            rawProbability: homeLeads ? homeProb : (1.0 - homeProb)
         )
     }
 
@@ -183,7 +194,12 @@ enum WatchMarquee {
 
     // MARK: Helpers
 
-    static func pct(_ p: Double) -> Int { Int((p * 100).rounded()) }
+    static func pct(_ p: Double) -> Int {
+        renderedPercent(p) ?? {
+            let scaled = p * 100.0
+            return Int(scaled.rounded())
+        }()
+    }
 
     static func shortName(_ name: String) -> String {
         name.count <= 16 ? name : String(name.prefix(15)) + "…"

@@ -239,7 +239,10 @@ struct SavedGameHeadlineWidgetModel12616: Equatable, Sendable {
                 smallFooterSegments = []
                 if let winnerIsHome, let pct = winnerPregamePct, pct < 50 {
                     let winnerName = winnerIsHome ? homeSide.shortName : awaySide.shortName
-                    mediumFooter = "\(winnerName) won from a \(pct)% pregame chance"
+                    let pctText = winnerPregameText
+                        ?? ExternalSurfaceProbabilityFormat.openWholePercent(pct)
+                        ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+                    mediumFooter = "\(winnerName) won from a \(pctText) pregame chance"
                     mediumFooterSegments = [TextSegment(text: mediumFooter, ink: .emerald)]
                     footerIsEmerald = true
                 } else {

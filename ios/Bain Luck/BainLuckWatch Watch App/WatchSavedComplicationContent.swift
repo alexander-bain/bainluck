@@ -1,5 +1,8 @@
 import SwiftUI
 import WidgetKit
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 /// Selected-game and saved-market complication views (`#4933`, `#13430`):
 /// circular and corner slots follow the iPhone small Lock Screen rules (`LockScreenSmallSlotFit13430`),
@@ -233,9 +236,9 @@ struct WatchUnavailableComplicationContent13339: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Text(status.reason.complicationHeadline)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.75)
                 Text(status.reason.complicationDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
