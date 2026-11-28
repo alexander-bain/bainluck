@@ -5,12 +5,13 @@ Fable's ACCEPT and after migrations in line (#13691 metrickit_payloads_12309,
 then #13865 poll_open_outcomes_13673) land on master and this migration's
 ``down_revision`` is moved onto ``poll_open_outcomes_13673``.
 
-Until those ahead-in-line migrations land on master, ``down_revision`` stays on
-master's current single head (``guess_daily_boards_443a``) so Alembic's
-reachability and single-head checks pass locally and in CI.
+Until `#13865` lands on master, ``down_revision`` temporarily follows
+``metrickit_payloads_12309`` (current master head from ``#13691``) so Alembic
+single-head checks and hosted CI/Vercel preview stay green; once ``#13865`` lands,
+this moves once more onto ``poll_open_outcomes_13673``.
 
 Revision ID: cu_fact_labels_13900
-Revises: guess_daily_boards_443a
+Revises: metrickit_payloads_12309
 """
 
 import sqlalchemy as sa
@@ -18,7 +19,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "cu_fact_labels_13900"
-down_revision = "guess_daily_boards_443a"
+down_revision = "metrickit_payloads_12309"
 branch_labels = None
 depends_on = None
 

@@ -92,6 +92,8 @@ struct Bain_LuckApp: App {
         AnonymousLifecycleCounts424A.shared.handleAppLaunch()
         #if os(iOS)
         WatchTelemetryReceiver.shared.start()
+        // #12309 — Apple's diagnostics, forwarded only under the grant above.
+        MetricKitSubscriber12309.shared.start()
         #endif
         // Subscribe to FCM registration tokens. After `configure()`, by
         // requirement — the delegate is ignored before it (#1159).
