@@ -68,19 +68,32 @@ def _headline_tenths(home: float | None, away: float | None) -> int | None:
     return int(math.floor(scaled + 0.5))
 
 
-def _pregame_percents(
-    detail: Mapping[str, object], sport: str | None
-) -> tuple[int | None, int | None]:
-    """Strict prematch_odds pair (never opening_odds) for two-way games (ruling 209)."""
-    if sport is None or sport_prices_a_draw(sport):
+def _extreme_marks(
+    probability: float | None, percent: int | None
+) -> tuple[bool | None, bool | None]:
+    """Return true-only (sub_one, above_ninety_nine) threshold marks matching iOS."""
+    if percent is None:
         return (None, None)
+    if (probability is not None and 0.0 <= probability < 0.01) or percent <= 0:
+        return (True, None)
+    if (probability is not None and 0.99 < probability <= 1.0) or percent >= 100:
+        return (None, True)
+    return (None, None)
+
+
+def _pregame_with_marks(
+    detail: Mapping[str, object], sport: str | None
+) -> tuple[int | None, int | None, bool | None, bool | None, bool | None, bool | None]:
+    """Strict prematch_odds pair plus true-only extreme threshold marks (ruling 209)."""
+    if sport is None or sport_prices_a_draw(sport):
+        return (None, None, None, None, None, None)
     prematch = detail.get("prematch_odds")
     if not isinstance(prematch, Mapping):
-        return (None, None)
+        return (None, None, None, None, None, None)
     away_p = _probability(prematch.get("away_probability"))
     home_p = _probability(prematch.get("home_probability"))
     if away_p is None or home_p is None:
-        return (None, None)
+        return (None, None, None, None, None, None)
     served = prematch.get("rendered_percents")
     if (
         isinstance(served, (list, tuple))
@@ -90,11 +103,22 @@ def _pregame_percents(
         and 0 <= served[0] <= 100
         and 0 <= served[1] <= 100
     ):
-        return (served[0], served[1])
-    duel = rendered_duel_percents(away_p, home_p)
-    if duel[0] is None or duel[1] is None:
-        return (None, None)
-    return (duel[0], duel[1])
+        away_pct, home_pct = served[0], served[1]
+    else:
+        duel = rendered_duel_percents(away_p, home_p)
+        if duel[0] is None or duel[1] is None:
+            return (None, None, None, None, None, None)
+        away_pct, home_pct = duel[0], duel[1]
+    away_sub_one, away_above_99 = _extreme_marks(away_p, away_pct)
+    home_sub_one, home_above_99 = _extreme_marks(home_p, home_pct)
+    return (away_pct, home_pct, away_sub_one, away_above_99, home_sub_one, home_above_99)
+
+
+def _pregame_percents(
+    detail: Mapping[str, object], sport: str | None
+) -> tuple[int | None, int | None]:
+    """Strict prematch_odds pair (never opening_odds) for two-way games (ruling 209)."""
+    return _pregame_with_marks(detail, sport)[:2]
 
 
 def _probability(value: object) -> float | None:
@@ -142,6 +166,8 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
     away_percent = None
     headline_tenths = None
     probability_clock = None
+    home = None
+    away = None
     if lifecycle in {"scheduled", "live"} and detail.get("hero_probability_source") != "opening":
         hero = _probability(detail.get("hero_probability"))
         raw_hero_away = detail.get("hero_probability_away")
@@ -165,6 +191,8 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
             percent = None
             away_percent = None
             headline_tenths = None
+    home_sub_one, home_above_ninety_nine = _extreme_marks(home, percent)
+    away_sub_one, away_above_ninety_nine = _extreme_marks(away, away_percent)
     home_score = detail.get("home_score")
     away_score = detail.get("away_score")
     home_score = home_score if type(home_score) is int and home_score >= 0 else None
@@ -189,7 +217,14 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
         if lifecycle == "final" and isinstance(raw_result, str) and raw_result in _RESULTS
         else None
     )
-    pregame_away, pregame_home = _pregame_percents(detail, sport)
+    (
+        pregame_away,
+        pregame_home,
+        pregame_away_sub_one,
+        pregame_away_above_ninety_nine,
+        pregame_home_sub_one,
+        pregame_home_above_ninety_nine,
+    ) = _pregame_with_marks(detail, sport)
     score_source_unavailable: bool | None = (
         True
         if (
@@ -223,4 +258,12 @@ def project_activitykit_snapshot(detail: Mapping[str, object]) -> GameActivitySn
         pregame_away_percent=pregame_away,
         pregame_home_percent=pregame_home,
         score_source_unavailable=score_source_unavailable,
+        home_sub_one=home_sub_one,
+        home_above_ninety_nine=home_above_ninety_nine,
+        away_sub_one=away_sub_one,
+        away_above_ninety_nine=away_above_ninety_nine,
+        pregame_home_sub_one=pregame_home_sub_one,
+        pregame_home_above_ninety_nine=pregame_home_above_ninety_nine,
+        pregame_away_sub_one=pregame_away_sub_one,
+        pregame_away_above_ninety_nine=pregame_away_above_ninety_nine,
     )

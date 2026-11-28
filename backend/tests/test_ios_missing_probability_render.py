@@ -26,6 +26,24 @@ import re
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 APP_ROOT = REPO / "ios/Bain Luck/Bain Luck"
+WIDGET_ROOT = REPO / "ios/Bain Luck/BainLuckWidget"
+WATCH_ROOT = REPO / "ios/Bain Luck/BainLuckWatch Watch App"
+SHARED_WIDGET_ROOT = APP_ROOT / "Widgets10875"
+APP_CLIP_ROOT = REPO / "ios/Bain Luck/BainLuckClip"
+EXT_PROB_FORMAT = APP_ROOT / "Utilities/ExternalSurfaceProbabilityFormat.swift"
+PBXPROJ = REPO / "ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj"
+
+EXTERNAL_TARGET_DIRS: tuple[pathlib.Path, ...] = (
+    WIDGET_ROOT,
+    WATCH_ROOT,
+    SHARED_WIDGET_ROOT,
+    APP_CLIP_ROOT,
+)
+
+EXTERNAL_EXTRA_FILES: tuple[pathlib.Path, ...] = (
+    APP_ROOT / "Utilities/GameActivitySnapshot.swift",
+    APP_ROOT / "Utilities/GameActivitySnapshot+Event.swift",
+)
 VIEW = APP_ROOT / "Components/RelatedFuturesView.swift"
 FORMATTING = APP_ROOT / "Utilities/FormattingUtilities.swift"
 
@@ -537,3 +555,174 @@ class TestGuardedSitesWereNotDisturbed:
         code = _view_code()
         assert code.count("if let prob = future.probability") == 5
         assert code.count("if let prob = outcome.probability") == 1
+
+
+FORMATTED_PERCENT_RE = re.compile(r"\.formatted\s*\(\s*\.percent\b")
+EXTREME_PERCENT_LITERAL_RE = re.compile(r'(?<!\d)(?:0|100)%')
+DIRECT_PERCENT_INTERPOLATION_RE = re.compile(r"\\\([^)]+\)\s*%")
+LEGACY_MISSING_PROBABILITY_PHRASES: tuple[str, ...] = (
+    "No chance to show",
+    "no chance to show",
+    "Win probability unavailable",
+    "Probability unavailable",
+    "win chance unavailable",
+    "Win chance unavailable",
+    "Waiting for odds",
+)
+
+
+def _find_raw_formatted_percent_calls(src: str) -> list[tuple[int, str]]:
+    """Return `(line, line_text)` for any code call to `.formatted(.percent...)` outside comments."""
+    code = _strip_comments(src)
+    hits: list[tuple[int, str]] = []
+    for line_no, line in enumerate(code.splitlines(), start=1):
+        if FORMATTED_PERCENT_RE.search(line):
+            hits.append((line_no, line.strip()))
+    return hits
+
+
+def _find_legacy_missing_probability_strings(src: str) -> list[tuple[int, str]]:
+    """Return `(line, normalized_literal)` for legacy missing-probability wording outside comments."""
+    code = _strip_comments(src)
+    hits: list[tuple[int, str]] = []
+    for line_no, literal in _extract_string_literals(code):
+        if any(phrase in literal for phrase in LEGACY_MISSING_PROBABILITY_PHRASES):
+            hits.append((line_no, " ".join(literal.split())))
+    return hits
+
+
+def _find_extreme_percent_literals(src: str) -> list[tuple[int, str]]:
+    """Return `(line, normalized_literal)` for hardcoded `0%` / `100%` strings outside comments."""
+    code = _strip_comments(src)
+    hits: list[tuple[int, str]] = []
+    for line_no, literal in _extract_string_literals(code):
+        if EXTREME_PERCENT_LITERAL_RE.search(literal):
+            hits.append((line_no, " ".join(literal.split())))
+    return hits
+
+
+def _find_direct_percent_interpolation(src: str) -> list[tuple[int, str]]:
+    """Return `(line, normalized_literal)` for ANY string interpolating `\\(...)%` outside comments."""
+    code = _strip_comments(src)
+    hits: list[tuple[int, str]] = []
+    for line_no, literal in _extract_string_literals(code):
+        if DIRECT_PERCENT_INTERPOLATION_RE.search(literal):
+            hits.append((line_no, " ".join(literal.split())))
+    return hits
+
+
+class TestExternalAppleSurfacesUseUnifiedProbabilityRule:
+    """Item 7 guard: every Apple surface outside the main app (Home/Lock Screen widgets,
+    Live Activities, Apple Watch app & complications, shared widget/App Clip layer)
+    must route probabilities and missing copy through `ExternalSurfaceProbabilityFormat`."""
+
+    def test_planted_external_probability_mutants_are_caught(self):
+        hand_rolled_mutants = [
+            'Text("\\(game.homeProb)%")',
+            'Text("\\(Int((prob * 100).rounded()))%")',
+            'let s = "\\(Int(round(p * 100)))%"',
+        ]
+        for mutant in hand_rolled_mutants:
+            assert (
+                _find_hand_rolled_percent_strings(mutant)
+                or _find_direct_percent_interpolation(mutant)
+            ), f"missed hand-rolled mutant: {mutant!r}"
+
+        formatted_percent_mutants = [
+            '(Double(homePercent) / 100).formatted(.percent.precision(.fractionLength(0)))',
+            'value.formatted(.percent)',
+        ]
+        for mutant in formatted_percent_mutants:
+            assert _find_raw_formatted_percent_calls(mutant), (
+                f"missed formatted(.percent) mutant: {mutant!r}"
+            )
+
+        legacy_missing_mutants = [
+            'Text("No chance to show")',
+            'return "Win probability unavailable"',
+            'return "Probability unavailable"',
+            'Text("\\(game.homeTeam) win chance unavailable")',
+            'case .noLiveOdds: return "Waiting for odds"',
+            'Text("0%")',
+            'Text("100%")',
+        ]
+        for mutant in legacy_missing_mutants:
+            assert (
+                _find_legacy_missing_probability_strings(mutant)
+                or _find_extreme_percent_literals(mutant)
+            ), f"missed legacy missing/extreme mutant: {mutant!r}"
+
+        safe_snippets = [
+            '// Text("\\(game.homeProb)%") (Double(x)/100).formatted(.percent) "Waiting for odds" "0%"',
+            'Text(ExternalSurfaceProbabilityFormat.missingProbabilityText)',
+            'let label = "No recent probability"',
+            'let pct = ExternalSurfaceProbabilityFormat.openWholePercent(p)',
+        ]
+        for safe in safe_snippets:
+            assert _find_hand_rolled_percent_strings(safe) == []
+            assert _find_direct_percent_interpolation(safe) == []
+            assert _find_raw_formatted_percent_calls(safe) == []
+            assert _find_legacy_missing_probability_strings(safe) == []
+            assert _find_extreme_percent_literals(safe) == []
+
+    def test_external_targets_use_unified_probability_format_and_no_legacy_strings(self):
+        swift_files: list[pathlib.Path] = list(EXTERNAL_EXTRA_FILES)
+        for root in EXTERNAL_TARGET_DIRS:
+            if root.exists():
+                swift_files.extend(sorted(root.rglob("*.swift")))
+
+        hand_rolled_hits: list[str] = []
+        direct_interpolation_hits: list[str] = []
+        formatted_percent_hits: list[str] = []
+        legacy_missing_hits: list[str] = []
+        extreme_literal_hits: list[str] = []
+
+        for path in swift_files:
+            rel = path.relative_to(REPO).as_posix()
+            text = path.read_text()
+            for line_no, norm_literal in _find_hand_rolled_percent_strings(text):
+                hand_rolled_hits.append(f"{rel}:{line_no}: {norm_literal}")
+            for line_no, norm_literal in _find_direct_percent_interpolation(text):
+                direct_interpolation_hits.append(f"{rel}:{line_no}: {norm_literal}")
+            for line_no, code_line in _find_raw_formatted_percent_calls(text):
+                formatted_percent_hits.append(f"{rel}:{line_no}: {code_line}")
+            for line_no, norm_literal in _find_legacy_missing_probability_strings(text):
+                legacy_missing_hits.append(f"{rel}:{line_no}: {norm_literal}")
+            for line_no, norm_literal in _find_extreme_percent_literals(text):
+                extreme_literal_hits.append(f"{rel}:{line_no}: {norm_literal}")
+
+        assert hand_rolled_hits == [], f"Hand-rolled *100 percent string(s): {hand_rolled_hits}"
+        assert direct_interpolation_hits == [], (
+            f"Direct \\(...)% string interpolation bypasses `<1%`/`>99%`: {direct_interpolation_hits}"
+        )
+        assert formatted_percent_hits == [], (
+            f"Raw .formatted(.percent) call(s) bypass `<1%`/`>99%`: {formatted_percent_hits}"
+        )
+        assert legacy_missing_hits == [], (
+            f"Legacy unavailable copy found outside unified `No recent probability`: {legacy_missing_hits}"
+        )
+        assert extreme_literal_hits == [], (
+            f"Hardcoded 0%/100% literal found in external target: {extreme_literal_hits}"
+        )
+
+    def test_shared_external_formatter_and_target_wiring(self):
+        assert EXT_PROB_FORMAT.exists(), f"missing {EXT_PROB_FORMAT}"
+        fmt_src = EXT_PROB_FORMAT.read_text()
+        assert 'static let missingProbabilityText = "No recent probability"' in fmt_src
+        assert "probability < 0.01" in fmt_src
+        assert 'return "<1%"' in fmt_src
+        assert "probability > 0.99" in fmt_src
+        assert 'return ">99%"' in fmt_src
+
+        pbx_src = PBXPROJ.read_text()
+        for block_id in (
+            "A707F8062FA91A3700A4D63C",  # BainLuckWatch Watch App
+            "A7C0000000000000000000DF",  # BainLuckComplication
+            "A7C0000000000000000000B1",  # BainLuckWidget
+        ):
+            assert block_id in pbx_src
+            segment = pbx_src.split(block_id, 1)[1].split(");", 1)[0]
+            assert "Utilities/ExternalSurfaceProbabilityFormat.swift" in segment, (
+                f"{block_id} missing Utilities/ExternalSurfaceProbabilityFormat.swift"
+            )
+

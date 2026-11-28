@@ -78,6 +78,16 @@ class GameActivitySnapshot:
     # #13000 (250-A) — True only on a scoreless live game whose league has no
     # live score feed; omitted otherwise to stay byte-identical for 1.0.6.
     score_source_unavailable: bool | None = None
+    # True-only threshold marks so pushed Live Activities preserve "<1%" / ">99%"
+    # on open markets (0 <= p < 0.01, 0.99 < p <= 1); omitted otherwise.
+    home_sub_one: bool | None = None
+    home_above_ninety_nine: bool | None = None
+    away_sub_one: bool | None = None
+    away_above_ninety_nine: bool | None = None
+    pregame_home_sub_one: bool | None = None
+    pregame_home_above_ninety_nine: bool | None = None
+    pregame_away_sub_one: bool | None = None
+    pregame_away_above_ninety_nine: bool | None = None
 
     def __post_init__(self) -> None:
         _integer(self.event_id, "event_id", minimum=1, maximum=_MAX_SWIFT_INT)
@@ -182,6 +192,36 @@ class GameActivitySnapshot:
                 raise ActivityKitPayloadError(
                     "score_source_unavailable may only be True on a scoreless live game"
                 )
+        for sub_name, above_name, pct in (
+            ("home_sub_one", "home_above_ninety_nine", self.home_rendered_percent),
+            ("away_sub_one", "away_above_ninety_nine", self.away_rendered_percent),
+            (
+                "pregame_home_sub_one",
+                "pregame_home_above_ninety_nine",
+                self.pregame_home_percent,
+            ),
+            (
+                "pregame_away_sub_one",
+                "pregame_away_above_ninety_nine",
+                self.pregame_away_percent,
+            ),
+        ):
+            sub_val = getattr(self, sub_name)
+            above_val = getattr(self, above_name)
+            for name, val in ((sub_name, sub_val), (above_name, above_val)):
+                if val is not None:
+                    if val is not True:
+                        raise ActivityKitPayloadError(
+                            f"{name} may only be True when present"
+                        )
+                    if pct is None:
+                        raise ActivityKitPayloadError(
+                            f"{name} requires its matching rendered percent"
+                        )
+            if sub_val is True and above_val is True:
+                raise ActivityKitPayloadError(
+                    f"{sub_name} and {above_name} cannot both be True"
+                )
 
     @property
     def is_terminal(self) -> bool:
@@ -212,6 +252,14 @@ class GameActivitySnapshot:
             ("pregameAwayPercent", self.pregame_away_percent),
             ("pregameHomePercent", self.pregame_home_percent),
             ("scoreSourceUnavailable", self.score_source_unavailable),
+            ("homeSubOne", self.home_sub_one),
+            ("homeAboveNinetyNine", self.home_above_ninety_nine),
+            ("awaySubOne", self.away_sub_one),
+            ("awayAboveNinetyNine", self.away_above_ninety_nine),
+            ("pregameHomeSubOne", self.pregame_home_sub_one),
+            ("pregameHomeAboveNinetyNine", self.pregame_home_above_ninety_nine),
+            ("pregameAwaySubOne", self.pregame_away_sub_one),
+            ("pregameAwayAboveNinetyNine", self.pregame_away_above_ninety_nine),
         ):
             if value is not None:
                 snapshot[key] = value
