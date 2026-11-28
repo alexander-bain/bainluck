@@ -33,6 +33,7 @@ export type DiscoverAction =
   | "detail_click"
   | "dismiss"
   | "like"
+  | "like_undo"
   | "unlike"
   | "share"
   | "group_expand"
@@ -101,6 +102,8 @@ const ACTION_WEIGHTS: Record<DiscoverAction, number> = {
   detail_click: 1.5,
   dismiss: -2,
   like: 2,
+  // Taking a like back reverses a prior like inside recordDiscoverInteraction without adding a minus or dismissal count.
+  like_undo: 0,
   unlike: -1,
   share: 3,
   group_expand: 0.75,
@@ -353,6 +356,24 @@ export function recordDiscoverInteraction(category: string, action: DiscoverActi
     if (learningIdentity && profile.owner_uid && profile.owner_uid !== currentLearningUid()) return;
     const key = normalizeCategory(category);
     const sports = isSportsDiscoverCategory(key);
+    if (action === "like_undo") {
+      // 463: A — taking a like back cancels a prior like without subtracting
+      // below zero, penalizing unrelated signals, or counting as a dismissal.
+      const saved = profile.categories[key];
+      if (!saved || saved.likes <= 0) return;
+      const bucket = sports ? sportsPositiveBucket(saved) : saved;
+      const minScore = sports || bucket.dismisses === 0 ? 0 : -10;
+      bucket.likes = Math.max(0, bucket.likes - 1);
+      bucket.score = clamp(bucket.score - ACTION_WEIGHTS.like, minScore, 30);
+      bucket.last_interaction_at = now;
+      profile.categories[key] = bucket;
+      profile.updated_at = now;
+      const uid = currentLearningUid();
+      if (uid) profile.owner_uid = uid;
+      localStorage.setItem(storageKey, JSON.stringify(profile));
+      window.dispatchEvent(new CustomEvent("discover-profile-updated"));
+      return;
+    }
     // Exact item/story dismissal is still recorded by the page and sent to the
     // server. It must not teach less of a sport, either team, or a region.
     if (sports && (action === "dismiss" || action === "unlike")) return;

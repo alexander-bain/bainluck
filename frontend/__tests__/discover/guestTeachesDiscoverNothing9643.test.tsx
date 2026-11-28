@@ -153,6 +153,7 @@ const ALL_ACTIONS = [
   "detail_click",
   "dismiss",
   "like",
+  "like_undo",
   "unlike",
   "share",
   "group_expand",
