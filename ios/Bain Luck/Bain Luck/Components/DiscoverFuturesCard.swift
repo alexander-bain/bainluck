@@ -129,6 +129,7 @@ struct NativeFuturesDiscoverCard: View {
     @ScaledMetric(relativeTo: .largeTitle) private var heroNumeralSize: CGFloat = 52
     @ScaledMetric(relativeTo: .headline) private var cardTitleSizeAX: CGFloat = 17
     @ScaledMetric(relativeTo: .caption2) private var chipFontSizeAX: CGFloat = 11
+    @ScaledMetric(relativeTo: .subheadline) private var shareIconSizeAX: CGFloat = 15
 
     /// #6343 — the price-age reveal, open or closed. The phone has no hover, so
     /// the precise stamp arrives by tap; the state lives here rather than in the
@@ -566,16 +567,32 @@ struct NativeFuturesDiscoverCard: View {
     }
 
     private var footerActionControls: some View {
-        HStack(spacing: 4) {
-            // #490 / L2-184: confidence signal (1-3 bars) — renders nothing
-            // when absent. Same tier map + placement as the native
-            // multi-candidate kernels (Comparison/Distribution/HeatMap).
-            SignalBarsView(tier: data.confidenceTier)
-
-            if let likeAction {
-                DiscoverLikeButton420D(isLiked: likeAction.isLiked, action: likeAction.onToggle)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+                SignalBarsView(tier: data.confidenceTier)
+                likeButtonControl
+                pinShareControls
             }
 
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack(spacing: 4) {
+                    SignalBarsView(tier: data.confidenceTier)
+                    likeButtonControl
+                }
+                pinShareControls
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var likeButtonControl: some View {
+        if let likeAction {
+            DiscoverLikeButton420D(isLiked: likeAction.isLiked, action: likeAction.onToggle)
+        }
+    }
+
+    private var pinShareControls: some View {
+        HStack(spacing: 4) {
             PinButton(type: "future", id: data.id)
                 .fixedSize(horizontal: true, vertical: false)
 
@@ -585,7 +602,11 @@ struct NativeFuturesDiscoverCard: View {
                 message: Text(shareMessage)
             ) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.subheadline.weight(.medium))
+                    .font(
+                        dynamicTypeSize.isAccessibilitySize
+                            ? .system(size: min(shareIconSizeAX, 22), weight: .medium)
+                            : .subheadline.weight(.medium)
+                    )
                     .foregroundStyle(DS.textSecondaryReadable)
                     .padding(8)
                     .background(Color.secondary.opacity(0.10), in: Circle())
@@ -606,7 +627,6 @@ struct NativeFuturesDiscoverCard: View {
                 #endif
             }
         }
-        .fixedSize(horizontal: true, vertical: false)
     }
 
     /// #4111 — the card's art. `image_url` rides in on the same payload the web

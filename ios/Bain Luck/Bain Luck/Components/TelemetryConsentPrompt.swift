@@ -17,8 +17,11 @@ import SwiftUI
 struct TelemetryConsentPrompt: View {
     /// Called once a choice is recorded, with the resulting durability.
     var onChoice: (ConsentPersistence) -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        let cardPadding: CGFloat = dynamicTypeSize.isAccessibilitySize ? 16 : 24
+        let outerPadding: CGFloat = dynamicTypeSize.isAccessibilitySize ? 12 : 24
         GeometryReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
@@ -54,9 +57,11 @@ struct TelemetryConsentPrompt: View {
                             } label: {
                                 Text("Allow")
                                     .font(.body.weight(.semibold))
+                                    .multilineTextAlignment(.center)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 14)
+                                    .padding(.horizontal, 8)
                                     .background(DS.blueReadable)
                                     .foregroundStyle(DS.textOnAccent)
                                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -68,9 +73,11 @@ struct TelemetryConsentPrompt: View {
                             } label: {
                                 Text("No thanks")
                                     .font(.body.weight(.semibold))
+                                    .multilineTextAlignment(.center)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 14)
+                                    .padding(.horizontal, 8)
                                     .background(DS.trackBg)
                                     .foregroundStyle(DS.textPrimary)
                                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -88,7 +95,7 @@ struct TelemetryConsentPrompt: View {
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(24)
+                    .padding(cardPadding)
                     .frame(maxWidth: 460)
                     .background(DS.cardBg)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -96,7 +103,7 @@ struct TelemetryConsentPrompt: View {
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
                             .stroke(DS.border, lineWidth: 1)
                     )
-                    .padding(24)
+                    .padding(outerPadding)
 
                     Spacer(minLength: 0)
                 }
