@@ -252,10 +252,10 @@ final class AppClip12307Tests: XCTestCase {
         XCTAssertEqual(ClipLoader12307.missingValueAccessibilityLabel, "No recent probability")
 
         let noResultReading = SavedWidgetReading10875(
-            kind: .game, targetID: 1, title: "Test", status: "Settled", phase: .noResult,
+            phase: .noResult, subject: "Away vs Home", shortSubject: "AWY vs HME", status: "Settled",
             rows: [
-                SavedWidgetOutcomeRow10875(id: "away", label: "Away", figure: nil, verdict: nil, emphasized: false),
-                SavedWidgetOutcomeRow10875(id: "home", label: "Home", figure: nil, verdict: nil, emphasized: false),
+                SavedWidgetReading10875.Row(label: "Away", shortLabel: "AWY", figure: nil, verdict: nil, emphasized: false),
+                SavedWidgetReading10875.Row(label: "Home", shortLabel: "HME", figure: nil, verdict: nil, emphasized: false),
             ],
             headline: nil, priceCaption: nil, observedAt: nil, becomesLastRecordedAt: nil,
             spoken: "", lastRecordedFigure: nil
@@ -263,10 +263,10 @@ final class AppClip12307Tests: XCTestCase {
         XCTAssertEqual(ClipLoader12307.displayCaption(noResultReading, now: t0), "No result reported")
 
         let suspendedSameLabelReading = SavedWidgetReading10875(
-            kind: .game, targetID: 1, title: "Test", status: "No result reported", phase: .noResult,
+            phase: .noResult, subject: "Away vs Home", shortSubject: "AWY vs HME", status: "No result reported",
             rows: [
-                SavedWidgetOutcomeRow10875(id: "away", label: "Away", figure: nil, verdict: nil, emphasized: false),
-                SavedWidgetOutcomeRow10875(id: "home", label: "Home", figure: nil, verdict: nil, emphasized: false),
+                SavedWidgetReading10875.Row(label: "Away", shortLabel: "AWY", figure: nil, verdict: nil, emphasized: false),
+                SavedWidgetReading10875.Row(label: "Home", shortLabel: "HME", figure: nil, verdict: nil, emphasized: false),
             ],
             headline: nil, priceCaption: nil, observedAt: nil, becomesLastRecordedAt: nil,
             spoken: "", lastRecordedFigure: nil
