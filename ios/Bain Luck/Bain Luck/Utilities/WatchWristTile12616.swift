@@ -490,8 +490,10 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
             }
             if !model.supportingLine.isEmpty {
                 composedSupportingText
-                    .font(HeadlineStyleTable199.quietText(.wristTile, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.wristTile)))
-                    .lineLimit(2)
+                    .font(isAccessibilitySize
+                          ? .footnote
+                          : HeadlineStyleTable199.quietText(.wristTile, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.wristTile)))
+                    .lineLimit(isAccessibilitySize ? nil : 2)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(spokenTextExpandingProbabilitySymbols(model.supportingLine))
                     .modifier(OptionalIdentifier12616(id: identifierPrefix.map { "\($0).clock" }))
@@ -528,55 +530,103 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
 
     @ViewBuilder
     private var topMetaRow: some View {
-        HStack(spacing: 4) {
-            leadingAccessory()
+        if isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    leadingAccessory()
 
-            if let liveBadge = model.liveCapsuleText {
-                HStack(spacing: 3) {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 4, height: 4)
-                        .accessibilityHidden(true)
-                    Text(liveBadge)
-                        .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: 9).monospacedDigit())
-                        .foregroundStyle(Color.white)
-                        .lineLimit(1)
+                    if let liveBadge = model.liveCapsuleText {
+                        HStack(spacing: 3) {
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 5, height: 5)
+                                .accessibilityHidden(true)
+                            Text(liveBadge)
+                                .font(.caption2.weight(.bold).monospacedDigit())
+                                .foregroundStyle(Color.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Self.rgbColor("#DC2626"), in: Capsule())
+                        .modifier(OptionalIdentifier12616(
+                            id: model.liveScoreMetaText != nil ? identifierPrefix.map { "\($0).header" } : nil
+                        ))
+                    } else if model.showsFinalCheckmark {
+                        Image(systemName: "checkmark")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Self.rgbColor("#34D399"))
+                            .accessibilityHidden(true)
+                    }
                 }
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1.5)
-                .background(Self.rgbColor("#DC2626"), in: Capsule())
-                .fixedSize(horizontal: true, vertical: false)
-                .modifier(OptionalIdentifier12616(
-                    id: model.liveScoreMetaText != nil ? identifierPrefix.map { "\($0).header" } : nil
-                ))
 
                 Text(model.topMetaText)
-                    .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: 9.5).monospacedDigit())
-                    .foregroundStyle(Color.white.opacity(0.78))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.70)
-                    .layoutPriority(1)
-                    .modifier(OptionalIdentifier12616(
-                        id: identifierPrefix.map { model.liveScoreMetaText != nil ? "\($0).score" : "\($0).header" }
-                    ))
-            } else {
-                if model.showsFinalCheckmark {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Self.rgbColor("#34D399"))
-                        .accessibilityHidden(true)
-                }
-                Text(model.topMetaText)
-                    .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: HeadlineStyleTable199.headerBaseSize(.wristTile)))
-                    .tracking(0.25)
+                    .font(.caption2.weight(.semibold).monospacedDigit())
                     .foregroundStyle(
                         model.showsFinalCheckmark
                             ? Self.rgbColor("#34D399")
-                            : Color.white.opacity(0.68)
+                            : (model.liveCapsuleText != nil ? Color.white.opacity(0.84) : Color.white.opacity(0.76))
                     )
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-                    .modifier(OptionalIdentifier12616(id: identifierPrefix.map { "\($0).header" }))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .modifier(OptionalIdentifier12616(
+                        id: identifierPrefix.map {
+                            (model.liveCapsuleText != nil && model.liveScoreMetaText != nil)
+                                ? "\($0).score"
+                                : "\($0).header"
+                        }
+                    ))
+            }
+        } else {
+            HStack(spacing: 4) {
+                leadingAccessory()
+
+                if let liveBadge = model.liveCapsuleText {
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 4, height: 4)
+                            .accessibilityHidden(true)
+                        Text(liveBadge)
+                            .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: 9).monospacedDigit())
+                            .foregroundStyle(Color.white)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(Self.rgbColor("#DC2626"), in: Capsule())
+                    .fixedSize(horizontal: true, vertical: false)
+                    .modifier(OptionalIdentifier12616(
+                        id: model.liveScoreMetaText != nil ? identifierPrefix.map { "\($0).header" } : nil
+                    ))
+
+                    Text(model.topMetaText)
+                        .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: 9.5).monospacedDigit())
+                        .foregroundStyle(Color.white.opacity(0.78))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.70)
+                        .layoutPriority(1)
+                        .modifier(OptionalIdentifier12616(
+                            id: identifierPrefix.map { model.liveScoreMetaText != nil ? "\($0).score" : "\($0).header" }
+                        ))
+                } else {
+                    if model.showsFinalCheckmark {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Self.rgbColor("#34D399"))
+                            .accessibilityHidden(true)
+                    }
+                    Text(model.topMetaText)
+                        .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: HeadlineStyleTable199.headerBaseSize(.wristTile)))
+                        .tracking(0.25)
+                        .foregroundStyle(
+                            model.showsFinalCheckmark
+                                ? Self.rgbColor("#34D399")
+                                : Color.white.opacity(0.68)
+                        )
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .modifier(OptionalIdentifier12616(id: identifierPrefix.map { "\($0).header" }))
+                }
             }
         }
     }

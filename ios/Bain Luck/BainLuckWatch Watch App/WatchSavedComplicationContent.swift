@@ -246,6 +246,7 @@ struct WatchUnavailableComplicationContent13339: View {
                     .minimumScaleFactor(0.85)
             }
         }
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(status.reason.accessibilityDescription(title: status.title))
