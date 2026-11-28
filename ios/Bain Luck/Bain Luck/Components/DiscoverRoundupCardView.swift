@@ -194,6 +194,7 @@ struct DiscoverRoundupCardView: View {
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(secondaryReadableInk)
                             .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel(spokenProbabilityText(divDisplay.label))
                     }
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -207,6 +208,7 @@ struct DiscoverRoundupCardView: View {
                             .foregroundStyle(secondaryReadableInk)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
+                            .accessibilityLabel(spokenProbabilityText(divDisplay.label))
                     }
                 }
                 proportionalBar(fill: 0, barHeight: 6, barColor: DS.blue)
@@ -278,6 +280,7 @@ struct DiscoverRoundupCardView: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(secondaryReadableInk)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("\(secondary.secondaryLabel) \(spokenProbabilityText(secondary.formattedPercentText)), \(secondary.primaryLabel) \(spokenProbabilityText(row.formattedPercentText))")
                 }
                 .padding(.top, 2)
             }
@@ -396,7 +399,8 @@ struct DiscoverRoundupCardView: View {
     // MARK: - Shared Primitives
 
     private func percentView(marker: String?, digits: String, font: Font, ink: Color? = nil) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 1) {
+        let printed = "\(marker ?? "")\(digits)%"
+        return HStack(alignment: .firstTextBaseline, spacing: 1) {
             Text("\(marker ?? "")\(digits)")
                 .font(font.monospacedDigit().weight(.bold))
                 .foregroundStyle(ink ?? primaryInk)
@@ -406,6 +410,8 @@ struct DiscoverRoundupCardView: View {
                 .foregroundStyle(secondaryReadableInk)
                 .fixedSize()
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenProbabilityText(printed))
     }
 
     private func proportionalBar(fill: Double, barHeight: CGFloat, barColor: Color) -> some View {

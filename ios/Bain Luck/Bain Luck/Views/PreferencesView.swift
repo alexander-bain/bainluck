@@ -1116,6 +1116,7 @@ struct PreferencesView: View {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
                         }
                         VStack(alignment: .leading, spacing: 2) {
                             Text("App icon")
@@ -1147,6 +1148,7 @@ struct PreferencesView: View {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
                     }
                 }
             }
@@ -1161,6 +1163,9 @@ struct PreferencesView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("App icon")
+        .accessibilityValue(selectedAppIconChoice.displayName)
+        .accessibilityHint("Choose an app icon")
         .accessibilityIdentifier("preferences.appIconRow")
     }
     #endif
@@ -1406,6 +1411,7 @@ struct PreferencesView: View {
             Image(systemName: "applewatch")
                 .font(.system(size: 20))
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Apple Watch diagnostics")
                     .font(.subheadline)
@@ -1522,6 +1528,7 @@ struct PreferencesView: View {
                         .font(.system(size: 20))
                         .foregroundStyle(.secondary)
                         .padding(.top, iconAlignment == .top ? 2 : 0)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
                             .font(.subheadline)

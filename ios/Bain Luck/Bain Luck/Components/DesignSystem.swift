@@ -192,6 +192,8 @@ struct ProbabilityNumber: View {
                 .font(.system(size: size * 0.42, weight: .semibold, design: .monospaced))
                 .foregroundStyle((color ?? DS.probColor(value)).opacity(0.7))
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenProbabilityText("\(percentNumber(value, renderedPercent: renderedPercent))%"))
     }
 }
 
@@ -214,6 +216,7 @@ struct DSProbabilityBar: View {
             }
         }
         .frame(height: height)
+        .accessibilityHidden(true)
     }
 }
 

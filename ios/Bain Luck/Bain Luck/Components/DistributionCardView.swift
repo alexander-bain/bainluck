@@ -248,14 +248,17 @@ struct DistributionCardView: View {
                     }
                 }
                 .frame(height: 6)
+                .accessibilityHidden(true)
             }
 
             // Percentage + optional served source mark (#12887)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(probability > 0 ? formatProbability(probability, renderedPercent: outcome.renderedPercent) : "\u{2014}")
+                let pctLabel = probability > 0 ? formatProbability(probability, renderedPercent: outcome.renderedPercent) : absentProbabilityMarker
+                Text(pctLabel)
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundStyle(primaryInk)
                     .frame(width: 40, alignment: .trailing)
+                    .accessibilityLabel(spokenProbabilityText(pctLabel))
 
                 if shownOutcomes.contains(where: { $0.sourceMark?.draws == true }) {
                     if let srcMark = SourceMarkButton(

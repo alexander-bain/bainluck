@@ -28,6 +28,7 @@ struct DiscoverLikeButton420D: View {
             HStack(spacing: 5) {
                 Image(systemName: isLiked ? "heart.fill" : "heart")
                     .font(heartFont)
+                    .accessibilityHidden(true)
                 Text(isLiked ? "Liked" : "Like")
                     .font(textFont)
                     .lineLimit(1)
@@ -118,6 +119,7 @@ struct DiscoverCardActionBar420D: View {
                     .background(Color.secondary.opacity(0.10), in: Circle())
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Circle())
+                    .accessibilityHidden(true)
             }
             .buttonStyle(.plain)
             .recordsShareOpened { actions.onShare?() }

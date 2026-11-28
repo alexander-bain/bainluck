@@ -917,6 +917,7 @@ struct DiscoverPairedMetricCardView: View {
                                     .font(.system(size: effectiveDetailSize, weight: .semibold).monospacedDigit())
                                     .foregroundStyle(primaryInk)
                                     .lineLimit(1)
+                                    .accessibilityLabel(spokenProbabilityText(s1.label))
                             }
                             .fixedSize(horizontal: true, vertical: false)
                             stage1SourceMarkButton(for: entry)
@@ -974,6 +975,7 @@ struct DiscoverPairedMetricCardView: View {
                         }
                     }
                     .frame(height: 9)
+                    .accessibilityHidden(true)
                 }
             }
         } else {
@@ -997,6 +999,7 @@ struct DiscoverPairedMetricCardView: View {
                         }
                     }
                     .frame(height: 8)
+                    .accessibilityHidden(true)
 
                     HStack(spacing: 3) {
                         PairedQuietNumberBox(
@@ -1012,6 +1015,7 @@ struct DiscoverPairedMetricCardView: View {
                                 .font(.system(size: effectiveDetailSize, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(primaryInk)
                                 .lineLimit(1)
+                                .accessibilityLabel(spokenProbabilityText(s1.label))
                         }
                         stage1SourceMarkButton(for: entry)
                     }
@@ -1085,6 +1089,7 @@ struct DiscoverPairedMetricCardView: View {
                                     .font(.system(size: effectiveSubjectSize, weight: .bold).monospacedDigit())
                                     .foregroundStyle(primaryInk)
                                     .lineLimit(1)
+                                    .accessibilityLabel(spokenProbabilityText(s2.label))
                             }
                             .fixedSize(horizontal: true, vertical: false)
                             stage2SourceMarkButton(for: entry)
@@ -1117,6 +1122,7 @@ struct DiscoverPairedMetricCardView: View {
                         }
                     }
                     .frame(height: 11)
+                    .accessibilityHidden(true)
                 }
             }
         } else {
@@ -1140,6 +1146,7 @@ struct DiscoverPairedMetricCardView: View {
                         }
                     }
                     .frame(height: 10)
+                    .accessibilityHidden(true)
 
                     HStack(spacing: 3) {
                         PairedQuietNumberBox(
@@ -1155,6 +1162,7 @@ struct DiscoverPairedMetricCardView: View {
                                 .font(.system(size: effectiveSubjectSize, weight: .bold).monospacedDigit())
                                 .foregroundStyle(primaryInk)
                                 .lineLimit(1)
+                                .accessibilityLabel(spokenProbabilityText(s2.label))
                         }
                         stage2SourceMarkButton(for: entry)
                     }
@@ -1268,6 +1276,7 @@ struct DiscoverPairedMetricCardView: View {
                                 Text(s2.label)
                                     .font(.system(size: effectivePodiumValueSize, weight: .bold).monospacedDigit())
                                     .foregroundStyle(DS.textPrimary)
+                                    .accessibilityLabel(spokenProbabilityText(s2.label))
                                 Text(s2Short)
                                     .font(.system(size: effectiveKickerSize, weight: .medium))
                                     .foregroundStyle(DS.textSecondaryReadable)
@@ -1282,6 +1291,7 @@ struct DiscoverPairedMetricCardView: View {
                                         .foregroundStyle(DS.textPrimary)
                                         .lineLimit(1)
                                         .minimumScaleFactor(0.85)
+                                        .accessibilityLabel(spokenProbabilityText(s2.label))
                                     stage2SourceMarkButton(for: spot.entry, numberSize: effectiveDetailSize)
                                 }
                                 Text(s2Short)
@@ -1321,6 +1331,7 @@ struct DiscoverPairedMetricCardView: View {
                                     .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
                                     .foregroundStyle(DS.textPrimary)
                                     .lineLimit(1)
+                                    .accessibilityLabel("\(spokenProbabilityText(s1.label)) \(s1Short)")
                                 stage1SourceMarkButton(for: spot.entry)
                             }
                             .fixedSize(horizontal: true, vertical: false)
@@ -1331,6 +1342,8 @@ struct DiscoverPairedMetricCardView: View {
                                         .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
                                         .foregroundStyle(DS.textPrimary)
                                         .lineLimit(1)
+                                        .accessibilityLabel(spokenProbabilityText(s1.label))
+                                        .accessibilityLabel(spokenProbabilityText(s1.label))
                                     stage1SourceMarkButton(for: spot.entry)
                                 }
                                 Text(s1Short)
@@ -1458,12 +1471,14 @@ struct DiscoverPairedMetricCardView: View {
                             .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
                             .foregroundStyle(DS.textPrimary)
                             .lineLimit(1)
+                            .accessibilityLabel(spokenProbabilityText(s1.label))
                     }
                     stage1SourceMarkButton(for: entry)
                 } else {
                     Text(s1.label)
                         .font(.system(size: effectiveKickerSize, weight: .medium).monospacedDigit())
                         .foregroundStyle(DS.textSecondaryReadable)
+                        .accessibilityLabel(spokenProbabilityText(s1.label))
                 }
 
                 PairedQuietNumberBox(
@@ -1479,6 +1494,7 @@ struct DiscoverPairedMetricCardView: View {
                         .font(.system(size: effectiveDetailSize, weight: .bold).monospacedDigit())
                         .foregroundStyle(DS.textPrimary)
                         .lineLimit(1)
+                        .accessibilityLabel(spokenProbabilityText(s2.label))
                 }
                 stage2SourceMarkButton(for: entry, numberSize: effectiveDetailSize)
             }
@@ -1498,6 +1514,7 @@ struct DiscoverPairedMetricCardView: View {
                         .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
                         .foregroundStyle(DS.textPrimary)
                         .lineLimit(1)
+                        .accessibilityLabel(spokenProbabilityText(s1.label))
                 }
                 stage1SourceMarkButton(for: entry)
                 Text(s2.label)

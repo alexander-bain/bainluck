@@ -214,3 +214,45 @@ func moneylineToProbability(_ ml: Int) -> Double {
         return abs / (abs + 100.0)
     }
 }
+
+/// Spoken VoiceOver phrasing for a printed probability label (`"<1%"` -> `"less than 1 percent"`,
+/// `">99%"` -> `"more than 99 percent"`, `"—"` -> `"No recent probability"`, `"53%"` -> `"53 percent"`),
+/// preserving plain status words (`"No recent probability"`, `"No probability yet"`, `"Eliminated"`).
+nonisolated func spokenProbabilityText(_ printed: String) -> String {
+    let trimmed = printed.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "" }
+    if trimmed == absentProbabilityMarker {
+        return "No recent probability"
+    }
+    if trimmed.hasPrefix("<"), trimmed.hasSuffix("%"), trimmed.count > 2 {
+        let number = String(trimmed.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        return "less than \(number) percent"
+    }
+    if trimmed.hasPrefix(">"), trimmed.hasSuffix("%"), trimmed.count > 2 {
+        let number = String(trimmed.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        return "more than \(number) percent"
+    }
+    if trimmed.hasSuffix("%"), trimmed.count > 1 {
+        let number = String(trimmed.dropLast()).trimmingCharacters(in: .whitespaces)
+        return "\(number) percent"
+    }
+    return trimmed
+}
+
+/// Expand `<N%`, `>N%`, and `N%` tokens inside compound VoiceOver sentences (`"from <1%"` ->
+/// `"from less than 1 percent"`).
+nonisolated func spokenTextExpandingProbabilitySymbols(_ text: String) -> String {
+    let patterns: [(String, String)] = [
+        (#"<(\d+(?:\.\d+)?)\s*%"#, "less than $1 percent"),
+        (#">(\d+(?:\.\d+)?)\s*%"#, "more than $1 percent"),
+        (#"(\d+(?:\.\d+)?)\s*%"#, "$1 percent"),
+    ]
+    var out = text
+    for (pattern, template) in patterns {
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let range = NSRange(out.startIndex..<out.endIndex, in: out)
+            out = regex.stringByReplacingMatches(in: out, options: [], range: range, withTemplate: template)
+        }
+    }
+    return out
+}
