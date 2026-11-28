@@ -166,11 +166,14 @@ class _FallbackAsyncSession(AsyncSession):
         *,
         recent_rows: list[tuple[int, float]] | None = None,
         older_rows: list[tuple[int, float]] | None = None,
+        recent_withdrawals: set[int] | list[int] | None = None,
     ):
         self.recent_rows = list(recent_rows or [])
         self.older_rows = list(older_rows or [])
+        self.recent_withdrawals = set(recent_withdrawals or ())
         self.pass1_batches: list[list[int]] = []
         self.pass2_batches: list[list[int]] = []
+        self.withdrawal_check_batches: list[list[int]] = []
 
     async def execute(self, statement, params=None):
         params = params or {}
@@ -181,6 +184,13 @@ class _FallbackAsyncSession(AsyncSession):
                 SimpleNamespace(event_id=eid, home_win_probability=prob)
                 for eid, prob in self.recent_rows
                 if eid in ids
+            ]
+        elif "withdrawals_since" in params:
+            self.withdrawal_check_batches.append(ids)
+            rows = [
+                SimpleNamespace(event_id=eid)
+                for eid in ids
+                if eid in self.recent_withdrawals
             ]
         else:
             self.pass2_batches.append(ids)
@@ -458,14 +468,15 @@ class TestSnapshotFallbackEmptyCache:
         assert db1.pass1_batches == [[10, 20]]
         assert db1.pass2_batches == [[10, 20]]
 
-        # 2 minutes later: Pass 1 runs fresh for both; Pass 2 runs ONLY for 20 (positive),
-        # skipping 10 (proven empty with overlapping interval).
+        # 2 minutes later (#13573): Pass 1 runs fresh for both; Pass 2 skips BOTH
+        # empty (10) AND positive >3h (20) after checking bounded recent withdrawals for 20.
         t1 = T0 + timedelta(minutes=2)
         db2 = _FallbackAsyncSession(recent_rows=[], older_rows=[(20, 0.61)])
         ans2 = await fsf.read_snapshot_fallbacks(db2, [10, 20], now=t1)
         assert ans2 == {20: 0.61}
         assert db2.pass1_batches == [[10, 20]]
-        assert db2.pass2_batches == [[20]]
+        assert db2.withdrawal_check_batches == [[20]]
+        assert db2.pass2_batches == []
 
         # 3 minutes later: a brand-new reading arrives for event 10 -> Pass 1 catches it
         # IMMEDIATELY (zero staleness!).
@@ -474,7 +485,53 @@ class TestSnapshotFallbackEmptyCache:
         ans3 = await fsf.read_snapshot_fallbacks(db3, [10], now=t2)
         assert ans3 == {10: 0.77}
         assert db3.pass1_batches == [[10]]
+        assert db3.withdrawal_check_batches == []
         assert db3.pass2_batches == []
+
+    @pytest.mark.asyncio
+    async def test_recent_withdrawal_invalidates_cached_positive_pass2_hit(self):
+        """#13573: a cached >3h Pass-2 price MUST invalidate on a fresh withdrawal in [since, now]."""
+        db1 = _FallbackAsyncSession(recent_rows=[], older_rows=[(77, 0.68)])
+        assert await fsf.read_snapshot_fallbacks(db1, [77], now=T0) == {77: 0.68}
+        assert db1.pass2_batches == [[77]]
+
+        # Warm hit with no withdrawal in [since, now] skips Pass 2 and serves cached 0.68.
+        db2 = _FallbackAsyncSession(recent_rows=[], older_rows=[(77, 0.68)])
+        assert await fsf.read_snapshot_fallbacks(db2, [77], now=T0 + timedelta(minutes=1)) == {77: 0.68}
+        assert db2.withdrawal_check_batches == [[77]]
+        assert db2.pass2_batches == []
+
+        # Withdrawal arrives in [since, now] -> invalidates 0.68 and re-runs Pass 2 fresh (now 0.35 or empty).
+        db3 = _FallbackAsyncSession(
+            recent_rows=[],
+            older_rows=[(77, 0.35)],
+            recent_withdrawals={77},
+        )
+        ans3 = await fsf.read_snapshot_fallbacks(db3, [77], now=T0 + timedelta(minutes=2))
+        assert ans3 == {77: 0.35}
+        assert db3.withdrawal_check_batches == [[77]]
+        assert db3.pass2_batches == [[77]]
+
+    @pytest.mark.asyncio
+    async def test_l2_redis_shares_positive_and_empty_pass2_across_workers(self, monkeypatch):
+        """#13573: Redis L2 preserves Decimal vs float and skips Pass 2 on cold workers."""
+        from decimal import Decimal
+
+        monkeypatch.setenv(fsf.SNAPSHOT_FALLBACK_EMPTY_CACHE_SHARED_ENV, "1")
+        redis = _FakeRedis()
+        monkeypatch.setattr(fsf, "_empty_l2_redis_client", lambda: redis)
+
+        db1 = _FallbackAsyncSession(older_rows=[(88, Decimal("0.4250"))])
+        assert await fsf.read_snapshot_fallbacks(db1, [88, 89], now=T0) == {88: Decimal("0.4250")}
+        assert db1.pass2_batches == [[88, 89]]
+
+        fsf.clear_snapshot_fallback_empty_cache()
+        db2 = _FallbackAsyncSession(older_rows=[(88, Decimal("0.4250"))])
+        ans2 = await fsf.read_snapshot_fallbacks(db2, [88, 89], now=T0 + timedelta(minutes=1))
+        assert ans2 == {88: Decimal("0.4250")}
+        assert isinstance(ans2[88], Decimal)
+        assert db2.withdrawal_check_batches == [[88]]
+        assert db2.pass2_batches == []
 
     @pytest.mark.asyncio
     async def test_gap_past_recent_window_or_earlier_clock_rechecks_pass2(self):
