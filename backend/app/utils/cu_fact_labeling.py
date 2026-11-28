@@ -18,6 +18,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, quote_plus
 
 from app.utils.cu_frame import (
     _CURRENCY_SIGNS,
@@ -32,16 +33,91 @@ from app.utils.cu_frame import (
     normalize_measure,
     normalize_value,
 )
+from app.utils.market_team_sport import market_event_slug
 
-VALID_SPLITS: tuple[str, ...] = ("sealed", "dev")
+EVENT_DATE_CANNOT_TELL = "cannot_tell"
+VALID_SPLITS: tuple[str, ...] = ("practice", "sealed", "dev")
 VALID_ROLES: tuple[str, ...] = ("primary", "second", "tiebreak")
 VALID_SCOPES: tuple[str, ...] = ("shared_100", "all")
 VALID_STRUCTURES: tuple[str, ...] = ("ladder", "dated_bucket", "neither")
 VALID_SUBJECT_MODES: tuple[str, ...] = ("candidate", "custom", "none_of_these", "not_sure")
-FACT_FIELDS: tuple[str, ...] = ("subjects", "event_date", "geography", "structure", "claim_frame")
+FACT_FIELDS: tuple[str, ...] = ("subjects", "event_date", "geography")
 TASTE_FIELDS: tuple[str, ...] = ("stakes", "breadth")
 CLAIM_SLOTS: tuple[str, ...] = FRAME_SLOTS
 NONE_OF_THESE = "none_of_these"
+
+# Five curated dev-set practice cards shown before the sealed test set opens (#13900 / 472: A).
+# Swapped 2 cards after Fable's first-time look so practice teaches the hard cases directly
+# without repeating items already shown in card examples.
+PRACTICE_ROUND_CARDS: tuple[dict[str, Any], ...] = (
+    {
+        "market_id": 72559511,
+        "subjects": {"selection_kind": "none_of_these", "selected": []},
+        "accepted_subject_sets": (),
+        "event_date": {"mode": "date", "value": "2026-11-28"},
+        "geography": "local",
+        "typical_stakes": (1, 2),
+        "typical_breadth": (1, 2),
+        "explanation": (
+            "A city weather forecast has no named person, team, company, bill, or country, so choose None of these "
+            "(a place smaller than a country goes under Where). It happens on one calendar day (2026-11-28) and covers one city (Local)."
+        ),
+    },
+    {
+        "market_id": 63119270,
+        "subjects": {"selection_kind": "candidate", "selected": ["San Jose Sharks"]},
+        "accepted_subject_sets": (("San Jose Sharks",),),
+        "event_date": {"mode": "no_single_day", "value": None},
+        "geography": "us",
+        "typical_stakes": (2, 3),
+        "typical_breadth": (2, 3),
+        "explanation": (
+            "Pick the team (San Jose Sharks), not the competition. Making the playoffs spans a season rather than one day "
+            "(No single day), and a team in a US national league (NHL) belongs under US (nationwide), not Local."
+        ),
+    },
+    {
+        "market_id": 70136122,
+        "subjects": {"selection_kind": "none_of_these", "selected": []},
+        "accepted_subject_sets": (),
+        "event_date": {"mode": "date", "value": "2028-11-07"},
+        "geography": "local",
+        "typical_stakes": (1, 2),
+        "typical_breadth": (1, 2),
+        "explanation": (
+            "When an election market lists only party choices and no named candidates, choose None of these. "
+            "US general Election Day is Nov 7, 2028 (Kalshi settles months later in May 2029), and a state legislative district is Local."
+        ),
+    },
+    {
+        "market_id": 70733228,
+        "subjects": {"selection_kind": "candidate", "selected": ["Israel", "Iran"]},
+        "accepted_subject_sets": (("Israel", "Iran"),),
+        "event_date": {"mode": "no_single_day", "value": None},
+        "geography": "global",
+        "typical_stakes": (4, 5),
+        "typical_breadth": (3, 5),
+        "explanation": (
+            "Include both Israel and Iran. Phrases like 'through November 30' describe a window rather than one day "
+            "(No single day), and a ceasefire between nations is Global (multiple countries)."
+        ),
+    },
+    {
+        "market_id": 71609185,
+        "subjects": {"selection_kind": "candidate", "selected": ["Marvell"]},
+        "accepted_subject_sets": (("Marvell",), ("MRVL",), ("Marvell", "MRVL")),
+        "event_date": {"mode": "cannot_tell", "value": None},
+        "geography": "us",
+        "typical_stakes": (2, 3),
+        "typical_breadth": (2, 3),
+        "explanation": (
+            "Earnings happen on one day, so it is not 'No single day' — yet neither the card nor the venue date (Dec 1 settlement) "
+            "proves the release day unless the Polymarket page names it. Choose Cannot tell when readable sources still do not settle the day."
+        ),
+    },
+)
+PRACTICE_CARD_IDS: tuple[int, ...] = tuple(int(c["market_id"]) for c in PRACTICE_ROUND_CARDS)
+PRACTICE_CARD_BY_ID: dict[int, dict[str, Any]] = {int(c["market_id"]): c for c in PRACTICE_ROUND_CARDS}
 
 SHARED_100_SEED_PREFIX = "cu-shared-100-v1:"
 SHARED_100_TARGET = 100
@@ -190,9 +266,28 @@ _TITLE_CANDIDATE_RE = re.compile(
     r"(?:\s+(?:of|the|and|for|in|on|at|vs\.?|v\.|y|de|del|la|el|van|von|al|"
     r"[A-Z][A-Za-z0-9&'.-]*|\d{1,3}(?![\d%$.,])))*)"
 )
+_TICKER_PAREN_RE = re.compile(r"(?<=[A-Za-z.])\s*\([A-Z]{1,6}\)")
+_LOCAL_WEATHER_HOME_PLACE_RE = re.compile(
+    r"\b(?:highest|lowest|high|low|mean|average|median)?\s*"
+    r"(?:temperature|temp|rain|snow(?:fall)?|precipitation|home\s+value)\s+"
+    r"(?:in|at|for)\s+(?:the\s+)?[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){0,3}(?:\s+area)?\b",
+    re.IGNORECASE,
+)
+_ELECTION_SEAT_OR_PARTY_RE = re.compile(
+    r"(?:\b(?:democratic|republican|libertarian|green|independent)\s+party\b"
+    r"|\b(?:house|senate|assembly|district|ward|precinct|legislature)\s+[A-Za-z0-9-]+-\d+\b"
+    r"|\b(?:state\s+house|state\s+senate|house\s+district|senate\s+district|assembly\s+district|city\s+council)\b"
+    r"|^no\s+next\b|^match\s+winner$)",
+    re.IGNORECASE,
+)
+_COMPETITION_STAGE_CHIP_RE = re.compile(
+    r"(?:\bplayoffs?\b|\bpostseason\b|\bfinals?\b|\bplay-?in\b)",
+    re.IGNORECASE,
+)
 _OUTCOME_SKIP_PREFIXES = (
     "above ", "below ", "over ", "under ", "before ", "after ", "by ",
     "more than ", "less than ", "at least ", "at most ", "between ",
+    "spread ", "o/u ", "no next ",
 )
 _ABBREV_END_RE = re.compile(r"(?:^|[.\s])[A-Za-z]\.$")
 
@@ -205,7 +300,8 @@ def frozen_split_exists(
     if split not in VALID_SPLITS:
         raise ValueError(f"Unsupported dataset split: {split!r}")
     paths = dataset_paths or DEFAULT_DATASET_PATHS
-    path = paths.get(split)
+    lookup_split = "dev" if split == "practice" else split
+    path = paths.get(lookup_split)
     return bool(path and path.exists())
 
 
@@ -219,6 +315,16 @@ def get_claim_vocabulary() -> dict[str, list[str]]:
     }
 
 
+def load_practice_markets(
+    *,
+    dataset_paths: dict[str, Path] | None = None,
+) -> list[dict[str, Any]]:
+    """Return the five ordered practice-round cards from the frozen dev file."""
+    dev_markets = load_frozen_split("dev", dataset_paths=dataset_paths)
+    by_id = {int(m["market_id"]): m for m in dev_markets}
+    return [by_id[mid] for mid in PRACTICE_CARD_IDS if mid in by_id]
+
+
 def load_frozen_split(
     split: str,
     *,
@@ -226,6 +332,8 @@ def load_frozen_split(
 ) -> list[dict[str, Any]]:
     if split not in VALID_SPLITS:
         raise ValueError(f"Unsupported dataset split: {split!r}")
+    if split == "practice":
+        return load_practice_markets(dataset_paths=dataset_paths)
     paths = dataset_paths or DEFAULT_DATASET_PATHS
     path = paths.get(split)
     if not path or not path.exists():
@@ -301,8 +409,10 @@ def order_queue_markets(
     scope: str = "shared_100",
     repeatability_priority_ids: list[int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Order labeling queue: dev leads with #13899 changed markets; sealed supports shared_100."""
+    """Order labeling queue: practice keeps 1-5 order; dev leads with #13899 changed markets."""
     by_id = {int(m["market_id"]): m for m in markets}
+    if split == "practice":
+        return [by_id[mid] for mid in PRACTICE_CARD_IDS if mid in by_id] or list(markets)
     if split == "dev":
         ordered_ids: list[int] = []
         seen: set[int] = set()
@@ -345,6 +455,8 @@ def _clean_subject_chip(raw: str) -> str | None:
         return None
     if _DATE_ONLY_CHIP_RE.match(s):
         return None
+    if _ELECTION_SEAT_OR_PARTY_RE.search(s):
+        return None
     norm_tokens = [re.sub(r"[^a-z0-9]", "", t.lower()) for t in s.split()]
     norm_tokens = [t for t in norm_tokens if t]
     if not norm_tokens or all(t in _GENERIC_CHIP_WORDS for t in norm_tokens):
@@ -367,9 +479,11 @@ def extract_subject_candidates(market: dict[str, Any]) -> list[str]:
             candidates.append(cleaned)
 
     title = str(market.get("title") or "")
-    # Remove explicit dates before scanning capitalized runs so trailing prepositions/months
-    # like "Rain in Chicago in Nov 2026?" yield "Chicago" rather than "... in Nov".
+    # Remove parenthesized stock tickers (`Amazon (AMZN)` -> `Amazon`), local weather/home-value
+    # places (`temperature in Denver`, `home value in Denver Metro`), and explicit dates.
     dateless_title = _TITLE_DATES.sub(" ", title)
+    dateless_title = _TICKER_PAREN_RE.sub("", dateless_title)
+    dateless_title = _LOCAL_WEATHER_HOME_PLACE_RE.sub(" ", dateless_title)
     for match in _TITLE_CANDIDATE_RE.findall(dateless_title):
         _add(match)
 
@@ -382,10 +496,95 @@ def extract_subject_candidates(market: dict[str, Any]) -> list[str]:
             if (
                 text
                 and not text.lower().startswith(_OUTCOME_SKIP_PREFIXES)
+                and ": o/u " not in text.lower()
                 and not re.match(r"^[$£€¥₹₩+\-<>0-9]", text)
             ):
                 _add(text)
+
+    if any(not _COMPETITION_STAGE_CHIP_RE.search(c) for c in candidates):
+        candidates = [c for c in candidates if not _COMPETITION_STAGE_CHIP_RE.search(c)]
     return candidates[:12]
+
+
+_UNIT_MULTIPLIER = {"k": 1_000.0, "m": 1_000_000.0, "b": 1_000_000_000.0}
+_NUMERIC_OPTION_TOKEN_RE = re.compile(
+    r"^\s*(?:([<>])\s*)?[$£€¥₹₩+]?\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmbKMB])?",
+    re.IGNORECASE,
+)
+
+
+def _scaled_float(num_raw: str, suffix: str | None) -> float:
+    val = float(num_raw.replace(",", ""))
+    if suffix:
+        val *= _UNIT_MULTIPLIER.get(suffix.lower(), 1.0)
+    return val
+
+
+def _numeric_outcome_sort_key(label: str) -> tuple[int, float, float] | None:
+    text = " ".join((label or "").strip().split())
+    if not text:
+        return None
+    low = text.lower()
+    if any(word in low for word in ("yes", "no", "draw", "tie", "party", "minister", "spread", "o/u")):
+        return None
+    clean = re.sub(r"[°$£€¥₹₩%]", " ", text).replace("−", "-")
+    clean_low = clean.lower()
+
+    # Exact lower tail ("41°F or below", "Under 10", "<$458K", "35 or fewer")
+    if re.search(r"\b(?:or\s+below|or\s+fewer|or\s+less|below|under)\b", clean_low) or text.lstrip().startswith("<"):
+        nums = re.findall(r"(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmb])?", clean_low)
+        if len(nums) == 1:
+            n = _scaled_float(nums[0][0], nums[0][1])
+            return (-1, n, n)
+
+    # Exact upper tail ("60°F or higher", "Above 249", "Above 13000", "200 or more", "$482K+")
+    if (
+        re.search(r"\b(?:or\s+higher|or\s+more|above|over|more\s+than|at\s+least)\b", clean_low)
+        or text.rstrip().endswith("+")
+    ):
+        nums = re.findall(r"(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmb])?", clean_low)
+        if len(nums) == 1:
+            n = _scaled_float(nums[0][0], nums[0][1])
+            return (1, n, n)
+
+    # Before / By YYYY deadlines ("Before 2027" .. "Before 2030")
+    m_before = re.match(r"^(?:before|by|through|after)\s+(\d{4})$", clean_low)
+    if m_before:
+        yr = float(m_before.group(1))
+        return (0, yr, yr)
+
+    # Range ("48-49", "3 to 9", "$458K - $463K", "10 to 24")
+    m_range = re.match(
+        r"^\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmb])?f?\s*(?:-|–|to)\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmb])?f?\s*$",
+        clean_low,
+    )
+    if m_range:
+        lo = _scaled_float(m_range.group(1), m_range.group(2))
+        hi = _scaled_float(m_range.group(3), m_range.group(4))
+        return (0, lo, hi)
+
+    # Single bare count/integer ("0", "1", "2")
+    m_single = re.match(r"^\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmb])?\s*$", clean_low)
+    if m_single:
+        n = _scaled_float(m_single.group(1), m_single.group(2))
+        return (0, n, n)
+
+    return None
+
+
+def sort_outcomes_for_display(outcomes: list[Any]) -> list[Any]:
+    """Naturally order numeric bucket/threshold/year options ascending without altering named lists."""
+    if len(outcomes) <= 1:
+        return list(outcomes)
+    keyed: list[tuple[tuple[int, float, float], int, Any]] = []
+    for idx, item in enumerate(outcomes):
+        label = item.get("name") if isinstance(item, dict) else str(item or "")
+        sort_key = _numeric_outcome_sort_key(str(label or ""))
+        if sort_key is None:
+            return list(outcomes)
+        keyed.append((sort_key, idx, item))
+    keyed.sort(key=lambda row: (row[0], row[1]))
+    return [row[2] for row in keyed]
 
 
 def normalize_subjects_answer(raw: Any) -> dict[str, Any]:
@@ -601,20 +800,31 @@ def validate_label_submission(
 
     no_single_day = bool(payload.get("no_single_day", False))
     event_date_raw = payload.get("event_date_answer")
+    event_date_token = str(event_date_raw).strip() if event_date_raw is not None else ""
+    if no_single_day and event_date_token.lower() == EVENT_DATE_CANNOT_TELL:
+        raise ValueError("Cannot choose both 'No single day' and 'Cannot tell'")
+
     event_date: str | None
-    if no_single_day or event_date_raw is None or not str(event_date_raw).strip():
+    if no_single_day:
         event_date = None
+    elif event_date_token.lower() == EVENT_DATE_CANNOT_TELL:
+        event_date = EVENT_DATE_CANNOT_TELL
+    elif not event_date_token:
+        raise ValueError(
+            "event_date_answer is required (calendar day, 'No single day', or 'Cannot tell')"
+        )
     else:
-        event_date = str(event_date_raw).strip()
+        event_date = event_date_token
         if not _DATE_RE.match(event_date):
             raise ValueError("event_date_answer must be YYYY-MM-DD when provided")
 
     structure_raw = payload.get("structure_answer")
-    if structure_raw is None:
-        raise ValueError("structure_answer is required")
-    structure = str(structure_raw).strip().lower()
-    if structure not in VALID_STRUCTURES:
-        raise ValueError(f"structure_answer must be one of {VALID_STRUCTURES}")
+    if structure_raw is None or (isinstance(structure_raw, str) and not structure_raw.strip()):
+        structure: str | None = None
+    else:
+        structure = str(structure_raw).strip().lower()
+        if structure not in VALID_STRUCTURES:
+            raise ValueError(f"structure_answer must be one of {VALID_STRUCTURES}")
 
     subjects = normalize_subjects_answer(payload.get("subjects_answer"))
     geography = normalize_geography_answer(payload.get("geography_answer"))
@@ -715,6 +925,8 @@ def _canonical_fact_value(
         if row.get("no_single_day"):
             return ("no_single_day", None)
         val = row.get("event_date_answer")
+        if str(val or "").strip().lower() == EVENT_DATE_CANNOT_TELL:
+            return (EVENT_DATE_CANNOT_TELL, None)
         return ("date", str(val).strip() if val else None)
     if field == "geography":
         val = row.get("geography_answer")
@@ -834,14 +1046,17 @@ def visible_labels_for_rater(
       only when two distinct raters finished AND disagree on >= 1 fact field.
     """
     norm_rater = " ".join(rater.split()).strip().lower()
-    own_row = next(
-        (
-            r
-            for r in market_rows
-            if str(r.get("rater") or "").strip().lower() == norm_rater and r.get("role") == role
-        ),
-        None,
-    )
+    if role not in VALID_ROLES:
+        own_row = None
+    else:
+        own_row = next(
+            (
+                r
+                for r in market_rows
+                if str(r.get("rater") or "").strip().lower() == norm_rater and r.get("role") == role
+            ),
+            None,
+        )
     pair = _extract_distinct_rater_pair(market_rows)
     if role in {"primary", "second"}:
         return {
@@ -880,7 +1095,11 @@ def _summarize_field_for_example(row: dict[str, Any], field: str, *, market_titl
     if field == "subjects":
         return row.get("subjects_answer")
     if field == "event_date":
-        return "no_single_day" if row.get("no_single_day") else row.get("event_date_answer")
+        if row.get("no_single_day"):
+            return "no_single_day"
+        if str(row.get("event_date_answer") or "").strip().lower() == EVENT_DATE_CANNOT_TELL:
+            return EVENT_DATE_CANNOT_TELL
+        return row.get("event_date_answer")
     if field == "geography":
         return row.get("geography_answer")
     if field == "structure":
@@ -1018,6 +1237,7 @@ def _row_to_scorecard_answers(
     selected = subj.get("selected") or []
 
     structure = row.get("structure_answer")
+    has_structure = structure is not None and str(structure).strip() != ""
     junk_flags = [structure] if structure in {"ladder", "dated_bucket"} else []
 
     raw_claim = row.get("claim_frame")
@@ -1026,10 +1246,22 @@ def _row_to_scorecard_answers(
 
     answers: dict[str, Any] = {
         "geography": row.get("geography_answer"),
-        "event_date": None if row.get("no_single_day") else row.get("event_date_answer"),
-        "junk_flags": junk_flags,
     }
-    if not unlisted_measure:
+    raw_event_date = row.get("event_date_answer")
+    event_date_token = str(raw_event_date).strip() if raw_event_date is not None else ""
+    if row.get("no_single_day"):
+        answers["event_date"] = None
+    elif event_date_token.lower() == EVENT_DATE_CANNOT_TELL:
+        # Store "cannot_tell" explicitly in the key so a writer that invents a
+        # specific calendar day is scored wrong (rather than omitted), while still
+        # tracking the separate cannot_tell_event_date_count summary counter.
+        answers["event_date"] = EVENT_DATE_CANNOT_TELL
+    elif event_date_token:
+        answers["event_date"] = event_date_token
+
+    if has_structure:
+        answers["junk_flags"] = junk_flags
+    if raw_claim is not None and not unlisted_measure:
         frame_candidate = {
             "measure": claim.get("measure"),
             "comparator": None if claim.get("comparator") == NONE_OF_THESE else claim.get("comparator"),
@@ -1042,8 +1274,7 @@ def _row_to_scorecard_answers(
             frame_candidate if any(v is not None for v in frame_candidate.values()) else None
         )
         answers["frame"] = frame
-    # When measure == "none_of_these", leave "frame" out of answers so it is excluded from
-    # the frame score and counted separately in `unlisted_measure_count`.
+    # When measure == "none_of_these" (or claim_frame omitted), leave "frame" out of answers.
 
     if mode in {"candidate", "custom"}:
         answers["entities"] = list(selected)
@@ -1097,6 +1328,7 @@ def build_answer_key_bundle(
 
     exported: list[dict[str, Any]] = []
     unlisted_measure_count = 0
+    cannot_tell_event_date_count = 0
     for mid, mrows in sorted(by_market.items()):
         tiebreak = next((r for r in mrows if r.get("role") == "tiebreak"), None)
         pair = _extract_distinct_rater_pair(mrows)
@@ -1122,6 +1354,12 @@ def build_answer_key_bundle(
 
         if unlisted_measure and "claim_frame" not in unresolved:
             unlisted_measure_count += 1
+        if (
+            not source_row.get("no_single_day")
+            and str(source_row.get("event_date_answer") or "").strip().lower() == EVENT_DATE_CANNOT_TELL
+            and "event_date" not in unresolved
+        ):
+            cannot_tell_event_date_count += 1
 
         exported.append(
             {
@@ -1160,6 +1398,7 @@ def build_answer_key_bundle(
         "withheld_taste_fields": withheld_taste_fields,
         "withheld_examples": withheld_examples,
         "unlisted_measure_count": unlisted_measure_count,
+        "cannot_tell_event_date_count": cannot_tell_event_date_count,
     }
 
 
@@ -1171,3 +1410,232 @@ def build_answer_key_rows(
 ) -> list[dict[str, Any]]:
     """Build scorecard-compatible answer rows from primary/second/tiebreak labels."""
     return build_answer_key_bundle(markets_by_id, rows, split=split)["rows"]
+
+
+_KALSHI_SERIES_PREFIX_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+_POLYMARKET_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+$", re.IGNORECASE)
+
+
+def build_venue_market_link(
+    market: dict[str, Any],
+    db_row: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Return a venue URL and label so every card links out to check its full rules."""
+    db_meta = db_row.get("market_metadata") if isinstance(db_row, dict) else None
+    source = str((db_row or {}).get("source") or market.get("source") or "").strip().lower()
+    external_id = str((db_row or {}).get("external_id") or market.get("external_id") or "").strip()
+    title = " ".join(str(market.get("title") or market.get("name") or "").split()).strip()
+    mid = int(market["market_id"])
+
+    if source == "kalshi":
+        series = external_id.split("-", 1)[0].strip() if external_id else ""
+        if series and _KALSHI_SERIES_PREFIX_RE.match(series):
+            return {
+                "venue_url": f"https://kalshi.com/markets/{quote(series.lower())}",
+                "venue_link_label": "Open on Kalshi",
+            }
+        return {
+            "venue_url": f"https://kalshi.com/markets?search={quote_plus(title)}" if title else "https://kalshi.com/markets",
+            "venue_link_label": "Find on Kalshi",
+        }
+
+    if source == "polymarket":
+        meta_slug = market_event_slug(db_meta)
+        if not meta_slug and isinstance(db_meta, dict):
+            for key in ("slug", "market_slug"):
+                candidate = db_meta.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    meta_slug = candidate.strip()
+                    break
+        if meta_slug:
+            return {
+                "venue_url": f"https://polymarket.com/event/{quote(meta_slug.strip().lower())}",
+                "venue_link_label": "Open on Polymarket",
+            }
+        if external_id and _POLYMARKET_SLUG_RE.match(external_id) and not external_id.isdigit():
+            return {
+                "venue_url": f"https://polymarket.com/event/{quote(external_id.lower())}",
+                "venue_link_label": "Open on Polymarket",
+            }
+        return {
+            "venue_url": f"https://polymarket.com/markets?_q={quote_plus(title)}" if title else "https://polymarket.com/markets",
+            "venue_link_label": "Find on Polymarket",
+        }
+
+    return {
+        "venue_url": f"https://bainluck.com/futures/{mid}",
+        "venue_link_label": "Open on Bain Luck",
+    }
+
+
+def score_event_date_against_key(
+    gold_event_date: str | None,
+    writer_event_date: str | None,
+) -> bool:
+    """Compare a writer event_date against the resolved human key per the 472: A matching rule.
+
+    - Resolved ``cannot_tell``: a writer claiming a specific day is scored wrong
+      (an invented day), while leaving it blank / null / ``cannot_tell`` is right.
+    - Resolved ``None`` (``No single day``): right iff writer returns ``None`` or blank.
+    - Specific ``YYYY-MM-DD``: right on exact normalized match.
+    """
+    gold = (gold_event_date or "").strip()
+    writer = (writer_event_date or "").strip()
+    if gold.lower() == EVENT_DATE_CANNOT_TELL:
+        return writer == "" or writer.lower() == EVENT_DATE_CANNOT_TELL
+    if not gold:
+        return writer == ""
+    return writer == gold
+
+
+def _format_subjects_label(subjects_answer: dict[str, Any] | None) -> str:
+    if not isinstance(subjects_answer, dict):
+        return "Blank"
+    kind = str(subjects_answer.get("selection_kind") or "").strip().lower()
+    if kind == "none_of_these":
+        return "None of these"
+    if kind == "not_sure":
+        return "Not sure"
+    selected = [str(s).strip() for s in (subjects_answer.get("selected") or []) if str(s).strip()]
+    return ", ".join(selected) if selected else "Blank"
+
+
+def _format_event_date_label(event_date_answer: str | None, no_single_day: bool) -> str:
+    if no_single_day:
+        return "No single day"
+    if str(event_date_answer or "").strip().lower() == EVENT_DATE_CANNOT_TELL:
+        return "Cannot tell"
+    return str(event_date_answer or "Blank")
+
+
+def _format_geography_label(geography_answer: str | None) -> str:
+    if not geography_answer:
+        return "Blank"
+    low = geography_answer.strip().lower()
+    if low == "local":
+        return "Local"
+    if low == "us":
+        return "US (nationwide)"
+    if low == "global":
+        return "Global (multiple countries)"
+    m = _COUNTRY_CODE_RE.match(geography_answer.strip())
+    if m:
+        code = m.group(1).upper()
+        name = ISO_COUNTRY_NAMES.get(code, code)
+        return f"One country: {name} ({code})"
+    return geography_answer
+
+
+def compute_practice_status(
+    practice_rows: list[dict[str, Any]],
+    rater: str,
+) -> dict[str, Any]:
+    """Compute mandatory 5-card practice completion status for one typed rater."""
+    norm_rater = " ".join(rater.split()).strip().lower()
+    completed_ids = {
+        int(row["market_id"])
+        for row in practice_rows
+        if row.get("dataset_split") == "practice"
+        and " ".join(str(row.get("rater") or "").split()).strip().lower() == norm_rater
+        and int(row["market_id"]) in PRACTICE_CARD_BY_ID
+    }
+    ordered_completed = [mid for mid in PRACTICE_CARD_IDS if mid in completed_ids]
+    required = len(PRACTICE_CARD_IDS)
+    return {
+        "required": required,
+        "completed": len(ordered_completed),
+        "unlocked_sealed": len(ordered_completed) >= required,
+        "completed_ids": ordered_completed,
+        "practice_card_ids": list(PRACTICE_CARD_IDS),
+    }
+
+
+def evaluate_practice_submission(
+    market_id: int,
+    submission: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Grade one practice-round card and return immediate right-answer feedback."""
+    spec = PRACTICE_CARD_BY_ID.get(int(market_id))
+    if spec is None:
+        return None
+
+    gold_subj = spec["subjects"]
+    user_subj = submission.get("subjects_answer") or {}
+    accepted_sets = spec.get("accepted_subject_sets") or ()
+    if accepted_sets and user_subj.get("selection_kind") in {"candidate", "custom"}:
+        user_row_tokens = sorted(
+            _subject_tokens(str(x))
+            for x in (user_subj.get("selected") or [])
+            if str(x).strip()
+        )
+        subjects_ok = any(
+            sorted(_subject_tokens(name) for name in allowed) == user_row_tokens
+            or (
+                len(allowed) == len(user_subj.get("selected") or [])
+                and all(any(_subjects_match(u, g) for g in allowed) for u in (user_subj.get("selected") or []))
+                and all(any(_subjects_match(u, g) for u in (user_subj.get("selected") or [])) for g in allowed)
+            )
+            for allowed in accepted_sets
+        )
+    else:
+        subjects_ok = _fact_fields_agree(
+            {"subjects_answer": gold_subj},
+            {"subjects_answer": user_subj},
+            "subjects",
+        )
+
+    gold_date = spec["event_date"]
+    gold_date_row = {
+        "no_single_day": gold_date["mode"] == "no_single_day",
+        "event_date_answer": (
+            EVENT_DATE_CANNOT_TELL
+            if gold_date["mode"] == "cannot_tell"
+            else gold_date.get("value")
+        ),
+    }
+    date_ok = _fact_fields_agree(gold_date_row, submission, "event_date")
+
+    geo_ok = _fact_fields_agree(
+        {"geography_answer": spec["geography"]},
+        submission,
+        "geography",
+    )
+
+    fields = [
+        {
+            "field": "subjects",
+            "label": "Who or what is it about?",
+            "matched": subjects_ok,
+            "your_answer": _format_subjects_label(user_subj),
+            "right_answer": _format_subjects_label(gold_subj),
+        },
+        {
+            "field": "event_date",
+            "label": "The event's own day",
+            "matched": date_ok,
+            "your_answer": _format_event_date_label(
+                submission.get("event_date_answer"),
+                bool(submission.get("no_single_day")),
+            ),
+            "right_answer": _format_event_date_label(
+                gold_date_row["event_date_answer"],
+                gold_date_row["no_single_day"],
+            ),
+        },
+        {
+            "field": "geography",
+            "label": "Where",
+            "matched": geo_ok,
+            "your_answer": _format_geography_label(submission.get("geography_answer")),
+            "right_answer": _format_geography_label(spec["geography"]),
+        },
+    ]
+
+    return {
+        "market_id": int(market_id),
+        "all_facts_matched": subjects_ok and date_ok and geo_ok,
+        "fields": fields,
+        "typical_stakes": list(spec["typical_stakes"]),
+        "typical_breadth": list(spec["typical_breadth"]),
+        "explanation": spec["explanation"],
+    }

@@ -6,51 +6,92 @@ import { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import { adminFetchJSON } from "@/lib/adminFetch";
 import {
   buildSubmissionPayload,
-  COMPARATOR_LABELS,
   COUNTRY_OPTIONS,
-  DEFAULT_CLAIM_COMPARATORS,
-  DEFAULT_CLAIM_HORIZON_KINDS,
-  DEFAULT_CLAIM_MEASURES,
   emptyCuDraft,
-  formatMeasureChoiceLabel,
+  formatEventStartSentence,
   formatPayoutDateSentence,
-  formatPeerClaimFrame,
-  HORIZON_LABELS,
-  MEASURE_GROUPS,
-  MEASURE_LABELS,
+  formatPeerEventDate,
   normalizeRaterName,
   RATER_STORAGE_KEY,
   type CuAgreementResponse,
   type CuFactLabelDraft,
+  type CuLabelSubmitResponse,
+  type CuPracticeFeedback,
+  type CuPracticeStatus,
   type CuQueueResponse,
   type CuRole,
   type CuScope,
   type CuSplit,
-  type CuStructure,
   type CuSubjectMode,
 } from "@/lib/cuLabeling";
 
-const STRUCTURE_OPTIONS: Array<{ value: CuStructure; label: string; help: string }> = [
-  { value: "ladder", label: "Ladder of one number", help: "Options are different cutoffs for the same number (like Above 100, Above 200)" },
-  { value: "dated_bucket", label: "Set of dated options", help: "Options split the same event across different deadline dates" },
-  { value: "neither", label: "Neither", help: "Plain Yes/No, a matchup, or a list of people/teams" },
+const EVENT_DAY_CHOICES: ReadonlyArray<{
+  mode: "date" | "no_single_day" | "cannot_tell";
+  label: string;
+  description: string;
+}> = [
+  {
+    mode: "date",
+    label: "Specific day",
+    description: "Happens on one known calendar day (pick it below — not the venue settlement date).",
+  },
+  {
+    mode: "no_single_day",
+    label: "No single day",
+    description: "Not tied to one day — a month, a season, or a 'by / before / through' deadline.",
+  },
+  {
+    mode: "cannot_tell",
+    label: "Cannot tell",
+    description: "Happens on one day and nothing you can read on the card or venue page says which.",
+  },
 ];
 
-const GEO_PRESETS: Array<{ value: "us" | "global" | "local"; label: string }> = [
-  { value: "us", label: "US" },
-  { value: "global", label: "Global / multi-country" },
-  { value: "local", label: "Local / city / state district" },
+const WHERE_CHOICES: ReadonlyArray<{
+  preset: "local" | "us" | "country" | "global";
+  label: string;
+  belongs: string;
+  example: string;
+}> = [
+  {
+    preset: "local",
+    label: "Local",
+    belongs:
+      "One city or town (anywhere in the world — US or non-US), one metro area, one whole US state, or a US state legislative district.",
+    example: "Chicago rain, Tokyo mayor, California governor, or Ohio House seat.",
+  },
+  {
+    preset: "us",
+    label: "US (nationwide)",
+    belongs:
+      "Federal US politics, US-wide business or macro releases, or teams and games in a US national league (use the league's country, not the team's city).",
+    example: "Fed rate move, Apple stock close, or Boston Bruins / NFL / NBA.",
+  },
+  {
+    preset: "country",
+    label: "One country (outside the US)",
+    belongs:
+      "National politics, economy, a firm mostly inside one non-US country, or a domestic league inside one country other than the US.",
+    example: "Japan tax bill (JP), Italy credit rating (IT), or Premier League (GB).",
+  },
+  {
+    preset: "global",
+    label: "Global (multiple countries)",
+    belongs:
+      "Two or more countries (including players from two countries meeting in a third), worldwide shipments or totals for a global company, or international competitions.",
+    example: "Eurovision, World Cup, French vs Spanish player in Dubai, or Toyota worldwide deliveries.",
+  },
 ];
 
-const STAKES_ANCHORS: Array<{ score: number; label: string }> = [
-  { score: 1, label: "1 — Local district race, city weather, or tiny niche stat" },
+const STAKES_ANCHORS: ReadonlyArray<{ score: number; label: string }> = [
+  { score: 1, label: "1 — Local seat, city weather, or tiny niche stat" },
   { score: 2, label: "2 — Regular-season game or routine regional company metric" },
   { score: 3, label: "3 — Major national game, governor/senate race, or big earnings report" },
   { score: 4, label: "4 — Championship final, Fed decision, court ruling, or major treaty" },
   { score: 5, label: "5 — Presidential election, war/peace shift, or global shock" },
 ];
 
-const BREADTH_ANCHORS: Array<{ score: number; label: string }> = [
+const BREADTH_ANCHORS: ReadonlyArray<{ score: number; label: string }> = [
   { score: 1, label: "1 — Only a few locals or niche fans follow this" },
   { score: 2, label: "2 — Fans of one team, state, or industry care" },
   { score: 3, label: "3 — Followed across a major sport, politics, or business audience" },
@@ -59,12 +100,10 @@ const BREADTH_ANCHORS: Array<{ score: number; label: string }> = [
 ];
 
 const AGREEMENT_FIELD_LABELS: Record<string, string> = {
-  subjects: "Named subjects",
-  event_date: "Day of the event",
+  subjects: "Which named people, teams, companies or countries is it about?",
+  event_date: "The event's own day",
   geography: "Where",
-  structure: "Market format",
-  claim_frame: "Number and comparison",
-  stakes: "How much it matters",
+  stakes: "How much this matters",
   breadth: "How many people care",
 };
 
@@ -75,14 +114,24 @@ const ROLE_LABELS: Record<CuRole, string> = {
 };
 
 const SPLIT_LABELS: Record<CuSplit, string> = {
+  practice: "Practice round (5 cards)",
   sealed: "Sealed test set",
-  dev: "Practice set",
+  dev: "Extra practice set (200)",
 };
 
 const SCOPE_LABELS: Record<CuScope, string> = {
   shared_100: "Shared 100",
   all: "Full set",
 };
+
+function formatSourceLabel(rawSource: string | null | undefined): string {
+  const s = (rawSource || "").trim().toLowerCase();
+  if (s === "polymarket") return "Polymarket";
+  if (s === "kalshi") return "Kalshi";
+  if (s === "odds_api") return "Odds API";
+  if (s === "datagolf") return "DataGolf";
+  return rawSource || "Unknown source";
+}
 
 export default function CuFactLabelingPage() {
   usePageTracking({ pageType: "admin_grade", pageTitle: "Market Fact Check" });
@@ -93,19 +142,21 @@ export default function CuFactLabelingPage() {
 
   const [raterInput, setRaterInput] = useState("");
   const [activeRater, setActiveRater] = useState("");
-  const [split, setSplit] = useState<CuSplit>("sealed");
+  const [split, setSplit] = useState<CuSplit>("practice");
   const [role, setRole] = useState<CuRole>("primary");
   const [scope, setScope] = useState<CuScope>("shared_100");
   const [index, setIndex] = useState(0);
 
   const [queue, setQueue] = useState<CuQueueResponse | null>(null);
+  const [practiceStatus, setPracticeStatus] = useState<CuPracticeStatus | null>(null);
+  const [practiceFeedback, setPracticeFeedback] = useState<CuPracticeFeedback | null>(null);
   const [agreement, setAgreement] = useState<CuAgreementResponse | null>(null);
   const [showAgreement, setShowAgreement] = useState(false);
-  const [showGuidelines, setShowGuidelines] = useState(false);
 
   const [draft, setDraft] = useState<CuFactLabelDraft>(emptyCuDraft);
   const [geoPreset, setGeoPreset] = useState<string>("");
   const [countryInput, setCountryInput] = useState("");
+  const [showExamples, setShowExamples] = useState(true);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -128,22 +179,29 @@ export default function CuFactLabelingPage() {
     if (!secret || !activeRater) return;
     setLoading(true);
     setErrorMsg(null);
+    setPracticeFeedback(null);
     try {
+      const effectiveRole: CuRole = split === "practice" ? "primary" : role;
       const q = await adminFetchJSON<CuQueueResponse>(
-        `/api/admin/cu-labeling/queue?split=${split}&role=${role}&scope=${scope}&rater=${encodeURIComponent(activeRater)}`,
+        `/api/admin/cu-labeling/queue?split=${split}&role=${effectiveRole}&scope=${scope}&rater=${encodeURIComponent(activeRater)}`,
         secret
       );
       setQueue(q);
+      setPracticeStatus(q.practice_status);
       setIndex(0);
       setDraft(emptyCuDraft());
       setGeoPreset("");
       setCountryInput("");
 
-      const ag = await adminFetchJSON<CuAgreementResponse>(
-        `/api/admin/cu-labeling/agreement?split=${split}`,
-        secret
-      );
-      setAgreement(ag);
+      if (split !== "practice") {
+        const ag = await adminFetchJSON<CuAgreementResponse>(
+          `/api/admin/cu-labeling/agreement?split=${split}`,
+          secret
+        );
+        setAgreement(ag);
+      } else {
+        setAgreement(null);
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Failed to load queue");
     } finally {
@@ -159,19 +217,23 @@ export default function CuFactLabelingPage() {
 
   const items = queue?.items || [];
   const current = items[index] || null;
-  const measures = useMemo(
-    () => queue?.claim_vocabulary?.measures || [...DEFAULT_CLAIM_MEASURES],
-    [queue]
-  );
-  const extraMeasures = useMemo(
-    () => measures.filter((m) => !MEASURE_LABELS[m]),
-    [measures]
-  );
-  const comparators = queue?.claim_vocabulary?.comparators || [...DEFAULT_CLAIM_COMPARATORS];
-  const horizonKinds = queue?.claim_vocabulary?.horizon_kinds || [...DEFAULT_CLAIM_HORIZON_KINDS];
+  const unlockedSealed = Boolean(practiceStatus?.unlocked_sealed ?? queue?.practice_status?.unlocked_sealed);
+  const practiceDone = practiceStatus?.completed ?? queue?.practice_status?.completed ?? 0;
+  const practiceRequired = practiceStatus?.required ?? queue?.practice_status?.required ?? 5;
+  const practiceCardIndex = current
+    ? (practiceStatus?.practice_card_ids ?? queue?.practice_status?.practice_card_ids ?? []).indexOf(
+        current.market_id
+      )
+    : -1;
+  const practiceCardNumber = practiceCardIndex >= 0 ? practiceCardIndex + 1 : index + 1;
+
   const payoutDateSentence = useMemo(
-    () => formatPayoutDateSentence(current?.resolution_date),
-    [current?.resolution_date]
+    () => formatPayoutDateSentence(current?.resolution_date, current?.source),
+    [current?.resolution_date, current?.source]
+  );
+  const eventStartSentence = useMemo(
+    () => formatEventStartSentence(current?.linked_start),
+    [current?.linked_start]
   );
 
   const currentGeography = useMemo(() => {
@@ -193,12 +255,27 @@ export default function CuFactLabelingPage() {
       return;
     }
     setErrorMsg(null);
+    setStatusMsg(null);
     setActiveRater(norm);
     try {
       window.localStorage.setItem(RATER_STORAGE_KEY, norm);
     } catch {
       // Non-fatal.
     }
+  };
+
+  const handleSelectSplit = (nextSplit: CuSplit) => {
+    if (nextSplit === "sealed" && activeRater && !unlockedSealed) {
+      setErrorMsg(
+        `Finish the 5-card practice round first (${practiceDone}/${practiceRequired} completed) to open the Sealed test set.`
+      );
+      return;
+    }
+    setErrorMsg(null);
+    setStatusMsg(null);
+    setPracticeFeedback(null);
+    setShowExamples(nextSplit === "practice");
+    setSplit(nextSplit);
   };
 
   const toggleCandidate = (candidate: string) => {
@@ -215,9 +292,10 @@ export default function CuFactLabelingPage() {
     if (!current || !secret || !activeRater) return;
     setErrorMsg(null);
     setStatusMsg(null);
+    const effectiveRole: CuRole = split === "practice" ? "primary" : role;
     const built = buildSubmissionPayload({
       split,
-      role,
+      role: effectiveRole,
       rater: activeRater,
       marketId: current.market_id,
       draft,
@@ -229,16 +307,24 @@ export default function CuFactLabelingPage() {
 
     setSubmitting(true);
     try {
-      await adminFetchJSON("/api/admin/cu-labeling/label", secret, {
+      const resp = await adminFetchJSON<CuLabelSubmitResponse>("/api/admin/cu-labeling/label", secret, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(built.payload),
       });
-      setStatusMsg(`Saved your answers for market ${current.market_id}.`);
-      setDraft(emptyCuDraft());
-      setGeoPreset("");
-      setCountryInput("");
-      await loadData();
+      if (resp.practice_status) {
+        setPracticeStatus(resp.practice_status);
+      }
+      if (split === "practice" && resp.practice_feedback) {
+        setPracticeFeedback(resp.practice_feedback);
+        setStatusMsg(`Saved practice card (${resp.practice_status?.completed ?? practiceDone + 1}/${practiceRequired}).`);
+      } else {
+        setStatusMsg(`Saved your answers for market ${current.market_id}.`);
+        setDraft(emptyCuDraft());
+        setGeoPreset("");
+        setCountryInput("");
+        await loadData();
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Failed to save answers");
     } finally {
@@ -246,12 +332,22 @@ export default function CuFactLabelingPage() {
     }
   };
 
+  const handleAdvanceAfterPracticeFeedback = async () => {
+    setPracticeFeedback(null);
+    setStatusMsg(null);
+    if (unlockedSealed && practiceDone >= practiceRequired && items.length <= 1) {
+      setSplit("sealed");
+      return;
+    }
+    await loadData();
+  };
+
   return (
-    <div className="max-w-4xl mx-auto space-y-5 text-text-primary">
+    <div className="w-full max-w-4xl mx-auto px-3 sm:px-4 pb-10 space-y-5 text-text-primary">
       <div className="space-y-1">
         <h1 className="text-xl font-bold text-text-primary">Market Fact Check</h1>
-        <p className="text-sm text-text-secondary">
-          Read each market and mark the facts first, then rate how much it matters and how many people care.
+        <p className="text-sm text-text-secondary-strong">
+          Start with the 5-card practice round to see right answers after each card, then label the sealed set independently.
         </p>
       </div>
 
@@ -277,98 +373,105 @@ export default function CuFactLabelingPage() {
           >
             Start labeling
           </button>
-          <button
-            type="button"
-            onClick={() => setShowGuidelines((v) => !v)}
-            className="px-3 py-2 text-xs font-medium rounded-lg border border-surface-border bg-surface-elevated text-text-secondary hover:text-text-primary"
-          >
-            {showGuidelines ? "Hide guide" : "Quick guide"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowAgreement((v) => !v)}
-            className="px-3 py-2 text-xs font-medium rounded-lg border border-surface-border bg-surface-elevated text-text-secondary hover:text-text-primary"
-          >
-            {showAgreement ? "Hide agreement" : "Agreement report"}
-          </button>
+          {split !== "practice" && (
+            <button
+              type="button"
+              onClick={() => setShowAgreement((v) => !v)}
+              className="px-3 py-2 text-xs font-medium rounded-lg border border-surface-border bg-surface-elevated text-text-secondary-strong hover:text-text-primary"
+            >
+              {showAgreement ? "Hide agreement" : "Agreement report"}
+            </button>
+          )}
         </form>
 
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-text-secondary">Market set:</span>
-            {(["sealed", "dev"] as const).map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => setSplit(opt)}
-                className={`px-2.5 py-1 rounded-md border ${
-                  split === opt
-                    ? "bg-accent-brand text-text-inverse border-accent-brand"
-                    : "bg-surface-deep text-text-secondary border-surface-border"
-                }`}
-              >
-                {SPLIT_LABELS[opt]}
-              </button>
-            ))}
+        <div className="flex flex-wrap items-center gap-2.5 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-semibold text-text-secondary-strong">Market set:</span>
+            <button
+              type="button"
+              onClick={() => handleSelectSplit("practice")}
+              className={`px-2.5 py-1 rounded-md border ${
+                split === "practice"
+                  ? "bg-accent-brand text-text-inverse border-accent-brand font-semibold"
+                  : "bg-surface-deep text-text-primary border-surface-border"
+              }`}
+            >
+              Practice round ({practiceDone}/{practiceRequired})
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectSplit("sealed")}
+              aria-disabled={Boolean(activeRater && !unlockedSealed)}
+              className={`px-2.5 py-1 rounded-md border ${
+                split === "sealed"
+                  ? "bg-accent-brand text-text-inverse border-accent-brand font-semibold"
+                  : activeRater && !unlockedSealed
+                    ? "bg-surface-elevated text-text-secondary border-surface-border opacity-75"
+                    : "bg-surface-deep text-text-primary border-surface-border"
+              }`}
+            >
+              {activeRater && !unlockedSealed ? "Sealed test set (Locked)" : "Sealed test set"}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectSplit("dev")}
+              className={`px-2.5 py-1 rounded-md border ${
+                split === "dev"
+                  ? "bg-accent-brand text-text-inverse border-accent-brand font-semibold"
+                  : "bg-surface-deep text-text-primary border-surface-border"
+              }`}
+            >
+              {SPLIT_LABELS.dev}
+            </button>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-text-secondary">Queue:</span>
-            {(["shared_100", "all"] as const).map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => setScope(opt)}
-                className={`px-2.5 py-1 rounded-md border ${
-                  scope === opt
-                    ? "bg-accent-brand text-text-inverse border-accent-brand"
-                    : "bg-surface-deep text-text-secondary border-surface-border"
-                }`}
-              >
-                {SCOPE_LABELS[opt]}
-              </button>
-            ))}
-          </div>
+          {split !== "practice" && (
+            <>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="font-semibold text-text-secondary-strong">Queue:</span>
+                {(["shared_100", "all"] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setScope(opt)}
+                    className={`px-2.5 py-1 rounded-md border ${
+                      scope === opt
+                        ? "bg-accent-brand text-text-inverse border-accent-brand font-semibold"
+                        : "bg-surface-deep text-text-primary border-surface-border"
+                    }`}
+                  >
+                    {SCOPE_LABELS[opt]}
+                  </button>
+                ))}
+              </div>
 
-          <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-text-secondary">Role:</span>
-            {(["primary", "second", "tiebreak"] as const).map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => setRole(opt)}
-                className={`px-2.5 py-1 rounded-md border ${
-                  role === opt
-                    ? "bg-accent-brand text-text-inverse border-accent-brand"
-                    : "bg-surface-deep text-text-secondary border-surface-border"
-                }`}
-              >
-                {ROLE_LABELS[opt]}
-              </button>
-            ))}
-          </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="font-semibold text-text-secondary-strong">Role:</span>
+                {(["primary", "second", "tiebreak"] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setRole(opt)}
+                    className={`px-2.5 py-1 rounded-md border ${
+                      role === opt
+                        ? "bg-accent-brand text-text-inverse border-accent-brand font-semibold"
+                        : "bg-surface-deep text-text-primary border-surface-border"
+                    }`}
+                  >
+                    {ROLE_LABELS[opt]}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
-          {queue && queue.dataset_file_present && (
-            <span className="ml-auto text-text-secondary">
+          {queue && queue.dataset_file_present && !queue.sealed_locked && (
+            <span className="sm:ml-auto text-text-secondary-strong">
               {queue.completed_by_rater} done / {queue.total_in_scope} in queue ({queue.remaining} left)
             </span>
           )}
         </div>
       </div>
-
-      {showGuidelines && (
-        <div className="bg-surface-card border border-surface-border rounded-xl p-4 text-xs space-y-2 text-text-secondary">
-          <div className="font-semibold text-text-primary text-sm">Quick Fact-Checking Rules</div>
-          <ul className="list-disc pl-5 space-y-1">
-            <li><strong className="text-text-primary">Label on your own:</strong> Do not compare notes with the other labeler while working.</li>
-            <li><strong className="text-text-primary">Named subjects:</strong> Pick the specific people, teams, bills, or things named. Pick Custom if missing, &quot;None of these&quot; for indexes/weather highs, or &quot;Not sure&quot;.</li>
-            <li><strong className="text-text-primary">Day of the event:</strong> Enter the day the real event happens, not the site&apos;s payout timestamp; check &quot;No single day&quot; for season winners or multi-week deadlines.</li>
-            <li><strong className="text-text-primary">Where:</strong> City, county, and state legislative districts are <code>Local</code>; cross-border tournaments like World Cup or UEFA Europa League are <code>Global</code>.</li>
-            <li><strong className="text-text-primary">Format &amp; Claim:</strong> Check the option list before choosing Ladder or Dated options. Copy exact numbers from the title — do not pull 27 from &quot;2026-27&quot; or 7M from &quot;W7M&quot;.</li>
-            <li><strong className="text-text-primary">Tie-breaker:</strong> Only reviews disagreements on facts using exact text evidence. Never tie-breaks the two 1–5 opinion ratings.</li>
-          </ul>
-        </div>
-      )}
 
       {showAgreement && agreement && (
         <div className="bg-surface-card border border-surface-border rounded-xl p-4 space-y-3">
@@ -376,12 +479,12 @@ export default function CuFactLabelingPage() {
             <span className="font-semibold">
               How often the two labelers agreed ({SPLIT_LABELS[split]})
             </span>
-            <span className="text-xs text-text-secondary">
+            <span className="text-xs text-text-secondary-strong">
               Double-checked: {agreement.paired_markets} · Waiting for tie-breaker:{" "}
               {agreement.needs_tiebreak} · Resolved: {agreement.resolved_tiebreaks}
             </span>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-w-full">
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="border-b border-surface-border text-text-secondary text-left">
@@ -399,14 +502,12 @@ export default function CuFactLabelingPage() {
                     <td className="py-1.5 pr-3 font-medium text-text-primary">
                       {AGREEMENT_FIELD_LABELS[f.field] || f.field}
                     </td>
-                    <td className="py-1.5 pr-3 text-text-secondary">
+                    <td className="py-1.5 pr-3 text-text-secondary-strong">
                       {f.metric === "within_1"
                         ? "Within 1 step"
                         : f.field === "subjects"
                           ? "Same names"
-                          : f.field === "claim_frame"
-                            ? "Same after cleaning"
-                            : "Exact match"}
+                          : "Exact match"}
                     </td>
                     <td className="py-1.5 pr-3">{f.agreed}</td>
                     <td className="py-1.5 pr-3">{f.total}</td>
@@ -419,7 +520,7 @@ export default function CuFactLabelingPage() {
                           Below 80% — held back for Alex
                         </span>
                       ) : (
-                        <span className="text-text-secondary">
+                        <span className="text-text-secondary-strong">
                           {f.tiebreak_allowed ? "Fact (tie-breaker allowed)" : "Opinion (Alex decides)"}
                         </span>
                       )}
@@ -438,14 +539,14 @@ export default function CuFactLabelingPage() {
         </div>
       )}
       {statusMsg && (
-        <div className="px-4 py-2.5 rounded-lg border border-accent-brand bg-surface-card text-accent-brand text-sm">
+        <div className="px-4 py-2.5 rounded-lg border border-accent-brand bg-surface-card text-text-primary text-sm">
           {statusMsg}
         </div>
       )}
 
       {!activeRater ? (
-        <div className="bg-surface-card border border-surface-border rounded-xl p-6 text-sm text-text-secondary">
-          Type your name above and click <strong>Start labeling</strong> to load your cards.
+        <div className="bg-surface-card border border-surface-border rounded-xl p-6 text-sm text-text-secondary-strong">
+          Type your name above and click <strong>Start labeling</strong> to begin the 5-card practice round.
         </div>
       ) : loading ? (
         <div className="bg-surface-card border border-surface-border rounded-xl p-6 text-sm text-text-muted animate-pulse">
@@ -457,31 +558,144 @@ export default function CuFactLabelingPage() {
           className="bg-surface-card border border-accent-warning rounded-xl p-6 space-y-2 text-sm"
         >
           <div className="font-semibold text-text-primary">Market file not loaded yet</div>
-          <p className="text-text-secondary">
+          <p className="text-text-secondary-strong">
             {queue.dataset_file_missing_message ||
               "The frozen market list for this set is not loaded on this server yet, so there are no cards to check."}
           </p>
         </div>
+      ) : queue && queue.sealed_locked ? (
+        <div
+          data-testid="cu-labeling-sealed-locked"
+          className="bg-surface-card border border-accent-warning rounded-xl p-6 space-y-3 text-sm"
+        >
+          <div className="font-semibold text-text-primary">
+            Complete the 5-card practice round first
+          </div>
+          <p className="text-text-secondary-strong">
+            You have completed <strong>{practiceDone} of {practiceRequired}</strong> practice cards.
+            Finish the practice round so you can check your answers before the Sealed test set opens.
+          </p>
+          <button
+            type="button"
+            onClick={() => setSplit("practice")}
+            className="px-4 py-2 text-sm font-semibold rounded-lg bg-accent-brand text-text-inverse hover:opacity-90"
+          >
+            Go to Practice round
+          </button>
+        </div>
+      ) : practiceFeedback ? (
+        <div
+          data-testid="cu-practice-feedback"
+          className="bg-surface-card border border-accent-brand rounded-xl p-5 space-y-4"
+        >
+          <div className="space-y-1">
+            <div className="text-xs font-semibold uppercase tracking-wide text-accent-brand">
+              Practice answer check · {practiceDone} of {practiceRequired} done
+            </div>
+            <h2 className="text-lg font-bold text-text-primary">
+              {practiceFeedback.all_facts_matched
+                ? "Nice — all three facts matched the answer key."
+                : "Review the answer key below before the next card."}
+            </h2>
+            <p className="text-sm text-text-secondary-strong">{practiceFeedback.explanation}</p>
+          </div>
+
+          <div className="space-y-2">
+            {practiceFeedback.fields.map((f) => (
+              <div
+                key={f.field}
+                className="p-3 rounded-lg border border-surface-border bg-surface-deep flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm"
+              >
+                <div className="space-y-0.5 min-w-0">
+                  <div className="font-semibold text-text-primary">{f.label}</div>
+                  <div className="text-xs text-text-secondary-strong">
+                    Your answer: <strong className="text-text-primary">{f.your_answer}</strong> · Right answer:{" "}
+                    <strong className="text-text-primary">{f.right_answer}</strong>
+                  </div>
+                </div>
+                <span
+                  className={`self-start sm:self-center px-2.5 py-0.5 text-xs font-semibold rounded-full border ${
+                    f.matched
+                      ? "border-accent-brand text-accent-brand bg-surface-card"
+                      : "border-accent-warning text-accent-warning bg-surface-card"
+                  }`}
+                >
+                  {f.matched ? "Match" : "Review"}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="text-xs text-text-secondary-strong">
+            Opinion ratings (1–5) are never marked wrong — typical range for this card: matters{" "}
+            {practiceFeedback.typical_stakes[0]}–{practiceFeedback.typical_stakes[1]}, audience{" "}
+            {practiceFeedback.typical_breadth[0]}–{practiceFeedback.typical_breadth[1]}.
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-3 pt-1">
+            {unlockedSealed ? (
+              <button
+                type="button"
+                onClick={() => handleSelectSplit("sealed")}
+                className="px-5 py-2 text-sm font-semibold rounded-lg bg-accent-brand text-text-inverse hover:opacity-90"
+              >
+                Open Sealed test set →
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleAdvanceAfterPracticeFeedback()}
+                className="px-5 py-2 text-sm font-semibold rounded-lg bg-accent-brand text-text-inverse hover:opacity-90"
+              >
+                Next practice card →
+              </button>
+            )}
+          </div>
+        </div>
       ) : !current ? (
-        <div className="bg-surface-card border border-surface-border rounded-xl p-6 text-sm text-text-secondary">
-          No remaining markets in this queue ({SPLIT_LABELS[split]} · {ROLE_LABELS[role]} · {SCOPE_LABELS[scope]}).
+        <div className="bg-surface-card border border-surface-border rounded-xl p-6 space-y-3 text-sm text-text-secondary-strong">
+          <div>
+            No remaining cards in this queue ({SPLIT_LABELS[split]}).
+          </div>
+          {split === "practice" && unlockedSealed && (
+            <button
+              type="button"
+              onClick={() => handleSelectSplit("sealed")}
+              className="px-4 py-2 text-sm font-semibold rounded-lg bg-accent-brand text-text-inverse hover:opacity-90"
+            >
+              Open Sealed test set →
+            </button>
+          )}
         </div>
       ) : (
-        <div className="bg-surface-card border border-surface-border rounded-xl p-5 space-y-5">
-          {/* Market card */}
-          <div className="border-b border-surface-border pb-4 space-y-2">
+        <div
+          data-testid="cu-labeling-card"
+          data-market-id={current.market_id}
+          className="bg-surface-card border border-surface-border rounded-xl p-4 sm:p-5 space-y-5 min-w-0"
+        >
+          {/* Market card header */}
+          <div className="border-b border-surface-border pb-4 space-y-2.5 min-w-0">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-secondary">
               <span>
-                Market {current.market_id} · {current.source || "unknown"} · {current.category || "uncategorized"}
+                Market {current.market_id} · {formatSourceLabel(current.source)} · {current.category || "uncategorized"}
               </span>
               <span>
-                Card {index + 1} of {items.length}
+                {split === "practice"
+                  ? `Card ${practiceCardNumber} of ${practiceRequired}`
+                  : `Card ${index + 1} of ${items.length}`}
               </span>
             </div>
-            <h2 className="text-lg font-semibold text-text-primary">{current.title}</h2>
-            {payoutDateSentence && (
-              <div className="text-sm text-text-primary">{payoutDateSentence}</div>
+
+            <h2 className="text-lg font-semibold text-text-primary break-words">{current.title}</h2>
+
+            {eventStartSentence && (
+              <div className="text-sm font-medium text-text-primary">{eventStartSentence}</div>
             )}
+
+            {payoutDateSentence && (
+              <div className="text-sm text-text-secondary-strong">{payoutDateSentence}</div>
+            )}
+
             {current.outcomes.length > 0 ? (
               <div className="flex flex-wrap gap-1.5 pt-1">
                 {current.outcomes.slice(0, 16).map((o, idx) => (
@@ -492,21 +706,62 @@ export default function CuFactLabelingPage() {
                     {o.name}
                   </span>
                 ))}
+                {current.outcomes.length > 16 && (
+                  <span className="px-2 py-0.5 text-xs text-text-secondary">
+                    +{current.outcomes.length - 16} more
+                  </span>
+                )}
               </div>
             ) : (
-              <div className="text-sm text-text-secondary pt-1">No options listed</div>
+              <div className="text-sm text-text-secondary-strong pt-1">No options listed</div>
             )}
+
             {current.rules_text && (
-              <p className="text-xs text-text-secondary bg-surface-deep p-3 rounded-lg border border-surface-border whitespace-pre-wrap">
+              <p className="text-xs text-text-secondary-strong bg-surface-deep p-3 rounded-lg border border-surface-border whitespace-pre-wrap break-words">
                 {current.rules_text}
               </p>
             )}
+
+            {/* Venue link on every card so labelers can open the original market rules */}
+            <div className="flex flex-wrap items-center gap-2.5 pt-1">
+              <a
+                href={current.venue_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-surface-border bg-surface-elevated text-text-primary hover:border-accent-brand transition-colors"
+              >
+                {current.venue_link_label} ↗
+              </a>
+              <span className="text-xs text-text-secondary-strong">
+                Read the full rules on the original market page if the card text is not enough.
+              </span>
+            </div>
           </div>
 
           {/* Blind vs Tiebreak peer panel */}
-          {role !== "tiebreak" ? (
-            <div className="text-xs text-text-muted">
-              Blind check active: neither labeler ever sees what the other answered.
+          {split === "practice" ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-secondary-strong">
+              <span>
+                Practice card {practiceCardNumber} of {practiceRequired}: click &quot;Check practice answer&quot; below to see the right answer and explanation.
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowExamples((v) => !v)}
+                className="px-2.5 py-1 text-xs font-medium rounded-md border border-surface-border bg-surface-elevated text-text-secondary-strong hover:text-text-primary"
+              >
+                {showExamples ? "Hide examples" : "Show examples"}
+              </button>
+            </div>
+          ) : role !== "tiebreak" ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-secondary">
+              <span>Please label on your own. Nobody sees another labeler&apos;s answers.</span>
+              <button
+                type="button"
+                onClick={() => setShowExamples((v) => !v)}
+                className="px-2.5 py-1 text-xs font-medium rounded-md border border-surface-border bg-surface-elevated text-text-secondary-strong hover:text-text-primary"
+              >
+                {showExamples ? "Hide examples" : "Show examples"}
+              </button>
             </div>
           ) : (
             <div className="bg-surface-elevated border border-surface-border rounded-lg p-3 space-y-2 text-xs">
@@ -519,27 +774,44 @@ export default function CuFactLabelingPage() {
               </div>
               <div className="grid md:grid-cols-2 gap-3">
                 {current.peer_labels.map((peer) => (
-                  <div key={`${peer.rater}-${peer.role}`} className="bg-surface-card border border-surface-border rounded-lg p-2.5 space-y-1">
+                  <div
+                    key={`${peer.rater}-${peer.role}`}
+                    className="bg-surface-card border border-surface-border rounded-lg p-2.5 space-y-1"
+                  >
                     <div className="font-semibold text-text-primary">
                       {peer.rater} ({ROLE_LABELS[peer.role]})
                     </div>
-                    <div>Subjects: {JSON.stringify(peer.subjects_answer)}</div>
-                    <div>Day: {peer.no_single_day ? "No single day" : peer.event_date_answer || "blank"}</div>
-                    <div>Where: {peer.geography_answer || "blank"}</div>
-                    <div>Format: {peer.structure_answer || "blank"}</div>
                     <div>
-                      Number &amp; comparison:{" "}
-                      {formatPeerClaimFrame(peer.claim_frame as Record<string, unknown> | null)}
+                      Who or what:{" "}
+                      {peer.subjects_answer?.selection_kind === "none_of_these"
+                        ? "None of these"
+                        : peer.subjects_answer?.selection_kind === "not_sure"
+                          ? "Not sure"
+                          : (peer.subjects_answer?.selected || []).join(", ") || "blank"}
                     </div>
+                    <div>Day: {formatPeerEventDate(peer.event_date_answer, peer.no_single_day)}</div>
+                    <div>Where: {peer.geography_answer || "blank"}</div>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Question 1: Subjects */}
-          <div className="space-y-2">
-            <div className="text-sm font-semibold">1. Who or what is it about?</div>
+          {/* Question 1: Which named people, teams, companies or countries is it about? */}
+          <div className="space-y-2.5">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-text-primary">
+                1. Which named people, teams, companies or countries is it about?
+              </div>
+              <p className="text-xs text-text-secondary-strong">
+                Pick every named person, team, company, agency, bill, tournament, or country the market turns on. Pick only the team beside a league playoff, pick all named actors and targets, choose None of these for city weather or elections with party-only choices, and put places smaller than a country under Where.
+              </p>
+              {showExamples && (
+                <p className="text-xs text-text-secondary">
+                  <strong>Example:</strong> &quot;Brazil vs Chile&quot; → <strong>Brazil</strong> and <strong>Chile</strong> · &quot;Fitch downgrades Portugal&quot; → <strong>Fitch</strong> and <strong>Portugal</strong> · City temperature or party-only house seat → <strong>None of these</strong>.
+                </p>
+              )}
+            </div>
             <div className="flex flex-wrap gap-1.5">
               {current.subject_candidates.map((cand) => {
                 const active = draft.subjectMode === "candidate" && draft.selectedCandidates.includes(cand);
@@ -548,9 +820,9 @@ export default function CuFactLabelingPage() {
                     key={cand}
                     type="button"
                     onClick={() => toggleCandidate(cand)}
-                    className={`px-2.5 py-1 text-xs rounded-md border ${
+                    className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors ${
                       active
-                        ? "bg-accent-brand text-text-inverse border-accent-brand"
+                        ? "bg-accent-brand text-text-inverse border-accent-brand font-semibold"
                         : "bg-surface-deep text-text-primary border-surface-border"
                     }`}
                   >
@@ -562,14 +834,20 @@ export default function CuFactLabelingPage() {
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => setDraft((d) => ({ ...d, subjectMode: mode }))}
-                  className={`px-2.5 py-1 text-xs rounded-md border ${
+                  onClick={() =>
+                    setDraft((d) => ({
+                      ...d,
+                      subjectMode: mode,
+                      selectedCandidates: mode === "candidate" ? d.selectedCandidates : [],
+                    }))
+                  }
+                  className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors ${
                     draft.subjectMode === mode
-                      ? "bg-accent-brand text-text-inverse border-accent-brand"
-                      : "bg-surface-elevated text-text-secondary border-surface-border"
+                      ? "bg-accent-brand text-text-inverse border-accent-brand font-semibold"
+                      : "bg-surface-elevated text-text-primary border-surface-border"
                   }`}
                 >
-                  {mode === "custom" ? "Custom" : mode === "none_of_these" ? "None of these" : "Not sure"}
+                  {mode === "custom" ? "Add a name" : mode === "none_of_these" ? "None of these" : "Not sure"}
                 </button>
               ))}
             </div>
@@ -578,253 +856,160 @@ export default function CuFactLabelingPage() {
                 type="text"
                 value={draft.customSubject}
                 onChange={(e) => setDraft((d) => ({ ...d, customSubject: e.target.value }))}
-                placeholder="Comma-separated names from the text"
+                placeholder="Type comma-separated names from the card"
                 className="w-full px-3 py-2 text-sm bg-surface-deep border border-surface-border rounded-lg"
               />
             )}
           </div>
 
-          {/* Question 2: Event's own day */}
-          <div className="space-y-2">
-            <div className="text-sm font-semibold">2. The event&apos;s own day</div>
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                type="date"
-                disabled={draft.noSingleDay}
-                value={draft.eventDate}
-                onChange={(e) => setDraft((d) => ({ ...d, eventDate: e.target.value, noSingleDay: false }))}
-                className="px-3 py-1.5 text-sm bg-surface-deep border border-surface-border rounded-lg disabled:opacity-50"
-              />
-              <label className="flex items-center gap-2 text-xs font-medium text-text-secondary cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={draft.noSingleDay}
-                  onChange={(e) =>
-                    setDraft((d) => ({
-                      ...d,
-                      noSingleDay: e.target.checked,
-                      eventDate: e.target.checked ? "" : d.eventDate,
-                    }))
-                  }
-                />
-                No single day
-              </label>
+          {/* Question 2: The event's own day */}
+          <div className="space-y-2.5 pt-2 border-t border-surface-border">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-text-primary">2. The event&apos;s own day</div>
+              <p className="text-xs text-text-secondary-strong">
+                The real-world day the event happens — read the card, then the venue link, then any fixed public date you are sure of (like an election day). Choose Cannot tell only when none of those settles it.
+              </p>
+              {showExamples && (
+                <p className="text-xs text-text-secondary">
+                  <strong>Example:</strong> Nov 2028 general election settling in May 2029 → <strong>Specific day</strong> · &quot;By Dec 31, 2027&quot; → <strong>No single day</strong> · Undated court ruling with no date in the rules → <strong>Cannot tell</strong>.
+                </p>
+              )}
             </div>
+            <div className="grid sm:grid-cols-3 gap-2">
+              {EVENT_DAY_CHOICES.map((opt) => {
+                const selected = draft.eventDateMode === opt.mode;
+                return (
+                  <button
+                    key={opt.mode}
+                    type="button"
+                    onClick={() =>
+                      setDraft((d) => ({
+                        ...d,
+                        eventDateMode: opt.mode,
+                        eventDate: opt.mode === "date" ? d.eventDate : "",
+                      }))
+                    }
+                    className={`p-3 text-left rounded-lg border transition-colors ${
+                      selected
+                        ? "border-2 border-accent-brand bg-surface-elevated text-text-primary ring-1 ring-accent-brand"
+                        : "border-surface-border bg-surface-deep text-text-primary"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold">{opt.label}</span>
+                      {selected && (
+                        <span className="text-[11px] font-semibold text-accent-brand">Selected</span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-text-secondary-strong">{opt.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+            {draft.eventDateMode === "date" && (
+              <div className="pt-1 flex flex-wrap items-center gap-2">
+                <label className="text-xs font-medium text-text-secondary-strong">
+                  Calendar day:
+                </label>
+                <input
+                  type="date"
+                  value={draft.eventDate}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, eventDateMode: "date", eventDate: e.target.value }))
+                  }
+                  className="px-3 py-1.5 text-sm bg-surface-deep border border-surface-border rounded-lg text-text-primary"
+                />
+              </div>
+            )}
           </div>
 
-          {/* Question 3: Geography */}
-          <div className="space-y-2">
-            <div className="text-sm font-semibold">3. Where</div>
-            <div className="flex flex-wrap items-center gap-2">
-              {GEO_PRESETS.map((g) => (
-                <button
-                  key={g.value}
-                  type="button"
-                  onClick={() => setGeoPreset(g.value)}
-                  className={`px-3 py-1 text-xs rounded-md border ${
-                    geoPreset === g.value
-                      ? "bg-accent-brand text-text-inverse border-accent-brand"
-                      : "bg-surface-deep text-text-primary border-surface-border"
-                  }`}
-                >
-                  {g.label}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setGeoPreset("country")}
-                className={`px-3 py-1 text-xs rounded-md border ${
-                  geoPreset === "country"
-                    ? "bg-accent-brand text-text-inverse border-accent-brand"
-                    : "bg-surface-deep text-text-primary border-surface-border"
-                }`}
-              >
-                One country
-              </button>
-              {geoPreset === "country" && (
+          {/* Question 3: Where (non-overlapping choices, each with rule + example) */}
+          <div className="space-y-2.5 pt-2 border-t border-surface-border">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-text-primary">3. Where</div>
+              <p className="text-xs text-text-secondary-strong">
+                Pick the single smallest region where the event takes place or applies — these four choices do not overlap.
+              </p>
+              {showExamples && (
+                <p className="text-xs text-text-secondary">
+                  <strong>Example:</strong> City or US state race → <strong>Local</strong> · US national league or federal policy → <strong>US (nationwide)</strong> · Japan policy → <strong>One country (outside the US)</strong> · World Cup or Toyota worldwide deliveries → <strong>Global</strong>.
+                </p>
+              )}
+            </div>
+            <div className="grid sm:grid-cols-2 gap-2.5">
+              {WHERE_CHOICES.map((opt) => {
+                const selected = geoPreset === opt.preset;
+                return (
+                  <button
+                    key={opt.preset}
+                    type="button"
+                    onClick={() => setGeoPreset(opt.preset)}
+                    className={`p-3 text-left rounded-lg border transition-colors ${
+                      selected
+                        ? "border-2 border-accent-brand bg-surface-elevated text-text-primary ring-1 ring-accent-brand"
+                        : "border-surface-border bg-surface-deep text-text-primary"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold">{opt.label}</span>
+                      {selected && (
+                        <span className="text-[11px] font-semibold text-accent-brand">Selected</span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-text-secondary-strong">{opt.belongs}</p>
+                    {showExamples && (
+                      <p className="mt-1 text-xs text-text-secondary">
+                        <strong>Example:</strong> {opt.example}
+                      </p>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {geoPreset === "country" && (
+              <div className="pt-1">
                 <select
                   aria-label="Country"
                   value={countryInput}
                   onChange={(e) => setCountryInput(e.target.value)}
-                  className="px-3 py-1.5 text-sm bg-surface-deep border border-surface-border rounded-lg text-text-primary"
+                  className="w-full sm:w-auto px-3 py-1.5 text-sm bg-surface-deep border border-surface-border rounded-lg text-text-primary"
                 >
-                  <option value="">Choose a country...</option>
+                  <option value="">Choose a country outside the US...</option>
                   {COUNTRY_OPTIONS.map((c) => (
                     <option key={c.code} value={`country:${c.code}`}>
                       {c.name} ({c.code})
                     </option>
                   ))}
                 </select>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
-          {/* Question 4: Market format */}
-          <div className="space-y-2">
-            <div className="text-sm font-semibold">4. Market format</div>
-            <div className="grid sm:grid-cols-3 gap-2">
-              {STRUCTURE_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setDraft((d) => ({ ...d, structure: opt.value }))}
-                  className={`p-3 text-left rounded-lg border text-sm ${
-                    draft.structure === opt.value
-                      ? "bg-accent-brand text-text-inverse border-accent-brand"
-                      : "bg-surface-deep text-text-primary border-surface-border"
-                  }`}
-                >
-                  <div className="font-semibold">{opt.label}</div>
-                  <div
-                    className={`mt-1 text-sm ${
-                      draft.structure === opt.value ? "text-text-inverse" : "text-text-primary"
-                    }`}
-                  >
-                    {opt.help}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Question 5: Number and comparison (6 fixed writer slots) */}
-          <div className="space-y-2">
-            <div className="text-sm font-semibold">
-              5. Number and comparison (if the title states a specific figure; otherwise leave blank)
-            </div>
-            <p className="text-xs text-text-secondary">
-              Put currency signs ($, £, €) or % in Unit, and the plain number in Exact number.
-            </p>
-            <div className="grid sm:grid-cols-3 gap-2.5">
-              <div className="space-y-1">
-                <label className="block text-xs text-text-secondary">What is measured</label>
-                <select
-                  value={draft.claim.measure}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, claim: { ...d.claim, measure: e.target.value } }))
-                  }
-                  className="w-full px-2.5 py-1.5 text-xs bg-surface-deep border border-surface-border rounded-lg text-text-primary"
-                >
-                  <option value="">Blank (no numeric claim)</option>
-                  <option value="none_of_these">None of these</option>
-                  {MEASURE_GROUPS.map((grp) => (
-                    <optgroup key={grp.group} label={grp.group}>
-                      {grp.options
-                        .filter((opt) => measures.includes(opt.value))
-                        .map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                    </optgroup>
-                  ))}
-                  {extraMeasures.length > 0 && (
-                    <optgroup label="Other">
-                      {extraMeasures.map((m) => (
-                        <option key={m} value={m}>
-                          {formatMeasureChoiceLabel(m)}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-xs text-text-secondary">Comparison</label>
-                <select
-                  value={draft.claim.comparator}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, claim: { ...d.claim, comparator: e.target.value } }))
-                  }
-                  className="w-full px-2.5 py-1.5 text-xs bg-surface-deep border border-surface-border rounded-lg text-text-primary"
-                >
-                  <option value="">Blank</option>
-                  <option value="none_of_these">None of these</option>
-                  {comparators.map((cmp) => (
-                    <option key={cmp} value={cmp}>
-                      {COMPARATOR_LABELS[cmp] || cmp}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-xs text-text-secondary">Exact number (verbatim from title)</label>
-                <input
-                  type="text"
-                  value={draft.claim.value}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, claim: { ...d.claim, value: e.target.value } }))
-                  }
-                  placeholder="e.g. 50000 or 13M"
-                  className="w-full px-2.5 py-1.5 text-xs bg-surface-deep border border-surface-border rounded-lg"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-xs text-text-secondary">Unit (verbatim from title)</label>
-                <input
-                  type="text"
-                  value={draft.claim.unit}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, claim: { ...d.claim, unit: e.target.value } }))
-                  }
-                  placeholder="e.g. $, %, goals, subscribers"
-                  className="w-full px-2.5 py-1.5 text-xs bg-surface-deep border border-surface-border rounded-lg"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-xs text-text-secondary">Kind of deadline</label>
-                <select
-                  value={draft.claim.horizon_kind}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, claim: { ...d.claim, horizon_kind: e.target.value } }))
-                  }
-                  className="w-full px-2.5 py-1.5 text-xs bg-surface-deep border border-surface-border rounded-lg text-text-primary"
-                >
-                  <option value="">Blank</option>
-                  <option value="none_of_these">None of these</option>
-                  {horizonKinds.map((hk) => (
-                    <option key={hk} value={hk}>
-                      {HORIZON_LABELS[hk] || hk}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-xs text-text-secondary">Written deadline date in title</label>
-                <input
-                  type="text"
-                  value={draft.claim.window_date}
-                  onChange={(e) =>
-                    setDraft((d) => ({ ...d, claim: { ...d.claim, window_date: e.target.value } }))
-                  }
-                  placeholder="e.g. December 31, 2027"
-                  className="w-full px-2.5 py-1.5 text-xs bg-surface-deep border border-surface-border rounded-lg"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Question 6: How much it matters & how many people care (asked last, hidden in tiebreak) */}
-          {role !== "tiebreak" ? (
+          {/* Questions 4 & 5: How much this matters & How many people care (asked last, hidden in tiebreak) */}
+          {(role !== "tiebreak" || split === "practice") ? (
             <div className="space-y-4 pt-2 border-t border-surface-border">
-              <div className="text-sm font-semibold">
-                6. How much it matters and how many people care (answer last)
-              </div>
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <div className="text-xs font-semibold text-text-primary">How much this matters</div>
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold text-text-primary">
+                      4. How much this matters (1–5)
+                    </div>
+                    <p className="text-xs text-text-secondary-strong">
+                      Your own judgment of the real-world impact if this happens.
+                    </p>
+                    {showExamples && (
+                      <p className="text-xs text-text-secondary">
+                        <strong>Example:</strong> City rain is <strong>1</strong> · regular-season NBA game is <strong>2</strong> · Fed rate decision is <strong>4</strong>.
+                      </p>
+                    )}
+                  </div>
                   <div className="flex gap-1.5">
                     {STAKES_ANCHORS.map((item) => (
                       <button
                         key={item.score}
                         type="button"
                         onClick={() => setDraft((d) => ({ ...d, stakes: item.score }))}
-                        className={`w-8 h-8 text-xs font-semibold rounded-md border ${
+                        className={`w-9 h-9 text-xs font-semibold rounded-md border transition-colors ${
                           draft.stakes === item.score
                             ? "bg-accent-brand text-text-inverse border-accent-brand"
                             : "bg-surface-deep text-text-primary border-surface-border"
@@ -834,7 +1019,7 @@ export default function CuFactLabelingPage() {
                       </button>
                     ))}
                   </div>
-                  <ul className="space-y-1 text-sm text-text-primary">
+                  <ul className="space-y-0.5 text-xs text-text-secondary-strong">
                     {STAKES_ANCHORS.map((item) => (
                       <li key={item.score}>{item.label}</li>
                     ))}
@@ -842,14 +1027,26 @@ export default function CuFactLabelingPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <div className="text-xs font-semibold text-text-primary">How many people care</div>
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold text-text-primary">
+                      5. How many people care (1–5)
+                    </div>
+                    <p className="text-xs text-text-secondary-strong">
+                      Your own judgment of how wide the audience following this story is.
+                    </p>
+                    {showExamples && (
+                      <p className="text-xs text-text-secondary">
+                        <strong>Example:</strong> Local council race is <strong>1</strong> · one US league is <strong>3</strong> · global celebrity or war news is <strong>5</strong>.
+                      </p>
+                    )}
+                  </div>
                   <div className="flex gap-1.5">
                     {BREADTH_ANCHORS.map((item) => (
                       <button
                         key={item.score}
                         type="button"
                         onClick={() => setDraft((d) => ({ ...d, breadth: item.score }))}
-                        className={`w-8 h-8 text-xs font-semibold rounded-md border ${
+                        className={`w-9 h-9 text-xs font-semibold rounded-md border transition-colors ${
                           draft.breadth === item.score
                             ? "bg-accent-brand text-text-inverse border-accent-brand"
                             : "bg-surface-deep text-text-primary border-surface-border"
@@ -859,7 +1056,7 @@ export default function CuFactLabelingPage() {
                       </button>
                     ))}
                   </div>
-                  <ul className="space-y-1 text-sm text-text-primary">
+                  <ul className="space-y-0.5 text-xs text-text-secondary-strong">
                     {BREADTH_ANCHORS.map((item) => (
                       <li key={item.score}>{item.label}</li>
                     ))}
@@ -869,25 +1066,33 @@ export default function CuFactLabelingPage() {
             </div>
           ) : (
             <div className="space-y-2 pt-2 border-t border-surface-border">
-              <div className="text-sm font-semibold">Written evidence note (required for tie-break)</div>
+              <div className="text-sm font-semibold text-text-primary">
+                4. Written evidence note (required for tie-break)
+              </div>
+              <p className="text-xs text-text-secondary-strong">
+                Open the venue link above if needed, then quote the phrase or rule that settles the fact disagreement.
+              </p>
+              <p className="text-xs text-text-secondary">
+                <strong>Example:</strong> &quot;Venue rules say quarterly earnings release is Dec 3, 2026 → 2026-12-03.&quot;
+              </p>
               <textarea
                 rows={3}
                 value={draft.evidenceNote}
                 onChange={(e) => setDraft((d) => ({ ...d, evidenceNote: e.target.value }))}
-                placeholder="Quote the exact phrase in the title, options, or rules showing which fact answer holds."
+                placeholder="Quote the exact phrase in the title, options, or venue rules."
                 className="w-full px-3 py-2 text-sm bg-surface-deep border border-surface-border rounded-lg"
               />
             </div>
           )}
 
           {/* Actions */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-surface-border">
             <div className="flex gap-2">
               <button
                 type="button"
                 disabled={index <= 0}
                 onClick={() => setIndex((i) => Math.max(0, i - 1))}
-                className="px-3 py-1.5 text-xs rounded-lg border border-surface-border bg-surface-elevated text-text-secondary disabled:opacity-40"
+                className="px-3 py-1.5 text-xs rounded-lg border border-surface-border bg-surface-elevated text-text-secondary-strong disabled:opacity-40"
               >
                 Prev
               </button>
@@ -895,7 +1100,7 @@ export default function CuFactLabelingPage() {
                 type="button"
                 disabled={index >= items.length - 1}
                 onClick={() => setIndex((i) => Math.min(items.length - 1, i + 1))}
-                className="px-3 py-1.5 text-xs rounded-lg border border-surface-border bg-surface-elevated text-text-secondary disabled:opacity-40"
+                className="px-3 py-1.5 text-xs rounded-lg border border-surface-border bg-surface-elevated text-text-secondary-strong disabled:opacity-40"
               >
                 Skip / Next
               </button>
@@ -906,7 +1111,13 @@ export default function CuFactLabelingPage() {
               onClick={handleSubmit}
               className="px-5 py-2 text-sm font-semibold rounded-lg bg-accent-brand text-text-inverse hover:opacity-90 disabled:opacity-50"
             >
-              {submitting ? "Saving..." : role === "tiebreak" ? "Save fact tie-break" : "Save answers"}
+              {submitting
+                ? "Saving..."
+                : split === "practice"
+                  ? "Check practice answer"
+                  : role === "tiebreak"
+                    ? "Save fact tie-break"
+                    : "Save answers"}
             </button>
           </div>
         </div>

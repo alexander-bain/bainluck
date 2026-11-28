@@ -1,173 +1,12 @@
 /** Types and pure validation/draft helpers for /admin/cu-labeling. */
 
-export type CuSplit = "sealed" | "dev";
+export type CuSplit = "practice" | "sealed" | "dev";
 export type CuRole = "primary" | "second" | "tiebreak";
 export type CuScope = "shared_100" | "all";
-export type CuStructure = "ladder" | "dated_bucket" | "neither";
 export type CuSubjectMode = "candidate" | "custom" | "none_of_these" | "not_sure";
+export type CuEventDateMode = "date" | "no_single_day" | "cannot_tell" | "";
 
-export const DEFAULT_CLAIM_MEASURES: readonly string[] = [
-  "appointment",
-  "approval_rating",
-  "asset_price",
-  "atp_points",
-  "award_result",
-  "bankruptcy_filing",
-  "box_office_revenue",
-  "ceasefire",
-  "close_price",
-  "daily_views",
-  "data_center_moratorium",
-  "economic_growth",
-  "election_result",
-  "employment",
-  "event_count",
-  "exchange_rate",
-  "goals",
-  "high_temperature",
-  "housing_starts",
-  "index_close",
-  "inflation_rate",
-  "interest_rate",
-  "low_temperature",
-  "magnitude",
-  "market_cap",
-  "nomination",
-  "points",
-  "poll_share",
-  "precipitation",
-  "price_high",
-  "price_low",
-  "price_record_high",
-  "price_record_low",
-  "ranking",
-  "release_date",
-  "result",
-  "revenue",
-  "rt_score",
-  "runs",
-  "snowfall",
-  "subscriber_count",
-  "touchdowns",
-  "tweet_count",
-  "unemployment_rate",
-  "victory_margin",
-  "vote_share",
-  "wins",
-];
-
-export const DEFAULT_CLAIM_COMPARATORS: readonly string[] = [
-  "gte",
-  "gt",
-  "lte",
-  "lt",
-  "eq",
-  "ne",
-  "range",
-];
-
-export const DEFAULT_CLAIM_HORIZON_KINDS: readonly string[] = [
-  "intraday",
-  "daily",
-  "weekly",
-  "monthly",
-  "quarterly",
-  "annual",
-  "multi_year",
-  "open_ended",
-];
-
-export const MEASURE_GROUPS: ReadonlyArray<{
-  group: string;
-  options: ReadonlyArray<{ value: string; label: string }>;
-}> = [
-  {
-    group: "Prices & Markets",
-    options: [
-      { value: "asset_price", label: "Asset price (price at a point in time)" },
-      { value: "close_price", label: "Closing price (end-of-day price)" },
-      { value: "price_high", label: "Highest price reached (peak during a period)" },
-      { value: "price_low", label: "Lowest price reached (bottom during a period)" },
-      { value: "price_record_high", label: "All-time record high price" },
-      { value: "price_record_low", label: "All-time record low price" },
-      { value: "index_close", label: "Stock index closing level (e.g. S&P 500 close)" },
-      { value: "market_cap", label: "Company market value (market cap)" },
-      { value: "exchange_rate", label: "Currency exchange rate" },
-    ],
-  },
-  {
-    group: "Economy & Business",
-    options: [
-      { value: "interest_rate", label: "Central bank interest rate" },
-      { value: "inflation_rate", label: "Inflation rate (price growth)" },
-      { value: "unemployment_rate", label: "Unemployment rate" },
-      { value: "economic_growth", label: "Economic growth rate (GDP)" },
-      { value: "employment", label: "Jobs added or employment count" },
-      { value: "housing_starts", label: "New housing construction starts" },
-      { value: "revenue", label: "Company revenue or sales" },
-      { value: "bankruptcy_filing", label: "Bankruptcy filing" },
-    ],
-  },
-  {
-    group: "Politics & World Events",
-    options: [
-      { value: "election_result", label: "Election or referendum winner" },
-      { value: "vote_share", label: "Share of the vote (%)" },
-      { value: "poll_share", label: "Opinion poll percentage" },
-      { value: "approval_rating", label: "Leader or government approval rating" },
-      { value: "nomination", label: "Party or official nomination" },
-      { value: "appointment", label: "Government or court appointment" },
-      { value: "ceasefire", label: "Ceasefire or peace agreement" },
-    ],
-  },
-  {
-    group: "Sports Stats",
-    options: [
-      { value: "wins", label: "Games or matches won" },
-      { value: "points", label: "Points scored" },
-      { value: "goals", label: "Goals scored" },
-      { value: "runs", label: "Runs scored (baseball or cricket)" },
-      { value: "touchdowns", label: "Touchdowns scored" },
-      { value: "atp_points", label: "ATP tennis ranking points" },
-    ],
-  },
-  {
-    group: "Weather & Nature",
-    options: [
-      { value: "high_temperature", label: "Daily high temperature" },
-      { value: "low_temperature", label: "Daily low temperature" },
-      { value: "precipitation", label: "Rain or total precipitation" },
-      { value: "snowfall", label: "Snowfall amount" },
-      { value: "magnitude", label: "Earthquake magnitude" },
-    ],
-  },
-  {
-    group: "Tech, Media & Culture",
-    options: [
-      { value: "release_date", label: "Release date (product, film, game, or model)" },
-      { value: "subscriber_count", label: "Subscriber or listener count" },
-      { value: "daily_views", label: "Daily video or stream views" },
-      { value: "tweet_count", label: "Number of social media posts (tweets)" },
-      { value: "box_office_revenue", label: "Movie box office ticket sales" },
-      { value: "rt_score", label: "Rotten Tomatoes score" },
-      { value: "award_result", label: "Award or prize winner" },
-      { value: "data_center_moratorium", label: "Data center pause or moratorium" },
-    ],
-  },
-  {
-    group: "General Outcomes & Counts",
-    options: [
-      { value: "event_count", label: "Number of times something happens" },
-      { value: "ranking", label: "Chart, poll, or league ranking" },
-      { value: "victory_margin", label: "Margin of victory" },
-      { value: "result", label: "Outcome or match result" },
-    ],
-  },
-];
-
-export const MEASURE_LABELS: Record<string, string> = Object.fromEntries(
-  MEASURE_GROUPS.flatMap((grp) => grp.options.map((opt) => [opt.value, opt.label]))
-);
+export const EVENT_DATE_CANNOT_TELL = "cannot_tell";
 
 // Alphabetical ISO 3166-1 alpha-2 country list (excluding US, which has its own button).
 export const COUNTRY_OPTIONS: ReadonlyArray<{ code: string; name: string }> = [
@@ -372,54 +211,13 @@ export const COUNTRY_OPTIONS: ReadonlyArray<{ code: string; name: string }> = [
   { code: "ZW", name: "Zimbabwe" },
 ];
 
-export const COMPARATOR_LABELS: Record<string, string> = {
-  gte: "At least (>=)",
-  gt: "More than (>)",
-  lte: "At most (<=)",
-  lt: "Fewer than (<)",
-  eq: "Exactly (=)",
-  ne: "Not equal (!=)",
-  range: "Between (range)",
-  none_of_these: "None of these",
-};
-
-export const HORIZON_LABELS: Record<string, string> = {
-  intraday: "Same day (intraday)",
-  daily: "Daily",
-  weekly: "Weekly",
-  monthly: "Monthly",
-  quarterly: "Quarterly",
-  annual: "Yearly (annual)",
-  multi_year: "Multi-year",
-  open_ended: "Open-ended",
-  none_of_these: "None of these",
-};
-
-export interface CuClaimVocabulary {
-  measures: string[];
-  comparators: string[];
-  horizon_kinds: string[];
-  special_options: string[];
-}
-
-export interface CuClaimFrameDraft {
-  measure: string;
-  comparator: string;
-  value: string;
-  unit: string;
-  horizon_kind: string;
-  window_date: string;
-}
-
 export interface CuFactLabelDraft {
   subjectMode: CuSubjectMode;
   selectedCandidates: string[];
   customSubject: string;
+  eventDateMode: CuEventDateMode;
   eventDate: string;
-  noSingleDay: boolean;
   geography: string;
-  structure: CuStructure | "";
-  claim: CuClaimFrameDraft;
   stakes: number | null;
   breadth: number | null;
   evidenceNote: string;
@@ -437,8 +235,31 @@ export interface CuPeerFactAnswer {
   event_date_answer: string | null;
   no_single_day: boolean;
   geography_answer: string | null;
-  structure_answer: CuStructure | null;
-  claim_frame: Partial<CuClaimFrameDraft> | null;
+}
+
+export interface CuPracticeFeedbackField {
+  field: string;
+  label: string;
+  matched: boolean;
+  your_answer: string;
+  right_answer: string;
+}
+
+export interface CuPracticeFeedback {
+  market_id: number;
+  all_facts_matched: boolean;
+  fields: CuPracticeFeedbackField[];
+  typical_stakes: [number, number];
+  typical_breadth: [number, number];
+  explanation: string;
+}
+
+export interface CuPracticeStatus {
+  required: number;
+  completed: number;
+  unlocked_sealed: boolean;
+  completed_ids: number[];
+  practice_card_ids: number[];
 }
 
 export interface CuQueueItem {
@@ -448,11 +269,15 @@ export interface CuQueueItem {
   category: string;
   draw_bucket?: string | null;
   rules_text: string;
+  linked_start?: string | null;
   resolution_date?: string | null;
+  venue_url: string;
+  venue_link_label: string;
   outcomes: CuQueueOutcome[];
   outcome_names: string[];
   subject_candidates: string[];
   own_label: Record<string, unknown> | null;
+  practice_feedback?: CuPracticeFeedback | null;
   pair_complete: boolean;
   peer_labels: CuPeerFactAnswer[];
   disagreeing_fact_fields: string[];
@@ -465,11 +290,19 @@ export interface CuQueueResponse {
   rater: string;
   dataset_file_present: boolean;
   dataset_file_missing_message: string | null;
-  claim_vocabulary?: CuClaimVocabulary;
+  sealed_locked: boolean;
+  practice_status: CuPracticeStatus;
   total_in_scope: number;
   completed_by_rater: number;
   remaining: number;
   items: CuQueueItem[];
+}
+
+export interface CuLabelSubmitResponse {
+  saved: boolean;
+  label: Record<string, unknown>;
+  practice_feedback?: CuPracticeFeedback | null;
+  practice_status?: CuPracticeStatus;
 }
 
 export interface CuAgreementFieldRow {
@@ -498,18 +331,9 @@ export function emptyCuDraft(): CuFactLabelDraft {
     subjectMode: "candidate",
     selectedCandidates: [],
     customSubject: "",
+    eventDateMode: "",
     eventDate: "",
-    noSingleDay: false,
     geography: "",
-    structure: "",
-    claim: {
-      measure: "",
-      comparator: "",
-      value: "",
-      unit: "",
-      horizon_kind: "",
-      window_date: "",
-    },
     stakes: null,
     breadth: null,
     evidenceNote: "",
@@ -520,42 +344,59 @@ export function normalizeRaterName(raw: string): string {
   return raw.trim().replace(/\s+/g, " ");
 }
 
-export function formatMeasureChoiceLabel(measure: string): string {
-  if (measure === "none_of_these") return "None of these";
-  if (MEASURE_LABELS[measure]) return MEASURE_LABELS[measure];
-  return measure
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (ch) => ch.toUpperCase());
-}
-
 const MONTH_SHORT = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ] as const;
 
-export function formatPayoutDateSentence(raw: string | null | undefined): string | null {
+export function formatVenueSourceName(rawSource: string | null | undefined): string {
+  const s = (rawSource || "").trim().toLowerCase();
+  if (s === "polymarket") return "Polymarket";
+  if (s === "kalshi") return "Kalshi";
+  if (s === "odds_api") return "Odds API";
+  if (s === "datagolf") return "DataGolf";
+  return rawSource?.trim() || "The venue";
+}
+
+export function formatPayoutDateSentence(
+  raw: string | null | undefined,
+  source?: string | null | undefined
+): string | null {
   if (!raw || !raw.trim()) return null;
   const trimmed = raw.trim();
+  const venue = formatVenueSourceName(source);
   const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) {
-    return `The site pays out on ${trimmed}. That is often not the day of the event.`;
+    return `${venue} settles this on ${trimmed}. That is often not the day the thing itself happens.`;
   }
   const month = MONTH_SHORT[parsed.getUTCMonth()];
   const day = parsed.getUTCDate();
   const year = parsed.getUTCFullYear();
-  return `The site pays out on ${month} ${day}, ${year}. That is often not the day of the event.`;
+  return `${venue} settles this on ${month} ${day}, ${year}. That is often not the day the thing itself happens.`;
 }
 
-export function formatPeerClaimFrame(frame: Record<string, unknown> | null | undefined): string {
-  if (!frame) return "blank";
-  const parts: string[] = [];
-  for (const key of ["measure", "comparator", "value", "unit", "horizon_kind", "window_date"]) {
-    const val = frame[key];
-    if (val !== null && val !== undefined && String(val).trim() !== "") {
-      parts.push(`${key}: ${String(val)}`);
-    }
+export function formatEventStartSentence(raw: string | null | undefined): string | null {
+  if (!raw || !raw.trim()) return null;
+  const parsed = new Date(raw.trim());
+  if (Number.isNaN(parsed.getTime())) return null;
+  const etDate = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(parsed);
+  return `Event starts ${etDate} (US Eastern).`;
+}
+
+export function formatPeerEventDate(
+  eventDateAnswer: string | null | undefined,
+  noSingleDay: boolean
+): string {
+  if (noSingleDay) return "No single day";
+  if ((eventDateAnswer || "").trim().toLowerCase() === EVENT_DATE_CANNOT_TELL) {
+    return "Cannot tell";
   }
-  return parts.length > 0 ? parts.join(" · ") : "blank";
+  return eventDateAnswer || "blank";
 }
 
 export function buildSubmissionPayload(params: {
@@ -576,7 +417,10 @@ export function buildSubmissionPayload(params: {
   if (draft.subjectMode === "candidate") {
     selected = draft.selectedCandidates.map((s) => s.trim()).filter(Boolean);
     if (selected.length === 0) {
-      return { ok: false, error: "Select at least one person/team, custom entry, or 'None of these' / 'Not sure'." };
+      return {
+        ok: false,
+        error: "Select at least one named chip, Add a name, 'None of these', or 'Not sure'.",
+      };
     }
   } else if (draft.subjectMode === "custom") {
     selected = draft.customSubject
@@ -584,21 +428,37 @@ export function buildSubmissionPayload(params: {
       .map((s) => s.trim())
       .filter(Boolean);
     if (selected.length === 0) {
-      return { ok: false, error: "Enter at least one custom name." };
+      return { ok: false, error: "Type at least one name after clicking Add a name." };
     }
   }
 
-  if (!draft.noSingleDay && !/^\d{4}-\d{2}-\d{2}$/.test(draft.eventDate.trim())) {
-    return { ok: false, error: "Enter YYYY-MM-DD for the event's own day or check 'No single day'." };
+  let eventDateAnswer: string | null = null;
+  let noSingleDay = false;
+  if (draft.eventDateMode === "no_single_day") {
+    noSingleDay = true;
+    eventDateAnswer = null;
+  } else if (draft.eventDateMode === "cannot_tell") {
+    noSingleDay = false;
+    eventDateAnswer = EVENT_DATE_CANNOT_TELL;
+  } else if (draft.eventDateMode === "date") {
+    const cleaned = draft.eventDate.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
+      return {
+        ok: false,
+        error: "Pick a calendar day, 'No single day', or 'Cannot tell'.",
+      };
+    }
+    eventDateAnswer = cleaned;
+  } else {
+    return {
+      ok: false,
+      error: "Choose 'Specific day', 'No single day', or 'Cannot tell' for the event's own day.",
+    };
   }
 
   const geography = draft.geography.trim();
   if (!geography) {
-    return { ok: false, error: "Select Where ('us', 'global', 'local') or pick a country." };
-  }
-
-  if (!draft.structure) {
-    return { ok: false, error: "Choose whether this market is a ladder, dated options, or neither." };
+    return { ok: false, error: "Choose one option under Where before saving." };
   }
 
   if (role === "tiebreak") {
@@ -614,11 +474,6 @@ export function buildSubmissionPayload(params: {
     }
   }
 
-  const claimEntries = Object.entries(draft.claim)
-    .map(([k, v]) => [k, v.trim()])
-    .filter(([, v]) => v.length > 0);
-  const claim_frame = claimEntries.length > 0 ? Object.fromEntries(claimEntries) : null;
-
   return {
     ok: true,
     payload: {
@@ -630,11 +485,9 @@ export function buildSubmissionPayload(params: {
         selection_kind: draft.subjectMode,
         selected,
       },
-      event_date_answer: draft.noSingleDay ? null : draft.eventDate.trim(),
-      no_single_day: draft.noSingleDay,
+      event_date_answer: eventDateAnswer,
+      no_single_day: noSingleDay,
       geography_answer: geography,
-      structure_answer: draft.structure,
-      claim_frame,
       // Taste scores are never submitted or tie-broken in tie-break mode.
       stakes: role === "tiebreak" ? null : draft.stakes,
       breadth: role === "tiebreak" ? null : draft.breadth,
