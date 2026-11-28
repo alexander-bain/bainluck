@@ -249,36 +249,40 @@ else
   note "An App Store export cannot be signed with a Development identity."
 fi
 
-# The App Store distribution profiles. A Store profile is the one with no
-# ProvisionedDevices array — that absence IS the distinction from a Team
-# (development) profile of the same bundle id, and both are installed here, so
-# matching on the bundle id alone would find the wrong one and say PASS.
-store_profile_for() {
-  local want="$1" f name appid expiry
-  for f in "$PROFILE_DIR"/*.mobileprovision; do
-    [ -e "$f" ] || continue
-    local xml
-    xml=$(security cms -D -i "$f" 2>/dev/null) || continue
-    case "$xml" in *"<key>ProvisionedDevices</key>"*) continue ;; esac
-    appid=$(echo "$xml" | /usr/bin/plutil -extract Entitlements.application-identifier raw -o - - 2>/dev/null)
-    [ "$appid" = "J893F72P4R.$want" ] || continue
-    name=$(echo "$xml" | /usr/bin/plutil -extract Name raw -o - - 2>/dev/null)
-    expiry=$(echo "$xml" | /usr/bin/plutil -extract ExpirationDate raw -o - - 2>/dev/null)
-    echo "$name|$expiry"
-    return 0
-  done
-  return 1
-}
+# Export options. Validated BEFORE the provisioning-profile check so we can read
+# `signingStyle` and `provisioningProfiles` from `$EXPORT_OPTIONS` when present.
+# `plutil -lint` catches malformed files; the method and renumber checks catch
+# files that export a testing archive or let Xcode rewrite CFBundleVersion.
+if [ ! -f "$EXPORT_OPTIONS" ]; then
+  fail=1
+  echo "FAIL: no export options at $EXPORT_OPTIONS"
+else
+  if ! /usr/bin/plutil -lint "$EXPORT_OPTIONS" >/dev/null 2>&1; then
+    fail=1
+    echo "FAIL: $EXPORT_OPTIONS is not a valid plist"
+  else
+    method=$(/usr/bin/plutil -extract method raw -o - "$EXPORT_OPTIONS" 2>/dev/null || echo "")
+    manage=$(/usr/bin/plutil -extract manageAppVersionAndBuildNumber raw -o - "$EXPORT_OPTIONS" 2>/dev/null || echo "")
+    signing_style=$(/usr/bin/plutil -extract signingStyle raw -o - "$EXPORT_OPTIONS" 2>/dev/null || echo "automatic")
+    note "export  : method=$method signingStyle=${signing_style:-automatic} manageAppVersionAndBuildNumber=$manage"
+    if [ "$method" != "app-store-connect" ] && [ "$method" != "app-store" ]; then
+      fail=1
+      echo "FAIL: export method '$method' does not produce an App Store build."
+    fi
+    if [ "$manage" = "true" ] || [ "$manage" = "1" ]; then
+      fail=1
+      echo "FAIL: manageAppVersionAndBuildNumber is on — Xcode would renumber the"
+      note "build during export and the number we graded is not the number shipped."
+    fi
+  fi
+fi
 
-# Every bundle the export signs needs its own Store profile, and the app and
-# widget are no longer the whole list: since #4932 (b077fbe57b) the iPhone target
-# embeds the Watch app, com.bainluck.Bain-Luck.watchkitapp, and its SavedGlance
-# extension. The export passes no -allowProvisioningUpdates, so a missing Watch
-# Store profile fails the export minutes in while this loop, checking two ids,
-# said PASS (#10544). The extra ids are read from the project, not listed here:
-# a bundle id under the app's own id is a bundle the app carries. Build 37's
-# tree named its Watch app com.bainluck.BainLuckWatch.watchkitapp, outside the
-# app's id, and it was not embedded; that tree still asks for two profiles.
+# The App Store distribution profiles. A Store profile has no ProvisionedDevices
+# array — that absence separates Store from Team Development of the same id.
+# When export options specify `signingStyle = manual` (or name a profile in
+# `provisioningProfiles`), match the exact mapped Name or UUID and check every
+# candidate instead of taking the first bundle-id match, then verify expiry and
+# (for the App Clip host app) `associated-appclip-app-identifiers`.
 HAS_APP_CLIP=0
 if /usr/bin/grep -q "com\.apple\.product-type\.application\.on-demand-install-capable" "$PBXPROJ" 2>/dev/null; then
   HAS_APP_CLIP=1
@@ -291,61 +295,140 @@ else
   PROFILE_BUNDLE_IDS=$(printf '%s\n' "$APP_BUNDLE_ID" "$WIDGET_BUNDLE_ID" $EMBEDDED_BUNDLE_IDS | awk 'NF && !seen[$0]++')
 fi
 
-for bid in $PROFILE_BUNDLE_IDS; do
-  if found=$(store_profile_for "$bid"); then
-    pname=${found%%|*}
-    pexp=${found##*|}
-    note "profile : $bid → ${pname} (expires ${pexp})"
-    # An expired profile is not a missing one: Xcode will refuse the export with
-    # a message about signing, which reads like a certificate problem.
-    # `plutil -extract … raw` prints a date as ISO 8601 (2027-09-11T00:19:37Z).
-    # The first draft parsed `%Y-%m-%d %H:%M:%S +0000`, which never matches — so
-    # `date` returned nothing, the comparison was skipped, and an expired profile
-    # passed. A parse that cannot read its input must SAY so, not fall through
-    # quietly into the healthy branch: that is the difference between "nothing to
-    # report" and "I could not tell".
-    exp_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pexp" +%s 2>/dev/null)
-    now_epoch=$(date +%s)
-    if [ -z "$exp_epoch" ]; then
-      fail=1
-      echo "FAIL: could not read that profile's expiry date ('$pexp')."
-      note "Unparsed, an expired profile would pass this check."
-    elif [ "$exp_epoch" -lt "$now_epoch" ] 2>/dev/null; then
-      fail=1
-      echo "FAIL: that distribution profile EXPIRED on $pexp."
-    fi
-  else
-    fail=1
-    echo "FAIL: no App Store distribution profile installed for $bid"
-    note "Xcode → Settings → Accounts → Download Manual Profiles, or supply an"
-    note "ASC key and the export step can fetch one with -allowProvisioningUpdates."
-  fi
-done
+profile_report=$(/usr/bin/python3 - "$PROFILE_DIR" "$EXPORT_OPTIONS" "J893F72P4R" "$APP_BUNDLE_ID" "$CLIP_BUNDLE_ID" "$HAS_APP_CLIP" "$PROFILE_BUNDLE_IDS" <<'PY'
+import datetime, glob, os, plistlib, subprocess, sys
 
-# Export options. `plutil -lint` catches the malformed file; the method check
-# catches the well-formed file that exports the wrong KIND of build — a
-# release-testing export uploads to nothing and looks identical until it fails.
-if [ ! -f "$EXPORT_OPTIONS" ]; then
+prof_dir, export_opts_path, team_id, app_bid, clip_bid, has_clip_str, bids_text = sys.argv[1:8]
+has_clip = has_clip_str == "1"
+bids = [b for b in bids_text.splitlines() if b.strip()]
+
+signing_style = "automatic"
+prof_map = {}
+if os.path.isfile(export_opts_path):
+    try:
+        with open(export_opts_path, "rb") as fh:
+            eo = plistlib.load(fh)
+        if isinstance(eo, dict):
+            signing_style = str(eo.get("signingStyle") or "automatic")
+            raw_map = eo.get("provisioningProfiles")
+            if isinstance(raw_map, dict):
+                prof_map = {str(k): str(v) for k, v in raw_map.items() if v is not None}
+    except Exception:
+        pass
+
+manual_mode = signing_style == "manual"
+now = datetime.datetime.now(datetime.timezone.utc)
+
+store_profiles = []
+for path in sorted(glob.glob(os.path.join(prof_dir, "*.mobileprovision"))):
+    proc = subprocess.run(["security", "cms", "-D", "-i", path], capture_output=True)
+    if proc.returncode != 0:
+        continue
+    try:
+        pl = plistlib.loads(proc.stdout)
+    except Exception:
+        continue
+    if not isinstance(pl, dict) or "ProvisionedDevices" in pl:
+        continue
+    ent = pl.get("Entitlements")
+    if not isinstance(ent, dict):
+        continue
+    appid = str(ent.get("application-identifier") or "")
+    name = str(pl.get("Name") or "")
+    uuid = str(pl.get("UUID") or "")
+    exp_raw = pl.get("ExpirationDate")
+    exp_dt = None
+    exp_iso = ""
+    if isinstance(exp_raw, datetime.datetime):
+        exp_dt = exp_raw if exp_raw.tzinfo else exp_raw.replace(tzinfo=datetime.timezone.utc)
+        exp_iso = exp_dt.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    elif isinstance(exp_raw, str):
+        exp_iso = exp_raw.strip()
+        try:
+            exp_dt = datetime.datetime.strptime(exp_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            exp_dt = None
+    clip_ent = ent.get("com.apple.developer.associated-appclip-app-identifiers")
+    clip_list = [str(x) for x in clip_ent] if isinstance(clip_ent, (list, tuple)) else []
+    store_profiles.append({
+        "path": path,
+        "appid": appid,
+        "name": name,
+        "uuid": uuid,
+        "exp_iso": exp_iso,
+        "exp_dt": exp_dt,
+        "clip_list": clip_list,
+    })
+
+had_fail = False
+for bid in bids:
+    want_appid = f"{team_id}.{bid}"
+    mapped = prof_map.get(bid)
+    if manual_mode and not mapped:
+        had_fail = True
+        print(f"FAIL|missing mapping in {os.path.basename(export_opts_path)} provisioningProfiles for {bid}")
+        continue
+
+    candidates = [p for p in store_profiles if p["appid"] == want_appid]
+    if mapped:
+        matched = [p for p in candidates if mapped in (p["name"], p["uuid"])]
+        if not matched:
+            had_fail = True
+            print(f"FAIL|no App Store distribution profile matching '{mapped}' installed for {bid}")
+            continue
+        candidates = matched
+
+    if not candidates:
+        had_fail = True
+        print(f"FAIL|no App Store distribution profile installed for {bid}")
+        print("NOTE|Xcode → Settings → Accounts → Download Manual Profiles, or supply an")
+        print("NOTE|ASC key and the export step can fetch one with -allowProvisioningUpdates.")
+        continue
+
+    # Evaluate validity across all matched Store candidates: if manual named an
+    # unambiguous profile (by UUID, or all identically named candidates), reject
+    # on unparseable/expired dates or missing App Clip entitlements.
+    unparseable = [p for p in candidates if p["exp_dt"] is None]
+    unexpired = [p for p in candidates if p["exp_dt"] is not None and p["exp_dt"] >= now]
+    if not unexpired:
+        had_fail = True
+        if unparseable and len(unparseable) == len(candidates):
+            pexp = unparseable[0]["exp_iso"]
+            print(f"FAIL|could not read that profile's expiry date ('{pexp}').")
+            print("NOTE|Unparsed, an expired profile would pass this check.")
+        else:
+            expired = [p for p in candidates if p["exp_dt"] is not None]
+            pexp = (expired[0]["exp_iso"] if expired else candidates[0]["exp_iso"])
+            print(f"FAIL|that distribution profile EXPIRED on {pexp}.")
+        continue
+
+    selected_pool = unexpired
+    if has_clip and bid == app_bid:
+        want_clip_id = f"{team_id}.{clip_bid}"
+        clip_ready = [p for p in selected_pool if want_clip_id in p["clip_list"]]
+        if not clip_ready:
+            had_fail = True
+            print(f"FAIL|Store profile for {bid} lacks Entitlements.com.apple.developer.associated-appclip-app-identifiers containing {want_clip_id}")
+            continue
+        selected_pool = clip_ready
+
+    chosen = selected_pool[0]
+    label = f"{chosen['name']} ({chosen['uuid']})" if chosen["uuid"] else chosen["name"]
+    print(f"OK|profile : {bid} → {label} (expires {chosen['exp_iso']})")
+
+sys.exit(1 if had_fail else 0)
+PY
+)
+profile_rc=$?
+while IFS= read -r _pline; do
+  case "$_pline" in
+    OK\|*)   note "${_pline#OK|}" ;;
+    NOTE\|*) note "${_pline#NOTE|}" ;;
+    FAIL\|*) fail=1; echo "FAIL: ${_pline#FAIL|}" ;;
+  esac
+done <<< "$profile_report"
+if [ "$profile_rc" -ne 0 ]; then
   fail=1
-  echo "FAIL: no export options at $EXPORT_OPTIONS"
-else
-  if ! /usr/bin/plutil -lint "$EXPORT_OPTIONS" >/dev/null 2>&1; then
-    fail=1
-    echo "FAIL: $EXPORT_OPTIONS is not a valid plist"
-  else
-    method=$(/usr/bin/plutil -extract method raw -o - "$EXPORT_OPTIONS" 2>/dev/null)
-    manage=$(/usr/bin/plutil -extract manageAppVersionAndBuildNumber raw -o - "$EXPORT_OPTIONS" 2>/dev/null)
-    note "export  : method=$method manageAppVersionAndBuildNumber=$manage"
-    if [ "$method" != "app-store-connect" ] && [ "$method" != "app-store" ]; then
-      fail=1
-      echo "FAIL: export method '$method' does not produce an App Store build."
-    fi
-    if [ "$manage" = "true" ] || [ "$manage" = "1" ]; then
-      fail=1
-      echo "FAIL: manageAppVersionAndBuildNumber is on — Xcode would renumber the"
-      note "build during export and the number we graded is not the number shipped."
-    fi
-  fi
 fi
 
 # Credentials. REPORTED in every mode, REQUIRED only by the two that talk to

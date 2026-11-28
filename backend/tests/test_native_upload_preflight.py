@@ -82,7 +82,15 @@ GOOD_EXPORT_OPTIONS = """<?xml version="1.0" encoding="UTF-8"?>
 """ % TEAM
 
 
-def profile_plist(bundle_id, *, store, expires="2027-09-11T00:19:37Z"):
+def profile_plist(
+    bundle_id,
+    *,
+    store,
+    expires="2027-09-11T00:19:37Z",
+    profile_name=None,
+    uuid=None,
+    clip_ids=None,
+):
     """One decoded provisioning profile.
 
     `store` decides the single fact the script keys on: an App Store profile has
@@ -91,16 +99,24 @@ def profile_plist(bundle_id, *, store, expires="2027-09-11T00:19:37Z"):
     """
     devices = "" if store else "\t<key>ProvisionedDevices</key><array><string>abc123</string></array>\n"
     kind = "Store " if store else ""
+    resolved_name = profile_name or f"iOS Team {kind}Provisioning Profile: {bundle_id}"
+    uuid_line = f"\t<key>UUID</key><string>{uuid}</string>\n" if uuid else ""
+    clip_line = ""
+    if clip_ids:
+        items = "".join(f"<string>{cid}</string>" for cid in clip_ids)
+        clip_line = f"\t\t<key>com.apple.developer.associated-appclip-app-identifiers</key><array>{items}</array>\n"
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
         '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
         '<plist version="1.0">\n<dict>\n'
-        f"\t<key>Name</key><string>iOS Team {kind}Provisioning Profile: {bundle_id}</string>\n"
+        f"\t<key>Name</key><string>{resolved_name}</string>\n"
+        f"{uuid_line}"
         f"\t<key>ExpirationDate</key><date>{expires}</date>\n"
         f"{devices}"
         "\t<key>Entitlements</key><dict>\n"
         f"\t\t<key>application-identifier</key><string>{TEAM}.{bundle_id}</string>\n"
+        f"{clip_line}"
         "\t</dict>\n</dict>\n</plist>\n"
     )
 
@@ -137,9 +153,28 @@ def rig(tmp_path):
             self.bin = tmp_path / "bin"
             self.bin.mkdir()
 
-        def set_profile(self, bundle_id, *, store, expires="2027-09-11T00:19:37Z", name=None):
+        def set_profile(
+            self,
+            bundle_id,
+            *,
+            store,
+            expires="2027-09-11T00:19:37Z",
+            name=None,
+            profile_name=None,
+            uuid=None,
+            clip_ids=None,
+        ):
             path = self.profiles / f"{name or bundle_id}.mobileprovision"
-            path.write_text(profile_plist(bundle_id, store=store, expires=expires))
+            path.write_text(
+                profile_plist(
+                    bundle_id,
+                    store=store,
+                    expires=expires,
+                    profile_name=profile_name,
+                    uuid=uuid,
+                    clip_ids=clip_ids,
+                )
+            )
             return path
 
         def _write_shims(self):
@@ -671,4 +706,122 @@ def test_repo_pointing_nowhere_is_refused_before_anything_else(rig):
     rc, out = rig.run("--dry-run", "--repo", "/no/such/checkout")
     assert rc == 2, out
     assert "--repo needs a directory that exists" in out, out
+    assert not rig.built()
+
+
+# ── manual signing & App Clip profile-map checks (#13051) ────────────────────
+
+
+CLIP_ID = "com.bainluck.Bain-Luck.Clip"
+
+CLIP_PBXPROJ = (
+    EMBEDDING_PBXPROJ
+    + f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "{CLIP_ID}";\n'
+    + '\t\t\t\tproductType = "com.apple.product-type.application.on-demand-install-capable";\n'
+)
+
+
+def _manual_export_options(profiles: dict[str, str]) -> str:
+    entries = "\n".join(
+        f"\t\t<key>{bid}</key><string>{val}</string>" for bid, val in profiles.items()
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n<dict>\n'
+        f"\t<key>method</key><string>app-store-connect</string>\n"
+        f"\t<key>teamID</key><string>{TEAM}</string>\n"
+        "\t<key>signingStyle</key><string>manual</string>\n"
+        "\t<key>manageAppVersionAndBuildNumber</key><false/>\n"
+        "\t<key>provisioningProfiles</key>\n\t<dict>\n"
+        f"{entries}\n"
+        "\t</dict>\n</dict>\n</plist>\n"
+    )
+
+
+def _setup_manual_clip_profiles(rig, *, with_clip_entitlement=True):
+    (rig.project / "project.pbxproj").write_text(CLIP_PBXPROJ)
+    for p in rig.profiles.glob("*.mobileprovision"):
+        p.unlink()
+    rig.set_profile(
+        APP_ID, store=True, name="app-no-clip",
+        profile_name="BainLuck App AppStore 39", uuid="11111111-1111-1111-1111-111111111111",
+    )
+    rig.set_profile(
+        APP_ID, store=True, name="app-with-clip",
+        profile_name="BainLuck App AppStore 39", uuid="2a0b16b6-015f-43d7-9627-9494c8d050e1",
+        clip_ids=[f"{TEAM}.{CLIP_ID}"] if with_clip_entitlement else None,
+    )
+    rig.set_profile(WIDGET_ID, store=True, profile_name="BainLuck Widget AppStore 39", uuid="w-uuid")
+    rig.set_profile(CLIP_ID, store=True, profile_name="BainLuck Clip AppStore", uuid="c-uuid")
+    rig.set_profile(WATCH_ID, store=True, profile_name="BainLuck Watch AppStore 38", uuid="wa-uuid")
+    rig.set_profile(GLANCE_ID, store=True, profile_name="BainLuck Watch SavedGlance AppStore 38", uuid="gl-uuid")
+    return {
+        APP_ID: "2a0b16b6-015f-43d7-9627-9494c8d050e1",
+        WIDGET_ID: "BainLuck Widget AppStore 39",
+        CLIP_ID: "BainLuck Clip AppStore",
+        WATCH_ID: "BainLuck Watch AppStore 38",
+        GLANCE_ID: "BainLuck Watch SavedGlance AppStore 38",
+    }
+
+
+def test_manual_export_options_passes_when_mapped_profiles_and_clip_entitlement_exist(rig):
+    """Manual signing matches by UUID (disambiguating shared display names) and Name."""
+    pmap = _setup_manual_clip_profiles(rig, with_clip_entitlement=True)
+    rig.options.write_text(_manual_export_options(pmap))
+    rc, out = rig.run("--dry-run")
+    assert rc == 0, out
+    assert "PREFLIGHT: PASS" in out
+    assert "signingStyle=manual" in out
+    assert "2a0b16b6-015f-43d7-9627-9494c8d050e1" in out
+    assert not rig.built()
+
+
+def test_manual_export_options_missing_mapped_profile_fails_even_when_bundle_has_other_store_profile(rig):
+    """If a named profile was renamed/removed, preflight fails instead of passing on another bundle-id match."""
+    pmap = _setup_manual_clip_profiles(rig, with_clip_entitlement=True)
+    pmap[WATCH_ID] = "BainLuck Watch AppStore 99"
+    rig.options.write_text(_manual_export_options(pmap))
+    rc, out = rig.run("--dry-run")
+    assert rc == 2, out
+    assert "matching 'BainLuck Watch AppStore 99'" in out, out
+    assert not rig.built()
+
+
+def test_manual_export_options_missing_bundle_key_is_refused(rig):
+    pmap = _setup_manual_clip_profiles(rig, with_clip_entitlement=True)
+    pmap.pop(GLANCE_ID)
+    rig.options.write_text(_manual_export_options(pmap))
+    rc, out = rig.run("--dry-run")
+    assert rc == 2, out
+    assert f"provisioningProfiles for {GLANCE_ID}" in out, out
+    assert not rig.built()
+
+
+def test_manual_export_options_rejects_main_app_profile_without_app_clip_entitlement(rig):
+    """Two installed Store profiles share one name: pointing at the non-clip UUID fails preflight."""
+    pmap = _setup_manual_clip_profiles(rig, with_clip_entitlement=True)
+    pmap[APP_ID] = "11111111-1111-1111-1111-111111111111"
+    rig.options.write_text(_manual_export_options(pmap))
+    rc, out = rig.run("--dry-run")
+    assert rc == 2, out
+    assert "associated-appclip-app-identifiers" in out, out
+    assert not rig.built()
+
+
+def test_manual_export_options_rejects_expired_mapped_profile_even_if_another_valid_profile_exists(rig):
+    pmap = _setup_manual_clip_profiles(rig, with_clip_entitlement=True)
+    rig.set_profile(
+        WATCH_ID, store=True, name="watch-valid-other",
+        profile_name="BainLuck Watch AppStore 99", uuid="wa-valid-99",
+    )
+    rig.set_profile(
+        WATCH_ID, store=True, expires="2020-01-01T00:00:00Z",
+        profile_name="BainLuck Watch AppStore 38", uuid="wa-uuid",
+    )
+    rig.options.write_text(_manual_export_options(pmap))
+    rc, out = rig.run("--dry-run")
+    assert rc == 2, out
+    assert "EXPIRED" in out, out
     assert not rig.built()

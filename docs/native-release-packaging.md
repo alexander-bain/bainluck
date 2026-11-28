@@ -53,23 +53,22 @@ upload proves the rest of the chain.
 # 1. Archive and grade it. Exit 0 only if a real .app came out.
 tools/native-release-check.sh
 
-# 2. Export for the App Store. ExportOptions.plist is NOT in the repo yet —
-#    it is written at the first upload, when we know which profile name the
-#    account issues. Shape:
-#      method = app-store-connect, teamID = J893F72P4R,
-#      signingStyle = automatic, uploadSymbols = true
+# 2. Export for the App Store using the tracked manual export options plist
+#    (`ios/ExportOptions-AppStore.plist`: method = app-store-connect,
+#    teamID = J893F72P4R, signingStyle = manual, uploadSymbols = true,
+#    manageAppVersionAndBuildNumber = false, explicit provisioningProfiles map).
+#    `tools/native-upload.sh` preflight validates every mapped Name/UUID,
+#    expiry, application-identifier, and (when an App Clip target is present)
+#    `com.apple.developer.associated-appclip-app-identifiers` on the main app profile.
 xcodebuild -exportArchive \
   -archivePath /tmp/BainLuck-release-check.xcarchive \
-  -exportOptionsPlist ios/ExportOptions.plist \
+  -exportOptionsPlist ios/ExportOptions-AppStore.plist \
   -exportPath /tmp/BainLuck-export
 ```
 
-Then upload via Xcode Organizer, or `xcrun altool --upload-app` with the API key.
+Then upload via Xcode Organizer, or `tools/native-upload.sh --upload --build <N>` (`altool` / Transporter) with the API key.
 
-I deliberately did **not** invent `ExportOptions.plist`. A guessed `provisioningProfiles` map
-fails at export with a profile-name mismatch, and the honest name is only knowable once the
-account issues one. Writing a plausible one would look like progress and cost the next session an
-hour.
+When `ios/ExportOptions-AppStore.plist` names manual Store profiles (such as the main app profile by UUID when two installed profiles share a display name, e.g. with vs without `associated-appclip-app-identifiers`), update `provisioningProfiles` in lockstep when a portal profile is regenerated or renamed; `tools/native-upload.sh` preflight refuses any outdated or missing mapping before archiving.
 
 ## The cause: Swift 6.3.3 and generic-class deinits
 
