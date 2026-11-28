@@ -70,6 +70,7 @@ struct NativeEventDiscoverCard: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.discoverCardLikeAction420D) private var likeAction
+    @ScaledMetric(relativeTo: .subheadline) private var shareIconSizeAX: CGFloat = 15
     @ObservedObject var clock = MinuteClock.shared
     @State private var heroContentWidth: Double = 0
 
@@ -635,11 +636,25 @@ struct NativeEventDiscoverCard: View {
     /// Ruling 182-A — game cards remove signal bars; `footerMarks` holds the
     /// Like heart (#13769), bookmark pin and share buttons and still rides the caption's row (#10373).
     private var footerMarks: some View {
-        HStack(spacing: 4) {
-            if let likeAction {
-                DiscoverLikeButton420D(isLiked: likeAction.isLiked, action: likeAction.onToggle)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+                if let likeAction {
+                    DiscoverLikeButton420D(isLiked: likeAction.isLiked, action: likeAction.onToggle)
+                }
+                eventPinShareControls
             }
 
+            VStack(alignment: .trailing, spacing: 6) {
+                if let likeAction {
+                    DiscoverLikeButton420D(isLiked: likeAction.isLiked, action: likeAction.onToggle)
+                }
+                eventPinShareControls
+            }
+        }
+    }
+
+    private var eventPinShareControls: some View {
+        HStack(spacing: 4) {
             PinButton(type: "event", id: event.id)
                 .fixedSize(horizontal: true, vertical: false)
 
@@ -649,7 +664,11 @@ struct NativeEventDiscoverCard: View {
                 message: Text(shareMessage)
             ) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.subheadline.weight(.medium))
+                    .font(
+                        dynamicTypeSize.isAccessibilitySize
+                            ? .system(size: min(shareIconSizeAX, 22), weight: .medium)
+                            : .subheadline.weight(.medium)
+                    )
                     .foregroundStyle(DS.textSecondaryReadable)
                     .padding(8)
                     .background(Color.secondary.opacity(0.10), in: Circle())
@@ -670,7 +689,6 @@ struct NativeEventDiscoverCard: View {
                 #endif
             }
         }
-        .fixedSize(horizontal: true, vertical: false)
     }
 
     /// #3430 — the card draws BOTH competitors side by side, so their labels

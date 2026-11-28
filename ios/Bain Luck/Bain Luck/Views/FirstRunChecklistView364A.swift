@@ -85,6 +85,7 @@ struct FirstRunChecklistView364A: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var rowTitleSizeAX: CGFloat = 15
 
     private var solidButtonForeground: Color {
         colorScheme == .dark ? Color(hex: "#0F172A") : .white
@@ -133,7 +134,7 @@ struct FirstRunChecklistView364A: View {
                 }
                 rowsCard
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 12 : 16)
             .padding(.top, 2)
             .padding(.bottom, 14)
 
@@ -336,17 +337,16 @@ struct FirstRunChecklistView364A: View {
                             )
                             .opacity(isRowLit ? 1.0 : 0.42)
 
-                            Text(row.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .layoutPriority(1)
-
                             Spacer(minLength: 6)
 
                             rowStatusIcon(isDone: isDone, enabled: isRowLit)
                         }
+
+                        Text(row.title)
+                            .font(.system(size: min(rowTitleSizeAX, 28), weight: .semibold))
+                            .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
 
                         if let note = mutedNote ?? preview?.subtitle, !note.isEmpty {
                             Text(note)

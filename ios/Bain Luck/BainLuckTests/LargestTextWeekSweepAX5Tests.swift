@@ -103,6 +103,11 @@ final class LargestTextWeekSweepAX5Tests: XCTestCase {
         }
 
         let measuredFinal = host.sizeThatFits(in: CGSize(width: width, height: 6000))
+        XCTAssertLessThanOrEqual(
+            measuredFinal.width,
+            width + 1.0,
+            "AX5 card exceeded \(width) pt viewport width (\(measuredFinal.width) pt)"
+        )
         let finalHeight = max(120, ceil(measuredFinal.height))
         let finalBounds = CGRect(origin: .zero, size: CGSize(width: width, height: finalHeight))
         window.frame = finalBounds
@@ -589,7 +594,8 @@ final class LargestTextWeekSweepAX5Tests: XCTestCase {
         )
         for width in widths {
             let consentHeight: CGFloat = width >= 700 ? 1650 : (width <= 320 ? 2420 : 2020)
-            let checklistHeight: CGFloat = width >= 700 ? 1750 : (width <= 320 ? 2550 : 2150)
+            let checklistHeight: CGFloat = width >= 700 ? 1850 : (width <= 320 ? 2550 : 2150)
+            let checklistForbidden = ["\u{2026}", "...", "Preferen\u{2026}", "Preferen...", "Go to Disco\u{2026}", "Go to Disco...", "anony-", "analyt-", "Notifica-", "school s", "any-", "ex-", "de-"]
             for (scheme, schemeName) in schemes {
                 let consentImg = renderFixedViewport(
                     TelemetryConsentPrompt { _ in }
@@ -620,7 +626,8 @@ final class LargestTextWeekSweepAX5Tests: XCTestCase {
                 try assertCleanOCR(
                     in: partialImg,
                     label: "3_checklist_partial_\(Int(width))_\(schemeName)",
-                    requiredTokens: ["Bain Luck", "2 of 5 done", "Skip", "Sign in to sync", "across devices", "2 followed"]
+                    requiredTokens: ["Bain Luck", "2 of 5 done", "Skip", "Sign in to sync", "across devices", "2 followed"],
+                    forbiddenSubstrings: checklistForbidden
                 )
                 try maybeSave(partialImg, name: "3_checklist_partial_\(Int(width))_\(schemeName)")
 
@@ -639,7 +646,8 @@ final class LargestTextWeekSweepAX5Tests: XCTestCase {
                 try assertCleanOCR(
                     in: doneImg,
                     label: "3_checklist_done_\(Int(width))_\(schemeName)",
-                    requiredTokens: ["Bain Luck", "5 of 5 done", "Go to Discover"]
+                    requiredTokens: ["Bain Luck", "5 of 5 done", "Go to Discover"],
+                    forbiddenSubstrings: checklistForbidden
                 )
                 try maybeSave(doneImg, name: "3_checklist_done_\(Int(width))_\(schemeName)")
             }
