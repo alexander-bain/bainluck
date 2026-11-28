@@ -2686,7 +2686,11 @@ struct DiscoverView: View {
                     )
                 let columnCount = DiscoverMasonry.discoverColumnCount(
                     availableWidth: effectiveGridWidth,
-                    horizontalSizeClass: sizeClass,
+                    dynamicTypeSize: dynamicTypeSize,
+                    isPhone: isPhoneDiscoverLayout
+                )
+                let isNarrowTwoColumn = DiscoverMasonry.usesNarrowMultiColumn(
+                    availableWidth: effectiveGridWidth,
                     dynamicTypeSize: dynamicTypeSize,
                     isPhone: isPhoneDiscoverLayout
                 )
@@ -2747,6 +2751,7 @@ struct DiscoverView: View {
                     }
                     .padding(.horizontal)
                     .padding(.bottom, DiscoverMasonry.spacing)
+                    .environment(\.discoverNarrowTwoColumn13914, isNarrowTwoColumn)
                     .accessibilityIdentifier("discover.ownerMachineryPreview")
                 }
 
@@ -2814,6 +2819,7 @@ struct DiscoverView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
+                .environment(\.discoverNarrowTwoColumn13914, isNarrowTwoColumn)
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { newWidth in
                     if newWidth > 0, abs(gridWidth - newWidth) > 0.5 {
                         gridWidth = newWidth
@@ -3911,6 +3917,7 @@ struct NativeGroupCard: View {
     @Binding var navigationPath: NavigationPath
     @State private var expanded = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .caption2) private var eyebrowFontSize: CGFloat = 11
     @Environment(\.discoverGroupBundleArt12840) private var envBundleArt
@@ -4108,7 +4115,7 @@ struct NativeGroupCard: View {
                         .font(isAX ? .system(size: min(eyebrowFontSize, 18), weight: .bold) : .caption2.weight(.bold))
                         .tracking(isAX ? 0 : 0.8)
                         .foregroundStyle(secondaryReadableInk)
-                        .lineLimit(isAX ? nil : 2)
+                        .lineLimit((isAX || isNarrowTwoColumn) ? nil : 2)
                         .minimumScaleFactor(isAX ? 0.85 : 1.0)
                         .fixedSize(horizontal: false, vertical: true)
                     if !isAX && sharedQuestion?.isEmpty != false {
@@ -4198,13 +4205,13 @@ struct NativeGroupCard: View {
                 Text(data.name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(primaryInk)
-                    .lineLimit(isAX ? nil : 3)
+                    .lineLimit((isAX || isNarrowTwoColumn) ? nil : 3)
                     .fixedSize(horizontal: false, vertical: true)
                 if let label = summary.label {
                     Text(label)
                         .font(.caption)
                         .foregroundStyle(secondaryInk)
-                        .lineLimit(isAX ? nil : 2)
+                        .lineLimit((isAX || isNarrowTwoColumn) ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -4502,6 +4509,7 @@ private struct NativeCompactFuturesRow: View {
     let data: FeedFuturesData
     @Binding var navigationPath: NavigationPath
     @Environment(\.discoverSwipeTapGuard13668) private var tapGuard
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
 
     /// What a UI test can find a group card's tappable row by (#7074).
     ///
@@ -4517,13 +4525,13 @@ private struct NativeCompactFuturesRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(data.name)
                         .font(.caption.weight(.semibold))
-                        .lineLimit(2)
+                        .lineLimit(isNarrowTwoColumn ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let leader = data.topOutcomes?.first {
                         Text(leader.name)
                             .font(.caption2)
                             .foregroundStyle(DS.textSecondaryReadable)
-                            .lineLimit(2)
+                            .lineLimit(isNarrowTwoColumn ? nil : 2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

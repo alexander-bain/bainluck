@@ -1582,6 +1582,7 @@ private struct MachineryOutcomeBarRow441A: View {
     let marketTitle: String
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
 
     var body: some View {
         let display = outcome.display441A
@@ -1609,7 +1610,7 @@ private struct MachineryOutcomeBarRow441A: View {
                 .opacity(artOpacity)
             }
             VStack(alignment: .leading, spacing: rowSpacing) {
-                if dynamicTypeSize.isAccessibilitySize && isUnpricedOrOut {
+                if (dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn) && isUnpricedOrOut {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(outcome.name)
                             .font(.system(size: rowFontSize, weight: titleWeight))

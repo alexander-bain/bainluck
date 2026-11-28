@@ -148,6 +148,7 @@ struct NativeFuturesDiscoverCard: View {
     /// setting instead, and measuring one while drawing the other is how a
     /// column ends up narrower than the string inside it.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.discoverCardLikeAction420D) private var likeAction
 
@@ -379,7 +380,7 @@ struct NativeFuturesDiscoverCard: View {
                     Text(leader.name)
                         .font(.headline.weight(.bold))
                         .foregroundStyle(.white.opacity(0.92))
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+                        .lineLimit((dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn) ? nil : 3)
                         .minimumScaleFactor(0.92)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -400,7 +401,7 @@ struct NativeFuturesDiscoverCard: View {
                             ? .system(size: min(cardTitleSizeAX, 30), weight: .bold)
                             : .headline.weight(.bold)
                     )
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 4)
+                    .lineLimit((dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn) ? nil : 4)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let contextText {
@@ -665,12 +666,13 @@ struct NativeFuturesDiscoverCard: View {
             .lineLimit(1)
             .frame(width: columns.percentWidth, alignment: .trailing)
 
-        // #8213 / #13832 — at accessibility text sizes, stack the full outcome
+        // #8213 / #13832 / #13914 — at accessibility text sizes and in
+        // narrow two-column iPad mode (`225–299 pt`), stack the full outcome
         // name above its bar and percentage so long names never break mid-word.
-        // Below accessibility sizes keep the 3-column HStack; before width settles
+        // Elsewhere keep the 3-column HStack; before width settles
         // (outcomeRowWidth <= 0), allow the name to expand instead of clamping to 60pt.
         return Group {
-            if dynamicTypeSize.isAccessibilitySize {
+            if dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn {
                 VStack(alignment: .leading, spacing: 6) {
                     nameLabel
                         .frame(maxWidth: .infinity, alignment: .leading)

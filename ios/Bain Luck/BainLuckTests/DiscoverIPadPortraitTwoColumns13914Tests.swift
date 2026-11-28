@@ -25,7 +25,6 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
             XCTAssertEqual(
                 DiscoverMasonry.discoverColumnCount(
                     availableWidth: area,
-                    horizontalSizeClass: .compact,
                     dynamicTypeSize: .large,
                     isPhone: true
                 ),
@@ -35,11 +34,16 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
             XCTAssertEqual(
                 DiscoverMasonry.discoverColumnCount(
                     availableWidth: area,
-                    horizontalSizeClass: .compact,
                     isPhone: true
                 ),
                 1,
                 "iPhone \(width) pt portrait must stay 1 column"
+            )
+            XCTAssertFalse(
+                DiscoverMasonry.usesNarrowMultiColumn(
+                    availableWidth: area,
+                    isPhone: true
+                )
             )
         }
         // iPhone compact landscape (`540`, `600`, `700`) behaves identically to legacy `columnCount`.
@@ -47,12 +51,17 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
             XCTAssertEqual(
                 DiscoverMasonry.discoverColumnCount(
                     availableWidth: landscapeWidth,
-                    horizontalSizeClass: .compact,
                     dynamicTypeSize: .large,
                     isPhone: true
                 ),
                 DiscoverMasonry.columnCount(availableWidth: landscapeWidth),
                 "iPhone compact width \(landscapeWidth) must match legacy columnCount"
+            )
+            XCTAssertFalse(
+                DiscoverMasonry.usesNarrowMultiColumn(
+                    availableWidth: landscapeWidth,
+                    isPhone: true
+                )
             )
         }
     }
@@ -61,20 +70,20 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
         // `iPad16,6` (`iPad Pro 13-inch`) upright full-screen (`1032`), sidebar open (`712`),
         // `2/3` Split View (`639`, `.compact`), `1/2` Split View (`507`, `.compact`), web `sm:`
         // `640` window, and Display Zoom / 11" iPad `834` with `320 pt` sidebar (`514` detail).
-        let cases: [(width: CGFloat, sizeClass: UserInterfaceSizeClass, expected: Int, label: String)] = [
-            (1032, .regular, 2, "iPad Pro 13 full screen upright (768 pt area)"),
-            (712, .regular, 2, "iPad Pro 13 w/ 320 pt sidebar open (680 pt area)"),
-            (639, .compact, 2, "iPad Pro 13 upright 2/3 Split View (.compact, 607 pt area)"),
-            (507, .compact, 2, "iPad Pro 13 upright 1/2 Split View (.compact, 475 pt area)"),
-            (640, .regular, 2, "640 pt window matching web sm:grid-cols-2 (608 pt area)"),
-            (514, .regular, 2, "834 pt upright iPad w/ 320 pt sidebar (482 pt area)"),
-            (744, .regular, 2, "iPad mini upright full screen"),
-            (820, .regular, 2, "iPad Air 11 upright full screen"),
-            (834, .regular, 2, "iPad Pro 11 upright full screen"),
-            (1376, .regular, 2, "iPad Pro 13 landscape full screen (768 pt clamped area)"),
-            (1056, .regular, 2, "iPad Pro 13 landscape w/ 320 pt sidebar (768 pt clamped area)"),
-            (375, .compact, 1, "iPad Pro 13 upright 1/3 Split View (343 pt area -> 1 col)"),
-            (320, .compact, 1, "iPad Slide Over (288 pt area -> 1 col)"),
+        let cases: [(width: CGFloat, sizeClass: UserInterfaceSizeClass, expected: Int, narrow: Bool, label: String)] = [
+            (1032, .regular, 2, false, "iPad Pro 13 full screen upright (768 pt area)"),
+            (712, .regular, 2, false, "iPad Pro 13 w/ 320 pt sidebar open (680 pt area)"),
+            (639, .compact, 2, true, "iPad Pro 13 upright 2/3 Split View (.compact, 607 pt area)"),
+            (507, .compact, 2, true, "iPad Pro 13 upright 1/2 Split View (.compact, 475 pt area)"),
+            (640, .regular, 2, true, "640 pt window matching web sm:grid-cols-2 (608 pt area)"),
+            (514, .regular, 2, true, "834 pt upright iPad w/ 320 pt sidebar (482 pt area)"),
+            (744, .regular, 2, false, "iPad mini upright full screen"),
+            (820, .regular, 2, false, "iPad Air 11 upright full screen"),
+            (834, .regular, 2, false, "iPad Pro 11 upright full screen"),
+            (1376, .regular, 2, false, "iPad Pro 13 landscape full screen (768 pt clamped area)"),
+            (1056, .regular, 2, false, "iPad Pro 13 landscape w/ 320 pt sidebar (768 pt clamped area)"),
+            (375, .compact, 1, false, "iPad Pro 13 upright 1/3 Split View (343 pt area -> 1 col)"),
+            (320, .compact, 1, false, "iPad Slide Over (288 pt area -> 1 col)"),
         ]
 
         for entry in cases {
@@ -86,12 +95,20 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
             XCTAssertEqual(
                 DiscoverMasonry.discoverColumnCount(
                     availableWidth: area,
-                    horizontalSizeClass: entry.sizeClass,
                     dynamicTypeSize: .large,
                     isPhone: false
                 ),
                 entry.expected,
                 "\(entry.label) (detail \(entry.width), area \(area))"
+            )
+            XCTAssertEqual(
+                DiscoverMasonry.usesNarrowMultiColumn(
+                    availableWidth: area,
+                    dynamicTypeSize: .large,
+                    isPhone: false
+                ),
+                entry.narrow,
+                "\(entry.label) narrow-multi-column mismatch"
             )
         }
     }
@@ -101,75 +118,98 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
         XCTAssertEqual(DiscoverMasonry.regularTwoColumnMinimumCardWidth, 225)
         XCTAssertEqual(DiscoverMasonry.regularTwoColumnMinimumAreaWidth, 466)
 
-        for sc in [UserInterfaceSizeClass.regular, .compact] {
-            XCTAssertEqual(
-                DiscoverMasonry.discoverColumnCount(availableWidth: 465, horizontalSizeClass: sc, isPhone: false),
-                1
-            )
-            XCTAssertEqual(
-                DiscoverMasonry.discoverColumnCount(availableWidth: 466, horizontalSizeClass: sc, isPhone: false),
-                2
-            )
-            XCTAssertEqual(
-                DiscoverMasonry.discoverColumnCount(availableWidth: 615, horizontalSizeClass: sc, isPhone: false),
-                2
-            )
-            XCTAssertEqual(
-                DiscoverMasonry.discoverColumnCount(availableWidth: 616, horizontalSizeClass: sc, isPhone: false),
-                2
-            )
-            XCTAssertEqual(
-                DiscoverMasonry.discoverColumnCount(availableWidth: 931, horizontalSizeClass: sc, isPhone: false),
-                2
-            )
-            XCTAssertEqual(
-                DiscoverMasonry.discoverColumnCount(availableWidth: 932, horizontalSizeClass: sc, isPhone: false),
-                3
-            )
-        }
+        XCTAssertEqual(
+            DiscoverMasonry.discoverColumnCount(availableWidth: 465, isPhone: false),
+            1
+        )
+        XCTAssertEqual(
+            DiscoverMasonry.discoverColumnCount(availableWidth: 466, isPhone: false),
+            2
+        )
+        XCTAssertEqual(
+            DiscoverMasonry.discoverColumnCount(availableWidth: 615, isPhone: false),
+            2
+        )
+        XCTAssertEqual(
+            DiscoverMasonry.discoverColumnCount(availableWidth: 616, isPhone: false),
+            2
+        )
+        XCTAssertEqual(
+            DiscoverMasonry.discoverColumnCount(availableWidth: 931, isPhone: false),
+            2
+        )
+        XCTAssertEqual(
+            DiscoverMasonry.discoverColumnCount(availableWidth: 932, isPhone: false),
+            3
+        )
+        XCTAssertTrue(DiscoverMasonry.usesNarrowMultiColumn(availableWidth: 466, isPhone: false))
+        XCTAssertTrue(DiscoverMasonry.usesNarrowMultiColumn(availableWidth: 615, isPhone: false))
+        XCTAssertFalse(DiscoverMasonry.usesNarrowMultiColumn(availableWidth: 616, isPhone: false))
 
         // Unknown / non-positive width never returns < 1 column.
         XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(availableWidth: 0, horizontalSizeClass: .regular, isPhone: false),
+            DiscoverMasonry.discoverColumnCount(availableWidth: 0, isPhone: false),
             1
         )
         XCTAssertEqual(
-            DiscoverMasonry.discoverColumnCount(availableWidth: -20, horizontalSizeClass: .regular, isPhone: false),
+            DiscoverMasonry.discoverColumnCount(availableWidth: -20, isPhone: false),
             1
         )
 
-        // Narrow iPad panes (< 616 pt) fall back to 1 column at Accessibility Dynamic Type sizes
-        // so oversized text never squeezes into 229-299 pt columns; wider panes (>= 616 pt) stay 2.
-        for ax in [DynamicTypeSize.accessibility1, .accessibility3, .accessibility5] {
-            XCTAssertEqual(
-                DiscoverMasonry.discoverColumnCount(
-                    availableWidth: 482,
-                    horizontalSizeClass: .regular,
-                    dynamicTypeSize: ax,
-                    isPhone: false
-                ),
-                1,
-                "Narrow 482 pt card area must stay 1 column at \(ax)"
-            )
-            XCTAssertEqual(
-                DiscoverMasonry.discoverColumnCount(
-                    availableWidth: 607,
-                    horizontalSizeClass: .compact,
-                    dynamicTypeSize: ax,
-                    isPhone: false
-                ),
-                1,
-                "2/3 split 607 pt card area must stay 1 column at \(ax)"
-            )
+        // Ordinary sizes up through .xxLarge keep 2 columns in the narrow 466–615 pt band.
+        for regularSize in [DynamicTypeSize.xSmall, .large, .xLarge, .xxLarge] {
+            for width in [466.0, 482.0, 607.0] {
+                XCTAssertEqual(
+                    DiscoverMasonry.discoverColumnCount(
+                        availableWidth: CGFloat(width),
+                        dynamicTypeSize: regularSize,
+                        isPhone: false
+                    ),
+                    2,
+                    "Narrow \(width) pt card area keeps 2 columns at \(regularSize)"
+                )
+                XCTAssertTrue(
+                    DiscoverMasonry.usesNarrowMultiColumn(
+                        availableWidth: CGFloat(width),
+                        dynamicTypeSize: regularSize,
+                        isPhone: false
+                    ),
+                    "Narrow \(width) pt card area expects usesNarrowMultiColumn at \(regularSize)"
+                )
+            }
+        }
+
+        // Narrow iPad panes (< 616 pt) fall back to 1 column starting at .xxxLarge and
+        // Accessibility Dynamic Type sizes so 225-299 pt cards never hyphenate mid-word;
+        // wider panes (>= 616 pt) stay 2 columns.
+        for fallbackSize in [DynamicTypeSize.xxxLarge, .accessibility1, .accessibility3, .accessibility5] {
+            for width in [466.0, 482.0, 607.0] {
+                XCTAssertEqual(
+                    DiscoverMasonry.discoverColumnCount(
+                        availableWidth: CGFloat(width),
+                        dynamicTypeSize: fallbackSize,
+                        isPhone: false
+                    ),
+                    1,
+                    "Narrow \(width) pt card area must fall back to 1 column at \(fallbackSize)"
+                )
+                XCTAssertFalse(
+                    DiscoverMasonry.usesNarrowMultiColumn(
+                        availableWidth: CGFloat(width),
+                        dynamicTypeSize: fallbackSize,
+                        isPhone: false
+                    ),
+                    "Narrow \(width) pt card area at \(fallbackSize) must not report usesNarrowMultiColumn"
+                )
+            }
             XCTAssertEqual(
                 DiscoverMasonry.discoverColumnCount(
                     availableWidth: 768,
-                    horizontalSizeClass: .regular,
-                    dynamicTypeSize: ax,
+                    dynamicTypeSize: fallbackSize,
                     isPhone: false
                 ),
                 2,
-                "Full 768 pt card area stays 2 columns at \(ax)"
+                "Full 768 pt card area stays 2 columns at \(fallbackSize)"
             )
         }
     }
@@ -1231,6 +1271,516 @@ final class DiscoverIPadPortraitTwoColumns13914Tests: XCTestCase {
             XCTAssertLessThan(abs(pa0.minX - pb0.minX), 8, "AFTER iPhone 390 left inset matches BEFORE")
             XCTAssertLessThan(abs(pa0.width - pb0.width), 8, "AFTER iPhone 390 card width matches BEFORE")
             XCTAssertGreaterThan(pa1.minY, pa0.maxY, "iPhone cards stack vertically")
+        }
+    }
+
+    // MARK: - Fable CHANGES Guards: Longest Fixture Title & All Card Types at 225 pt Min Column Width
+
+    private func decodeFixtureLongestFuturesItem() throws -> (longestItem: FeedItem, longestTitle: String) {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let prodResp = try decoder.decode(FeedResponse.self, from: Data(DiscoverFeedProdFixture.json.utf8))
+        var candidates: [FeedItem] = []
+        for item in prodResp.items {
+            if item.futures != nil {
+                candidates.append(item)
+            }
+            if let bundleItems = item.bundle?.items {
+                for child in bundleItems where child.futures != nil {
+                    candidates.append(child)
+                }
+            }
+        }
+        let picked = try XCTUnwrap(candidates.max(by: { ($0.futures?.name.count ?? 0) < ($1.futures?.name.count ?? 0) }))
+        let title = try XCTUnwrap(picked.futures?.name)
+        return (picked, title)
+    }
+
+    private func recognizeLines(in image: UIImage) throws -> [String] {
+        guard let cg = image.cgImage else { return [] }
+        let req = VNRecognizeTextRequest()
+        req.recognitionLevel = .accurate
+        req.usesLanguageCorrection = false
+        let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+        try handler.perform([req])
+        return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    }
+
+    private func renderMinimumColumnShowcasePage<V: View>(
+        _ content: V,
+        size: CGSize,
+        colorScheme: ColorScheme,
+        dynamicTypeSize: DynamicTypeSize,
+        isNarrowTwoColumn: Bool = true
+    ) -> UIImage {
+        let uiStyle: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
+        let auth = AuthManager(restoreOnInit: false)
+        auth.user = nil
+        auth.isLoading = false
+        let view = content
+            .padding(.horizontal, DiscoverMasonry.spacing)
+            .padding(.vertical, 12)
+            .frame(width: size.width, alignment: .topLeading)
+            .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
+            .environment(\.colorScheme, colorScheme)
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
+            .environment(\.horizontalSizeClass, .regular)
+            .environment(\.discoverLayoutIsPhone13914, false)
+            .environment(\.discoverNarrowTwoColumn13914, isNarrowTwoColumn)
+            .environmentObject(NavigationCoordinator())
+            .environmentObject(PinManager(allowLegacyGuestPins: false))
+            .environmentObject(auth)
+
+        let host = hostForMeasurement(view, at: dynamicTypeSize)
+        host.overrideUserInterfaceStyle = uiStyle
+        host.traitOverrides.horizontalSizeClass = .regular
+        let bounds = CGRect(origin: .zero, size: size)
+        host.view.frame = bounds
+
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let window: UIWindow = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: bounds)
+        window.frame = bounds
+        window.overrideUserInterfaceStyle = uiStyle
+        window.backgroundColor = colorScheme == .dark ? .black : .systemGroupedBackground
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        window.frame = bounds
+        host.view.frame = bounds
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        for _ in 0..<10 {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.03))
+        }
+
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 1.5
+        fmt.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: fmt).image { _ in
+            _ = window.drawHierarchy(in: bounds, afterScreenUpdates: true)
+        }
+    }
+
+    func testLongestFixtureTitleRendersWholeAtMinimumTwoColumnWidth() throws {
+        let (feedResp, _) = try makeTestFeed()
+        let (longestItem, longestTitle) = try decodeFixtureLongestFuturesItem()
+        let riemannGroup = try XCTUnwrap(feedResp.items.first(where: { $0.bundle != nil })?.bundle)
+        let riemannChild = try XCTUnwrap(riemannGroup.items.first)
+        XCTAssertGreaterThan(longestTitle.count, 35, "Expected real long title from DiscoverFeedProdFixture")
+
+        // Minimum 2-column canvas: 498 pt total - 32 pt padding = 466 pt card area -> two 225 pt columns.
+        let canvasSize = CGSize(width: 498, height: 900)
+        let items = [riemannChild, longestItem]
+        let cardView = LazyMasonryColumns(
+            range: 0..<2,
+            columnCount: 2,
+            spacing: DiscoverMasonry.spacing,
+            horizontalAlignment: .center,
+            cardAlignment: .center
+        ) { idx in
+            if idx == 0 {
+                NativeGroupCard(
+                    title: "AI",
+                    items: items,
+                    kind: "theme",
+                    sharedQuestion: "Longest Fixture Title Guard",
+                    navigationPath: .constant(NavigationPath())
+                )
+            } else {
+                NativeGroupCard(
+                    title: "TECH",
+                    items: [longestItem],
+                    kind: "theme",
+                    sharedQuestion: longestTitle,
+                    navigationPath: .constant(NavigationPath())
+                )
+            }
+        }
+
+        let img = renderMinimumColumnShowcasePage(
+            cardView,
+            size: canvasSize,
+            colorScheme: .light,
+            dynamicTypeSize: .large
+        )
+        if let dirPath = ProcessInfo.processInfo.environment["DISCOVER_IPAD_13914_RENDER_DIR"], !dirPath.isEmpty {
+            let dirURL = URL(fileURLWithPath: dirPath, isDirectory: true)
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            try img.pngData()?.write(to: dirURL.appendingPathComponent("longest_title_min_2col_light.png"))
+        }
+
+        let lines = try recognizeLines(in: img)
+        let full = lines.joined(separator: " | ")
+        let fullSpace = lines.joined(separator: " ")
+        XCTAssertFalse(full.contains("…"), "Minimum 225 pt column must not truncate longest fixture title with ellipsis: \(full)")
+        XCTAssertFalse(full.contains("..."), "Minimum 225 pt column must not truncate longest fixture title: \(full)")
+        XCTAssertTrue(
+            fullSpace.localizedCaseInsensitiveContains("AI proves") || fullSpace.localizedCaseInsensitiveContains("Al proves"),
+            "Missing 'AI proves' in: \(full)"
+        )
+        for required in ["Riemann", "Hypothesis", "2026?"] {
+            XCTAssertTrue(fullSpace.localizedCaseInsensitiveContains(required), "Missing '\(required)' in: \(full)")
+        }
+        let longestWords = longestTitle
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { $0.count >= 4 }
+        for word in longestWords {
+            XCTAssertTrue(
+                fullSpace.localizedCaseInsensitiveContains(word),
+                "Longest fixture title word '\(word)' (from '\(longestTitle)') truncated at 225 pt: \(full)"
+            )
+        }
+    }
+
+    func testAllFeedCardTypesAtMinimumTwoColumnWidthAcrossDynamicTypes() async throws {
+        let (feedResp, _) = try makeTestFeed()
+        let (longestItem, longestTitle) = try decodeFixtureLongestFuturesItem()
+        let riemannGroup = try XCTUnwrap(feedResp.items.first(where: { $0.bundle != nil })?.bundle)
+        let riemannChild = try XCTUnwrap(riemannGroup.items.first)
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        // 1. Live game with long team names and live score
+        let now = Date()
+        let iso = ISO8601DateFormatter()
+        let liveCommence = iso.string(from: now.addingTimeInterval(-3600))
+        let liveEventJSON = """
+        {
+          "id": 9139199,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "home_team": "Oklahoma City Thunder",
+          "away_team": "Minnesota Timberwolves",
+          "home_team_data": {"team_id": 25, "name": "Oklahoma City Thunder", "short_name": "Thunder", "abbreviation": "OKC", "primary_color": "#007AC1"},
+          "away_team_data": {"team_id": 18, "name": "Minnesota Timberwolves", "short_name": "Timberwolves", "abbreviation": "MIN", "primary_color": "#0C2340"},
+          "commence_time": "\(liveCommence)",
+          "status": "live",
+          "home_score": 108,
+          "away_score": 104,
+          "espn": {"period": "Q4", "game_clock": "2:14"},
+          "current_odds": {"home_probability": 0.68, "away_probability": 0.32}
+        }
+        """
+        let liveEvent = try decoder.decode(FeedEventData.self, from: Data(liveEventJSON.utf8))
+
+        // 2. Division race card (`MachineryDiscoverCardView`) w/ `<1%` and `No recent probability`
+        let divisionCardJSON = """
+        {
+          "slug": "machinery-nfc-north-race",
+          "form_id": "contender_spotlight",
+          "kicker": "NFL · NFC NORTH",
+          "title": "NFC North Division Winner",
+          "subtitle": "All 4 teams including sub-1% and unpriced.",
+          "footer": "",
+          "scale_ordered": false,
+          "section_count": 1,
+          "destination_href": "/collections/machinery-nfc-north-race",
+          "rows": [
+            {"outcome_id": 1, "name": "Detroit Lions", "probability": 0.61, "rendered_percent": 61, "settled_out": false},
+            {"outcome_id": 2, "name": "Green Bay Packers", "probability": 0.38, "rendered_percent": 38, "settled_out": false},
+            {"outcome_id": 3, "name": "Minnesota Vikings", "probability": 0.004, "rendered_percent": 1, "unfloored_percent": 0, "settled_out": false}
+          ],
+          "unpriced_outcomes": [
+            {"outcome_id": 4, "name": "Chicago Bears", "settled_out": false}
+          ]
+        }
+        """
+        let divisionCard = try decoder.decode(MachineryCardContract.self, from: Data(divisionCardJSON.utf8))
+
+        // 3. Round-up card (`DiscoverRoundupCardView`) w/ `<1%` and `No recent probability`
+        let roundupContractJSON = """
+        {
+          "kicker": "NFL · DIVISION ROUND-UP",
+          "tag": "4 teams",
+          "subtitle": "Live prices beside sub-1% and paused team.",
+          "complete_group": true,
+          "footer": "See full division",
+          "rows": [
+            {"market_id": 7001, "outcome_id": 11, "label": "Buffalo Bills", "probability": 0.42, "rendered_percent": 42, "settled_out": false},
+            {"market_id": 7001, "outcome_id": 12, "label": "Miami Dolphins", "probability": 0.29, "rendered_percent": 29, "settled_out": false},
+            {"market_id": 7001, "outcome_id": 13, "label": "New England Patriots", "probability": 0.004, "rendered_percent": 1, "unfloored_percent": 0, "settled_out": false}
+          ],
+          "unpriced_outcomes": [
+            {"outcome_id": 14, "name": "New York Jets", "settled_out": false}
+          ]
+        }
+        """
+        let roundupContract = try decoder.decode(FeedRoundupContract.self, from: Data(roundupContractJSON.utf8))
+        let roundupModel = try XCTUnwrap(
+            DiscoverRoundupCardModel.build(
+                title: "AFC East contenders",
+                contract: roundupContract,
+                allowFlexibleRowCount: true
+            )
+        )
+
+        // 4. Dated ladder (`HeatMapCardView`) w/ 4 date rungs including `<1%`
+        let datedLadderJSON = """
+        {
+          "id": 9139204,
+          "name": "Starship Mars landing date?",
+          "llm_sport_category": "tech",
+          "source": "kalshi",
+          "source_count": 2,
+          "sources": ["kalshi", "polymarket"],
+          "market_tier": 2,
+          "market_type": "quantity",
+          "status": "open",
+          "resolution_date": "2028-01-01T00:00:00Z",
+          "discover_card": {
+            "suggested_format": "threshold_heatmap",
+            "threshold_points": [
+              {"source": "date_bucket", "label": "Before Mar 31, 2027", "value": 1, "unit": "date", "direction": "before", "probability": 0.004},
+              {"source": "date_bucket", "label": "Before Jun 30, 2027", "value": 2, "unit": "date", "direction": "before", "probability": 0.14},
+              {"source": "date_bucket", "label": "Before Sep 30, 2027", "value": 3, "unit": "date", "direction": "before", "probability": 0.38},
+              {"source": "date_bucket", "label": "Before Dec 31, 2027", "value": 4, "unit": "date", "direction": "before", "probability": 0.62}
+            ]
+          }
+        }
+        """
+        let datedLadderData = try decoder.decode(FeedFuturesData.self, from: Data(datedLadderJSON.utf8))
+
+        // 5. Tournament card (`NativeTournamentDiscoverCard`)
+        let tournamentJSON = """
+        {
+          "key": "masters-2027",
+          "name": "The Masters Tournament",
+          "tour": "pga",
+          "tour_label": "PGA Tour",
+          "is_major": true,
+          "venue": "Augusta National Golf Club",
+          "marquee_whathit": false,
+          "golfers": [
+            {"name": "Scottie Scheffler", "probability": 0.31, "rendered_percent": 31, "rank": 1, "movement_24h": 0.024},
+            {"name": "Rory McIlroy", "probability": 0.12, "rendered_percent": 12, "rank": 2},
+            {"name": "Xander Schauffele", "probability": 0.09, "rendered_percent": 9, "rank": 3},
+            {"name": "Jon Rahm", "probability": 0.07, "rendered_percent": 7, "rank": 4}
+          ]
+        }
+        """
+        let tournamentData = try decoder.decode(FeedTournamentData.self, from: Data(tournamentJSON.utf8))
+
+        // 6. Futures card w/ `<1%`
+        let subOneFuturesJSON = """
+        {
+          "id": 9139206,
+          "name": "Next Federal Reserve Chair?",
+          "llm_sport_category": "economics",
+          "source": "kalshi",
+          "source_count": 2,
+          "sources": ["kalshi", "polymarket"],
+          "market_tier": 1,
+          "market_type": "field",
+          "status": "open",
+          "top_outcomes": [
+            {"id": 91392061, "name": "Kevin Warsh", "probability": 0.54, "rank": 1, "movement": 0.03},
+            {"id": 91392062, "name": "Christopher Waller", "probability": 0.28, "rank": 2},
+            {"id": 91392063, "name": "Longshot Nominee", "probability": 0.004, "rank": 3}
+          ],
+          "outcome_count": 10
+        }
+        """
+        let subOneFutures = try decoder.decode(FeedFuturesData.self, from: Data(subOneFuturesJSON.utf8))
+
+        let page1View = LazyMasonryColumns(
+            range: 0..<4,
+            columnCount: 2,
+            spacing: DiscoverMasonry.spacing,
+            horizontalAlignment: .center,
+            cardAlignment: .center
+        ) { idx in
+            switch idx {
+            case 0:
+                NativeGroupCard(
+                    title: "TECH & WORLD",
+                    items: [riemannChild, longestItem],
+                    kind: "theme",
+                    sharedQuestion: "Set · Long Titles",
+                    navigationPath: .constant(NavigationPath())
+                )
+            case 1:
+                NativeEventDiscoverCard(
+                    event: liveEvent,
+                    feedContext: nil,
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+            case 2:
+                MachineryDiscoverCardView(card: divisionCard)
+            default:
+                DiscoverRoundupCardView(model: roundupModel, collectionRef: nil)
+            }
+        }
+
+        let page2View = LazyMasonryColumns(
+            range: 0..<3,
+            columnCount: 2,
+            spacing: DiscoverMasonry.spacing,
+            horizontalAlignment: .center,
+            cardAlignment: .center
+        ) { idx in
+            switch idx {
+            case 0:
+                HeatMapCardView(data: datedLadderData, navigationPath: .constant(NavigationPath()))
+            case 1:
+                NativeTournamentDiscoverCard(
+                    data: tournamentData,
+                    feedContext: "PGA Tour: Scottie Scheffler leads at 31% (+2.4pp today)",
+                    navigationPath: .constant(NavigationPath())
+                )
+            default:
+                NativeFuturesDiscoverCard(
+                    data: subOneFutures,
+                    feedContext: "Warsh leads across 2 sources",
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+            }
+        }
+
+        let dirURL: URL? = {
+            guard let p = ProcessInfo.processInfo.environment["DISCOVER_IPAD_13914_RENDER_DIR"], !p.isEmpty else { return nil }
+            return URL(fileURLWithPath: p, isDirectory: true)
+        }()
+        if let dirURL {
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+        }
+
+        let configs: [(size: DynamicTypeSize, sizeLabel: String, scheme: ColorScheme, schemeName: String, heightP1: CGFloat, heightP2: CGFloat, enforceStrict: Bool)] = [
+            (.large, "large", .light, "light", 1180, 980, true),
+            (.large, "large", .dark, "dark", 1180, 980, true),
+            (.xxLarge, "xxl", .light, "light", 1420, 1200, true),
+            (.xxLarge, "xxl", .dark, "dark", 1420, 1200, true),
+        ]
+
+        let longestWords = longestTitle
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { $0.count >= 4 }
+
+        for cfg in configs {
+            XCTAssertEqual(
+                DiscoverMasonry.discoverColumnCount(
+                    availableWidth: 466,
+                    dynamicTypeSize: cfg.size,
+                    isPhone: false
+                ),
+                2
+            )
+            let p1Img = renderMinimumColumnShowcasePage(
+                page1View,
+                size: CGSize(width: 498, height: cfg.heightP1),
+                colorScheme: cfg.scheme,
+                dynamicTypeSize: cfg.size
+            )
+            let p2Img = renderMinimumColumnShowcasePage(
+                page2View,
+                size: CGSize(width: 498, height: cfg.heightP2),
+                colorScheme: cfg.scheme,
+                dynamicTypeSize: cfg.size
+            )
+
+            if let dirURL {
+                try p1Img.pngData()?.write(to: dirURL.appendingPathComponent("narrow225_\(cfg.sizeLabel)_\(cfg.schemeName)_p1.png"))
+                try p2Img.pngData()?.write(to: dirURL.appendingPathComponent("narrow225_\(cfg.sizeLabel)_\(cfg.schemeName)_p2.png"))
+            }
+
+            let lines1 = try recognizeLines(in: p1Img)
+            let lines2 = try recognizeLines(in: p2Img)
+            let ocr1 = lines1.joined(separator: " | ")
+            let ocr2 = lines2.joined(separator: " | ")
+            let ocr1Space = lines1.joined(separator: " ")
+            let ocr2Space = lines2.joined(separator: " ")
+            let hasEllipsis1 = ocr1.contains("…") || ocr1.contains("...")
+            let hasEllipsis2 = ocr2.contains("…") || ocr2.contains("...")
+            print("NARROW_225_CHECK \(cfg.sizeLabel)_\(cfg.schemeName) ellipsis1=\(hasEllipsis1) ellipsis2=\(hasEllipsis2) p1=\(ocr1) ||| p2=\(ocr2)")
+
+            if cfg.enforceStrict {
+                XCTAssertFalse(hasEllipsis1, "225 pt .\(cfg.sizeLabel) \(cfg.schemeName) page 1 has ellipsis: \(ocr1)")
+                XCTAssertFalse(hasEllipsis2, "225 pt .\(cfg.sizeLabel) \(cfg.schemeName) page 2 has ellipsis: \(ocr2)")
+                for bad in ["Timber-", "ROUND- | ", "Christo-", "Nomi-", "Long-"] {
+                    XCTAssertFalse(
+                        ocr1.contains(bad) || ocr2.contains(bad),
+                        "225 pt .\(cfg.sizeLabel) \(cfg.schemeName) hyphenated '\(bad)' in p1=\(ocr1) ||| p2=\(ocr2)"
+                    )
+                }
+                for tok in ["Riemann", "Hypothesis", "108", "104", "Lions", "Vikings", "<1%", "No recent probability", "Bears", "Jets"] {
+                    XCTAssertTrue(ocr1Space.localizedCaseInsensitiveContains(tok), "225 pt .\(cfg.sizeLabel) \(cfg.schemeName) p1 missing '\(tok)' in: \(ocr1)")
+                }
+                for word in longestWords {
+                    XCTAssertTrue(ocr1Space.localizedCaseInsensitiveContains(word), "225 pt .\(cfg.sizeLabel) \(cfg.schemeName) p1 missing '\(word)' in: \(ocr1)")
+                }
+                for tok in ["Starship Mars landing date?", "Before Dec 31", "Masters", "Scheffler", "Warsh", "Christopher Waller", "Longshot Nominee", "<1%"] {
+                    XCTAssertTrue(ocr2Space.localizedCaseInsensitiveContains(tok), "225 pt .\(cfg.sizeLabel) \(cfg.schemeName) p2 missing '\(tok)' in: \(ocr2)")
+                }
+            }
+        }
+
+        // Verify .xxxLarge at 466 pt card area (498 pt pane) falls back to 1 column cleanly.
+        let xxxlCols = DiscoverMasonry.discoverColumnCount(
+            availableWidth: 466,
+            dynamicTypeSize: .xxxLarge,
+            isPhone: false
+        )
+        XCTAssertEqual(xxxlCols, 1)
+        XCTAssertFalse(
+            DiscoverMasonry.usesNarrowMultiColumn(
+                availableWidth: 466,
+                dynamicTypeSize: .xxxLarge,
+                isPhone: false
+            )
+        )
+        let xxxlFallbackView = LazyMasonryColumns(
+            range: 0..<2,
+            columnCount: xxxlCols,
+            spacing: DiscoverMasonry.spacing,
+            horizontalAlignment: .center,
+            cardAlignment: .center
+        ) { idx in
+            if idx == 0 {
+                NativeGroupCard(
+                    title: "TECH & WORLD",
+                    items: [riemannChild, longestItem],
+                    kind: "theme",
+                    sharedQuestion: "Set · Long Titles",
+                    navigationPath: .constant(NavigationPath())
+                )
+            } else {
+                NativeFuturesDiscoverCard(
+                    data: subOneFutures,
+                    feedContext: "Warsh leads across 2 sources",
+                    expandedContext: nil,
+                    navigationPath: .constant(NavigationPath())
+                )
+            }
+        }
+        let xxxlImg = renderMinimumColumnShowcasePage(
+            xxxlFallbackView,
+            size: CGSize(width: 498, height: 1180),
+            colorScheme: .light,
+            dynamicTypeSize: .xxxLarge,
+            isNarrowTwoColumn: false
+        )
+        if let dirURL {
+            try xxxlImg.pngData()?.write(to: dirURL.appendingPathComponent("narrow225_xxxl_1col_fallback_light.png"))
+        }
+        let xxxlLines = try recognizeLines(in: xxxlImg)
+        let xxxlOCR = xxxlLines.joined(separator: " | ")
+        let xxxlOCRSpace = xxxlLines.joined(separator: " ")
+        let xxxlEllipsis = xxxlOCR.contains("…") || xxxlOCR.contains("...")
+        print("NARROW_225_CHECK xxxl_1col_fallback ellipsis=\(xxxlEllipsis) ocr=\(xxxlOCR)")
+        XCTAssertFalse(xxxlEllipsis, ".xxxLarge 1-col fallback at 498 pt has ellipsis: \(xxxlOCR)")
+        for tok in ["Riemann", "Hypothesis", "Christopher Waller", "Longshot Nominee", "<1%"] {
+            XCTAssertTrue(
+                xxxlOCRSpace.localizedCaseInsensitiveContains(tok),
+                ".xxxLarge 1-col fallback missing '\(tok)' in: \(xxxlOCR)"
+            )
         }
     }
 

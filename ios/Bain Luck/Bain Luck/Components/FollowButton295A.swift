@@ -129,6 +129,11 @@ private struct GameCardTeamFollowBarBody295A: View {
     @ObservedObject var alertsPrompt: GameAlertsPromptController295A
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
+
+    private var usesStackedFollowChips: Bool {
+        dynamicTypeSize.isAccessibilitySize || (isNarrowTwoColumn && dynamicTypeSize >= .xxLarge)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -136,7 +141,7 @@ private struct GameCardTeamFollowBarBody295A: View {
                 .fill(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.06))
                 .frame(height: 0.5)
 
-            if dynamicTypeSize.isAccessibilitySize {
+            if usesStackedFollowChips {
                 VStack(alignment: .leading, spacing: 6) {
                     if let awayEntry {
                         teamChip(entry: awayEntry, fullWidth: true)
@@ -195,7 +200,7 @@ private struct GameCardTeamFollowBarBody295A: View {
             }
         } label: {
             Group {
-                if dynamicTypeSize.isAccessibilitySize {
+                if usesStackedFollowChips {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .center, spacing: 6) {
                             TeamLogoView(
