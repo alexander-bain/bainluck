@@ -8418,6 +8418,7 @@ def _total_threshold_in_sport_range(
 
 
 _event_detail_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
+_event_detail_live_signatures: dict[int, tuple[float, tuple]] = {}  # event_id → (timestamp, price signature)
 _EVENT_DETAIL_LIVE_TTL = 30
 _EVENT_DETAIL_DEFAULT_TTL = 300
 #: The ceiling on the settled-row shortcut below — lane1/132.
@@ -20615,16 +20616,51 @@ async def _settled_prematch_odds(
     )
 
 
+def _normalize_sig_num(val: object) -> object:
+    if isinstance(val, bool) or val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return round(float(val), 8)
+    return val
+
+
+def _live_sources_price_signature(sources: object) -> tuple:
+    """Return an order-independent price signature ignoring timestamp fields."""
+    if not isinstance(sources, dict):
+        return ()
+    items = []
+    for key in sorted(sources.keys(), key=lambda k: str(k)):
+        entry = sources[key]
+        if isinstance(entry, dict):
+            items.append(
+                (
+                    str(key),
+                    _normalize_sig_num(entry.get("value")),
+                    _normalize_sig_num(entry.get("away_value")),
+                    _normalize_sig_num(entry.get("draw_value")),
+                    _normalize_sig_num(entry.get("three_way_home_value")),
+                )
+            )
+        else:
+            items.append((str(key), _normalize_sig_num(entry), None, None, None))
+    return tuple(items)
+
+
 async def _cached_live_detail_is_stale(
     db: AsyncSession,
     cached_resp: dict,
+    *,
+    event_id: int,
+    cached_at: Optional[float] = None,
 ) -> bool:
-    """Return True when a cached ``live`` detail payload lags DB revision/status.
+    """Return True when a cached ``live`` detail payload lags DB price/status.
 
-    Executes one PK lookup against ``Event.win_probability_sources_rev`` and
-    ``Event.status`` for the IDs in ``blend_fold_revision``. Unversioned
-    payloads and mock sessions that do not return ``(id, rev, status)`` tuples
-    abstain safely (``False``).
+    Executes one PK lookup against ``Event.win_probability_sources_rev``,
+    ``Event.status``, and ``Event.win_probability_sources``. Timestamp-only
+    same-price heartbeat writes (#12581) increment ``rev`` without moving any
+    price value and stay cached until TTL or ``?fresh=true``. Unversioned
+    payloads and mock sessions that do not return 4-tuples abstain safely
+    (``False``).
     """
     cached_rev = cached_resp.get("blend_fold_revision")
     if not isinstance(cached_rev, dict) or not cached_rev:
@@ -20650,6 +20686,7 @@ async def _cached_live_detail_is_stale(
                 Event.id,
                 Event.win_probability_sources_rev,
                 Event.status,
+                Event.win_probability_sources,
             ).where(Event.id.in_(list(rev_targets)))
         )
         rows = res.all()
@@ -20658,12 +20695,12 @@ async def _cached_live_detail_is_stale(
     if not rows:
         return False
 
-    db_state: dict[int, tuple[int, object]] = {}
+    db_state: dict[int, tuple[int, object, object]] = {}
     for row in rows:
         try:
-            if len(row) != 3:
+            if len(row) != 4:
                 return False
-            rid, r_rev, r_status = row
+            rid, r_rev, r_status, r_sources = row
         except (TypeError, ValueError):
             return False
         if (
@@ -20673,17 +20710,36 @@ async def _cached_live_detail_is_stale(
             or isinstance(r_rev, bool)
         ):
             return False
-        db_state[rid] = (r_rev, r_status)
+        db_state[rid] = (r_rev, r_status, r_sources)
 
     if len(db_state) != len(rev_targets) or set(db_state) != set(rev_targets):
         return True
+
+    moved_ids: list[int] = []
     for rid, expected_rev in rev_targets.items():
-        actual_rev, actual_status = db_state[rid]
-        if actual_rev != expected_rev:
-            return True
+        actual_rev, actual_status, _actual_sources = db_state[rid]
         if rid == served_id and actual_status != "live":
             return True
-    return False
+        if actual_rev != expected_rev:
+            moved_ids.append(rid)
+
+    if not moved_ids:
+        return False
+    if len(rev_targets) > 1:
+        return True
+
+    only_id = next(iter(rev_targets))
+    r_sources = db_state[only_id][2]
+    sig_entry = _event_detail_live_signatures.get(event_id)
+    if sig_entry is not None and (cached_at is None or sig_entry[0] == cached_at):
+        return _live_sources_price_signature(r_sources) != sig_entry[1]
+
+    cached_sources = cached_resp.get("win_probability_sources")
+    if isinstance(cached_sources, dict) and isinstance(r_sources, dict):
+        return _live_sources_price_signature(r_sources) != _live_sources_price_signature(
+            cached_sources
+        )
+    return True
 
 
 @router.get("/{event_id}")
@@ -20703,13 +20759,19 @@ async def get_event(
         return await _coalesced_fresh_detail(
             event_id, _now, lambda: get_event(event_id, db=db, fresh=True)
         )
+    _cached_entry = None if fresh else _event_detail_cache.get(event_id)
     _cached_resp = None if fresh else _cached_detail_payload(event_id, _now)
     if _cached_resp is not None:
         if (
             _cached_resp.get("status") == "live"
             and db is not None
             and not _detail_fresh_leader.get()
-            and await _cached_live_detail_is_stale(db, _cached_resp)
+            and await _cached_live_detail_is_stale(
+                db,
+                _cached_resp,
+                event_id=event_id,
+                cached_at=_cached_entry[0] if _cached_entry is not None else None,
+            )
         ):
             return await _coalesced_fresh_detail(
                 event_id, _now, lambda: get_event(event_id, db=db, fresh=True)
@@ -21570,13 +21632,24 @@ async def get_event(
                     old = _event_detail_cache.get(key)
                     if old is not None and old[0] <= _now:
                         del _event_detail_cache[key]
+                        _event_detail_live_signatures.pop(key, None)
                 return _with_state_read_fresh(response, True)
         _published = _with_state_read_fresh(response, False)
+        _live_sig = (
+            _live_sources_price_signature(event.win_probability_sources)
+            if event.status == "live"
+            else None
+        )
         for _cache_key in {requested_event_id, event_id}:
             if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
                 oldest = min(_event_detail_cache, key=lambda k: _event_detail_cache[k][0])
                 del _event_detail_cache[oldest]
+                _event_detail_live_signatures.pop(oldest, None)
             _event_detail_cache[_cache_key] = (_now, event.status, _published)
+            if _live_sig is not None:
+                _event_detail_live_signatures[_cache_key] = (_now, _live_sig)
+            else:
+                _event_detail_live_signatures.pop(_cache_key, None)
 
     return _with_state_read_fresh(response, True)
 

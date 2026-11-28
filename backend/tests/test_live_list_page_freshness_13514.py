@@ -118,12 +118,24 @@ class _ParitySession:
 
         # `_cached_live_detail_is_stale` narrow PK check:
         if sql.startswith(
-            "SELECT events.id, events.win_probability_sources_rev, events.status FROM events"
+            "SELECT events.id, events.win_probability_sources_rev, events.status, events.win_probability_sources FROM events"
         ):
             self.pk_rev_checks += 1
-            rows = [(self.event.id, self.event.win_probability_sources_rev, self.event.status)]
+            rows = [
+                (
+                    self.event.id,
+                    self.event.win_probability_sources_rev,
+                    self.event.status,
+                    self.event.win_probability_sources,
+                )
+            ]
             if self.twin_rev is not None:
-                rows.append((TWIN_EVENT_ID, self.twin_rev, "live"))
+                twin_sources = (
+                    {"kalshi": {"value": self.twin_kalshi}}
+                    if self.twin_kalshi is not None
+                    else {}
+                )
+                rows.append((TWIN_EVENT_ID, self.twin_rev, "live", twin_sources))
             return _Result(rows)
 
         # `event_state_read_window`:
@@ -207,6 +219,7 @@ def clean_env(monkeypatch):
     rc = FakeRedis()
     monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: rc)
     events_route._event_detail_cache.clear()
+    events_route._event_detail_live_signatures.clear()
     events_route._DETAIL_FRESH_BUILDS.clear()
 
     async def _no_percentiles(_db):
@@ -236,6 +249,7 @@ def clean_env(monkeypatch):
     monkeypatch.setattr("app.utils.price_evidence.load_price_evidence", AsyncMock(return_value=None))
     yield rc
     events_route._event_detail_cache.clear()
+    events_route._event_detail_live_signatures.clear()
     events_route._DETAIL_FRESH_BUILDS.clear()
 
 
@@ -479,6 +493,33 @@ class TestLiveDetailCacheRevisionInvalidation:
         assert transition_session.pk_rev_checks == 1
         assert transition_session.full_event_loads >= 1
         assert rebuilt["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_same_price_rev_bump_keeps_cache_while_price_move_rebuilds(self, clean_env):
+        now = datetime.now(timezone.utc)
+        ev_v4 = _make_live_event(now=now, polymarket_prob=0.48, rev=4)
+        await events_route.get_event(LIVE_EVENT_ID, db=_ParitySession(ev_v4))
+
+        # Timestamp-only same-price heartbeat (#12581) bumps rev 4 -> 5 with identical 0.48 price:
+        # cache stays warm (`full_event_loads == 0`), avoiding an unnecessary detail rebuild.
+        ev_v5_same_price = _make_live_event(
+            now=now + timedelta(seconds=10), polymarket_prob=0.48, rev=5
+        )
+        same_price_session = _ParitySession(ev_v5_same_price)
+        same_out = await events_route.get_event(LIVE_EVENT_ID, db=same_price_session)
+        assert same_price_session.pk_rev_checks == 1
+        assert same_price_session.full_event_loads == 0
+        assert extract_headline_percent(same_out) == 48
+
+        # Actual price movement (0.48 -> 0.57, rev 6) invalidates cache and matches live list.
+        ev_v6_moved = _make_live_event(
+            now=now + timedelta(seconds=15), polymarket_prob=0.57, rev=6
+        )
+        moved_session = _ParitySession(ev_v6_moved)
+        moved_out = await events_route.get_event(LIVE_EVENT_ID, db=moved_session)
+        assert moved_session.pk_rev_checks == 1
+        assert moved_session.full_event_loads >= 1
+        assert extract_headline_percent(moved_out) == 57
 
     @pytest.mark.asyncio
     async def test_non_live_detail_cache_hit_skips_pk_revision_query(self, clean_env):
