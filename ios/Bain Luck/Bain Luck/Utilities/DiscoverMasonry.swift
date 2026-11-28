@@ -138,6 +138,33 @@ enum DiscoverMasonry {
         return max(1, n)
     }
 
+    /// Narrowest per-card width for keeping two columns on regular-width iPad
+    /// Discover surfaces when split-view/sidebar panes narrow the detail area
+    /// below `2 * 300 + 16 = 616 pt` (matching web's `sm:grid-cols-2` at 640 px,
+    /// #13914). Two columns require `2 * 225 + 16 = 466 pt` card area.
+    static let regularTwoColumnMinimumCardWidth: CGFloat = 225
+    static let regularTwoColumnMinimumAreaWidth: CGFloat = 2 * regularTwoColumnMinimumCardWidth + spacing
+
+    /// Column count for `DiscoverView`.
+    ///
+    /// Keeps `.compact` (iPhone) and Accessibility Dynamic Type at narrow
+    /// widths identical to `columnCount(availableWidth:)`, while allowing
+    /// `.regular` iPad/Mac canvases down to `regularTwoColumnMinimumAreaWidth`
+    /// (`466 pt` card area) to stay two columns rather than collapsing into a
+    /// single oversized column in upright portrait split view (#13914).
+    nonisolated static func discoverColumnCount(
+        availableWidth: CGFloat,
+        horizontalSizeClass: UserInterfaceSizeClass?,
+        dynamicTypeSize: DynamicTypeSize = .large
+    ) -> Int {
+        guard availableWidth > 0 else { return 1 }
+        let base = columnCount(availableWidth: availableWidth)
+        guard horizontalSizeClass != .compact else { return base }
+        if base >= 2 { return base }
+        guard !dynamicTypeSize.isAccessibilitySize else { return 1 }
+        return availableWidth >= regularTwoColumnMinimumAreaWidth ? 2 : 1
+    }
+
     /// How wide each column resolves to at `availableWidth` — the companion to
     /// `columnCount`, and the number `.adaptive` will not tell you.
     ///
