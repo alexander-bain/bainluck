@@ -59,16 +59,17 @@ _PRE_NOV6_ISO = "2026-11-06T00:00:00Z"
 _EVENTS_STMT_TIMEOUT_S = 120
 _WP_STMT_TIMEOUT_S = 120
 _WRONG_START_STMT_TIMEOUT_S = 120
+_WRONG_START_FIRST_BATCH_MAX_S = 30.0
 _ESM_DETAIL_STMT_TIMEOUT_S = 120
 _ODDS_STMT_TIMEOUT_S = 30
 _INTER_BATCH_PAUSE_S = 1.0
-_MAX_READ_DURATION_S = 3600.0
+_MAX_READ_DURATION_S = 1800.0
 _ODDS_MAX_SINGLE_BATCH_S = 15.0
 _ODDS_FIRST_N_AVG_COUNT = 0
 _ODDS_FIRST_N_AVG_MAX_S = 3.0
 _NON_PM_ODDS_SAMPLE_LIMIT = 4000
 _BATCH_SIZE = 200
-_WRONG_START_BATCH_SIZE = 500
+_WRONG_START_BATCH_SIZE = 100
 _ODDS_BATCH_SIZE = 40
 _SERIES_MAX_GAP = timedelta(days=4)
 _LOG_LOSS_CLIP = 1e-15
@@ -232,34 +233,71 @@ SELECT w.id AS snap_id,
 """.strip()
 
 WRONG_START_BATCH_SQL = f"""
-SELECT b.event_id AS event_id,
-       EXISTS (
-           SELECT 1
-             FROM win_prob_snapshots w
-            WHERE w.event_id = b.event_id
-              AND w.captured_at < b.start_at
-              AND w.captured_at < TIMESTAMPTZ '{_PRE_NOV6_ISO}'
-              AND w.game_state IS NOT NULL
-              AND COALESCE(w.game_state->>'backfilled', '') <> 'true'
-              AND (
-                  LOWER(COALESCE(w.game_state->>'period', '')) NOT IN (
-                      '', 'start', 'pre', 'pregame', 'scheduled', '0', 'tbd'
-                  )
-                  OR (
-                      NULLIF(TRIM(COALESCE(w.game_state->>'inning', '')), '') IS NOT NULL
-                      AND LOWER(TRIM(COALESCE(w.game_state->>'inning', ''))) <> '0'
-                  )
-                  OR (
-                      (w.game_state->>'home_score') ~ '^[0-9]+$'
-                      AND CAST(w.game_state->>'home_score' AS integer) > 0
-                  )
-                  OR (
-                      (w.game_state->>'away_score') ~ '^[0-9]+$'
-                      AND CAST(w.game_state->>'away_score' AS integer) > 0
-                  )
-              )
-       ) AS has_prestart_inplay_wp
-  FROM unnest(CAST(:event_ids AS bigint[]), CAST(:starts AS timestamptz[])) AS b(event_id, start_at)
+WITH RECURSIVE target_events AS MATERIALIZED (
+    SELECT b.event_id,
+           b.start_at
+      FROM unnest(CAST(:event_ids AS bigint[]), CAST(:starts AS timestamptz[])) AS b(event_id, start_at)
+),
+event_sources AS (
+    SELECT te.event_id,
+           te.start_at,
+           (SELECT w.source
+              FROM win_prob_snapshots w
+             WHERE w.event_id = te.event_id
+             ORDER BY w.source ASC
+             LIMIT 1) AS source
+      FROM target_events te
+    UNION ALL
+    SELECT es.event_id,
+           es.start_at,
+           (SELECT w.source
+              FROM win_prob_snapshots w
+             WHERE w.event_id = es.event_id
+               AND w.source > es.source
+             ORDER BY w.source ASC
+             LIMIT 1) AS source
+      FROM event_sources es
+     WHERE es.source IS NOT NULL
+),
+distinct_sources AS MATERIALIZED (
+    SELECT event_id, start_at, source
+      FROM event_sources
+     WHERE source IS NOT NULL
+)
+SELECT te.event_id AS event_id,
+       COALESCE(BOOL_OR(hit.found IS NOT NULL), FALSE) AS has_prestart_inplay_wp
+  FROM target_events te
+  LEFT JOIN distinct_sources ds ON ds.event_id = te.event_id
+  LEFT JOIN LATERAL (
+      SELECT 1 AS found
+        FROM win_prob_snapshots w
+       WHERE w.event_id = ds.event_id
+         AND w.source = ds.source
+         AND w.captured_at < ds.start_at
+         AND w.captured_at < TIMESTAMPTZ '{_PRE_NOV6_ISO}'
+         AND w.game_state IS NOT NULL
+         AND COALESCE(w.game_state->>'backfilled', '') <> 'true'
+         AND (
+             LOWER(COALESCE(w.game_state->>'period', '')) NOT IN (
+                 '', 'start', 'pre', 'pregame', 'scheduled', '0', 'tbd'
+             )
+             OR (
+                 NULLIF(TRIM(COALESCE(w.game_state->>'inning', '')), '') IS NOT NULL
+                 AND LOWER(TRIM(COALESCE(w.game_state->>'inning', ''))) <> '0'
+             )
+             OR (
+                 (w.game_state->>'home_score') ~ '^[0-9]+$'
+                 AND CAST(w.game_state->>'home_score' AS integer) > 0
+             )
+             OR (
+                 (w.game_state->>'away_score') ~ '^[0-9]+$'
+                 AND CAST(w.game_state->>'away_score' AS integer) > 0
+             )
+         )
+       ORDER BY w.captured_at DESC
+       LIMIT 1
+  ) hit ON TRUE
+ GROUP BY te.event_id
 """.strip()
 
 ODDS_BATCH_SQL = f"""
@@ -760,6 +798,7 @@ async def read_step2_observations(
     odds_stmt_timeout_s: int = _ODDS_STMT_TIMEOUT_S,
     max_read_duration_s: float = _MAX_READ_DURATION_S,
     odds_max_single_batch_s: float = _ODDS_MAX_SINGLE_BATCH_S,
+    wrong_start_first_batch_max_s: float = _WRONG_START_FIRST_BATCH_MAX_S,
     odds_first_n_avg_count: int = _ODDS_FIRST_N_AVG_COUNT,
     odds_first_n_avg_max_s: float = _ODDS_FIRST_N_AVG_MAX_S,
     non_pm_sample_limit: int = _NON_PM_ODDS_SAMPLE_LIMIT,
@@ -818,6 +857,7 @@ async def read_step2_observations(
         # Wrong-start map across all 23,307 events.
         prestart_inplay_eids: set[int] = set()
         wrong_start_batches_done = 0
+        wrong_start_first_batch_s: float | None = None
         wrong_start_batches_total = (
             math.ceil(len(ordered_events) / _WRONG_START_BATCH_SIZE) if ordered_events else 0
         )
@@ -921,34 +961,59 @@ async def read_step2_observations(
                         break
                     if batch_pause_s > 0:
                         await asyncio.sleep(batch_pause_s)
+                        if time.monotonic() >= deadline:
+                            stopped_early = True
+                            stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
+                            stop_stage = "wrong_start_batch"
+                            break
                     batch = ordered_events[
                         b_idx * _WRONG_START_BATCH_SIZE : (b_idx + 1) * _WRONG_START_BATCH_SIZE
                     ]
                     ws_eids = [int(ev["event_id"]) for ev in batch]
                     ws_starts = [_as_utc(ev["start"]) for ev in batch]
+                    ws_stmt_timeout_s = (
+                        min(
+                            _WRONG_START_STMT_TIMEOUT_S,
+                            max(1, math.ceil(wrong_start_first_batch_max_s)),
+                        )
+                        if b_idx == 0
+                        else _WRONG_START_STMT_TIMEOUT_S
+                    )
                     await s.rollback()
                     await s.execute(text("SET LOCAL transaction_read_only = on"))
                     await s.execute(
-                        text(f"SET LOCAL statement_timeout = '{_WRONG_START_STMT_TIMEOUT_S}s'")
+                        text(f"SET LOCAL statement_timeout = '{ws_stmt_timeout_s}s'")
                     )
+                    ws_t0 = time.monotonic()
                     try:
                         ws_res = await s.execute(
                             wrong_start_stmt, {"event_ids": ws_eids, "starts": ws_starts}
                         )
                         ws_rows = ws_res.mappings().all()
+                        ws_elapsed = time.monotonic() - ws_t0
                         statements_executed += 1
                         await s.rollback()
                     except Exception as exc:  # noqa: BLE001
                         await s.rollback()
                         stopped_early = True
                         stop_reason = (
-                            f"statement_timeout_{_WRONG_START_STMT_TIMEOUT_S}s"
+                            f"statement_timeout_{ws_stmt_timeout_s}s"
                             if is_statement_timeout(exc)
                             else f"error:{type(exc).__name__}"
                         )
                         stop_stage = "wrong_start_batch"
                         break
                     wrong_start_batches_done += 1
+                    if b_idx == 0:
+                        wrong_start_first_batch_s = round(ws_elapsed, 3)
+                        if ws_elapsed > wrong_start_first_batch_max_s:
+                            stopped_early = True
+                            stop_reason = (
+                                f"wrong_start_first_batch_over_{wrong_start_first_batch_max_s:g}s "
+                                f"({ws_elapsed:.2f}s)"
+                            )
+                            stop_stage = "wrong_start_batch"
+                            break
                     for r in ws_rows:
                         if r["has_prestart_inplay_wp"]:
                             prestart_inplay_eids.add(int(r["event_id"]))
@@ -1180,6 +1245,7 @@ async def read_step2_observations(
             "wp_batches_total": wp_batches_total,
             "wrong_start_batches_done": wrong_start_batches_done,
             "wrong_start_batches_total": wrong_start_batches_total,
+            "wrong_start_first_batch_s": wrong_start_first_batch_s,
             "esm_detail_batches_done": esm_detail_batches_done,
             "esm_detail_batches_total": esm_detail_batches_total,
             "esm_events_count": len(esm_eids),
@@ -2260,7 +2326,7 @@ def main() -> int:
         write_per_game_jsonl_gz(args.per_game_out, raw_rec, clean_rec)
 
     print(md)
-    return 2 if report.get("aborted") else 0
+    return 2 if (report.get("aborted") or obs.get("stopped_early")) else 0
 
 
 if __name__ == "__main__":

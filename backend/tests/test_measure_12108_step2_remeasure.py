@@ -743,3 +743,302 @@ class TestVerdictGateAndReport:
         t1_e1001 = next(r for r in rows if r["horizon"] == "t_minus_1h" and r["event_id"] == 1001)
         assert "espn" in t1_e1001["raw_sources"]
         assert "espn" not in t1_e1001["clean_sources"]
+
+
+_OLD_WRONG_START_BATCH_SQL_448A = f"""
+SELECT b.event_id AS event_id,
+       EXISTS (
+           SELECT 1
+             FROM win_prob_snapshots w
+            WHERE w.event_id = b.event_id
+              AND w.captured_at < b.start_at
+              AND w.captured_at < TIMESTAMPTZ '{step2._PRE_NOV6_ISO}'
+              AND w.game_state IS NOT NULL
+              AND COALESCE(w.game_state->>'backfilled', '') <> 'true'
+              AND (
+                  LOWER(COALESCE(w.game_state->>'period', '')) NOT IN (
+                      '', 'start', 'pre', 'pregame', 'scheduled', '0', 'tbd'
+                  )
+                  OR (
+                      NULLIF(TRIM(COALESCE(w.game_state->>'inning', '')), '') IS NOT NULL
+                      AND LOWER(TRIM(COALESCE(w.game_state->>'inning', ''))) <> '0'
+                  )
+                  OR (
+                      (w.game_state->>'home_score') ~ '^[0-9]+$'
+                      AND CAST(w.game_state->>'home_score' AS integer) > 0
+                  )
+                  OR (
+                      (w.game_state->>'away_score') ~ '^[0-9]+$'
+                      AND CAST(w.game_state->>'away_score' AS integer) > 0
+                  )
+              )
+       ) AS has_prestart_inplay_wp
+  FROM unnest(CAST(:event_ids AS bigint[]), CAST(:starts AS timestamptz[])) AS b(event_id, start_at)
+""".strip()
+
+
+class TestWrongStartBatchSql410B:
+    def test_wrong_start_sql_matches_original_verbatim_on_local_postgres(self) -> None:
+        from sqlalchemy import create_engine, text
+
+        conn = None
+        engine = None
+        for dsn in (
+            "postgresql+psycopg2:///postgres",
+            "postgresql+psycopg2://postgres:postgres@localhost:5432/postgres",
+        ):
+            try:
+                candidate = create_engine(dsn)
+                conn = candidate.connect()
+                engine = candidate
+                break
+            except Exception:
+                continue
+        assert conn is not None and engine is not None, (
+            "Local PostgreSQL server is required to run 410: B SQL equivalence test"
+        )
+
+        try:
+            conn.execute(
+                text(
+                    """
+                    CREATE TEMP TABLE win_prob_snapshots (
+                        id bigserial PRIMARY KEY,
+                        event_id bigint NOT NULL,
+                        source varchar(30) NOT NULL,
+                        captured_at timestamptz NOT NULL,
+                        game_state jsonb
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX ix_winprob_event_source_captured "
+                    "ON win_prob_snapshots (event_id, source, captured_at)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX ix_win_prob_snapshots_event_id "
+                    "ON win_prob_snapshots (event_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX ix_winprob_event_source "
+                    "ON win_prob_snapshots (event_id, source)"
+                )
+            )
+
+            base = _dt(2026, 10, 15, 20, 0)
+            pre_nov6_start = _dt(2026, 11, 6, 5, 0)
+            starts_by_eid = {eid: base for eid in range(101, 111)}
+            starts_by_eid[109] = pre_nov6_start
+
+            seeded_rows = [
+                # 101: two sources — benign espn + pre-start inplay kalshi -> True
+                (101, "espn", base - timedelta(minutes=20), json.dumps({"period": "Pre"})),
+                (101, "kalshi", base - timedelta(minutes=5), json.dumps({"period": "Q1"})),
+                # 102: two sources — backfilled period=1 + non-backfilled stat_model home_score=2 -> True
+                (102, "backfill", base - timedelta(minutes=15), json.dumps({"period": "1", "backfilled": "true"})),
+                (102, "stat_model", base - timedelta(minutes=3), json.dumps({"period": "start", "home_score": "2"})),
+                # 103: ONLY backfilled inplay rows before start + benign espn pregame -> False
+                (103, "backfill", base - timedelta(minutes=30), json.dumps({"period": "Q2", "backfilled": "true"})),
+                (103, "espn", base - timedelta(minutes=10), json.dumps({"period": "scheduled", "backfilled": False})),
+                # 104: NONE before start — only post-start inplay rows across two sources -> False
+                (104, "espn", base + timedelta(minutes=1), json.dumps({"period": "1st", "home_score": "7"})),
+                (104, "kalshi", base + timedelta(minutes=15), json.dumps({"period": "2nd"})),
+                # 105: NO rows at all in win_prob_snapshots -> False
+                # 106: Only benign pregame states & NULL game_state before start -> False
+                (106, "espn", base - timedelta(minutes=30), None),
+                (106, "kalshi", base - timedelta(minutes=25), json.dumps({"period": "", "inning": "0", "home_score": "0", "away_score": "abc"})),
+                (106, "polymarket", base - timedelta(minutes=20), json.dumps({"period": "TBD", "inning": "  "})),
+                (106, "betting", base - timedelta(minutes=10), json.dumps({"period": "Pregame", "away_score": "0"})),
+                # 107: Non-zero inning before start -> True
+                (107, "mlb", base - timedelta(minutes=8), json.dumps({"period": "pre", "inning": "2"})),
+                # 108: Positive away_score before start -> True
+                (108, "betting", base - timedelta(minutes=4), json.dumps({"away_score": "3"})),
+                # 109: Captured exactly at start or >= _PRE_NOV6_ISO -> False
+                (109, "espn", pre_nov6_start, json.dumps({"period": "Q1"})),
+                (109, "kalshi", _dt(2026, 11, 6, 0, 0), json.dumps({"period": "Q1"})),
+                # 110: Three sources (post-start, backfilled, and pre-start 1st Quarter) -> True
+                (110, "espn", base + timedelta(minutes=5), json.dumps({"period": "Q1"})),
+                (110, "backfill", base - timedelta(minutes=12), json.dumps({"period": "Final", "backfilled": "true"})),
+                (110, "kalshi", base - timedelta(minutes=2), json.dumps({"period": "1st Quarter"})),
+            ]
+            # Also add bulk rows for events 201..310 (100+ event batch with heavy post-start traffic)
+            for eid in range(201, 311):
+                starts_by_eid[eid] = base
+                for src in ("betting", "espn", "kalshi"):
+                    for step in range(40):
+                        cap = base + timedelta(minutes=step - 5)
+                        gs = {"period": "Q1"} if step >= 5 else {"period": "pre"}
+                        seeded_rows.append((eid, src, cap, json.dumps(gs)))
+            # Make event 255 true via one pre-start inplay tick on polymarket.
+            seeded_rows.append((255, "polymarket", base - timedelta(minutes=1), json.dumps({"period": "1H"})))
+
+            for eid, src, cap, gs_json in seeded_rows:
+                conn.execute(
+                    text(
+                        "INSERT INTO win_prob_snapshots (event_id, source, captured_at, game_state) "
+                        "VALUES (:eid, :src, :cap, CAST(:gs AS jsonb))"
+                    ),
+                    {"eid": eid, "src": src, "cap": cap, "gs": gs_json},
+                )
+            conn.execute(text("ANALYZE win_prob_snapshots"))
+
+            all_eids = sorted(starts_by_eid)
+            all_starts = [starts_by_eid[eid] for eid in all_eids]
+            params = {"event_ids": all_eids, "starts": all_starts}
+
+            old_rows = conn.execute(text(_OLD_WRONG_START_BATCH_SQL_448A), params).mappings().all()
+            new_rows = conn.execute(text(step2.WRONG_START_BATCH_SQL), params).mappings().all()
+
+            old_map = {int(r["event_id"]): bool(r["has_prestart_inplay_wp"]) for r in old_rows}
+            new_map = {int(r["event_id"]): bool(r["has_prestart_inplay_wp"]) for r in new_rows}
+
+            expected = {
+                101: True,
+                102: True,
+                103: False,
+                104: False,
+                105: False,
+                106: False,
+                107: True,
+                108: True,
+                109: False,
+                110: True,
+                **{eid: (eid == 255) for eid in range(201, 311)},
+            }
+            assert old_map == expected
+            assert new_map == old_map
+
+            plan_lines = [
+                r[0]
+                for r in conn.execute(
+                    text(f"EXPLAIN {step2.WRONG_START_BATCH_SQL}"), params
+                ).fetchall()
+            ]
+            assert any("ix_winprob_event_source_captured" in line for line in plan_lines), "\n".join(plan_lines)
+        finally:
+            conn.rollback()
+            conn.close()
+            engine.dispose()
+
+    def test_wrong_start_stop_rules_and_batch_size(self, monkeypatch) -> None:
+        import asyncio
+        import time
+
+        assert step2._WRONG_START_BATCH_SIZE == 100
+        assert step2._WRONG_START_FIRST_BATCH_MAX_S == 30.0
+        assert step2._MAX_READ_DURATION_S == 1800.0
+
+        class _FakeMappingsResult:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def __iter__(self):
+                return iter(self._rows)
+
+            def mappings(self):
+                return self
+
+            def all(self):
+                return list(self._rows)
+
+        class _SlowFirstWrongStartSession:
+            def __init__(self, delay_s: float):
+                self._delay_s = delay_s
+                self.wrong_start_calls = 0
+                self.esm_or_odds_calls = 0
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+            async def rollback(self):
+                return None
+
+            async def execute(self, stmt, params=None):
+                sql = str(stmt)
+                if "SET LOCAL" in sql:
+                    return _FakeMappingsResult([])
+                if "FROM events e" in sql and "ORDER BY e.id" in sql:
+                    base = _dt(2026, 10, 15, 20, 0)
+                    return _FakeMappingsResult(
+                        [
+                            {
+                                "event_id": 1000 + i,
+                                "start": base + timedelta(days=i),
+                                "completed_at": base + timedelta(days=i, hours=3),
+                                "score_observed_at": base + timedelta(days=i, minutes=30),
+                                "home_team_name": f"H{i}",
+                                "away_team_name": f"A{i}",
+                                "home_score": 100,
+                                "away_score": 90,
+                                "league": "basketball_nba",
+                                "sport_group": "Basketball",
+                            }
+                            for i in range(150)
+                        ]
+                    )
+                if "WIN_PROB_BATCH_SQL" in sql or ("FROM unnest(" in sql and "CROSS JOIN (" in sql):
+                    return _FakeMappingsResult([])
+                if sql.strip() == step2.WRONG_START_BATCH_SQL.strip():
+                    self.wrong_start_calls += 1
+                    await asyncio.sleep(self._delay_s)
+                    return _FakeMappingsResult(
+                        [
+                            {"event_id": eid, "has_prestart_inplay_wp": False}
+                            for eid in params["event_ids"]
+                        ]
+                    )
+                self.esm_or_odds_calls += 1
+                return _FakeMappingsResult([])
+
+        class _FakeEngine:
+            async def dispose(self):
+                return None
+
+        # 1. Slow first wrong_start batch > wrong_start_first_batch_max_s stops immediately.
+        session1 = _SlowFirstWrongStartSession(delay_s=0.04)
+        monkeypatch.setattr(step2, "create_async_engine", lambda *_a, **_kw: _FakeEngine())
+        monkeypatch.setattr(step2, "async_sessionmaker", lambda *_a, **_kw: (lambda: session1))
+
+        obs1 = asyncio.run(
+            step2.read_step2_observations(
+                "postgresql://unused/local",
+                batch_pause_s=0.0,
+                wrong_start_first_batch_max_s=0.01,
+                max_read_duration_s=1800.0,
+            )
+        )
+        assert obs1["stopped_early"] is True
+        assert obs1["stop_stage"] == "wrong_start_batch"
+        assert obs1["stop_reason"].startswith("wrong_start_first_batch_over_")
+        assert obs1["wrong_start_first_batch_s"] is not None
+        assert obs1["wrong_start_batches_total"] == 2
+        assert obs1["wrong_start_batches_done"] == 1
+        assert session1.wrong_start_calls == 1
+        assert session1.esm_or_odds_calls == 0
+
+        # 2. Total duration past max_read_duration_s stops cleanly between wrong_start batches.
+        session2 = _SlowFirstWrongStartSession(delay_s=0.03)
+        monkeypatch.setattr(step2, "async_sessionmaker", lambda *_a, **_kw: (lambda: session2))
+        obs2 = asyncio.run(
+            step2.read_step2_observations(
+                "postgresql://unused/local",
+                batch_pause_s=0.02,
+                wrong_start_first_batch_max_s=30.0,
+                max_read_duration_s=0.04,
+            )
+        )
+        assert obs2["stopped_early"] is True
+        assert obs2["stop_stage"] == "wrong_start_batch"
+        assert obs2["stop_reason"].startswith("max_read_duration_")
+        assert session2.wrong_start_calls == 1
+        assert session2.esm_or_odds_calls == 0
+        _ = time.monotonic()
