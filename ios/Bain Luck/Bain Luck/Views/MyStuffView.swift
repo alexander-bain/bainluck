@@ -111,18 +111,8 @@ struct MyStuffView: View {
         Button {
             showPinManagement = true
         } label: {
-            HStack {
-                Label("Manage pins", systemImage: "bookmark.fill")
-                    .font(.subheadline.weight(.medium))
-                Spacer()
-                Text("\(pinManager.savedPins.count)")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 16)
+            ManagePinsHeaderRowLabel13941(savedPinCount: pinManager.savedPins.count)
+                .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(Color.cardBackgroundDark)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
