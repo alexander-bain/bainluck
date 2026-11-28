@@ -5479,15 +5479,11 @@ async def _fetch_futures_window(
     nested = await db.begin_nested()
     _arm_t0 = time.perf_counter()
     try:
-        _outcome_stmt = window_query(candidates_in([outcome_arm]))
-        outcome_rows = await _search_sliced_window_rows(
-            db,
-            _outcome_stmt,
-            None if slice_query is None else slice_query([outcome_arm]),
-            lambda ids: window_query(
-                FuturesMarket.id == any_(literal(ids, ARRAY(Integer)))
-            ),
-            _SEARCH_FUTURES_WINDOW,
+        outcome_rows = (
+            (await db.execute(window_query(candidates_in([outcome_arm]))))
+            .scalars()
+            .unique()
+            .all()
         )
     except Exception as exc:  # noqa: BLE001 — re-raised below unless it is the bound
         _arm_done("outcome")

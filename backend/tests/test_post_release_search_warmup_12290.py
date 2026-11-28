@@ -11,9 +11,6 @@ Verifies:
    preserving healthy sibling warm-ups.
 4. ``startup_cache_warm_enabled`` honors ``STARTUP_CACHE_WARM`` overrides and
    ``DYNO`` default; ``main.lifespan`` invokes it when enabled and skips when disabled.
-5. ``_fetch_futures_window`` routes ``outcome_arm`` through ``_search_sliced_window_rows``
-   when ``slice_query`` is given and keeps the unsliced fallback when ``slice_query``
-   is None or a full slice yields too few survivors.
 """
 
 from __future__ import annotations
@@ -277,82 +274,3 @@ class TestStartupCacheWarmup:
         async with main_module.lifespan(main_module.app):
             pass
         warm_mock.assert_awaited_once()
-
-
-class TestOutcomeArmUsesSlicedWindow:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("fallback_to_full", [False, True])
-    async def test_outcome_arm_uses_slice_query_and_falls_back_only_when_needed(
-        self, monkeypatch, fallback_to_full: bool
-    ):
-        class _Row:
-            def __init__(self, row_id: int, tier: int):
-                self.id = row_id
-                self.tier = tier
-
-        async def _fake_apply(db, deadline=None, bound_ms=None):
-            return None
-
-        monkeypatch.setattr(ev, "_apply_search_statement_timeout", _fake_apply)
-
-        ran: list[object] = []
-        slice_cap = ev._SEARCH_OPEN_NOW_SLICE
-
-        class _Savepoint:
-            async def commit(self):
-                return None
-
-            async def rollback(self):
-                return None
-
-        class _DB:
-            async def begin_nested(self):
-                return _Savepoint()
-
-            async def execute(self, stmt):
-                ran.append(stmt)
-                if stmt == ("SLICE", ("name",)):
-                    return _FakeResult([1])
-                if stmt == ("SLICE", ("outcome",)):
-                    if fallback_to_full:
-                        return _FakeResult(list(range(100, 100 + slice_cap)))
-                    return _FakeResult([101, 102])
-                if isinstance(stmt, tuple) and stmt[0] == "OVER_IDS":
-                    if len(ran) >= 2 and ran[-2] == ("SLICE", ("name",)):
-                        return _FakeResult([_Row(1, 0)])
-                    if fallback_to_full:
-                        # Only 3 survived _futures_game_already_played from full slice
-                        return _FakeResult([_Row(101, 2), _Row(102, 2), _Row(103, 2)])
-                    return _FakeResult([_Row(101, 2), _Row(102, 2)])
-                if stmt == ("WINDOW", frozenset(["outcome"])) and fallback_to_full:
-                    return _FakeResult([_Row(101, 2), _Row(102, 2), _Row(103, 2), _Row(104, 2)])
-                raise AssertionError(f"Unexpected execution: {stmt!r}")
-
-        class _FakeQuery(tuple):
-            def limit(self, _n: int):
-                return self
-
-        def _window_query(candidate_filter):
-            if isinstance(candidate_filter, frozenset):
-                return _FakeQuery(("WINDOW", candidate_filter))
-            # ``over_ids(slice_ids)`` passes ``FuturesMarket.id == any_(...)``.
-            return _FakeQuery(("OVER_IDS", str(candidate_filter)))
-
-        db = _DB()
-        rows, state = await ev._fetch_futures_window(
-            db,
-            _window_query,
-            lambda arms: frozenset(arms),
-            ["name"],
-            "outcome",
-            ev.time.monotonic() + 30.0,
-            slice_query=lambda arms: ("SLICE", tuple(arms)),
-        )
-        assert state == "merged"
-        if not fallback_to_full:
-            assert [r.id for r in rows] == [1, 101, 102]
-            assert ("WINDOW", frozenset(["outcome"])) not in ran
-            assert ("SLICE", ("outcome",)) in ran
-        else:
-            assert [r.id for r in rows] == [1, 101, 102, 103, 104]
-            assert ("WINDOW", frozenset(["outcome"])) in ran
