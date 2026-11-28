@@ -747,6 +747,7 @@ from kombu import Queue
 #: a day. It removes no load. The warmers it displaces served about 0 real
 #: searches in 60 minutes. Revert = route it back to `background`.
 DISCOVER_BASE_QUEUE = "discover_base"
+SCOUT_NIGHTLY_QUEUE = "scout_nightly"
 
 celery_app.conf.task_queues = [
     Queue("realtime", routing_key="realtime"),
@@ -755,6 +756,10 @@ celery_app.conf.task_queues = [
     # #12042 L-1: the Discover base rebuild's own lane, served FIRST by
     # `worker-background` (see `queue_order_strategy` above and the Procfile).
     Queue(DISCOVER_BASE_QUEUE, routing_key=DISCOVER_BASE_QUEUE),
+    # #13102: Nightly Fun Scout priority lane, served after `discover_base`
+    # and before the general `background` FIFO backlog so 1:00 AM PT runs are
+    # never starved for hours by overnight maintenance jobs.
+    Queue(SCOUT_NIGHTLY_QUEUE, routing_key=SCOUT_NIGHTLY_QUEUE),
 ]
 
 celery_app.conf.task_default_queue = "background"
@@ -762,6 +767,8 @@ celery_app.conf.task_default_queue = "background"
 celery_app.conf.task_routes = {
     # #12042 L-1: the Discover base rebuild runs on its own lane (above).
     "app.tasks.precompute_discover_candidate_base": {"queue": DISCOVER_BASE_QUEUE},
+    # #13102: Nightly Fun Scout runs on its dedicated priority lane.
+    "app.tasks.discover_fun_scout": {"queue": SCOUT_NIGHTLY_QUEUE},
     # --- Realtime: live game data (30s-120s cycle) ---
     "app.tasks.poll_all_odds": {"queue": "realtime"},
     "app.tasks.poll_datagolf_inplay": {"queue": "realtime"},
@@ -1059,6 +1066,10 @@ HEAVY_TASKS = {
     # `VENUE_GAP_BACKFILL_WALL_S` lowers that without a deploy; unsetting
     # `VENUE_GAP_BACKFILL_ENABLED` is the whole revert.
     "app.tasks.backfill_venue_history_gaps",
+    # #13102: 1:25 AM PT (09:25 UTC) Fun Scout watchdog checks GitHub #13102
+    # from `heavy` (zero contention with `worker-background`) and alerts #13580
+    # loudly if the 1:00 AM PT report did not post.
+    "app.tasks.discover_fun_scout_watchdog",
     # --- 🔄 `prewarm_live_feed_shapes` IS NO LONGER A MEMBER OF THIS SET. It was
     # added by D68-next below and REMOVED by #3765 (LAT-P179, Fable D51) on
     # 2026-09-07; it routes to `realtime` from `task_routes` above, where the
@@ -6035,7 +6046,8 @@ def grouping_sentinel(self, post=True, file_issues=False):
 def discover_fun_scout(self, force=False):
     """Nightly Fun Scout (#13102, Ruling 276: B): tag fun single markets on the
     small model and propose novel cross-family sets on Claude under Decide 61-A
-    caps ($5/run, $30/month). Runs on ``bainluck``'s ``background`` queue where
+    caps ($5/run, $30/month). Runs on ``bainluck``'s ``scout_nightly`` priority
+    lane (drained after ``discover_base`` and before ``background``) where
     ``ANTHROPIC_API_KEY_SCOUT`` is configured; no-ops while
     ``DISCOVER_FUN_SCOUT_ENABLED`` is off unless ``force=True``."""
     from app.tasks.discover_fun_scout import _run_discover_fun_scout
@@ -6043,6 +6055,23 @@ def discover_fun_scout(self, force=False):
     return _tracked_run(
         "discover_fun_scout",
         _run_discover_fun_scout(force=force),
+    )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=60,
+    time_limit=90,
+    name="app.tasks.discover_fun_scout_watchdog",
+)
+def discover_fun_scout_watchdog(self):
+    """Daily 09:25 UTC (1:25 AM PST) watchdog (#13102): verifies tonight's Fun
+    Scout posted on #13102 and posts loudly to #13580 by 1:30 AM PT if missing."""
+    from app.tasks.discover_fun_scout import _run_discover_fun_scout_watchdog
+
+    return _tracked_run(
+        "discover_fun_scout_watchdog",
+        _run_discover_fun_scout_watchdog(),
     )
 
 
@@ -9692,12 +9721,19 @@ celery_app.conf.beat_schedule = {
     },
     "discover-fun-scout-nightly": {
         # #13102 (Ruling 276: B): nightly fun singles + set-writing scout on
-        # bainluck's background queue (where ANTHROPIC_API_KEY_SCOUT lives).
-        # Runs 09:00 UTC (1:00 AM PT), gated behind DISCOVER_FUN_SCOUT_ENABLED
-        # (default OFF until Wed Nov 25).
+        # bainluck's `scout_nightly` priority lane (where
+        # ANTHROPIC_API_KEY_SCOUT lives), drained before `background` FIFO.
+        # Runs 09:00 UTC (1:00 AM PST).
         "task": "app.tasks.discover_fun_scout",
         "schedule": crontab(minute=0, hour=9),  # Daily 09:00 UTC (1:00 AM PT)
-        "options": {"queue": "background"},
+        "options": {"queue": SCOUT_NIGHTLY_QUEUE},
+    },
+    "discover-fun-scout-watchdog-daily": {
+        # #13102: loud missing-scout watchdog on `heavy` 25 min after 1:00 AM
+        # PST fire (before 1:30 AM PT deadline).
+        "task": "app.tasks.discover_fun_scout_watchdog",
+        "schedule": crontab(minute=25, hour=9),  # Daily 09:25 UTC (1:25 AM PST)
+        "options": {"queue": "heavy"},
     },
     "propose-uncovered-containers-nightly": {
         # #12221 / Decision 386: A: nightly uncovered-family Kit container page

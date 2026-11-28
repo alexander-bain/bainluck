@@ -25,7 +25,8 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy import select
@@ -89,6 +90,12 @@ _LICENCE_STATE_REDIS_KEY = "bainluck:fun_scout:licence_state"
 _RETIRED_SETS_REDIS_KEY = "bainluck:fun_scout:retired_sets"
 
 SCOUT_REPORT_ISSUE_NUMBER = 13102
+SCOUT_ALERT_ISSUE_NUMBER = 13580
+_DISABLED_MARKER_REDIS_PREFIX = "bainluck:fun_scout:disabled"
+_MISSING_ALERT_CLAIM_REDIS_PREFIX = "bainluck:fun_scout:missing_alert_claimed"
+_GITHUB_COMMENT_PER_PAGE = 100
+_GITHUB_COMMENT_MAX_PAGES = 10
+_PT_TZ = ZoneInfo("America/Los_Angeles")
 
 # In-process fallback so a worker whose Redis write failed cannot undercount on
 # a subsequent invocation in the same process even if marking Redis also failed.
@@ -664,28 +671,30 @@ async def _load_known_sets_durable(
     )
 
 
-def _post_scout_report_to_github(
-    artifact: dict[str, Any],
-    *,
-    issue_number: int = SCOUT_REPORT_ISSUE_NUMBER,
+def _github_headers(token: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def _post_issue_comment_to_github(
+    issue_number: int,
+    body: str,
 ) -> tuple[Optional[str], Optional[str]]:
-    """Post the nightly scout report as a comment on #13102 so Fable can open it."""
+    """Post a markdown comment to a GitHub issue, reading ``GITHUB_TOKEN`` dynamically."""
     from app.tasks.bug_report_github import REPO
 
     token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not token:
         return None, "GITHUB_TOKEN not set"
 
-    body = format_scout_nightly_comment_markdown(artifact)
     url = f"https://api.github.com/repos/{REPO}/issues/{int(issue_number)}/comments"
     try:
         resp = httpx.post(
             url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
+            headers=_github_headers(token),
             json={"body": body},
             timeout=20.0,
         )
@@ -695,6 +704,178 @@ def _post_scout_report_to_github(
         return str(payload.get("html_url") or ""), None
     except Exception as exc:
         return None, f"{type(exc).__name__}: {exc}"
+
+
+def _scan_issue_comments_for_marker(
+    issue_number: int,
+    *,
+    since: Optional[str],
+    matcher: Callable[[str], bool],
+) -> tuple[Optional[bool], Optional[str]]:
+    """Paginate issue comments cleanly; never misread an API error as absent."""
+    from app.tasks.bug_report_github import REPO
+
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if not token:
+        return None, "GITHUB_TOKEN not set"
+
+    url = f"https://api.github.com/repos/{REPO}/issues/{int(issue_number)}/comments"
+    headers = _github_headers(token)
+    try:
+        for page in range(1, _GITHUB_COMMENT_MAX_PAGES + 1):
+            params: dict[str, Any] = {
+                "per_page": _GITHUB_COMMENT_PER_PAGE,
+                "page": page,
+            }
+            if since:
+                params["since"] = since
+            resp = httpx.get(url, headers=headers, params=params, timeout=20.0)
+            if resp.status_code != 200:
+                return None, f"GitHub API HTTP {resp.status_code}"
+            batch = resp.json()
+            if not isinstance(batch, list):
+                return None, "GitHub API comments payload was not a list"
+            for comment in batch:
+                body = str((comment or {}).get("body") or "")
+                if matcher(body):
+                    return True, str((comment or {}).get("html_url") or "")
+            if len(batch) < _GITHUB_COMMENT_PER_PAGE:
+                return False, None
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+    return None, f"comment list truncated at {_GITHUB_COMMENT_MAX_PAGES} pages"
+
+
+def _missing_scout_alert_marker(run_date: str) -> str:
+    return f"<!-- fun-scout-missing:{run_date} -->"
+
+
+def _check_scout_report_posted_on_github(
+    run_date: str,
+    *,
+    issue_number: int = SCOUT_REPORT_ISSUE_NUMBER,
+) -> tuple[Optional[bool], Optional[str]]:
+    """Verify whether #13102 carries today's Nightly Fun Scout report."""
+    expected_code_heading = f"## Nightly Fun Scout Report — {_md_code_span(run_date)}"
+    expected_plain_heading = f"Nightly Fun Scout Report — {run_date}"
+    return _scan_issue_comments_for_marker(
+        issue_number,
+        since=f"{run_date}T00:00:00Z",
+        matcher=lambda body: (
+            expected_code_heading in body or expected_plain_heading in body
+        ),
+    )
+
+
+def _find_existing_missing_scout_alert(
+    run_date: str,
+    *,
+    issue_number: int = SCOUT_ALERT_ISSUE_NUMBER,
+) -> tuple[Optional[bool], Optional[str]]:
+    """Check whether #13580 already has today's loud missing-scout alert."""
+    marker = _missing_scout_alert_marker(run_date)
+    return _scan_issue_comments_for_marker(
+        issue_number,
+        since=f"{run_date}T00:00:00Z",
+        matcher=lambda body: marker in body,
+    )
+
+
+def _record_disabled_marker_redis(run_date: str) -> None:
+    """Best-effort Redis note so the heavy watchdog knows the run was disabled."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        client = get_redis_client()
+        client.set(f"{_DISABLED_MARKER_REDIS_PREFIX}:{run_date}", "1", ex=86400)
+    except Exception:
+        pass
+
+
+def _inspect_fun_scout_runtime_state(run_date: str) -> dict[str, Any]:
+    """Read best-effort Redis indicators to enrich a missing-scout alert."""
+    state: dict[str, Any] = {
+        "disabled_for_date": False,
+        "run_artifact_for_date": False,
+        "latest_run_date": None,
+        "scout_nightly_queue_depth": None,
+        "background_queue_depth": None,
+    }
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        client = get_redis_client()
+        state["disabled_for_date"] = bool(
+            client.get(f"{_DISABLED_MARKER_REDIS_PREFIX}:{run_date}")
+        )
+        state["run_artifact_for_date"] = bool(
+            client.get(f"{_RUN_ARTIFACT_REDIS_PREFIX}:{run_date}")
+        )
+        latest_raw = client.get(_RUN_ARTIFACT_LATEST_KEY)
+        if latest_raw:
+            if isinstance(latest_raw, bytes):
+                latest_raw = latest_raw.decode("utf-8", errors="replace")
+            try:
+                latest_obj = json.loads(str(latest_raw))
+                if isinstance(latest_obj, dict):
+                    state["latest_run_date"] = latest_obj.get("run_date")
+            except Exception:
+                pass
+        llen_fn = getattr(client, "llen", None)
+        if callable(llen_fn):
+            for field, qname in (
+                ("scout_nightly_queue_depth", "scout_nightly"),
+                ("background_queue_depth", "background"),
+            ):
+                try:
+                    state[field] = int(llen_fn(qname))
+                except Exception:
+                    state[field] = None
+    except Exception as exc:
+        state["redis_error"] = f"{type(exc).__name__}: {exc}"
+    return state
+
+
+def _post_missing_scout_alert_to_github(
+    run_date: str,
+    *,
+    checked_at: datetime,
+    report_issue_number: int = SCOUT_REPORT_ISSUE_NUMBER,
+    alert_issue_number: int = SCOUT_ALERT_ISSUE_NUMBER,
+    runtime_state: Optional[dict[str, Any]] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    """Post a loud alert comment to #13580 when #13102 has no report for today."""
+    checked_utc = checked_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    checked_pt = checked_at.astimezone(_PT_TZ).strftime("%Y-%m-%d %I:%M %p %Z")
+    diag = runtime_state or {}
+    lines = [
+        f"ALERT · **Nightly Fun Scout report missing for `{run_date}` on #{int(report_issue_number)}**",
+        "",
+        f"- **Checked at:** `{checked_utc}` (`{checked_pt}` — scheduled 1:00 AM PT scout did not post within 25 minutes)",
+        f"- **Run artifact in Redis for `{run_date}`:** `{bool(diag.get('run_artifact_for_date'))}` "
+        f"(latest artifact date: `{diag.get('latest_run_date')}`)",
+        f"- **Queue depths:** `scout_nightly={diag.get('scout_nightly_queue_depth')}`, "
+        f"`background={diag.get('background_queue_depth')}`",
+    ]
+    if diag.get("redis_error"):
+        lines.append(f"- **Redis diagnostic error:** `{diag['redis_error']}`")
+    lines.extend(
+        [
+            "",
+            _missing_scout_alert_marker(run_date),
+        ]
+    )
+    return _post_issue_comment_to_github(alert_issue_number, "\n".join(lines))
+
+
+def _post_scout_report_to_github(
+    artifact: dict[str, Any],
+    *,
+    issue_number: int = SCOUT_REPORT_ISSUE_NUMBER,
+) -> tuple[Optional[str], Optional[str]]:
+    """Post the nightly scout report as a comment on #13102 so Fable can open it."""
+    body = format_scout_nightly_comment_markdown(artifact)
+    return _post_issue_comment_to_github(issue_number, body)
 
 
 async def fetch_open_non_sports_markets_for_scout(
@@ -764,11 +945,12 @@ async def _run_discover_fun_scout(
     report_issue_number: int = SCOUT_REPORT_ISSUE_NUMBER,
 ) -> dict[str, Any]:
     """Execute one scheduled or attended Nightly Fun Scout run."""
+    run_now = now or datetime.now(timezone.utc)
     if not force and not is_fun_scout_enabled():
         logger.info("Nightly fun scout skipped: DISCOVER_FUN_SCOUT_ENABLED is off")
+        _record_disabled_marker_redis(run_now.strftime("%Y-%m-%d"))
         return {"status": "disabled"}
 
-    run_now = now or datetime.now(timezone.utc)
     month_key = run_now.strftime("%Y-%m")
     prior_spend = _read_monthly_spend_usd(month_key)
 
@@ -838,6 +1020,13 @@ async def _run_discover_fun_scout(
         github_url, github_error = _post_scout_report_to_github(
             artifact, issue_number=report_issue_number
         )
+        if github_error:
+            logger.error(
+                "Fun scout finished (%s) but failed to post report to #%d: %s",
+                artifact.get("run_date"),
+                report_issue_number,
+                github_error,
+            )
 
     status = (
         "completed"
@@ -862,4 +1051,113 @@ async def _run_discover_fun_scout(
         "redis_artifact_error": redis_error,
         "github_comment_url": github_url,
         "github_comment_error": github_error,
+    }
+
+
+async def _run_discover_fun_scout_watchdog(
+    *,
+    now: Optional[datetime] = None,
+    report_issue_number: int = SCOUT_REPORT_ISSUE_NUMBER,
+    alert_issue_number: int = SCOUT_ALERT_ISSUE_NUMBER,
+) -> dict[str, Any]:
+    """Check by 1:25 AM PT (09:25 UTC) that tonight's Fun Scout posted on #13102.
+
+    Runs on ``bainluck-heavy`` (never checks ``is_fun_scout_enabled()`` locally,
+    because ``DISCOVER_FUN_SCOUT_ENABLED`` lives only on ``bainluck``; instead
+    respects the Redis disabled marker written by a disabled run).
+    """
+    checked_at = now or datetime.now(timezone.utc)
+    run_date = checked_at.strftime("%Y-%m-%d")
+
+    posted, info = _check_scout_report_posted_on_github(
+        run_date, issue_number=report_issue_number
+    )
+    if posted is True:
+        return {"status": "ok", "run_date": run_date, "report_url": info}
+    if posted is None:
+        logger.error(
+            "Fun scout watchdog could not read #%d for %s: %s",
+            report_issue_number,
+            run_date,
+            info,
+        )
+        return {"status": "github_read_failed", "run_date": run_date, "error": info}
+
+    runtime_state = _inspect_fun_scout_runtime_state(run_date)
+    if runtime_state.get("disabled_for_date"):
+        logger.info("Fun scout watchdog silent for %s: run recorded disabled", run_date)
+        return {"status": "skipped_disabled", "run_date": run_date}
+
+    logger.error(
+        "Nightly Fun Scout missing report for %s on #%d at %s (runtime=%s)",
+        run_date,
+        report_issue_number,
+        checked_at.isoformat(),
+        runtime_state,
+    )
+
+    alerted, alert_info = _find_existing_missing_scout_alert(
+        run_date, issue_number=alert_issue_number
+    )
+    if alerted is True:
+        return {
+            "status": "already_alerted",
+            "run_date": run_date,
+            "alert_url": alert_info,
+        }
+    if alerted is None:
+        logger.error(
+            "Fun scout watchdog could not read #%d for missing-alert dedup (%s): %s",
+            alert_issue_number,
+            run_date,
+            alert_info,
+        )
+        return {
+            "status": "alert_dedupe_read_failed",
+            "run_date": run_date,
+            "error": alert_info,
+        }
+
+    claim_key = f"{_MISSING_ALERT_CLAIM_REDIS_PREFIX}:{run_date}"
+    claim_client = None
+    claimed = False
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        claim_client = get_redis_client()
+        set_res = claim_client.set(claim_key, "1", nx=True, ex=86400)
+        if set_res is False:
+            return {"status": "alert_claim_lost", "run_date": run_date}
+        claimed = bool(set_res)
+    except Exception:
+        claim_client = None
+
+    url, err = _post_missing_scout_alert_to_github(
+        run_date,
+        checked_at=checked_at,
+        report_issue_number=report_issue_number,
+        alert_issue_number=alert_issue_number,
+        runtime_state=runtime_state,
+    )
+    if err:
+        logger.error(
+            "Fun scout watchdog failed to post alert to #%d for %s: %s",
+            alert_issue_number,
+            run_date,
+            err,
+        )
+        if claimed and claim_client is not None:
+            delete_fn = getattr(claim_client, "delete", None)
+            if callable(delete_fn):
+                try:
+                    delete_fn(claim_key)
+                except Exception:
+                    pass
+        return {"status": "alert_post_failed", "run_date": run_date, "error": err}
+
+    return {
+        "status": "alerted",
+        "run_date": run_date,
+        "alert_url": url,
+        "runtime_state": runtime_state,
     }

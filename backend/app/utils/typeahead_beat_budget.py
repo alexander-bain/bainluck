@@ -2216,7 +2216,14 @@ def free_background_slots(
 #: 09:35 UTC = 1:35 AM PT) names `options={"queue": "background"}` (1 fire/day,
 #: bounded 2,500-market read into Redis-only preview deck). Census RUN over
 #: assembled `beat_schedule` prints `explicit 117 implicit 38 total 155`.
-BACKGROUND_BEAT_COUNT = 155
+#: 🔴 RE-DERIVED at builder-e/13102-scout-lane-and-loud-watchdog (2026-11-28,
+#: #13102): 155 → 154, explicit 117 → 116, fall-through UNMOVED at 38.
+#: `discover-fun-scout-nightly` (`crontab(minute=0, hour=9)`, daily 09:00 UTC
+#: = 1:00 AM PT) moved off `background` FIFO onto its dedicated `scout_nightly`
+#: priority lane (`discover_base,scout_nightly,background`); the 09:25 UTC
+#: missing-report watchdog runs on `heavy`. Assembled census:
+#: `explicit 116 implicit 38 total 154`.
+BACKGROUND_BEAT_COUNT = 154
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
