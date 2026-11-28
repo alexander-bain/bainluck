@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Draw and verify the sealed (300) and development (200) CU eval sets (#13898).
 
-Read-only script over market tables only (``futures_markets``,
-``futures_outcomes``, ``events``) combined with Discover's top-120 ranking slate
-appearances saved locally. Executes at most one ``READ ONLY`` PostgreSQL session
-that always ends with ``ROLLBACK`` and writes zero database rows.
+Authorization notice: every draw or refresh reads production tables and requires
+Alex's explicit yes. Decision 453 authorized the initial Nov 27 draw only, and
+decision 457 authorized the narrow rank + league key re-freeze over the same
+500 markets. Do NOT run any draw against production without an explicit yes in
+the active window; pass ``DATABASE_URL`` explicitly (never auto-fetched).
 
 Usage:
   # Verify existing committed JSON files against their manifest SHA-256 hashes:
   python3 scripts/draw_cu_eval_sets.py --verify
 
-  # Execute the draw against production using saved slate weights (requires --slates-weights):
+  # Execute a newly authorized draw with saved slate weights and explicit DATABASE_URL:
   DATABASE_URL=... python3 scripts/draw_cu_eval_sets.py --slates-weights /path/to/slate_weights.json
 """
 
@@ -22,7 +23,6 @@ import json
 import math
 import os
 import random
-import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -41,6 +41,16 @@ QUARTERLY_REFRESH_RULE = (
     "Each quarter, retire the third of the sealed set (100 markets) that has been "
     "settled longest (by settled_at, then resolution_date) and draw replacements "
     "from non-pilot, non-sealed open markets using a newly posted seed."
+)
+RULES_TEXT_NOTE = (
+    "rules_text is null on all 500 markets because Bain Luck does not store contract "
+    "rules text on futures_markets rows and the CU writer does not read it."
+)
+DRAW_ORDER_NOTE = (
+    "The development set was drawn after the sealed set from the remaining open markets, "
+    "so it holds fewer of the most-seen markets (10 of 100 reader-weighted development "
+    "rows appeared on all 14 slate days vs 69 of 200 in the sealed set). This does not "
+    "bias the sealed set."
 )
 
 SQL_OPEN_ROSTER = """
@@ -83,9 +93,17 @@ SELECT
     fm.market_metadata->>'rules' AS metadata_rules,
     e.commence_time AS linked_start,
     e.commence_time_source AS start_source,
-    e.status AS linked_event_status
+    e.status AS linked_event_status,
+    league.key AS linked_league,
+    home_league.key AS home_team_league,
+    away_league.key AS away_team_league
 FROM futures_markets fm
 LEFT JOIN events e ON e.id = fm.event_id
+LEFT JOIN sports league ON league.id = e.sport_id
+LEFT JOIN teams home_team ON home_team.id = e.home_team_id
+LEFT JOIN teams away_team ON away_team.id = e.away_team_id
+LEFT JOIN sports home_league ON home_league.id = home_team.sport_id
+LEFT JOIN sports away_league ON away_league.id = away_team.sport_id
 WHERE fm.id = ANY(%s)
 ORDER BY fm.id;
 """.strip()
@@ -95,11 +113,12 @@ SELECT
     fo.market_id,
     fo.id AS outcome_id,
     fo.name,
+    fo.rank,
     fo.current_probability,
     fo.probability_change_24h
 FROM futures_outcomes fo
 WHERE fo.market_id = ANY(%s)
-ORDER BY fo.market_id, fo.id;
+ORDER BY fo.market_id, fo.rank ASC NULLS LAST, fo.id ASC;
 """.strip()
 
 
@@ -177,19 +196,101 @@ def _clean_rules_text(row: dict[str, Any]) -> str | None:
 
 
 def _resolve_db_url() -> str:
-    env_url = os.environ.get("DATABASE_URL")
+    env_url = (os.environ.get("DATABASE_URL") or "").strip()
     if env_url:
         return env_url
-    for app_name in ("bainluck-heavy", "bainluck"):
-        proc = subprocess.run(
-            ["heroku", "config:get", "DATABASE_URL", "-a", app_name],
-            capture_output=True,
-            text=True,
-            timeout=15,
+    raise RuntimeError(
+        "DATABASE_URL must be passed explicitly; running draw_cu_eval_sets.py reads "
+        "production and requires Alex's explicit yes (decision 453 covered Nov 27 only)."
+    )
+
+
+def enrich_frozen_payload(
+    payload: dict[str, Any],
+    *,
+    ranks_by_outcome_id: dict[int, int | None],
+    leagues_by_event_id: dict[int, dict[str, str | None]],
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """Enrich an already-drawn dataset with outcome ranks and linked-game league keys.
+
+    Keeps the exact drawn market IDs, seed, buckets, prices, and titles unchanged.
+    """
+    total_outcomes = 0
+    matched_outcomes = 0
+    linked_markets_enriched = 0
+    enriched_markets: list[dict[str, Any]] = []
+
+    for market in payload.get("markets") or []:
+        event_id = market.get("event_id")
+        league_info = (
+            leagues_by_event_id.get(int(event_id), {})
+            if event_id is not None
+            else {}
         )
-        if proc.returncode == 0 and proc.stdout.strip():
-            return proc.stdout.strip()
-    raise RuntimeError("No DATABASE_URL found in environment or Heroku config")
+        if event_id is not None and int(event_id) in leagues_by_event_id:
+            linked_markets_enriched += 1
+
+        new_outcomes: list[dict[str, Any]] = []
+        for out in market.get("outcomes") or []:
+            oid = int(out["outcome_id"])
+            total_outcomes += 1
+            if oid in ranks_by_outcome_id:
+                matched_outcomes += 1
+            rank_val = ranks_by_outcome_id.get(oid, out.get("rank"))
+            new_outcomes.append(
+                {
+                    "outcome_id": oid,
+                    "name": out["name"],
+                    "rank": int(rank_val) if rank_val is not None else None,
+                    "prob": out.get("prob"),
+                    "move": out.get("move"),
+                }
+            )
+        new_outcomes.sort(
+            key=lambda o: (o["rank"] is None, o["rank"] if o["rank"] is not None else 0, o["outcome_id"])
+        )
+
+        # Preserve original key ordering with league keys right after linked_event_status.
+        updated: dict[str, Any] = {}
+        inserted_leagues = False
+        for key, val in market.items():
+            if key in {"linked_league", "home_team_league", "away_team_league", "outcomes", "outcome_names"}:
+                continue
+            updated[key] = val
+            if key == "linked_event_status":
+                updated["linked_league"] = league_info.get("linked_league")
+                updated["home_team_league"] = league_info.get("home_team_league")
+                updated["away_team_league"] = league_info.get("away_team_league")
+                inserted_leagues = True
+        if not inserted_leagues:
+            updated["linked_league"] = league_info.get("linked_league")
+            updated["home_team_league"] = league_info.get("home_team_league")
+            updated["away_team_league"] = league_info.get("away_team_league")
+        updated["outcomes"] = new_outcomes
+        updated["outcome_names"] = [o["name"] for o in new_outcomes]
+        enriched_markets.append(updated)
+
+    new_payload: dict[str, Any] = {}
+    inserted_notes = False
+    for key, val in payload.items():
+        if key in {"rules_text_note", "draw_order_note", "markets"}:
+            continue
+        new_payload[key] = val
+        if key == "quarterly_refresh_rule":
+            new_payload["rules_text_note"] = RULES_TEXT_NOTE
+            new_payload["draw_order_note"] = DRAW_ORDER_NOTE
+            inserted_notes = True
+    if not inserted_notes:
+        new_payload["rules_text_note"] = RULES_TEXT_NOTE
+        new_payload["draw_order_note"] = DRAW_ORDER_NOTE
+    new_payload["markets"] = enriched_markets
+
+    stats = {
+        "total_outcomes": total_outcomes,
+        "matched_outcomes": matched_outcomes,
+        "linked_markets_enriched": linked_markets_enriched,
+    }
+    return new_payload, stats
 
 
 def execute_draw(slates_weights_path: Path, pilot_path: Path) -> dict[str, Any]:
@@ -257,6 +358,7 @@ def execute_draw(slates_weights_path: Path, pilot_path: Path) -> dict[str, Any]:
             {
                 "outcome_id": int(row["outcome_id"]),
                 "name": row["name"],
+                "rank": int(row["rank"]) if row.get("rank") is not None else None,
                 "prob": float(row["current_probability"]) if row["current_probability"] is not None else None,
                 "move": float(row["probability_change_24h"]) if row["probability_change_24h"] is not None else None,
             }
@@ -267,7 +369,10 @@ def execute_draw(slates_weights_path: Path, pilot_path: Path) -> dict[str, Any]:
 
     def build_entry(mid: int, draw_bucket: str) -> dict[str, Any]:
         row = market_by_id[mid]
-        outs = outcomes_by_market.get(mid, [])
+        outs = sorted(
+            outcomes_by_market.get(mid, []),
+            key=lambda o: (o["rank"] is None, o["rank"] if o["rank"] is not None else 0, o["outcome_id"]),
+        )
         stratum = stratum_by_id.get(mid)
         if stratum is None and mid in open_by_id:
             _, src, mtype, rel, vtier = open_by_id[mid]
@@ -298,6 +403,9 @@ def execute_draw(slates_weights_path: Path, pilot_path: Path) -> dict[str, Any]:
             "linked_start": row["linked_start"].isoformat() if row["linked_start"] else None,
             "start_source": row["start_source"],
             "linked_event_status": row["linked_event_status"],
+            "linked_league": row.get("linked_league"),
+            "home_team_league": row.get("home_team_league"),
+            "away_team_league": row.get("away_team_league"),
             "outcomes": outs,
             "outcome_names": [o["name"] for o in outs],
         }
@@ -328,6 +436,8 @@ def execute_draw(slates_weights_path: Path, pilot_path: Path) -> dict[str, Any]:
             ),
         },
         "quarterly_refresh_rule": QUARTERLY_REFRESH_RULE,
+        "rules_text_note": RULES_TEXT_NOTE,
+        "draw_order_note": DRAW_ORDER_NOTE,
     }
 
     sealed_payload = {

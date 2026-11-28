@@ -20,13 +20,89 @@
   "files": {
     "cu_sealed_300_v1.json": {
       "path": "backend/data/evals/cu_sealed_300_v1.json",
-      "sha256": "f15e175ec4813abd5f19c62c6a3cc709fc03e1169297820321a5caec4a7817f1",
-      "count": 300
+      "sha256": "a977889abd3407449ce8a4dde8f9443af4ee58ca1456b506d71a434411ca81f8",
+      "count": 300,
+      "previous_sha256": "f15e175ec4813abd5f19c62c6a3cc709fc03e1169297820321a5caec4a7817f1"
     },
     "cu_dev_200_v1.json": {
       "path": "backend/data/evals/cu_dev_200_v1.json",
-      "sha256": "5f555e016af5656d8d67c411f3c70245f94eeefcc4ba08e54ee850308f8a8927",
-      "count": 200
+      "sha256": "31495cc0e36de1705bc8bc093336f67db794fb29a5e35322d9abc426a56cec6b",
+      "count": 200,
+      "previous_sha256": "5f555e016af5656d8d67c411f3c70245f94eeefcc4ba08e54ee850308f8a8927"
     }
+  },
+  "re_frozen_at_utc": "2026-11-28T02:37:22.336457+00:00",
+  "decision_457_refreeze_row_counts": {
+    "futures_outcomes_batches": [
+      {
+        "page": 1,
+        "market_count": 10,
+        "row_count": 567,
+        "duration_ms": 13.2
+      },
+      {
+        "page": 2,
+        "market_count": 43,
+        "row_count": 588,
+        "duration_ms": 25.7
+      },
+      {
+        "page": 3,
+        "market_count": 46,
+        "row_count": 591,
+        "duration_ms": 45.3
+      },
+      {
+        "page": 4,
+        "market_count": 65,
+        "row_count": 598,
+        "duration_ms": 60.1
+      },
+      {
+        "page": 5,
+        "market_count": 80,
+        "row_count": 459,
+        "duration_ms": 41.9
+      },
+      {
+        "page": 6,
+        "market_count": 74,
+        "row_count": 587,
+        "duration_ms": 43.5
+      },
+      {
+        "page": 7,
+        "market_count": 68,
+        "row_count": 590,
+        "duration_ms": 49.6
+      },
+      {
+        "page": 8,
+        "market_count": 42,
+        "row_count": 656,
+        "duration_ms": 37.3
+      },
+      {
+        "page": 9,
+        "market_count": 39,
+        "row_count": 569,
+        "duration_ms": 46.6
+      },
+      {
+        "page": 10,
+        "market_count": 33,
+        "row_count": 300,
+        "duration_ms": 39.6
+      }
+    ],
+    "futures_outcomes_rows_returned": 5505,
+    "sealed_outcomes_matched": 3626,
+    "sealed_outcomes_total": 3626,
+    "dev_outcomes_matched": 1796,
+    "dev_outcomes_total": 1796,
+    "event_rows_returned": 57,
+    "event_query_duration_ms": 32.5,
+    "sealed_linked_markets_enriched": 27,
+    "dev_linked_markets_enriched": 32
   }
 }
