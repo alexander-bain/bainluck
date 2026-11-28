@@ -272,16 +272,16 @@ describe("supported and unsupported mounts", () => {
 
   it("a finished NFL game with every input renders the module", () => {
     expect(RAW.status).toBe("completed");
-    expect(html({})).toContain("Projected final points");
-    expect(html({ eventStatus: "closed" })).toContain("Projected final points");
+    expect(html({})).toContain("Projected final score");
+    expect(html({ eventStatus: "closed" })).toContain("Projected final score");
     // completed and closed are one phase on either side.
-    expect(html({ history: history({ status: "closed" }) })).toContain("Projected final points");
+    expect(html({ history: history({ status: "closed" }) })).toContain("Projected final score");
   });
 
   it("the page's hook carries the history's own status through its memo, in both directions", () => {
     // Dropping status would refuse every mount; reading it from anywhere but the history would admit this one.
     expect(html({ history: history({ status: "live" }) })).toBe("");
-    expect(html({ history: history({ status: "completed" }) })).toContain("Projected final points");
+    expect(html({ history: history({ status: "completed" }) })).toContain("Projected final score");
   });
 
   it.each([

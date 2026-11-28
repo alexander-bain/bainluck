@@ -215,6 +215,12 @@ export default function ProjectedFinalPointsChart({
     !!finalScore && !!actual && actual.home === finalScore.home && actual.away === finalScore.away;
   const showFinalApart = after && !!finalScore && !recordedIsFinal;
   const markerRows = markers.reduce((n, m) => Math.max(n, m.labelRow + 1), 0);
+  const forecastReadingCount = full.segments.reduce((n, seg) => n + seg.length, 0);
+  const showChartFrame = forecastReadingCount >= 2;
+  const multiDaySpan =
+    format(new Date(full.start), "yyyy-MM-dd") !== format(new Date(full.end), "yyyy-MM-dd");
+  const formatAxisTime = (t: number) =>
+    multiDaySpan ? format(new Date(t), "MMM d, h:mm a") : formatProjectionTime(t);
 
   return (
     <section
@@ -223,7 +229,7 @@ export default function ProjectedFinalPointsChart({
       data-projected-final-points={full.phase}
     >
       <h3 id="projected-final-points-title" className="text-base font-semibold text-text-primary">
-        Projected final points
+        Projected final score
       </h3>
 
       <div className="mt-3 grid grid-cols-2 gap-3" aria-live="polite" data-testid="projected-reading">
@@ -272,172 +278,176 @@ export default function ProjectedFinalPointsChart({
         )}
       </p>
 
-      {/* The marker labels get their own rows above the plot: the plot stretches to its box, and
-          text inside it would stretch with it. Positions are the plot's own x, as percentages. */}
-      {markerRows > 0 && (
-        <div
-          className="relative mt-3"
-          style={{ height: markerRows * PERIOD_LABEL_ROW_HEIGHT_PX }}
-          aria-hidden="true"
-          data-testid="projected-period-labels"
-        >
-          {markers.map((m) => (
-            <span
-              key={`label-${m.timestamp}`}
-              data-period-label={m.label}
-              className={`absolute whitespace-nowrap text-[10px] font-semibold leading-[13px] text-text-secondary ${
-                m.labelPosition === "insideTopRight" ? "-translate-x-full pr-0.5" : "pl-0.5"
-              }`}
-              style={{ left: `${(x(Date.parse(m.timestamp)) / W) * 100}%`, top: m.labelRow * PERIOD_LABEL_ROW_HEIGHT_PX }}
+      {showChartFrame && (
+        <>
+          {/* The marker labels get their own rows above the plot: the plot stretches to its box, and
+              text inside it would stretch with it. Positions are the plot's own x, as percentages. */}
+          {markerRows > 0 && (
+            <div
+              className="relative mt-3"
+              style={{ height: markerRows * PERIOD_LABEL_ROW_HEIGHT_PX }}
+              aria-hidden="true"
+              data-testid="projected-period-labels"
             >
-              {periodBoundaryChipLabel(m)}
+              {markers.map((m) => (
+                <span
+                  key={`label-${m.timestamp}`}
+                  data-period-label={m.label}
+                  className={`absolute whitespace-nowrap text-[10px] font-semibold leading-[13px] text-text-secondary ${
+                    m.labelPosition === "insideTopRight" ? "-translate-x-full pr-0.5" : "pl-0.5"
+                  }`}
+                  style={{ left: `${(x(Date.parse(m.timestamp)) / W) * 100}%`, top: m.labelRow * PERIOD_LABEL_ROW_HEIGHT_PX }}
+                >
+                  {periodBoundaryChipLabel(m)}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className={`relative h-64 sm:h-80 ${markerRows > 0 ? "mt-0.5" : "mt-3"}`} data-testid="projected-plot">
+          {full.yTicks.map((v) => (
+            <span
+              key={`tick-${v}`}
+              aria-hidden="true"
+              className="absolute left-0 -translate-y-1/2 text-xs tabular-nums text-text-secondary"
+              style={{ top: `${(y(v) / H) * 100}%` }}
+            >
+              {v}
             </span>
           ))}
-        </div>
-      )}
-      <div className={`relative h-64 sm:h-80 ${markerRows > 0 ? "mt-0.5" : "mt-3"}`} data-testid="projected-plot">
-      {full.yTicks.map((v) => (
-        <span
-          key={`tick-${v}`}
-          aria-hidden="true"
-          className="absolute left-0 -translate-y-1/2 text-xs tabular-nums text-text-secondary"
-          style={{ top: `${(y(v) / H) * 100}%` }}
-        >
-          {v}
-        </span>
-      ))}
-      <svg
-        className="absolute inset-0 h-full w-full"
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
-        role="img"
-        aria-label={`Projected final points for ${homeTeam} and ${awayTeam}, with the actual score as a quieter dashed step line. Gaps are missing or unusable readings and are not joined.`}
-      >
-        {full.yTicks.map((v) => (
-          <line
-            key={v}
-            x1={LEFT}
-            x2={RIGHT}
-            y1={y(v)}
-            y2={y(v)}
-            stroke="var(--surface-border)"
-            strokeWidth={1}
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-        {markers.map((m) => (
-          <line
-            key={`period-${m.timestamp}`}
-            data-period-marker={m.label}
-            x1={x(Date.parse(m.timestamp))}
-            x2={x(Date.parse(m.timestamp))}
-            y1={TOP}
-            y2={BOTTOM}
-            stroke="var(--text-muted)"
-            strokeWidth={1}
-            strokeDasharray="4 4"
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-        {actualDrawn &&
-          ([
-            ["home", homeStroke],
-            ["away", awayStroke],
-          ] as const).map(([key, stroke]) => (
-            <path
-              key={`actual-${key}`}
-              data-series={`actual-${key}`}
-              d={actualPath(full.actualSteps, key, full.end, x, y)}
-              fill="none"
-              stroke={stroke}
-              strokeWidth={2.5}
-              strokeDasharray="6 5"
-              strokeOpacity={0.75}
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
-        {([
-            ["home", homeStroke],
-            ["away", awayStroke],
-          ] as const).map(([key, stroke]) =>
-            full.segments.map((seg, i) =>
-              seg.length === 1 && seg[0].holdEnd === seg[0].at ? (
-                // A round-capped stroke, not a circle: the plot stretches to its
-                // box, and a circle would stretch with it into an ellipse.
+          <svg
+            className="absolute inset-0 h-full w-full"
+            viewBox={`0 0 ${W} ${H}`}
+            preserveAspectRatio="none"
+            role="img"
+            aria-label={`Projected final score for ${homeTeam} and ${awayTeam}, with the actual score as a quieter dashed step line. Gaps are missing or unusable readings and are not joined.`}
+          >
+            {full.yTicks.map((v) => (
+              <line
+                key={v}
+                x1={LEFT}
+                x2={RIGHT}
+                y1={y(v)}
+                y2={y(v)}
+                stroke="var(--surface-border)"
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+            {markers.map((m) => (
+              <line
+                key={`period-${m.timestamp}`}
+                data-period-marker={m.label}
+                x1={x(Date.parse(m.timestamp))}
+                x2={x(Date.parse(m.timestamp))}
+                y1={TOP}
+                y2={BOTTOM}
+                stroke="var(--text-muted)"
+                strokeWidth={1}
+                strokeDasharray="4 4"
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+            {actualDrawn &&
+              ([
+                ["home", homeStroke],
+                ["away", awayStroke],
+              ] as const).map(([key, stroke]) => (
                 <path
-                  key={`${key}-${i}`}
-                  data-series={`forecast-${key}`}
-                  data-single-point="true"
-                  d={`M${x(seg[0].at).toFixed(1)},${y(seg[0][key]).toFixed(1)} h0.01`}
+                  key={`actual-${key}`}
+                  data-series={`actual-${key}`}
+                  d={actualPath(full.actualSteps, key, full.end, x, y)}
+                  fill="none"
                   stroke={stroke}
-                  strokeWidth={8}
-                  strokeLinecap="round"
+                  strokeWidth={2.5}
+                  strokeDasharray="6 5"
+                  strokeOpacity={0.75}
                   vectorEffect="non-scaling-stroke"
                 />
-              ) : (
-                <Fragment key={`${key}-${i}`}>
-                  <path
-                    data-series={`forecast-${key}`}
-                    d={stepPath(seg, key, x, y)}
-                    fill="none"
-                    stroke={stroke}
-                    strokeWidth={3}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                  {seg.map((pt, j) => (
+              ))}
+            {([
+                ["home", homeStroke],
+                ["away", awayStroke],
+              ] as const).map(([key, stroke]) =>
+                full.segments.map((seg, i) =>
+                  seg.length === 1 && seg[0].holdEnd === seg[0].at ? (
+                    // A round-capped stroke, not a circle: the plot stretches to its
+                    // box, and a circle would stretch with it into an ellipse.
                     <path
-                      key={`${key}-${i}-pt-${j}`}
-                      data-forecast-mark={key}
-                      d={`M${x(pt.at).toFixed(1)},${y(pt[key]).toFixed(1)} h0.01`}
+                      key={`${key}-${i}`}
+                      data-series={`forecast-${key}`}
+                      data-single-point="true"
+                      d={`M${x(seg[0].at).toFixed(1)},${y(seg[0][key]).toFixed(1)} h0.01`}
                       stroke={stroke}
-                      strokeWidth={6}
+                      strokeWidth={8}
                       strokeLinecap="round"
                       vectorEffect="non-scaling-stroke"
                     />
-                  ))}
-                </Fragment>
-              ),
-            ),
+                  ) : (
+                    <Fragment key={`${key}-${i}`}>
+                      <path
+                        data-series={`forecast-${key}`}
+                        d={stepPath(seg, key, x, y)}
+                        fill="none"
+                        stroke={stroke}
+                        strokeWidth={3}
+                        vectorEffect="non-scaling-stroke"
+                      />
+                      {seg.map((pt, j) => (
+                        <path
+                          key={`${key}-${i}-pt-${j}`}
+                          data-forecast-mark={key}
+                          d={`M${x(pt.at).toFixed(1)},${y(pt[key]).toFixed(1)} h0.01`}
+                          stroke={stroke}
+                          strokeWidth={6}
+                          strokeLinecap="round"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      ))}
+                    </Fragment>
+                  ),
+                ),
+              )}
+            {full.withheld.map((w) => (
+              <line
+                key={`gap-${w.at}`}
+                data-withheld={w.reason}
+                x1={x(w.at)}
+                x2={x(w.at)}
+                y1={BOTTOM + 4}
+                y2={BOTTOM + 12}
+                stroke="var(--text-secondary)"
+                strokeWidth={2}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+          </svg>
+          </div>
+          <div className="flex justify-between pl-6 text-xs text-text-secondary" aria-hidden="true">
+            <span>{formatAxisTime(full.start)}</span>
+            <span>{formatAxisTime(full.end)}</span>
+          </div>
+
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary">
+            <span>━ Projected final</span>
+            {actualDrawn && <span>┅ Actual score</span>}
+            <span>Gaps are not joined</span>
+          </div>
+
+          {markers.length > 0 && (
+            <p className="sr-only" data-testid="projected-period-markers-text">
+              Game state marked on the chart:{" "}
+              {markers.map((m) => `${spokenPeriodLabel(m.label)} ${markerTiming(m)} ${formatProjectionTime(Date.parse(m.timestamp))}`).join(", ")}.
+            </p>
           )}
-        {full.withheld.map((w) => (
-          <line
-            key={`gap-${w.at}`}
-            data-withheld={w.reason}
-            x1={x(w.at)}
-            x2={x(w.at)}
-            y1={BOTTOM + 4}
-            y2={BOTTOM + 12}
-            stroke="var(--text-secondary)"
-            strokeWidth={2}
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-      </svg>
-      </div>
-      <div className="flex justify-between pl-6 text-xs text-text-secondary" aria-hidden="true">
-        <span>{formatProjectionTime(full.start)}</span>
-        <span>{formatProjectionTime(full.end)}</span>
-      </div>
-
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary">
-        <span>━ Projected final</span>
-        {actualDrawn && <span>┅ Actual score</span>}
-        <span>Gaps are not joined</span>
-      </div>
-
-      {markers.length > 0 && (
-        <p className="sr-only" data-testid="projected-period-markers-text">
-          Game state marked on the chart:{" "}
-          {markers.map((m) => `${spokenPeriodLabel(m.label)} ${markerTiming(m)} ${formatProjectionTime(Date.parse(m.timestamp))}`).join(", ")}.
-        </p>
+        </>
       )}
 
       <details className="mt-3 text-xs text-text-secondary">
         <summary className="cursor-pointer">How to read this</summary>
         {pagePair && (
           <p className="mt-1" data-testid="projected-page-pair">
-            The numbers above are this page&apos;s projected final, the same as at the top of the page. The lines show how one
-            sportsbook&apos;s projection moved.
+            The numbers above are this page&apos;s projected final, the same as at the top of the page.
+            {showChartFrame ? " The lines show how one sportsbook's projection moved." : ""}
           </p>
         )}
         <p className="mt-1" data-testid="projected-source">
@@ -445,13 +455,15 @@ export default function ProjectedFinalPointsChart({
           points for the full game, recorded together, which imply a final score for each team. It is not the Bain Luck probability above and not an
           average of sources.
         </p>
-        <p className="mt-1">
-          The solid lines are the projections; the dashed steps are the score so far. A break in a line means that reading
-          was missing or could not be right, such as a projection below points already scored. The last projection is never
-          joined to the final score.
-          {markers.length > 0 &&
-            ` The thin vertical rules mark each ${firstPeriodWord}, halftime or overtime where it was first seen in progress, which can be a little after it began.`}
-        </p>
+        {showChartFrame && (
+          <p className="mt-1">
+            The solid lines are the projections; the dashed steps are the score so far. A break in a line means that reading
+            was missing or could not be right, such as a projection below points already scored. The last projection is never
+            joined to the final score.
+            {markers.length > 0 &&
+              ` The thin vertical rules mark each ${firstPeriodWord}, halftime or overtime where it was first seen in progress, which can be a little after it began.`}
+          </p>
+        )}
       </details>
     </section>
   );

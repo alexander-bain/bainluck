@@ -91,7 +91,7 @@ describe("a finished game", () => {
   const html = render(nflInput(), { home: 27, away: 7 });
 
   it("draws two forecast series and two quieter actual steps", () => {
-    expect(html).toContain("Projected final points");
+    expect(html).toContain("Projected final score");
     expect(html).toContain('data-series="forecast-home"');
     expect(html).toContain('data-series="forecast-away"');
     expect(count(html, 'data-series="actual-home"')).toBe(1);
@@ -131,7 +131,7 @@ describe("#10539 the source is explained, not printed bare in the heading", () =
 
   it("the heading row carries no source name", () => {
     const heading = html.match(/<h3[^>]*>([\s\S]*?)<\/h3>/)!;
-    expect(heading[1]).toBe("Projected final points");
+    expect(heading[1]).toBe("Projected final score");
     // Nothing between the heading and the readout names the source either.
     const head = html.slice(0, html.indexOf('data-testid="projected-reading"'));
     expect(head).not.toContain("DraftKings");
@@ -603,5 +603,45 @@ describe("#12889 pregame lines join hourly polls and fit the y-axis while live/f
     expect(liveSeries.phase).toBe("during");
     expect(liveSeries.yMin).toBe(0);
     expect(liveSeries.yTicks[0]).toBe(0);
+  });
+});
+
+describe("Projected final score pregame span and fewer-than-two readings guard", () => {
+  it("draws all pregame readings across two days with overnight gaps unjoined and dates on axis", () => {
+    const html = render(
+      nflInput({
+        kickoffAt: null,
+        finalAt: null,
+        asOf: "2026-11-28T15:18:00Z",
+        pairs: [
+          { timestamp: "2026-11-26T22:00:00Z", home: 23.0, away: 20.5, homeProbability: 0.58, kind: "recorded" },
+          { timestamp: "2026-11-26T23:00:00Z", home: 23.5, away: 20.0, homeProbability: 0.6, kind: "recorded" },
+          { timestamp: "2026-11-28T14:15:00Z", home: 25.0, away: 19.5, homeProbability: 0.65, kind: "recorded" },
+        ],
+      }),
+    );
+    expect(html).toContain("Projected final score");
+    expect(html).toContain('data-testid="projected-plot"');
+    expect(html).toContain("<svg");
+    expect(count(html, 'data-series="forecast-home"')).toBe(2);
+    expect(html).toContain("Gaps are not joined");
+  });
+
+  it("shows the two numbers and no chart frame when fewer than two readings exist", () => {
+    const html = render(
+      nflInput({
+        kickoffAt: null,
+        finalAt: null,
+        asOf: "2026-11-28T15:18:00Z",
+        pairs: [{ timestamp: "2026-11-28T14:15:00Z", home: 25.0, away: 19.5, homeProbability: 0.65, kind: "recorded" }],
+      }),
+    );
+    expect(html).toContain("Projected final score");
+    expect(html).toContain('data-testid="projected-reading"');
+    expect(html).toContain(">25.0<");
+    expect(html).toContain(">19.5<");
+    expect(html).not.toContain('data-testid="projected-plot"');
+    expect(html).not.toContain("<svg");
+    expect(html).not.toContain("Gaps are not joined");
   });
 });
