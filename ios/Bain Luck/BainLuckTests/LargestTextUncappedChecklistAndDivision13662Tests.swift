@@ -448,7 +448,7 @@ final class LargestTextUncappedChecklistAndDivision13662Tests: XCTestCase {
         }
     }
 
-    // MARK: - Deterministic UIFontMetrics Scaling Hierarchy
+    // MARK: - Deterministic UIFontMetrics Scaling Hierarchy + Ordinary Size Parity
 
     func testAX5FontScalingHierarchyIsUncapped() {
         let largeTraits = UITraitCollection(preferredContentSizeCategory: .large)
@@ -466,14 +466,17 @@ final class LargestTextUncappedChecklistAndDivision13662Tests: XCTestCase {
         XCTAssertGreaterThan(checklistTitleAX5, checklistSubAX5)
         XCTAssertGreaterThanOrEqual(checklistTitleAX5, checklistTitleLarge * 3.0)
 
-        // 2. Discover division race card (@ScaledMetric(relativeTo: .headline)).
+        // 2. Discover division race card keeps master's base curves below AX and uses unified .headline + .title3 from AX1 up.
+        let discoverDuelAX5 = scaled(21, style: .title3, traits: ax5Traits)
         let discoverTitleAX5 = scaled(17, style: .headline, traits: ax5Traits)
         let discoverRowAX5 = scaled(14, style: .headline, traits: ax5Traits)
         let discoverSubAX5 = scaled(12, style: .headline, traits: ax5Traits)
-        let discoverKickerAX5 = scaled(11, style: .headline, traits: ax5Traits)
+        let discoverKickerAX5 = max(scaled(11, style: .headline, traits: ax5Traits), 17.5)
+        XCTAssertGreaterThan(discoverDuelAX5, discoverTitleAX5)
         XCTAssertGreaterThan(discoverTitleAX5, discoverRowAX5)
         XCTAssertGreaterThan(discoverRowAX5, discoverSubAX5)
         XCTAssertGreaterThan(discoverSubAX5, discoverKickerAX5)
+        XCTAssertGreaterThan(discoverDuelAX5, 26.0)
         XCTAssertGreaterThan(discoverTitleAX5, 26.0)
         XCTAssertGreaterThan(discoverRowAX5, 22.0)
         XCTAssertGreaterThan(discoverSubAX5, 19.0)
@@ -481,25 +484,200 @@ final class LargestTextUncappedChecklistAndDivision13662Tests: XCTestCase {
         XCTAssertGreaterThanOrEqual(discoverTitleAX5, 17.0 * 2.75)
         XCTAssertGreaterThanOrEqual(discoverRowAX5, 14.0 * 2.75)
 
-        // 3. Hub grid division race cards: compact phones (.title) stay readable without breaking 12-char words at 320 pt,
-        // while .regular iPad uses .headline to match Discover's AX5 scale.
-        let hubCompactTitleAX5 = scaled(14, style: .title1, traits: ax5Traits)
-        let hubCompactRowAX5 = scaled(13, style: .title1, traits: ax5Traits)
+        // 3. Hub grid division race cards: compact phones keep 12-char words whole at 320 pt; regular iPad scales cleanly higher.
+        let hubCompactTitleAX5 = MachineryDynamicTypeCurve13662.compactHubAXTitleSize(step: 5)
+        let hubCompactRowAX5 = MachineryDynamicTypeCurve13662.compactHubAXRowSize(step: 5)
         XCTAssertGreaterThan(hubCompactTitleAX5, hubCompactRowAX5)
         XCTAssertGreaterThan(hubCompactTitleAX5, 22.0)
         XCTAssertGreaterThan(hubCompactRowAX5, 20.0)
-        XCTAssertGreaterThanOrEqual(hubCompactTitleAX5, 14.0 * 1.95)
-        XCTAssertGreaterThanOrEqual(hubCompactRowAX5, 13.0 * 1.95)
+        XCTAssertGreaterThanOrEqual(hubCompactTitleAX5, 14.0 * 2.25)
+        XCTAssertGreaterThanOrEqual(hubCompactRowAX5, 13.0 * 2.25)
 
-        let hubRegularTitleAX5 = scaled(14, style: .headline, traits: ax5Traits)
-        let hubRegularRowAX5 = scaled(13, style: .headline, traits: ax5Traits)
+        let hubRegularTitleAX5 = max(scaled(14, style: .subheadline, traits: ax5Traits), hubCompactTitleAX5)
+        let hubRegularRowAX5 = max(scaled(13, style: .subheadline, traits: ax5Traits), hubCompactRowAX5)
         XCTAssertGreaterThan(hubRegularTitleAX5, hubRegularRowAX5)
         XCTAssertGreaterThan(hubRegularTitleAX5, 22.0)
         XCTAssertGreaterThan(hubRegularRowAX5, 20.0)
-        XCTAssertGreaterThanOrEqual(hubRegularTitleAX5, 14.0 * 2.75)
-        XCTAssertGreaterThanOrEqual(hubRegularRowAX5, 13.0 * 2.75)
+        XCTAssertGreaterThanOrEqual(hubRegularTitleAX5, 14.0 * 2.5)
+        XCTAssertGreaterThanOrEqual(hubRegularRowAX5, 13.0 * 2.5)
         XCTAssertGreaterThan(hubRegularTitleAX5, hubCompactTitleAX5)
         XCTAssertGreaterThan(hubRegularRowAX5, hubCompactRowAX5)
+    }
+
+    func testOrdinaryLargerSizesNeverShrinkBelowMasterAndGrowAcrossAXBoundary() throws {
+        let levels: [(dt: DynamicTypeSize, ui: UIContentSizeCategory, label: String)] = [
+            (.large, .large, "large"),
+            (.xLarge, .extraLarge, "xLarge"),
+            (.xxLarge, .extraExtraLarge, "xxLarge"),
+            (.xxxLarge, .extraExtraExtraLarge, "xxxLarge"),
+            (.accessibility1, .accessibilityMedium, "AX1"),
+            (.accessibility2, .accessibilityLarge, "AX2"),
+            (.accessibility3, .accessibilityExtraLarge, "AX3"),
+            (.accessibility4, .accessibilityExtraExtraLarge, "AX4"),
+            (.accessibility5, .accessibilityExtraExtraExtraLarge, "AX5"),
+        ]
+
+        func scaled(_ value: CGFloat, style: UIFont.TextStyle, cat: UIContentSizeCategory) -> CGFloat {
+            let t = UITraitCollection(preferredContentSizeCategory: cat)
+            return UIFontMetrics(forTextStyle: style).scaledValue(for: value, compatibleWith: t)
+        }
+
+        struct Sample {
+            let showAll: CGFloat
+            let kicker: CGFloat
+            let title: CGFloat
+            let row: CGFloat
+            let sub: CGFloat
+            let duelPct: CGFloat
+            let hubCompactTitle: CGFloat
+            let hubCompactRow: CGFloat
+            let hubRegularTitle: CGFloat
+            let hubRegularRow: CGFloat
+        }
+
+        var samples: [Sample] = []
+        for entry in levels {
+            let isAX = entry.dt.isAccessibilitySize
+            let step = MachineryDynamicTypeCurve13662.accessibilityStepIndex(entry.dt) ?? 0
+
+            let cap13 = scaled(13, style: .caption1, cat: entry.ui)
+            let cap2_11 = scaled(11, style: .caption2, cat: entry.ui)
+            let head17 = scaled(17, style: .headline, cat: entry.ui)
+            let head14 = scaled(14, style: .headline, cat: entry.ui)
+            let head12 = scaled(12, style: .headline, cat: entry.ui)
+            let head11 = scaled(11, style: .headline, cat: entry.ui)
+            let sub14 = scaled(14, style: .subheadline, cat: entry.ui)
+            let sub13 = scaled(13, style: .subheadline, cat: entry.ui)
+            let cap12 = scaled(12, style: .caption1, cat: entry.ui)
+            let title3_21 = scaled(21, style: .title3, cat: entry.ui)
+
+            let showAll = MachineryDynamicTypeCurve13662.resolved(ordinaryScaled: cap13, ordinaryCap: 20, axScaled: cap13, isAccessibilitySize: isAX)
+            let kicker = MachineryDynamicTypeCurve13662.resolved(ordinaryScaled: cap2_11, ordinaryCap: 17, axScaled: max(head11, 17.5), isAccessibilitySize: isAX)
+            let title = MachineryDynamicTypeCurve13662.resolved(ordinaryScaled: head17, ordinaryCap: 26, axScaled: head17, isAccessibilitySize: isAX)
+            let row = MachineryDynamicTypeCurve13662.resolved(ordinaryScaled: sub14, ordinaryCap: 22, axScaled: head14, isAccessibilitySize: isAX)
+            let sub = MachineryDynamicTypeCurve13662.resolved(ordinaryScaled: cap12, ordinaryCap: 19, axScaled: head12, isAccessibilitySize: isAX)
+            let duelPct = MachineryDynamicTypeCurve13662.resolved(ordinaryScaled: title3_21, ordinaryCap: 26, axScaled: title3_21, isAccessibilitySize: isAX)
+
+            let hubCompactTitle = isAX ? MachineryDynamicTypeCurve13662.compactHubAXTitleSize(step: step) : min(sub14, 22)
+            let hubCompactRow = isAX ? MachineryDynamicTypeCurve13662.compactHubAXRowSize(step: step) : min(cap13, 20)
+            let hubRegularTitle = isAX ? max(sub14, hubCompactTitle) : min(sub14, 22)
+            let hubRegularRow = isAX ? max(sub13, hubCompactRow) : min(cap13, 20)
+
+            print(String(format: "CURVE_13662 %@ show=%.1f kicker=%.1f sub=%.1f row=%.1f title=%.1f duel=%.1f hubC=(%.1f,%.1f) hubR=(%.1f,%.1f)", entry.label, showAll, kicker, sub, row, title, duelPct, hubCompactTitle, hubCompactRow, hubRegularTitle, hubRegularRow))
+
+            // Master exact parity across ordinary sizes (.large .. .xxxLarge).
+            if !isAX {
+                XCTAssertEqual(showAll, min(cap13, 20), accuracy: 0.001, "\(entry.label) showAll")
+                XCTAssertEqual(kicker, min(cap2_11, 17), accuracy: 0.001, "\(entry.label) kicker")
+                XCTAssertEqual(title, min(head17, 26), accuracy: 0.001, "\(entry.label) title")
+                XCTAssertEqual(row, min(sub14, 22), accuracy: 0.001, "\(entry.label) row")
+                XCTAssertEqual(sub, min(cap12, 19), accuracy: 0.001, "\(entry.label) sub")
+                XCTAssertEqual(duelPct, min(title3_21, 26), accuracy: 0.001, "\(entry.label) duelPct")
+                XCTAssertEqual(hubCompactTitle, min(sub14, 22), accuracy: 0.001, "\(entry.label) hubCompactTitle")
+                XCTAssertEqual(hubCompactRow, min(cap13, 20), accuracy: 0.001, "\(entry.label) hubCompactRow")
+                XCTAssertEqual(hubRegularTitle, min(sub14, 22), accuracy: 0.001, "\(entry.label) hubRegularTitle")
+                XCTAssertEqual(hubRegularRow, min(cap13, 20), accuracy: 0.001, "\(entry.label) hubRegularRow")
+            } else {
+                // Visual hierarchy preserved across all accessibility sizes.
+                XCTAssertGreaterThan(duelPct, title, "\(entry.label): duelPct > title")
+                XCTAssertGreaterThan(title, row, "\(entry.label): title > row")
+                XCTAssertGreaterThan(row, sub, "\(entry.label): row > sub")
+                XCTAssertGreaterThan(sub, kicker, "\(entry.label): sub > kicker")
+                XCTAssertGreaterThan(hubCompactTitle, hubCompactRow, "\(entry.label): hubCompactTitle > row")
+                XCTAssertGreaterThan(hubRegularTitle, hubRegularRow, "\(entry.label): hubRegularTitle > row")
+            }
+
+            samples.append(Sample(
+                showAll: showAll, kicker: kicker, title: title, row: row, sub: sub, duelPct: duelPct,
+                hubCompactTitle: hubCompactTitle, hubCompactRow: hubCompactRow,
+                hubRegularTitle: hubRegularTitle, hubRegularRow: hubRegularRow
+            ))
+        }
+
+        // Verify strictly non-decreasing across every step, and strictly growing at xxxLarge -> AX1 -> AX5.
+        for i in 1..<samples.count {
+            let prev = samples[i - 1], cur = samples[i]
+            XCTAssertGreaterThanOrEqual(cur.showAll, prev.showAll)
+            XCTAssertGreaterThanOrEqual(cur.kicker, prev.kicker)
+            XCTAssertGreaterThanOrEqual(cur.title, prev.title)
+            XCTAssertGreaterThanOrEqual(cur.row, prev.row)
+            XCTAssertGreaterThanOrEqual(cur.sub, prev.sub)
+            XCTAssertGreaterThanOrEqual(cur.duelPct, prev.duelPct)
+            XCTAssertGreaterThanOrEqual(cur.hubCompactTitle, prev.hubCompactTitle)
+            XCTAssertGreaterThanOrEqual(cur.hubCompactRow, prev.hubCompactRow)
+            XCTAssertGreaterThanOrEqual(cur.hubRegularTitle, prev.hubRegularTitle)
+            XCTAssertGreaterThanOrEqual(cur.hubRegularRow, prev.hubRegularRow)
+        }
+
+        let xxxl = samples[3]
+        let ax1 = samples[4]
+        let ax5 = samples[8]
+        XCTAssertGreaterThan(ax1.showAll, xxxl.showAll)
+        XCTAssertGreaterThan(ax1.kicker, xxxl.kicker)
+        XCTAssertGreaterThan(ax1.title, xxxl.title)
+        XCTAssertGreaterThan(ax1.row, xxxl.row)
+        XCTAssertGreaterThan(ax1.sub, xxxl.sub)
+        XCTAssertGreaterThan(ax1.duelPct, xxxl.duelPct)
+        XCTAssertGreaterThan(ax1.hubCompactTitle, xxxl.hubCompactTitle)
+        XCTAssertGreaterThan(ax1.hubCompactRow, xxxl.hubCompactRow)
+        XCTAssertGreaterThan(ax1.hubRegularTitle, xxxl.hubRegularTitle)
+        XCTAssertGreaterThan(ax1.hubRegularRow, xxxl.hubRegularRow)
+
+        XCTAssertGreaterThan(ax5.showAll, ax1.showAll)
+        XCTAssertGreaterThan(ax5.kicker, ax1.kicker)
+        XCTAssertGreaterThan(ax5.title, ax1.title)
+        XCTAssertGreaterThan(ax5.row, ax1.row)
+        XCTAssertGreaterThan(ax5.sub, ax1.sub)
+        XCTAssertGreaterThan(ax5.duelPct, ax1.duelPct)
+        XCTAssertGreaterThan(ax5.hubCompactTitle, ax1.hubCompactTitle)
+        XCTAssertGreaterThan(ax5.hubCompactRow, ax1.hubCompactRow)
+        XCTAssertGreaterThan(ax5.hubRegularTitle, ax1.hubRegularTitle)
+        XCTAssertGreaterThan(ax5.hubRegularRow, ax1.hubRegularRow)
+
+        // Render-verify .xxxLarge at 390 pt Light on Discover division card & Hub grid.
+        let suiteName = "xxxl-13662-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        let pinManager = PinManager(defaults: defaults, allowLegacyGuestPins: false)
+        let navCoordinator = NavigationCoordinator()
+        let authManager = AuthManager(restoreOnInit: false)
+        authManager.user = nil
+        let (discoverCard, hubBlock) = makeDivisionRaceFixtures()
+        let bad = ["\u{2026}", "...", "Champion-", "Fran-"]
+
+        let dImg = renderIntrinsic(
+            MachineryDiscoverCardView(card: discoverCard, onOpenContainer: { _, _ in })
+                .environmentObject(pinManager)
+                .environmentObject(navCoordinator)
+                .environmentObject(authManager),
+            width: 390,
+            colorScheme: .light,
+            dynamicTypeSize: .xxxLarge
+        )
+        let dOCR = try ocrLinesInPoints(in: dImg)
+        assertCleanText(
+            dOCR,
+            label: "xxxl_discover_390",
+            requiredTokens: ["Denver Broncos", "53%", "Kansas City Chiefs", "<1%", "Los Angeles Chargers", "No recent probability", "Las Vegas Raiders", "Eliminated"],
+            forbiddenSubstrings: bad
+        )
+
+        let hImg = renderIntrinsicInNavStack(
+            MachinerySectionBlockView(visualBlock: hubBlock, members: [], columnCount: 1)
+                .environmentObject(pinManager)
+                .environmentObject(navCoordinator)
+                .environmentObject(authManager),
+            width: 390,
+            colorScheme: .light,
+            dynamicTypeSize: .xxxLarge
+        )
+        let hOCR = try ocrLinesInPoints(in: hImg)
+        assertCleanText(
+            hOCR,
+            label: "xxxl_hub_390",
+            requiredTokens: ["NFC West Championship", "San Francisco 49ers", "61%", "Seattle Seahawks", "<1%", "Arizona Cardinals", "No recent probability", "Tennessee Titans", "Eliminated"],
+            forbiddenSubstrings: bad
+        )
     }
 
     // MARK: - Capture + Uncapped Scaling Verification

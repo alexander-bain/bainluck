@@ -276,6 +276,41 @@ struct MachinerySubjectArtView: View {
     }
 }
 
+/// Keeps master's exact Dynamic Type curves below accessibility sizes (`.xSmall`..`.xxxLarge`)
+/// so no larger ordinary size ever shrinks below `master`, while un-capping and scaling
+/// monotonically from `.accessibility1` through `.accessibility5` (`#13662`).
+nonisolated enum MachineryDynamicTypeCurve13662 {
+    static func resolved(
+        ordinaryScaled: CGFloat,
+        ordinaryCap: CGFloat,
+        axScaled: CGFloat,
+        isAccessibilitySize: Bool
+    ) -> CGFloat {
+        isAccessibilitySize ? axScaled : min(ordinaryScaled, ordinaryCap)
+    }
+
+    static func accessibilityStepIndex(_ size: DynamicTypeSize) -> Int? {
+        switch size {
+        case .accessibility1: return 1
+        case .accessibility2: return 2
+        case .accessibility3: return 3
+        case .accessibility4: return 4
+        case .accessibility5: return 5
+        default: return nil
+        }
+    }
+
+    /// Monotonic AX1..AX5 ramp anchored above master's `22`/`20` caps while bounding compact
+    /// `320 pt` Hub Grid headers below the single-word hyphenation threshold (`"Championship"`).
+    static func compactHubAXTitleSize(step: Int) -> CGFloat {
+        22.2 + 2.6 * CGFloat(max(0, step - 1))
+    }
+
+    static func compactHubAXRowSize(step: Int) -> CGFloat {
+        20.2 + 2.5 * CGFloat(max(0, step - 1))
+    }
+}
+
 /// Reusable `"Show all N <noun> (+K more)"` / `"Show top 3"` expander button.
 struct MachineryShowAllButton: View {
     let expanded: Bool
@@ -285,7 +320,17 @@ struct MachineryShowAllButton: View {
     let onToggle: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
-    @ScaledMetric(relativeTo: .headline) private var fontSize: CGFloat = 13
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .caption) private var fontSize: CGFloat = 13
+
+    private var effectiveFontSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: fontSize,
+            ordinaryCap: 20,
+            axScaled: fontSize,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
 
     var body: some View {
         if totalCount > visibleLimit {
@@ -295,7 +340,7 @@ struct MachineryShowAllButton: View {
                         ? "Show top \(visibleLimit)"
                         : "Show all \(totalCount) \(noun) (+\(totalCount - visibleLimit) more)"
                 )
-                .font(.system(size: fontSize, weight: .semibold))
+                .font(.system(size: effectiveFontSize, weight: .semibold))
                 .foregroundStyle(colorScheme == .dark ? DS.emerald : DS.greenReadable)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1724,17 +1769,28 @@ private struct MachinerySiblingFieldsSectionView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @ScaledMetric(relativeTo: .title) private var compactTitleSize: CGFloat = 14
-    @ScaledMetric(relativeTo: .title) private var compactRowSize: CGFloat = 13
-    @ScaledMetric(relativeTo: .headline) private var regularTitleSize: CGFloat = 14
-    @ScaledMetric(relativeTo: .headline) private var regularRowSize: CGFloat = 13
+    @ScaledMetric(relativeTo: .subheadline) private var ordinaryTitleSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .caption) private var ordinaryRowSize: CGFloat = 13
+    @ScaledMetric(relativeTo: .subheadline) private var axRegularRowSize: CGFloat = 13
 
     private var titleSize: CGFloat {
-        horizontalSizeClass == .regular ? regularTitleSize : compactTitleSize
+        guard let step = MachineryDynamicTypeCurve13662.accessibilityStepIndex(dynamicTypeSize) else {
+            return min(ordinaryTitleSize, 22)
+        }
+        if horizontalSizeClass == .regular {
+            return max(ordinaryTitleSize, MachineryDynamicTypeCurve13662.compactHubAXTitleSize(step: step))
+        }
+        return MachineryDynamicTypeCurve13662.compactHubAXTitleSize(step: step)
     }
 
     private var rowSize: CGFloat {
-        horizontalSizeClass == .regular ? regularRowSize : compactRowSize
+        guard let step = MachineryDynamicTypeCurve13662.accessibilityStepIndex(dynamicTypeSize) else {
+            return min(ordinaryRowSize, 20)
+        }
+        if horizontalSizeClass == .regular {
+            return max(axRegularRowSize, MachineryDynamicTypeCurve13662.compactHubAXRowSize(step: step))
+        }
+        return MachineryDynamicTypeCurve13662.compactHubAXRowSize(step: step)
     }
 
     private var cardBgColor: Color {
@@ -2006,11 +2062,59 @@ struct MachineryDiscoverCardView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.machineryPreloadedImages12288) private var preloadedImages
     @Environment(\.discoverCardLikeAction420D) private var likeAction
-    @ScaledMetric(relativeTo: .headline) private var kickerSize: CGFloat = 11
-    @ScaledMetric(relativeTo: .headline) private var titleSize: CGFloat = 17
-    @ScaledMetric(relativeTo: .headline) private var rowSize: CGFloat = 14
-    @ScaledMetric(relativeTo: .headline) private var subSize: CGFloat = 12
-    @ScaledMetric(relativeTo: .title2) private var duelPctSize: CGFloat = 21
+    @ScaledMetric(relativeTo: .caption2) private var ordinaryKickerSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .headline) private var rawTitleSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .subheadline) private var ordinaryRowSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .caption) private var ordinarySubSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .title3) private var rawDuelPctSize: CGFloat = 21
+    @ScaledMetric(relativeTo: .headline) private var axKickerSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .headline) private var axRowSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .headline) private var axSubSize: CGFloat = 12
+
+    private var kickerSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: ordinaryKickerSize,
+            ordinaryCap: 17,
+            axScaled: max(axKickerSize, 17.5),
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
+
+    private var titleSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: rawTitleSize,
+            ordinaryCap: 26,
+            axScaled: rawTitleSize,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
+
+    private var rowSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: ordinaryRowSize,
+            ordinaryCap: 22,
+            axScaled: axRowSize,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
+
+    private var subSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: ordinarySubSize,
+            ordinaryCap: 19,
+            axScaled: axSubSize,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
+
+    private var duelPctSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: rawDuelPctSize,
+            ordinaryCap: 26,
+            axScaled: rawDuelPctSize,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
 
     private var cardBgColor: Color {
         colorScheme == .dark ? Color(red: 0.11, green: 0.11, blue: 0.12) : DS.cardBg
