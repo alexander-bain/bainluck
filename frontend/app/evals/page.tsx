@@ -1,5 +1,6 @@
 "use client";
 
+import ContentUnderstandingSection from "@/components/evals/ContentUnderstandingSection";
 import EvalsSection from "@/components/evals/EvalsSection";
 import ExamSection from "@/components/evals/ExamSection";
 import ForwardRecordSection from "@/components/evals/ForwardRecordSection";
@@ -18,6 +19,7 @@ import { useForwardRecord } from "@/components/evals/useForwardRecord";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import {
   CONFUSION_COPY,
+  CU_SCORECARD_COPY,
   EVALS_PAGE_TITLE,
   EXAM_COPY,
   FORWARD_COPY,
@@ -30,6 +32,7 @@ import {
   STORY_COPY,
   WATCHERS_COPY,
 } from "@/lib/evals/copy";
+import { loadCuScorecard } from "@/lib/evals/contentUnderstanding";
 import { GAPS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
 import { loadReviewerResults } from "@/lib/evals/reviewerResults";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
@@ -73,10 +76,12 @@ const SCOREBOARD = loadScoreboard();
 const REVIEWER_STUDY = loadReviewerStudy();
 const WATCHERS = loadWatchers();
 const REVIEWER_RESULTS = loadReviewerResults(REVIEWER_STUDY);
+const CU_SCORECARD = loadCuScorecard();
 
 const SECTIONS_ON_PAGE: readonly EvalsSectionId[] = [
   "forward-record",
   ...(EXAM ? (["exam", "confusion"] as const) : []),
+  ...(CU_SCORECARD ? (["market-understanding"] as const) : []),
   "timeline",
   ...(REVIEWER_STUDY ? (["tests-for-tests"] as const) : []),
   ...(SCOREBOARD ? (["test-library"] as const) : []),
@@ -87,6 +92,7 @@ const SECTIONS_ON_PAGE: readonly EvalsSectionId[] = [
 const SECTION_TITLES: Record<EvalsSectionId, string> = {
   exam: EXAM_COPY.title,
   confusion: CONFUSION_COPY.title,
+  "market-understanding": CU_SCORECARD_COPY.title,
   timeline: TIMELINE_COPY.title,
   "forward-record": FORWARD_COPY.title,
   "test-library": LIBRARY_COPY.title,
@@ -157,6 +163,7 @@ export default function EvalsPage() {
             {EXAM && <ExamSection exam={EXAM} />}
             {EXAM && <RelationReportCard exam={EXAM} />}
             {SIBLING_EXAM && <SiblingFamilyExamSection exam={SIBLING_EXAM} />}
+            {CU_SCORECARD && <ContentUnderstandingSection scorecard={CU_SCORECARD} />}
             <EvalsSection
               id="timeline"
               title={TIMELINE_COPY.title}

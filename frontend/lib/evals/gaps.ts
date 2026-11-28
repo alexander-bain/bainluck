@@ -103,4 +103,20 @@ export const GAPS: readonly Gap[] = [
     text: "Nothing measures how often a test fails by bad luck rather than a real problem.",
     ...targetFor("chance-failures"),
   },
+  {
+    id: "cu-fact-labels",
+    text: "Two people have not yet labeled the same markets, so we do not know how often people agree on these facts.",
+    ...targetFor("cu-fact-labels"),
+  },
+  {
+    id: "cu-scorecard-numbers",
+    text: "The scorecard for market understanding has no numbers yet.",
+    ...targetFor("cu-scorecard-numbers"),
+    planned: { waitingOn: "two-person labels on the sealed set", ref: issueRef(13900) },
+  },
+  {
+    id: "cu-entity-linking",
+    text: "Most markets are not yet linked to the real person, team or place they are about. That and the later steps are tracked in one place.",
+    ...targetFor("cu-entity-linking"),
+  },
 ];

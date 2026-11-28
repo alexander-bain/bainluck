@@ -140,3 +140,15 @@ def check_my_new_issue(data: dict, report: AuditReport):
         ))
 ```
 Then call it from `audit_event_detail()` or `audit_championship_grid()`. Update this table.
+
+## Content Understanding Eval Tests (Suite Map)
+
+Pure deterministic checks and offline scoring tools for Content Understanding (#13901):
+
+| Artifact | Purpose | Network / Model Calls |
+|----------|---------|-----------------------|
+| `backend/tests/evals/test_cu_fault_library_13901.py` | Frozen CI regression cases from `#1809` grading rounds (`cu_fault_library_13901.json`: 6 district races, Europa League country rule, `#13896` ladders & dated buckets, settlement-day echo, Eastern boundaries, frame literal grounding) | Zero (network socket blocked) |
+| `backend/tests/evals/test_cu_scorecard_13901.py` | Unit & CLI contract tests for `cu_eval_scorecard.py` (`right`/`wrong`/`blank`/`said_not_known`, code vs model columns, 4 slices, cost formatting, checked-in `/evals` JSON guard) | Zero |
+| `backend/scripts/score_cu_eval.py` | CLI scorer producing plain-English tables & `/evals` JSON from sealed/dev answer keys | Zero |
+| `frontend/lib/evals/__tests__/contentUnderstanding.test.tsx` | `/evals` Market Understanding block tests (`not_measured_yet` + measured states, `scanEvalsDom`, copy bans) | Zero |
+| `frontend/components/evals/__tests__/evalsPage.test.tsx` | Full `/evals` page integration, section order, source links, and `#13897` gap/target coverage | Zero |
