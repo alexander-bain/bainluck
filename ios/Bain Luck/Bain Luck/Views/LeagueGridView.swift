@@ -411,7 +411,7 @@ struct LeagueGridView: View {
                             .lineLimit(isAX ? nil : 1)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer()
-                        Text("\(Int(o.prob))%")
+                        Text(formatProbability(o.prob / 100.0))
                             .font(.caption)
                             .fontWeight(.bold)
                             .monospacedDigit()

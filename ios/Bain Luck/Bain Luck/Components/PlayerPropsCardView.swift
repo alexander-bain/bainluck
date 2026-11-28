@@ -423,7 +423,7 @@ struct PlayerPropsCardView: View {
                 }
                 Spacer(minLength: 8)
                 if let target {
-                    Text("\(PlayerPropsPricing.displayPercent(target.rung.probability))%")
+                    Text(Self.propPercentText(target.rung.probability, settled: isDone && target.rung.hit != nil))
                         .font(.title3.weight(.bold))
                         .monospacedDigit()
                 }
@@ -588,7 +588,7 @@ struct PlayerPropsCardView: View {
 
     private func targetChip(_ rung: Rung, isSelected: Bool, item: PropItem) -> some View {
         let label = PlayerPropsFamily.targetLabel(rung.threshold)
-        let percent = PlayerPropsPricing.displayPercent(rung.probability)
+        let percent = Self.propPercentText(rung.probability, settled: isDone && rung.hit != nil)
         return Button {
             guard rung.priced else { return }
             selectedTargets[item.group.id] = rung.threshold
@@ -623,7 +623,7 @@ struct PlayerPropsCardView: View {
         .disabled(!rung.priced)
         .accessibilityIdentifier("props-target")
         .accessibilityLabel(rung.priced
-            ? "\(label) \(spokenStat(item)), \(percent)%"
+            ? "\(label) \(spokenStat(item)), \(percent)"
             : "\(label) \(spokenStat(item)), not priced")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
@@ -829,7 +829,7 @@ struct PlayerPropsCardView: View {
                         .foregroundStyle(led ? .green : .secondary)
                 }
 
-                Text("\(PlayerPropsPricing.displayPercent(candidate.probability))%")
+                Text(Self.propPercentText(candidate.probability, settled: graded))
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(.primary)
@@ -969,8 +969,12 @@ struct PlayerPropsCardView: View {
             .fixedSize()
             .frame(minWidth: figureColumn, alignment: .trailing)
         // #5137 — through the same rounding the flat-ladder rule reads, so a
-        // ladder judged flat is exactly a ladder printing one repeated number.
-        let percent = Text("\(PlayerPropsPricing.displayPercent(rung.probability))%")
+        // ladder judged flat is exactly a ladder printing one repeated number,
+        // while open bounds follow formatProbability (<1% / >99%).
+        let rungDisplay = (isDone && verdict.hit != nil && (rung.probability <= 0 || rung.probability >= 1))
+            ? "\(PlayerPropsPricing.displayPercent(rung.probability))%"
+            : formatProbability(rung.probability, renderedPercent: PlayerPropsPricing.displayPercent(rung.probability))
+        let percent = Text(rungDisplay)
             .font(.subheadline.weight(.semibold))
             .monospacedDigit()
             .foregroundStyle(.primary)
@@ -1161,5 +1165,17 @@ struct PlayerPropsCardView: View {
             }
         }
         return nil
+    }
+
+    /// Formats a prop probability using the central `<1%` / `>99%` rule for live and open
+    /// markets while preserving exact `0%` / `100%` settled terminal outcomes when graded.
+    static func propPercentText(_ probability: Double, settled: Bool) -> String {
+        if settled && (probability <= 0 || probability >= 1) {
+            return "\(PlayerPropsPricing.displayPercent(probability))%"
+        }
+        return formatProbability(
+            probability,
+            renderedPercent: PlayerPropsPricing.displayPercent(probability)
+        )
     }
 }
