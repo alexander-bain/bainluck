@@ -226,22 +226,22 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
 
     @MainActor
     func testProbabilityArcZeroStaysZero() throws {
-        try checkProbabilityArcEndpoint(scenario: "probability-zero", value: "0%")
+        try checkProbabilityArcEndpoint(scenario: "probability-zero", value: "<1%")
     }
 
     @MainActor
     func testProbabilityArcHundredStaysHundred() throws {
-        try checkProbabilityArcEndpoint(scenario: "probability-hundred", value: "100%")
+        try checkProbabilityArcEndpoint(scenario: "probability-hundred", value: ">99%")
     }
 
     @MainActor
     func testProbabilityArcZeroUsesNativeAccessibilityFallback() throws {
-        try checkProbabilityArcEndpoint(scenario: "probability-zero", value: "0%", large: true)
+        try checkProbabilityArcEndpoint(scenario: "probability-zero", value: "<1%", large: true)
     }
 
     @MainActor
     func testProbabilityArcHundredUsesNativeAccessibilityFallback() throws {
-        try checkProbabilityArcEndpoint(scenario: "probability-hundred", value: "100%", large: true)
+        try checkProbabilityArcEndpoint(scenario: "probability-hundred", value: ">99%", large: true)
     }
 
     @MainActor
@@ -876,7 +876,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         }
         if closed {
             XCTAssertFalse(app.staticTexts["watch.home-probability-unavailable"].exists)
-            XCTAssertFalse(app.staticTexts["Win probability unavailable"].exists,
+            XCTAssertFalse(app.staticTexts["No recent probability"].exists,
                            "Closed events require result qualification, not a missing-forecast invitation")
             try assertSingleResultQualification(in: app, label: "Result not confirmed")
             XCTAssertFalse(app.staticTexts["Closed · result unverified"].exists)
@@ -890,8 +890,8 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         } else {
             let unavailable = app.staticTexts["watch.home-probability-unavailable"]
             XCTAssertTrue(unavailable.exists)
-            XCTAssertEqual(unavailable.label, expectedHome + " win chance unavailable")
-            XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", expectedHome + " win chance unavailable")).count, 1)
+            XCTAssertEqual(unavailable.label, "No recent probability")
+            XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", "No recent probability")).count, 1)
             XCTAssertGreaterThanOrEqual(unavailable.frame.minY, max(away.frame.maxY, home.frame.maxY),
                                         "Quiet unavailable reading stays below both useful scores")
             XCTAssertGreaterThanOrEqual(unavailable.frame.minY, state.frame.maxY)
@@ -1489,7 +1489,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         let current = app.buttons["watch.pick.111"]
         XCTAssertTrue(current.waitForExistence(timeout: 15))
         let value = try XCTUnwrap(current.value as? String)
-        XCTAssertTrue(value.contains("Win probability unavailable"))
+        XCTAssertTrue(value.contains("No recent probability"))
         XCTAssertTrue(value.contains("Probability observation time unavailable"))
         XCTAssertFalse(value.contains("64%"))
         XCTAssertFalse(value.contains("ago"))
@@ -1521,7 +1521,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         let current = app.buttons["watch.pick.111"]
         XCTAssertTrue(current.waitForExistence(timeout: 15))
         let value = try XCTUnwrap(current.value as? String)
-        XCTAssertTrue(value.contains("Win probability unavailable"))
+        XCTAssertTrue(value.contains("No recent probability"))
         XCTAssertTrue(value.contains("Probability observation time unavailable"))
         XCTAssertFalse(value.contains("64%"))
         XCTAssertFalse(value.contains("ago"))

@@ -2,6 +2,9 @@ import Foundation
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 /// Project using the same rounded probability as the app; never export raw auth/API data.
 nonisolated enum WatchComplicationProjection {
@@ -70,13 +73,18 @@ nonisolated enum WatchComplicationProjection {
             }
         }
         guard let observed, validObservation(observed, savedAt: savedAt) else { return nil }
+        let isForecast = kind == .forecast
+        let homeSubOne = isForecast && (ExternalSurfaceProbabilityFormat.isSubOne(game.homeProbability) || game.homeRenderedPercent == 0)
+        let homeAbove99 = isForecast && (ExternalSurfaceProbabilityFormat.isAboveNinetyNine(game.homeProbability) || game.homeRenderedPercent == 100)
         let compact = WatchCircularReading(version: 1, eventID: game.id, kind: kind,
             homeName: game.homeTeam, awayName: game.awayTeam,
             home: game.homeCompactIdentity, away: game.awayCompactIdentity,
-            percent: kind == .forecast ? game.homeRenderedPercent : nil,
-            homeScore: kind == .forecast ? nil : game.homeScore,
-            awayScore: kind == .forecast ? nil : game.awayScore,
-            stateLabel: kind == .final ? "Final" : game.stateLabel, observedAt: observed)
+            percent: isForecast ? game.homeRenderedPercent : nil,
+            homeScore: isForecast ? nil : game.homeScore,
+            awayScore: isForecast ? nil : game.awayScore,
+            stateLabel: kind == .final ? "Final" : game.stateLabel, observedAt: observed,
+            subOnePercent: homeSubOne ? true : nil,
+            aboveNinetyNinePercent: homeAbove99 ? true : nil)
         let validHome: WatchCompactTeamIdentity? = game.homeCompactIdentity.flatMap { $0.isValid ? $0 : nil }
         let validAway: WatchCompactTeamIdentity? = game.awayCompactIdentity.flatMap {
             guard $0.isValid else { return nil }
@@ -84,7 +92,8 @@ nonisolated enum WatchComplicationProjection {
             return $0
         }
         let rectangular: WatchRectangularReading? = rectangularKind.map { rKind in
-            WatchRectangularReading(
+            let rectForecast = (rKind == .liveForecast || rKind == .scheduledForecast)
+            return WatchRectangularReading(
                 version: 1,
                 eventID: game.id,
                 kind: rKind,
@@ -92,13 +101,15 @@ nonisolated enum WatchComplicationProjection {
                 awayName: game.awayTeam,
                 home: validHome,
                 away: validAway,
-                homePercent: (rKind == .liveForecast || rKind == .scheduledForecast) ? game.homeRenderedPercent : nil,
+                homePercent: rectForecast ? game.homeRenderedPercent : nil,
                 homeScore: rectHomeScore,
                 awayScore: rectAwayScore,
                 commenceTime: rectCommenceTime,
                 stateLabel: kind == .final ? "Final" : game.stateLabel,
                 observedAt: observed,
-                scoreObservedAt: rectScoreObserved
+                scoreObservedAt: rectScoreObserved,
+                subOnePercent: (rectForecast && homeSubOne) ? true : nil,
+                aboveNinetyNinePercent: (rectForecast && homeAbove99) ? true : nil
             )
         }
         let parent = WatchComplicationSnapshot(version: 1, eventID: game.id, title: title,
@@ -138,7 +149,17 @@ nonisolated enum WatchComplicationProjection {
             drawPercent: threeWayCurrent.draw,
             awayPercent: threeWayCurrent.away,
             pregameDrawPercent: pregameDraw,
-            isThreeWay: isThreeWay ? true : nil
+            isThreeWay: isThreeWay ? true : nil,
+            drawSubOne: ExternalSurfaceProbabilityFormat.isSubOne(game.drawProbability) ? true : nil,
+            drawAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(game.drawProbability) ? true : nil,
+            awaySubOne: ExternalSurfaceProbabilityFormat.isSubOne(game.awayProbability) ? true : nil,
+            awayAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(game.awayProbability) ? true : nil,
+            pregameHomeSubOne: ExternalSurfaceProbabilityFormat.isSubOne(game.prematchHomeProbability) ? true : nil,
+            pregameHomeAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(game.prematchHomeProbability) ? true : nil,
+            pregameAwaySubOne: ExternalSurfaceProbabilityFormat.isSubOne(game.prematchAwayProbability) ? true : nil,
+            pregameAwayAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(game.prematchAwayProbability) ? true : nil,
+            pregameDrawSubOne: ExternalSurfaceProbabilityFormat.isSubOne(game.prematchDrawProbability) ? true : nil,
+            pregameDrawAboveNinetyNine: ExternalSurfaceProbabilityFormat.isAboveNinetyNine(game.prematchDrawProbability) ? true : nil
         )
     }
 
@@ -163,13 +184,18 @@ nonisolated enum WatchComplicationProjection {
               validObservation(observedAt, savedAt: savedAt) else {
             return nil
         }
-        let subOne = probability < 0.01
-        let aboveNinetyNine = probability > 0.99
-        let clampedPercent: Int = {
-            if subOne { return 1 }
-            if aboveNinetyNine { return 99 }
-            return min(99, max(1, Int((probability * 100).rounded())))
-        }()
+        let subOne = ExternalSurfaceProbabilityFormat.isSubOne(probability)
+        let above99 = ExternalSurfaceProbabilityFormat.isAboveNinetyNine(probability)
+        let rounded: Int
+        if subOne {
+            rounded = 1
+        } else if above99 {
+            rounded = 99
+        } else if let whole = renderedPercent(probability) {
+            rounded = min(max(whole, 1), 99)
+        } else {
+            return nil
+        }
         let reading = WatchRectangularReading(
             version: 1,
             eventID: marketID,
@@ -178,7 +204,7 @@ nonisolated enum WatchComplicationProjection {
             awayName: trimmedOutcome,
             home: nil,
             away: nil,
-            homePercent: clampedPercent,
+            homePercent: rounded,
             homeScore: nil,
             awayScore: nil,
             commenceTime: nil,
@@ -186,7 +212,7 @@ nonisolated enum WatchComplicationProjection {
             observedAt: observedAt,
             scoreObservedAt: nil,
             subOnePercent: subOne ? true : nil,
-            aboveNinetyNinePercent: aboveNinetyNine ? true : nil
+            aboveNinetyNinePercent: above99 ? true : nil
         )
         guard let pct = reading.formattedHomePercent else { return nil }
         let detail = "\(trimmedOutcome) \(pct)"

@@ -1,5 +1,8 @@
 import SwiftUI
 import WidgetKit
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 // MARK: - Small Widget: Single Best Live Game
 
@@ -31,7 +34,7 @@ struct SmallLiveGameView: View {
                 teamRow(
                     abbrev: game.awayAbbrev,
                     score: game.awayScore,
-                    prob: game.awayProb,
+                    probText: game.awayProbText,
                     color: awayHex,
                     isLeading: game.awayIsLeading
                 )
@@ -40,7 +43,7 @@ struct SmallLiveGameView: View {
                 teamRow(
                     abbrev: game.homeAbbrev,
                     score: game.homeScore,
-                    prob: game.homeProb,
+                    probText: game.homeProbText,
                     color: homeHex,
                     isLeading: game.homeIsLeading
                 )
@@ -62,10 +65,10 @@ struct SmallLiveGameView: View {
         }
     }
 
-    /// `prob` is optional for #5363: a draw-priced sport has no away price, so
+    /// `probText` is optional for #5363: a draw-priced sport has no away price, so
     /// that row keeps its crest, abbreviation and score and drops only the
     /// percentage.
-    private func teamRow(abbrev: String, score: Int?, prob: Int?, color: String?, isLeading: Bool) -> some View {
+    private func teamRow(abbrev: String, score: Int?, probText: String?, color: String?, isLeading: Bool) -> some View {
         HStack(spacing: 6) {
             // Team color indicator
             RoundedRectangle(cornerRadius: 2)
@@ -74,19 +77,25 @@ struct SmallLiveGameView: View {
 
             Text(abbrev)
                 .font(.system(size: 14, weight: isLeading ? .bold : .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
                 .frame(width: 36, alignment: .leading)
 
-            Spacer()
+            Spacer(minLength: 2)
 
             if let score {
                 Text("\(score)")
                     .font(.system(size: 16, weight: .heavy, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
 
-            Text(prob.map { "\($0)%" } ?? "")
+            Text(probText ?? "")
                 .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 32, alignment: .trailing)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 32, alignment: .trailing)
         }
     }
 
@@ -202,10 +211,9 @@ struct MediumLiveGamesView: View {
                             .fixedSize(horizontal: true, vertical: false)
                     }
                     Spacer(minLength: 2)
-                    // #5363 + #13162 + #13392: keep probability pair on one uncut line ("93-7"), never wrapping onto "-7",
+                    // #5363 + #13162 + #13392: keep probability pair on one uncut line ("93-7" or "<1%·>99%"),
                     // and include the percent sign on single-outcome fallback ("RMA 52%").
-                    Text(game.awayProb.map { "\($0)-\(game.homeProb)" }
-                         ?? "\(game.homeAbbrev) \(game.homeProb)%")
+                    Text(game.compactProbHeaderText)
                         .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -321,7 +329,7 @@ struct MediumLiveGamesView: View {
                     Spacer(minLength: 4)
 
                     VStack(alignment: .trailing, spacing: 1) {
-                        Text("\(item.probability)%")
+                        Text(item.probabilityText)
                             .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
@@ -431,7 +439,7 @@ struct LargeDashboardView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.85)
                         // #5363 — withheld on a draw-priced sport.
-                        Text(game.awayProb.map { "\($0)%" } ?? "")
+                        Text(game.awayProbText ?? "")
                             .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -465,7 +473,7 @@ struct LargeDashboardView: View {
                             .font(.system(size: 13, weight: game.homeIsLeading ? .bold : .medium))
                             .lineLimit(1)
                             .minimumScaleFactor(0.85)
-                        Text("\(game.homeProb)%")
+                        Text(game.homeProbText)
                             .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -566,7 +574,7 @@ struct LargeDashboardView: View {
                 Spacer(minLength: 4)
 
                 VStack(alignment: .trailing, spacing: 1) {
-                    Text("\(item.probability)%")
+                    Text(item.probabilityText)
                         .font(.system(size: 14, weight: .heavy, design: .rounded).monospacedDigit())
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
@@ -603,6 +611,7 @@ struct LargeDashboardView: View {
 
 // MARK: - Color Extension (hex string to SwiftUI Color)
 
+#if BAINLUCK_WIDGET_EXTENSION || !canImport(Bain_Luck)
 extension Color {
     init(hex: String) {
         let hex = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
@@ -622,3 +631,4 @@ extension Color {
         self.init(red: r, green: g, blue: b)
     }
 }
+#endif

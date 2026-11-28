@@ -1063,7 +1063,7 @@ def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
 XCODE_27_2_CURRENT_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "267753ce4fd805a4592f9c7f05794a6866d55616919170c64fb13ea82f12a03c",
     "PickerAliasJourneyTests.swift": "ea343e54ba47a229254f1db32e5bbbb074a43362406b5c3728ce0a1eb0500c35",
-    "PickerCurrentGameJourneyTests.swift": "3ff94018d2176706b004eba31c7733606e7f679c392cd4faf410245e54220781",
+    "PickerCurrentGameJourneyTests.swift": "dd7730c1baafd637e4e73a9a703f8a968ac7bab87cc1bf7b89b2ecd16d7e89be",
     "PickerReturnJourneyTests.swift": "8e23abbce48fc2c47f382fdde2985f414236026caa03987535b91b8524e361bc",
     "PickerSelectedStateJourneyTests.swift": "129ad9836cfe7eee86f8aa024fd09b00e0a8ad2f8c145c19be1d3e7e851073b5",
     "WatchDiagnosticsJourneyTests.swift": "9f6fd014300264b8a817e8b8c42caebc91e15457c1d305ca06018c67c62fdb68",
@@ -1335,6 +1335,31 @@ XCODE_27_2_LATER_TRANSFORMS = {
         (
             '    @MainActor\n    private func failure(_ message: String, in app: XCUIApplication) -> NSError {\n        capture(app, message)\n        XCTFail(message)\n        return NSError(domain: "WatchCurrentGameJourney", code: 1,\n                       userInfo: [NSLocalizedDescriptionKey: message])\n    }\n}\n#endif',
             '    @MainActor\n    private func failure(_ message: String, in app: XCUIApplication) -> NSError {\n        capture(app, message)\n        XCTFail(message)\n        return NSError(domain: "WatchCurrentGameJourney", code: 1,\n                       userInfo: [NSLocalizedDescriptionKey: message])\n    }\n\n    @MainActor\n    private func terminateAfterLeavingForeground(_ app: XCUIApplication) {\n        if app.state == .notRunning { return }\n        // Let any active foreground task cancel cleanly through a normal scene\n        // transition before terminating (avoids #12513 `:0` terminate races without\n        // calling Carousel.activate(), which IOSSHLMainWorkspace can reject, and\n        // without passing `object: app` to XCTNSPredicateExpectation, which\n        // snapshots the accessibility hierarchy every second). Still fails closed\n        // if `app.terminate()` does not stop the app.\n        XCUIDevice.shared.press(.home)\n        func leftForeground(within seconds: TimeInterval) -> Bool {\n            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                let state = app.state\n                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n            }, object: nil)\n            return XCTWaiter.wait(for: [backgrounded], timeout: seconds) == .completed\n        }\n        if !leftForeground(within: 10) && app.state == .runningForeground {\n            XCUIDevice.shared.press(.home)\n            _ = leftForeground(within: 10)\n        }\n        if app.state != .notRunning { app.terminate() }\n        XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")\n    }\n}\n#endif',
+            1,
+        ),
+        (
+            '    @MainActor\n    func testProbabilityArcZeroStaysZero() throws {\n        try checkProbabilityArcEndpoint(scenario: "probability-zero", value: "0%")\n    }\n\n    @MainActor\n    func testProbabilityArcHundredStaysHundred() throws {\n        try checkProbabilityArcEndpoint(scenario: "probability-hundred", value: "100%")\n    }\n\n    @MainActor\n    func testProbabilityArcZeroUsesNativeAccessibilityFallback() throws {\n        try checkProbabilityArcEndpoint(scenario: "probability-zero", value: "0%", large: true)\n    }\n\n    @MainActor\n    func testProbabilityArcHundredUsesNativeAccessibilityFallback() throws {\n        try checkProbabilityArcEndpoint(scenario: "probability-hundred", value: "100%", large: true)\n    }',
+            '    @MainActor\n    func testProbabilityArcZeroStaysZero() throws {\n        try checkProbabilityArcEndpoint(scenario: "probability-zero", value: "<1%")\n    }\n\n    @MainActor\n    func testProbabilityArcHundredStaysHundred() throws {\n        try checkProbabilityArcEndpoint(scenario: "probability-hundred", value: ">99%")\n    }\n\n    @MainActor\n    func testProbabilityArcZeroUsesNativeAccessibilityFallback() throws {\n        try checkProbabilityArcEndpoint(scenario: "probability-zero", value: "<1%", large: true)\n    }\n\n    @MainActor\n    func testProbabilityArcHundredUsesNativeAccessibilityFallback() throws {\n        try checkProbabilityArcEndpoint(scenario: "probability-hundred", value: ">99%", large: true)\n    }',
+            1,
+        ),
+        (
+            '        if closed {\n            XCTAssertFalse(app.staticTexts["watch.home-probability-unavailable"].exists)\n            XCTAssertFalse(app.staticTexts["Win probability unavailable"].exists,\n                           "Closed events require result qualification, not a missing-forecast invitation")',
+            '        if closed {\n            XCTAssertFalse(app.staticTexts["watch.home-probability-unavailable"].exists)\n            XCTAssertFalse(app.staticTexts["No recent probability"].exists,\n                           "Closed events require result qualification, not a missing-forecast invitation")',
+            1,
+        ),
+        (
+            '            XCTAssertEqual(unavailable.label, expectedHome + " win chance unavailable")\n            XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", expectedHome + " win chance unavailable")).count, 1)',
+            '            XCTAssertEqual(unavailable.label, "No recent probability")\n            XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", "No recent probability")).count, 1)',
+            1,
+        ),
+        (
+            '    func testUnknownCurrentGameDoesNotInventProbabilityOrAge() throws {\n        let app = try launchCurrentGame(large: false, scenario: "unknown")\n        defer { app.terminate() }\n        try openPicker(app)\n        let current = app.buttons["watch.pick.111"]\n        XCTAssertTrue(current.waitForExistence(timeout: 15))\n        let value = try XCTUnwrap(current.value as? String)\n        XCTAssertTrue(value.contains("Win probability unavailable"))',
+            '    func testUnknownCurrentGameDoesNotInventProbabilityOrAge() throws {\n        let app = try launchCurrentGame(large: false, scenario: "unknown")\n        defer { app.terminate() }\n        try openPicker(app)\n        let current = app.buttons["watch.pick.111"]\n        XCTAssertTrue(current.waitForExistence(timeout: 15))\n        let value = try XCTUnwrap(current.value as? String)\n        XCTAssertTrue(value.contains("No recent probability"))',
+            1,
+        ),
+        (
+            '    func testUnknownCurrentGameDoesNotInventProbabilityOrAgeAtAccessibilitySize() throws {\n        let app = try launchCurrentGame(large: true, scenario: "unknown")\n        defer { terminateAfterLeavingForeground(app) }\n        try openPicker(app)\n        let current = app.buttons["watch.pick.111"]\n        XCTAssertTrue(current.waitForExistence(timeout: 15))\n        let value = try XCTUnwrap(current.value as? String)\n        XCTAssertTrue(value.contains("Win probability unavailable"))',
+            '    func testUnknownCurrentGameDoesNotInventProbabilityOrAgeAtAccessibilitySize() throws {\n        let app = try launchCurrentGame(large: true, scenario: "unknown")\n        defer { terminateAfterLeavingForeground(app) }\n        try openPicker(app)\n        let current = app.buttons["watch.pick.111"]\n        XCTAssertTrue(current.waitForExistence(timeout: 15))\n        let value = try XCTUnwrap(current.value as? String)\n        XCTAssertTrue(value.contains("No recent probability"))',
             1,
         ),
     ],

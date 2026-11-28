@@ -192,7 +192,7 @@ struct WatchDiscoverStoriesView: View {
                 Text(game.stateLabel).font(.subheadline.bold())
                 if game.showsForecast {
                     Text(game.homeProbabilityText.map { "\(game.homeTeam) win · \($0)" }
-                         ?? "Win probability unavailable")
+                         ?? ExternalSurfaceProbabilityFormat.missingProbabilityText)
                         .font(.body.bold()).fixedSize(horizontal: false, vertical: true)
                 } else if game.isFinal, let away = game.awayScore, let home = game.homeScore {
                     Text("Final · \(game.awayTeam) \(away), \(game.homeTeam) \(home)")
@@ -246,7 +246,7 @@ struct WatchDiscoverStoriesView: View {
                         .accessibilityLabel("\(outcome), reported probability \(probability)")
                         .accessibilityIdentifier("watch.discovery.probability.\(reading.id)")
                 } else {
-                    Text("Probability unavailable").font(.footnote).foregroundStyle(.secondary)
+                    Text(ExternalSurfaceProbabilityFormat.missingProbabilityText).font(.footnote).foregroundStyle(.secondary)
                 }
                 Text(display.observation).font(.footnote).foregroundStyle(.secondary)
                     .accessibilityLabel(display.spokenObservation)

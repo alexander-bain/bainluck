@@ -78,7 +78,7 @@ struct WatchHomeView: View {
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
                 Spacer(minLength: 2)
-                Text("\(story.bigNumber)%")
+                Text(story.bigNumberText)
                     .font(.system(size: 40, weight: .heavy, design: .rounded))
                     .foregroundStyle(story.accentColor)
                     .minimumScaleFactor(0.7)
