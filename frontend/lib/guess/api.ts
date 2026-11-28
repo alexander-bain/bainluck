@@ -19,12 +19,36 @@ export interface DailyEditionResponse {
 }
 
 export interface GroupBoardEntry {
+  entry_id?: number;
   nickname: string;
   answers: number[];
   step_times: number[];
   points: number;
   step_points: number[];
+  step_labels?: string[];
   total_time_seconds: number;
+}
+
+export interface PublicBoardEntry {
+  entry_id: number;
+  rank: number;
+  nickname: string;
+  points: number;
+  step_points: number[];
+  step_labels: string[];
+  total_time_seconds: number;
+}
+
+export interface PublicBoardResponse {
+  day: string;
+  edition_code: string;
+  steps: { name: string }[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  entries: PublicBoardEntry[];
+  me: PublicBoardEntry | null;
 }
 
 export interface GroupBoardResponse {
@@ -43,11 +67,47 @@ export interface GroupEntrySubmissionPayload {
 
 export class GuessApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  reason: string | null;
+  constructor(status: number, message: string, reason: string | null = null) {
     super(message);
     this.name = "GuessApiError";
     this.status = status;
+    this.reason = reason;
   }
+}
+
+const ALLOWED_NICKNAME_RE = /^[A-Za-z0-9 '\-]+$/;
+
+export function isAllowedNicknameChars(raw: string): boolean {
+  const normalized = cleanName(raw).replace(/[’‘ʼ]/g, "'");
+  if (!normalized) return false;
+  return ALLOWED_NICKNAME_RE.test(normalized) && /[A-Za-z0-9]/.test(normalized);
+}
+
+export function formatOrdinal(n: number): string {
+  const num = Math.trunc(Math.abs(n));
+  const mod100 = num % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${num}th`;
+  switch (num % 10) {
+    case 1:
+      return `${num}st`;
+    case 2:
+      return `${num}nd`;
+    case 3:
+      return `${num}rd`;
+    default:
+      return `${num}th`;
+  }
+}
+
+export function readerSafeBoardError(err: unknown, fallback: string): string {
+  if (
+    err instanceof GuessApiError &&
+    (err.status === 409 || err.status === 429 || err.reason === "nickname_refused")
+  ) {
+    return err.message;
+  }
+  return fallback;
 }
 
 export function isValidGroupCode(raw: string | null | undefined): raw is string {
@@ -80,21 +140,24 @@ export function generateGroupCode(): string {
   return out.join("");
 }
 
-async function readErrorDetail(res: Response, fallback: string): Promise<string> {
+async function readErrorInfo(res: Response, fallback: string): Promise<{ detail: string; reason: string | null }> {
   try {
-    const body = (await res.json()) as { detail?: unknown };
-    if (typeof body?.detail === "string" && body.detail.trim()) return body.detail;
+    const body = (await res.json()) as { detail?: unknown; reason?: unknown };
+    const detail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : fallback;
+    const reason = typeof body?.reason === "string" && body.reason.trim() ? body.reason : null;
+    return { detail, reason };
   } catch {
     // Non-JSON body; keep the caller-friendly fallback message.
   }
-  return fallback;
+  return { detail: fallback, reason: null };
 }
 
 export async function fetchTodayPack(day?: string | null): Promise<DailyEditionResponse> {
   const qs = day ? `?day=${encodeURIComponent(day)}` : "";
   const res = await fetch(`${API_URL}/api/guess/today${qs}`, { cache: "no-store" });
   if (!res.ok) {
-    throw new GuessApiError(res.status, await readErrorDetail(res, "Today's cards are not ready right now."));
+    const info = await readErrorInfo(res, "Today's cards are not ready right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
   }
   const data = (await res.json()) as DailyEditionResponse;
   if (!data?.pack || !Array.isArray(data.pack.cards) || data.pack.cards.length === 0) {
@@ -107,9 +170,32 @@ export async function fetchGroupBoard(groupCode: string, day?: string | null): P
   const qs = day ? `?day=${encodeURIComponent(day)}` : "";
   const res = await fetch(`${API_URL}/api/guess/groups/${encodeURIComponent(groupCode)}${qs}`, { cache: "no-store" });
   if (!res.ok) {
-    throw new GuessApiError(res.status, await readErrorDetail(res, "Could not load the group board right now."));
+    const info = await readErrorInfo(res, "Could not load the group board right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
   }
   return (await res.json()) as GroupBoardResponse;
+}
+
+export async function fetchPublicBoard(
+  day: string,
+  page = 1,
+  pageSize = 20,
+  entryId?: number | null,
+): Promise<PublicBoardResponse> {
+  const params = new URLSearchParams({
+    day,
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  if (typeof entryId === "number" && Number.isInteger(entryId) && entryId > 0) {
+    params.set("entry_id", String(entryId));
+  }
+  const res = await fetch(`${API_URL}/api/guess/board?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) {
+    const info = await readErrorInfo(res, "Could not load today's leaderboard right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
+  }
+  return (await res.json()) as PublicBoardResponse;
 }
 
 export async function submitGroupEntry(groupCode: string, payload: GroupEntrySubmissionPayload): Promise<GroupBoardResponse> {
@@ -126,7 +212,8 @@ export async function submitGroupEntry(groupCode: string, payload: GroupEntrySub
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new GuessApiError(res.status, await readErrorDetail(res, "Could not save your finished game right now."));
+    const info = await readErrorInfo(res, "Could not save your finished game right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
   }
   return (await res.json()) as GroupBoardResponse;
 }

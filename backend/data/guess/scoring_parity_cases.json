@@ -1,0 +1,215 @@
+{
+  "description": "Shared scoring parity test fixture executed by both backend (guess_daily.py) and frontend (engine.ts).",
+  "cases": [
+    {
+      "name": "side_below_50_hit",
+      "card": {"id": "p-side-low", "topic": "Sports", "kind": "side", "question": "Below 50%?", "answer": 34},
+      "guess": 0,
+      "valid": true,
+      "full_guess": 0,
+      "full_points": 10,
+      "points": 10
+    },
+    {
+      "name": "side_below_50_miss",
+      "card": {"id": "p-side-low-miss", "topic": "Sports", "kind": "side", "question": "Below 50%?", "answer": 34},
+      "guess": 1,
+      "valid": true,
+      "full_guess": 0,
+      "full_points": 10,
+      "points": 0
+    },
+    {
+      "name": "side_above_50_hit",
+      "card": {"id": "p-side-hi", "topic": "Money & Tech", "kind": "side", "question": "Above 50%?", "answer": 72},
+      "guess": 1,
+      "valid": true,
+      "full_guess": 1,
+      "full_points": 10,
+      "points": 10
+    },
+    {
+      "name": "versus_hit",
+      "card": {
+        "id": "p-versus",
+        "topic": "Money & Tech",
+        "kind": "versus",
+        "question": "Which is higher?",
+        "options": [{"label": "A", "percent": 28}, {"label": "B", "percent": 72}]
+      },
+      "guess": 1,
+      "valid": true,
+      "full_guess": 1,
+      "full_points": 10,
+      "points": 10
+    },
+    {
+      "name": "versus_miss_and_out_of_bounds",
+      "card": {
+        "id": "p-versus-oob",
+        "topic": "Money & Tech",
+        "kind": "versus",
+        "question": "Which is higher?",
+        "options": [{"label": "A", "percent": 28}, {"label": "B", "percent": 72}]
+      },
+      "guess": 2,
+      "valid": false,
+      "full_guess": 1,
+      "full_points": 10,
+      "points": 0
+    },
+    {
+      "name": "leader_four_way_hit",
+      "card": {
+        "id": "p-leader",
+        "topic": "World & Culture",
+        "kind": "leader",
+        "question": "Who leads?",
+        "options": [
+          {"label": "A", "percent": 10},
+          {"label": "B", "percent": 44},
+          {"label": "C", "percent": 29},
+          {"label": "D", "percent": 17}
+        ]
+      },
+      "guess": 1,
+      "valid": true,
+      "full_guess": 1,
+      "full_points": 15,
+      "points": 15
+    },
+    {
+      "name": "leader_four_way_miss",
+      "card": {
+        "id": "p-leader-miss",
+        "topic": "World & Culture",
+        "kind": "leader",
+        "question": "Who leads?",
+        "options": [
+          {"label": "A", "percent": 10},
+          {"label": "B", "percent": 44},
+          {"label": "C", "percent": 29},
+          {"label": "D", "percent": 17}
+        ]
+      },
+      "guess": 2,
+      "valid": true,
+      "full_guess": 1,
+      "full_points": 15,
+      "points": 0
+    },
+    {
+      "name": "four_percent_hit",
+      "card": {
+        "id": "p-four",
+        "topic": "Sports",
+        "kind": "four",
+        "question": "Pick exact share",
+        "options": [18, 34, 52, 71],
+        "answer": 52
+      },
+      "guess": 2,
+      "valid": true,
+      "full_guess": 2,
+      "full_points": 15,
+      "points": 15
+    },
+    {
+      "name": "four_percent_miss",
+      "card": {
+        "id": "p-four-miss",
+        "topic": "Sports",
+        "kind": "four",
+        "question": "Pick exact share",
+        "options": [18, 34, 52, 71],
+        "answer": 52
+      },
+      "guess": 0,
+      "valid": true,
+      "full_guess": 2,
+      "full_points": 15,
+      "points": 0
+    },
+    {
+      "name": "chance_slider_exact",
+      "card": {"id": "p-chance-hit", "topic": "Money & Tech", "kind": "chance", "question": "Rate cut?", "answer": 63},
+      "guess": 63,
+      "valid": true,
+      "full_guess": 63,
+      "full_points": 20,
+      "points": 20
+    },
+    {
+      "name": "chance_slider_near",
+      "card": {"id": "p-chance-near", "topic": "Money & Tech", "kind": "chance", "question": "Rate cut?", "answer": 63},
+      "guess": 58,
+      "valid": true,
+      "full_guess": 63,
+      "full_points": 20,
+      "points": 15
+    },
+    {
+      "name": "chance_slider_far_floor_zero",
+      "card": {"id": "p-chance-far", "topic": "Money & Tech", "kind": "chance", "question": "Rate cut?", "answer": 63},
+      "guess": 30,
+      "valid": true,
+      "full_guess": 63,
+      "full_points": 20,
+      "points": 0
+    },
+    {
+      "name": "count_slider_step4_near",
+      "card": {"id": "p-count", "topic": "Sports", "kind": "count", "question": "How many?", "max": 40, "step": 4, "answer": 12},
+      "guess": 10,
+      "valid": true,
+      "full_guess": 12,
+      "full_points": 20,
+      "points": 12
+    },
+    {
+      "name": "duo_half_up_rounding",
+      "card": {
+        "id": "p-duo-halfup",
+        "topic": "World & Culture",
+        "kind": "duo",
+        "question": "Two percents",
+        "parts": [{"label": "A", "answer": 60}, {"label": "B", "answer": 40}]
+      },
+      "guess": 6101,
+      "valid": true,
+      "full_guess": 6100,
+      "full_points": 20,
+      "points": 20
+    },
+    {
+      "name": "duo_even_half_score",
+      "card": {
+        "id": "p-duo-even",
+        "topic": "World & Culture",
+        "kind": "duo",
+        "question": "Two percents",
+        "parts": [{"label": "A", "answer": 60}, {"label": "B", "answer": 40}]
+      },
+      "guess": 6102,
+      "valid": true,
+      "full_guess": 6100,
+      "full_points": 20,
+      "points": 19
+    },
+    {
+      "name": "duo_invalid_out_of_bounds",
+      "card": {
+        "id": "p-duo-invalid",
+        "topic": "World & Culture",
+        "kind": "duo",
+        "question": "Two percents",
+        "parts": [{"label": "A", "answer": 60}, {"label": "B", "answer": 40}]
+      },
+      "guess": 10201,
+      "valid": false,
+      "full_guess": 6100,
+      "full_points": 20,
+      "points": 0
+    }
+  ]
+}

@@ -1,10 +1,10 @@
-"""Server logic for the daily /guess challenge and group boards (#12619, 443: A).
+"""Server logic for the daily /guess challenge, group boards, and public board (#12619, 443: A, 446: B).
 
 Freezes once per Pacific Time calendar day from live site-formatted futures
 details (`get_futures_market(..., representation="verified_title")`), never
-fabricated numbers, with zero LLM calls. Groups are isolated by random URL
-group codes with strict privacy-only persistence:
-`(day_pt, group_code, nickname, answers, step_times)`, swept after 30 days.
+fabricated numbers, with zero LLM calls. Group boards and the daily public board
+filter out `hidden_at` rows while storing only
+`(day_pt, group_code, nickname, answers, step_times)` for 30 days.
 """
 
 from __future__ import annotations
@@ -56,6 +56,104 @@ GROUP_CODE_RE = re.compile(r"^[a-z0-9]{8,24}$")
 
 _TAP_KINDS = frozenset({"side", "versus", "four", "leader"})
 _RESERVED_NICKNAMES = frozenset({"the coin", "together"})
+ALLOWED_NICKNAME_RE = re.compile(r"^[A-Za-z0-9 '\-]+$")
+_RUDE_WHOLE_TOKENS = frozenset(
+    {
+        "anal",
+        "anus",
+        "arse",
+        "ass",
+        "bastard",
+        "bitch",
+        "boob",
+        "boobs",
+        "cock",
+        "coon",
+        "crap",
+        "cum",
+        "cunt",
+        "damn",
+        "dick",
+        "dildo",
+        "dyke",
+        "fag",
+        "fgt",
+        "fuk",
+        "fuck",
+        "hell",
+        "hoe",
+        "homo",
+        "jerk",
+        "jizz",
+        "kike",
+        "kunt",
+        "milf",
+        "nazi",
+        "nig",
+        "niga",
+        "nigg",
+        "piss",
+        "poop",
+        "porn",
+        "prick",
+        "pube",
+        "puss",
+        "pussy",
+        "rape",
+        "retard",
+        "semen",
+        "sex",
+        "shit",
+        "slut",
+        "spic",
+        "suck",
+        "tit",
+        "tits",
+        "tranny",
+        "turd",
+        "twat",
+        "wank",
+        "wetback",
+        "whore",
+        "xxx",
+    }
+)
+_RUDE_SUBSTRINGS = (
+    "asshole",
+    "bastard",
+    "bitch",
+    "blowjob",
+    "boner",
+    "bullshit",
+    "cocksuck",
+    "cumshot",
+    "cunt",
+    "dildo",
+    "dumbass",
+    "faggot",
+    "fuck",
+    "goddam",
+    "handjob",
+    "jackoff",
+    "jizz",
+    "motherfuck",
+    "nigga",
+    "nigger",
+    "penis",
+    "porn",
+    "pussy",
+    "retard",
+    "scrotum",
+    "shit",
+    "slut",
+    "testicle",
+    "titty",
+    "twat",
+    "vagina",
+    "wanker",
+    "whore",
+)
+_LEET_MAP = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b"})
 _LEGACY_EDITION_CODES = frozenset({"c1", "d1"})
 _NON_PLAYABLE_OUTCOME_STATUSES = frozenset({"settled", "closed", "voided", "cancelled"})
 _EDITION_LOCK_NS = 0x47554553  # 'GUES'
@@ -73,6 +171,10 @@ class GuessEditionNotFoundError(GuessError):
 
 class GuessEditionUnavailableError(GuessError):
     """Daily schedule cannot produce 15 playable live cards without fabricating."""
+
+
+class GuessEditionUnscheduledError(GuessEditionUnavailableError):
+    """No schedule entry is configured for the requested PT day yet."""
 
 
 class GuessInvalidGroupCodeError(GuessError):
@@ -140,6 +242,7 @@ def clean_nickname(raw: Any) -> str:
         return ""
     # Replace control chars and collapse whitespace identically to JS `.replace(/\s+/g, " ").trim()`.
     stripped = re.sub(r"[\x00-\x1f\x7f]+", " ", raw)
+    stripped = stripped.replace("’", "'").replace("‘", "'").replace("ʼ", "'")
     collapsed = re.sub(r"\s+", " ", stripped).strip()
     if not collapsed:
         return ""
@@ -147,6 +250,49 @@ def clean_nickname(raw: Any) -> str:
     if clipped.lower() in _RESERVED_NICKNAMES:
         return ""
     return clipped
+
+
+def _is_rude_nickname(nickname: str) -> bool:
+    lowered = nickname.lower()
+    collapsed_alpha = re.sub(r"[^a-z0-9]+", "", lowered)
+    normalized_leet = collapsed_alpha.translate(_LEET_MAP)
+    for stem in _RUDE_SUBSTRINGS:
+        if stem in collapsed_alpha or stem in normalized_leet:
+            return True
+    if collapsed_alpha in _RUDE_WHOLE_TOKENS or normalized_leet in _RUDE_WHOLE_TOKENS:
+        return True
+    for raw_tok in re.split(r"[\s\-']+", lowered):
+        if not raw_tok:
+            continue
+        tok = raw_tok.strip()
+        tok_leet = tok.translate(_LEET_MAP)
+        if tok in _RUDE_WHOLE_TOKENS or tok_leet in _RUDE_WHOLE_TOKENS:
+            return True
+        if any(stem in tok or stem in tok_leet for stem in _RUDE_SUBSTRINGS):
+            return True
+    return False
+
+
+def validate_nickname(raw: Any) -> tuple[str, Optional[str]]:
+    """Validate and clean a board nickname, returning `(clean, refusal_reason)`."""
+    if not isinstance(raw, str):
+        return "", "Please pick a nickname using letters or numbers."
+    stripped = re.sub(r"[\x00-\x1f\x7f]+", " ", raw)
+    stripped = stripped.replace("’", "'").replace("‘", "'").replace("ʼ", "'")
+    collapsed = re.sub(r"\s+", " ", stripped).strip()
+    if not collapsed:
+        return "", "Please type a valid nickname."
+    clipped = collapsed[:12].strip()
+    if clipped.lower() in _RESERVED_NICKNAMES:
+        return "", "That name is taken by the house. Please pick another nickname."
+    if not ALLOWED_NICKNAME_RE.fullmatch(clipped) or not re.search(r"[A-Za-z0-9]", clipped):
+        return (
+            "",
+            "Names can use only letters, spaces, numbers, apostrophes, and hyphens. Please pick another.",
+        )
+    if _is_rude_nickname(clipped):
+        return "", "Please pick another nickname for the board."
+    return clipped, None
 
 
 def validate_group_code(group_code: str) -> str:
@@ -286,6 +432,34 @@ def clean_step_times(pack: Mapping[str, Any], raw_times: Any) -> list[int]:
     return cleaned
 
 
+def score_step_labels(
+    pack: Mapping[str, Any],
+    answers: Sequence[int],
+    step_points: Sequence[int],
+) -> list[str]:
+    """Mirror frontend `stepScoreLabel`: 'R of C' for all-tap steps, else step points."""
+    cards = pack.get("cards") or []
+    steps = pack.get("steps") or []
+    per_round = int(pack.get("perRound") or 5)
+    labels: list[str] = []
+    for step_idx in range(len(steps)):
+        start = step_idx * per_round
+        end = min(len(cards), start + per_round)
+        step_cards = cards[start:end]
+        if step_cards and all(is_tap(c) for c in step_cards):
+            right = 0
+            for offset, card in enumerate(step_cards):
+                idx = start + offset
+                guess = answers[idx] if idx < len(answers) else None
+                if points_for(card, guess) == full_points(card):
+                    right += 1
+            labels.append(f"{right} of {len(step_cards)}")
+        else:
+            pts = int(step_points[step_idx]) if step_idx < len(step_points) else 0
+            labels.append(str(pts))
+    return labels
+
+
 def score_answers(
     pack: Mapping[str, Any],
     answers: Sequence[Any],
@@ -315,11 +489,13 @@ def score_answers(
         sum(card_points[s * per_round : (s + 1) * per_round])
         for s in range(len(steps))
     ]
+    step_labels = score_step_labels(pack, validated_answers, step_points)
     return {
         "answers": validated_answers,
         "step_times": validated_times,
         "card_points": card_points,
         "step_points": step_points,
+        "step_labels": step_labels,
         "points": sum(step_points),
         "total_time_seconds": sum(validated_times),
     }
@@ -910,99 +1086,155 @@ def build_daily_pack(
     market_details: Mapping[int, Mapping[str, Any]],
     frozen_at: datetime,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Resolve 15 live cards (5 per step), swapping spares for closed/unplayable primaries."""
+    """Resolve 15 live cards (5 per step), trying alternate spares on whole-day failure."""
     steps = list(schedule_day.get("steps") or [])
     if len(steps) != 3:
         raise GuessEditionUnavailableError(f"Schedule for {day_pt} must define 3 steps.")
     step_cards = schedule_day.get("step_cards") or {}
     spares = schedule_day.get("spares") or {}
+    day_str = day_pt.isoformat()
+    code = edition_code_for_day(day_pt)
 
+    step_keys = ("easy", "medium", "hard")
+    slots: list[tuple[int, str, int, Mapping[str, Any]]] = []
+    spare_pools: list[list[Mapping[str, Any]]] = []
+    for step_idx, step_key in enumerate(step_keys):
+        primaries = list(step_cards.get(step_key) or [])
+        if len(primaries) != 5:
+            raise GuessEditionUnavailableError(
+                f"Expected 5 cards for {day_str} step '{step_key}', got {len(primaries)}."
+            )
+        spare_pools.append(list(spares.get(step_key) or []))
+        for primary_idx, tmpl in enumerate(primaries):
+            slots.append((step_idx, step_key, primary_idx, tmpl))
+
+    consumed_by_step: list[set[int]] = [set(), set(), set()]
+    kept_by_step: list[list[dict[str, Any]]] = [[], [], []]
     resolved_cards: list[dict[str, Any]] = []
     provenance: list[dict[str, Any]] = []
-    day_str = day_pt.isoformat()
+    used_ids: set[str] = set()
 
-    for step_idx, step_key in enumerate(("easy", "medium", "hard")):
-        primaries = list(step_cards.get(step_key) or [])
-        spare_pool = list(spares.get(step_key) or [])
-        consumed_spares: set[int] = set()
-        kept_in_step: list[dict[str, Any]] = []
-        used_ids: set[str] = {c["id"] for c in resolved_cards}
+    last_invariant_error: Optional[GuessEditionUnavailableError] = None
+    first_short_step: Optional[str] = None
+    invariant_attempts = 0
+    max_invariant_attempts = 64
 
-        for primary_idx, tmpl in enumerate(primaries):
-            prev_card = kept_in_step[-1] if kept_in_step else (resolved_cards[-1] if resolved_cards else None)
-            primary_refusals: list[str] = []
-            outcome = _resolve_with_step_fit(
-                tmpl,
-                market_details,
-                frozen_at,
-                day_seed=day_str,
-                step_key=step_key,
-                kept_in_step=kept_in_step,
-                prev_global_card=prev_card,
-                refusal_reasons_out=primary_refusals,
-            )
-            if outcome is not None:
-                card, prov = outcome
-                kept_in_step.append(card)
-                provenance.extend(prov)
-                used_ids.add(card["id"])
-                continue
+    def _finish_pack() -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        nonlocal invariant_attempts, last_invariant_error
+        if invariant_attempts >= max_invariant_attempts:
+            return None
+        invariant_attempts += 1
+        candidate_pack: dict[str, Any] = {
+            "id": day_str,
+            "code": code,
+            "asOf": format_as_of_pt(frozen_at),
+            "perRound": 5,
+            "steps": [{"name": str(s["name"]), "how": str(s["how"])} for s in steps],
+            "coinTaps": _draw_coin_taps(list(resolved_cards), day_str),
+            "topics": list(schedule_day["topics"]),
+            "cards": list(resolved_cards),
+        }
+        try:
+            _validate_pack_invariants(candidate_pack, day_str)
+        except GuessEditionUnavailableError as exc:
+            last_invariant_error = exc
+            return None
+        return candidate_pack, [dict(p) for p in provenance]
 
-            swapped = False
+    def _search(depth: int) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        nonlocal first_short_step
+        if depth == len(slots):
+            return _finish_pack()
+        if invariant_attempts >= max_invariant_attempts:
+            return None
+
+        step_idx, step_key, primary_idx, tmpl = slots[depth]
+        prev_card = resolved_cards[-1] if resolved_cards else None
+        kept_step = kept_by_step[step_idx]
+        primary_refusals: list[str] = []
+        outcome = _resolve_with_step_fit(
+            tmpl,
+            market_details,
+            frozen_at,
+            day_seed=day_str,
+            step_key=step_key,
+            kept_in_step=kept_step,
+            prev_global_card=prev_card,
+            refusal_reasons_out=primary_refusals,
+        )
+
+        candidates: list[tuple[Optional[int], dict[str, Any], list[dict[str, Any]]]] = []
+        if outcome is not None:
+            card, prov = outcome
+            candidates.append((None, card, prov))
+        else:
             swap_reason = primary_refusals[0] if primary_refusals else "step_fit_rejected"
-            for s_idx, candidate in enumerate(spare_pool):
-                if s_idx in consumed_spares:
+            for s_idx, spare_tmpl in enumerate(spare_pools[step_idx]):
+                if s_idx in consumed_by_step[step_idx]:
                     continue
                 spare_outcome = _resolve_with_step_fit(
-                    candidate,
+                    spare_tmpl,
                     market_details,
                     frozen_at,
                     day_seed=day_str,
                     step_key=step_key,
-                    kept_in_step=kept_in_step,
+                    kept_in_step=kept_step,
                     prev_global_card=prev_card,
                 )
                 if spare_outcome is None:
                     continue
-                consumed_spares.add(s_idx)
                 card, prov = spare_outcome
-                if card["id"] in used_ids:
-                    card["id"] = f"{card['id']}_{step_idx}_{primary_idx}"
-                for p in prov:
-                    p["swapped_from_slot"] = str(tmpl.get("id") or "")
-                    p["swapped_reason"] = swap_reason
-                kept_in_step.append(card)
-                provenance.extend(prov)
+                card_copy = dict(card)
+                if card_copy["id"] in used_ids:
+                    card_copy["id"] = f"{card_copy['id']}_{step_idx}_{primary_idx}"
+                prov_copy = [
+                    {
+                        **p,
+                        "card_id": card_copy["id"],
+                        "swapped_from_slot": str(tmpl.get("id") or ""),
+                        "swapped_reason": swap_reason,
+                    }
+                    for p in prov
+                ]
+                candidates.append((s_idx, card_copy, prov_copy))
+
+        if not candidates:
+            if first_short_step is None:
+                first_short_step = step_key
+            return None
+
+        for s_idx, card, prov in candidates:
+            added_id = card["id"] not in used_ids
+            if s_idx is not None:
+                consumed_by_step[step_idx].add(s_idx)
+            if added_id:
                 used_ids.add(card["id"])
-                swapped = True
-                break
+            kept_step.append(card)
+            resolved_cards.append(card)
+            provenance.extend(prov)
 
-            if not swapped:
-                raise GuessEditionUnavailableError(
-                    f"Insufficient live playable cards for {day_str} step '{step_key}'."
-                )
+            result = _search(depth + 1)
+            if result is not None:
+                return result
 
-        if len(kept_in_step) != 5:
-            raise GuessEditionUnavailableError(
-                f"Expected 5 cards for {day_str} step '{step_key}', got {len(kept_in_step)}."
-            )
-        resolved_cards.extend(kept_in_step)
+            del provenance[-len(prov) :]
+            resolved_cards.pop()
+            kept_step.pop()
+            if added_id:
+                used_ids.discard(card["id"])
+            if s_idx is not None:
+                consumed_by_step[step_idx].discard(s_idx)
 
-    code = edition_code_for_day(day_pt)
-    pack: dict[str, Any] = {
-        "id": day_str,
-        "code": code,
-        "asOf": format_as_of_pt(frozen_at),
-        "perRound": 5,
-        "steps": [
-            {"name": str(s["name"]), "how": str(s["how"])} for s in steps
-        ],
-        "coinTaps": _draw_coin_taps(resolved_cards, day_str),
-        "topics": list(schedule_day["topics"]),
-        "cards": resolved_cards,
-    }
-    _validate_pack_invariants(pack, day_str)
-    return pack, provenance
+        return None
+
+    built = _search(0)
+    if built is not None:
+        return built
+    if last_invariant_error is not None:
+        raise last_invariant_error
+    raise GuessEditionUnavailableError(
+        f"Insufficient live playable cards for {day_str} step '{first_short_step or 'easy'}'."
+    )
 
 
 def _schedule_market_ids(schedule_day: Mapping[str, Any]) -> list[int]:
@@ -1083,7 +1315,7 @@ async def get_or_freeze_daily_edition(
     sched = schedule or load_daily_schedule()
     day_entry = (sched.get("days") or {}).get(day.isoformat())
     if not isinstance(day_entry, Mapping):
-        raise GuessEditionUnavailableError(
+        raise GuessEditionUnscheduledError(
             f"No daily schedule configured for {day.isoformat()} PT."
         )
 
@@ -1146,13 +1378,14 @@ async def build_group_board_payload(
     edition: GuessDailyEdition,
     group_code: str,
 ) -> dict[str, Any]:
-    """Load one group's stored entries and score them server-side from answers."""
+    """Load one group's visible entries and score them server-side from answers."""
     rows = (
         await db.scalars(
             select(GuessGroupEntry)
             .where(
                 GuessGroupEntry.day_pt == edition.day_pt,
                 GuessGroupEntry.group_code == group_code,
+                GuessGroupEntry.hidden_at.is_(None),
             )
             .order_by(GuessGroupEntry.id.asc())
         )
@@ -1163,11 +1396,13 @@ async def build_group_board_payload(
         scored = score_answers(pack, row.answers, row.step_times)
         entries_out.append(
             {
+                "entry_id": int(row.id),
                 "nickname": row.nickname,
                 "answers": scored["answers"],
                 "step_times": scored["step_times"],
                 "points": scored["points"],
                 "step_points": scored["step_points"],
+                "step_labels": scored["step_labels"],
                 "total_time_seconds": scored["total_time_seconds"],
             }
         )
@@ -1177,6 +1412,98 @@ async def build_group_board_payload(
         "edition_code": edition.edition_code,
         "group_code": group_code,
         "entries": entries_out,
+    }
+
+
+async def build_public_board_snapshot(
+    db: AsyncSession,
+    edition: GuessDailyEdition,
+) -> dict[str, Any]:
+    """Build one PT day's public board snapshot across all visible finished games.
+
+    Strictly omits ``group_code`` so reading the public board can never grant
+    write access to another family's board.
+    """
+    rows = (
+        await db.scalars(
+            select(GuessGroupEntry)
+            .where(
+                GuessGroupEntry.day_pt == edition.day_pt,
+                GuessGroupEntry.hidden_at.is_(None),
+            )
+            .order_by(GuessGroupEntry.id.asc())
+        )
+    ).all()
+    pack = edition.pack_json
+    entries_out: list[dict[str, Any]] = []
+    for row in rows:
+        scored = score_answers(pack, row.answers, row.step_times)
+        entries_out.append(
+            {
+                "entry_id": int(row.id),
+                "nickname": row.nickname,
+                "points": scored["points"],
+                "step_points": scored["step_points"],
+                "step_labels": scored["step_labels"],
+                "total_time_seconds": scored["total_time_seconds"],
+            }
+        )
+    entries_out.sort(key=lambda e: (-e["points"], e["total_time_seconds"], e["entry_id"]))
+
+    prev_points: Optional[int] = None
+    prev_rank = 0
+    for idx, item in enumerate(entries_out, start=1):
+        if prev_points is None or item["points"] != prev_points:
+            prev_points = item["points"]
+            prev_rank = idx
+        item["rank"] = prev_rank
+
+    steps_meta = [
+        {"name": str(step.get("name") or "")}
+        for step in (pack.get("steps") or ())
+    ]
+    return {
+        "day": edition.day_pt.isoformat(),
+        "edition_code": edition.edition_code,
+        "steps": steps_meta,
+        "entries": entries_out,
+    }
+
+
+def slice_public_board_page(
+    snapshot: Mapping[str, Any],
+    *,
+    page: int = 1,
+    page_size: int = 25,
+    entry_id: Optional[int] = None,
+) -> dict[str, Any]:
+    """Slice one page plus optional ``me`` lookup from a cached public board snapshot."""
+    entries = list(snapshot.get("entries") or ())
+    total_count = len(entries)
+    safe_size = max(1, min(100, int(page_size)))
+    total_pages = max(1, math.ceil(total_count / safe_size)) if total_count > 0 else 1
+    safe_page = max(1, min(int(page), total_pages))
+    start = (safe_page - 1) * safe_size
+    page_entries = entries[start : start + safe_size]
+
+    me_entry = None
+    if entry_id is not None:
+        target_id = int(entry_id)
+        for item in entries:
+            if int(item.get("entry_id") or -1) == target_id:
+                me_entry = item
+                break
+
+    return {
+        "day": snapshot["day"],
+        "edition_code": snapshot["edition_code"],
+        "steps": list(snapshot.get("steps") or ()),
+        "total_count": total_count,
+        "page": safe_page,
+        "page_size": safe_size,
+        "total_pages": total_pages,
+        "entries": page_entries,
+        "me": me_entry,
     }
 
 

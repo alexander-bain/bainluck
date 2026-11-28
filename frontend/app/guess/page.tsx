@@ -96,6 +96,7 @@ export default function GuessPage() {
           return;
         }
       }
+      const unscheduled = err instanceof GuessApiError && err.reason === "unscheduled";
       setEdition({
         pack: LATEST_PACK,
         initialGroupCode: null,
@@ -103,7 +104,9 @@ export default function GuessPage() {
         initialGroupError: null,
         earlierDayNotice: null,
         expiredDayNotice: null,
-        fallbackNotice: "Today's live cards could not be reached, so you are playing the built-in set.",
+        fallbackNotice: unscheduled
+          ? "No new cards today. Here is the latest set."
+          : "Today's live cards could not be reached, so you are playing the built-in set.",
       });
     }
   }, []);

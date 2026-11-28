@@ -61,11 +61,16 @@ import {
 import {
   evaluateGroupVisitOnResults,
   fetchGroupBoard,
+  fetchPublicBoard,
+  formatOrdinal,
   generateGroupCode,
   groupEntryToPlayerEntry,
   GuessApiError,
+  isAllowedNicknameChars,
   mergeGroupPlayers,
+  readerSafeBoardError,
   submitGroupEntry,
+  type PublicBoardResponse,
 } from "@/lib/guess/api";
 import { decodeGroup, encodeGroup, mergeFromLink, shareMessage, stepShareMessage, uniqueName } from "@/lib/guess/link";
 import { roastHistory } from "@/lib/guess/roast";
@@ -307,6 +312,162 @@ function BoardErrorBanner({ message, canRetry, onRetry }: { message: string; can
   );
 }
 
+function PublicBoardPanel({
+  pack,
+  board,
+  loading,
+  error,
+  myEntryIds,
+  primaryEntryId,
+  onPageChange,
+  onRetry,
+}: {
+  pack: GamePack;
+  board: PublicBoardResponse | null;
+  loading: boolean;
+  error: string | null;
+  myEntryIds: Set<number>;
+  primaryEntryId: number | null;
+  onPageChange: (nextPage: number) => void;
+  onRetry: () => void;
+}) {
+  const stepNames = pack.steps.map((s) => s.name);
+  const readyBoard =
+    board && typeof board.total_count === "number" && Array.isArray(board.entries) ? board : null;
+  return (
+    <section className={`${PANEL} space-y-2.5`} data-testid="public-board">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-sm font-black text-text-primary">Everyone who played today</h3>
+        {readyBoard && (
+          <span className="text-xs font-bold tabular-nums text-text-secondary" data-testid="public-board-count">
+            {readyBoard.total_count} {readyBoard.total_count === 1 ? "game" : "games"}
+          </span>
+        )}
+      </div>
+
+      {readyBoard?.me && (
+        <p
+          className="rounded-2xl border border-surface-border bg-surface-elevated px-3 py-2 text-sm font-black text-text-primary"
+          data-testid="public-board-place"
+        >
+          You finished {formatOrdinal(readyBoard.me.rank)} of {readyBoard.total_count}.
+        </p>
+      )}
+
+      {error && (
+        <div className="space-y-2" data-testid="public-board-error">
+          <p className="text-sm text-text-secondary">{error}</p>
+          <button type="button" className={QUIET} onClick={onRetry} data-testid="public-board-retry">
+            Try again
+          </button>
+        </div>
+      )}
+
+      {!error && loading && !readyBoard && (
+        <p className="text-sm text-text-secondary" data-testid="public-board-loading">
+          Loading today&apos;s board…
+        </p>
+      )}
+
+      {readyBoard && readyBoard.entries.length === 0 && (
+        <p className="text-sm text-text-secondary" data-testid="public-board-empty">
+          No finished games saved on today&apos;s public board yet.
+        </p>
+      )}
+
+      {readyBoard && readyBoard.entries.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left" data-testid="public-board-table">
+            <thead>
+              <tr className="text-xs font-black uppercase tracking-wide text-text-secondary">
+                <th className="pb-1 pr-1.5 font-black">#</th>
+                <th className="pb-1 pr-2 font-black">Player</th>
+                {stepNames.map((name) => (
+                  <th key={name} className="pb-1 pl-1 text-right font-black">
+                    {name}
+                  </th>
+                ))}
+                <th className="pb-1 pl-1.5 text-right font-black">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {readyBoard.entries.map((entry) => {
+                const isPrimary = primaryEntryId !== null && entry.entry_id === primaryEntryId;
+                const isMine = myEntryIds.has(entry.entry_id);
+                return (
+                  <tr
+                    key={entry.entry_id}
+                    data-testid={isMine ? "public-board-row-me" : `public-board-row-${entry.entry_id}`}
+                    className={`border-t border-surface-border align-middle ${
+                      isMine ? "bg-surface-elevated" : ""
+                    }`}
+                  >
+                    <td className="py-1.5 pr-1.5 text-xs font-black tabular-nums text-text-secondary">
+                      {entry.rank}
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      <span className="flex items-center gap-1.5">
+                        <span className="max-w-[92px] truncate text-sm font-bold text-text-primary">
+                          {entry.nickname}
+                        </span>
+                        {isMine && (
+                          <span
+                            className="shrink-0 rounded-full bg-text-primary px-2 py-0.5 text-xs font-black uppercase tracking-wide text-white"
+                            data-testid={isPrimary ? "public-board-you-badge" : undefined}
+                          >
+                            {isPrimary ? "You" : "Here"}
+                          </span>
+                        )}
+                      </span>
+                    </td>
+                    {stepNames.map((stepName, sIdx) => (
+                      <td
+                        key={`${entry.entry_id}:${stepName}`}
+                        className="py-1.5 pl-1 text-right text-xs font-bold whitespace-nowrap tabular-nums text-text-secondary"
+                      >
+                        {entry.step_labels?.[sIdx] ?? String(entry.step_points?.[sIdx] ?? 0)}
+                      </td>
+                    ))}
+                    <td className="py-1.5 pl-1.5 text-right text-sm font-black tabular-nums text-text-primary">
+                      {entry.points}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {readyBoard && readyBoard.total_pages > 1 && (
+        <div className="flex items-center justify-between gap-2 pt-1" data-testid="public-board-pager">
+          <button
+            type="button"
+            className={QUIET}
+            disabled={readyBoard.page <= 1 || loading}
+            onClick={() => onPageChange(readyBoard.page - 1)}
+            data-testid="public-board-prev"
+          >
+            Previous
+          </button>
+          <span className="text-xs font-bold tabular-nums text-text-secondary" data-testid="public-board-page-label">
+            Page {readyBoard.page} of {readyBoard.total_pages}
+          </span>
+          <button
+            type="button"
+            className={QUIET}
+            disabled={readyBoard.page >= readyBoard.total_pages || loading}
+            onClick={() => onPageChange(readyBoard.page + 1)}
+            data-testid="public-board-next"
+          >
+            Next
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function EditionNotices({
   earlierDayNotice,
   expiredDayNotice,
@@ -381,12 +542,18 @@ export default function ChanceGame({
   const [joinedGroups, setJoinedGroups] = useState<string[]>([]);
   const [pendingJoinBoard, setPendingJoinBoard] = useState<boolean>(false);
   const [storedEntries, setStoredEntries] = useState<PlayerEntry[]>([]);
+  const [savedEntryIds, setSavedEntryIds] = useState<Record<string, number>>({});
   const [boardLoading, setBoardLoading] = useState<boolean>(Boolean(initialGroupCode && !isLegacyPack));
   const [boardError, setBoardError] = useState<string | null>(initialGroupError);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "conflict" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [conflictName, setConflictName] = useState("");
   const [conflictOldName, setConflictOldName] = useState("");
+  const [publicBoard, setPublicBoard] = useState<PublicBoardResponse | null>(null);
+  const [publicBoardLoading, setPublicBoardLoading] = useState(false);
+  const [publicBoardError, setPublicBoardError] = useState<string | null>(null);
+  const [publicPage, setPublicPage] = useState(1);
+  const [publicRefreshTick, setPublicRefreshTick] = useState(0);
   // When the card in front of the current player was shown, to time the decision.
   const shownAt = useRef<{ at: string; time: number }>({ at: "", time: 0 });
   const savedKeysRef = useRef<Set<string>>(new Set());
@@ -394,6 +561,23 @@ export default function ChanceGame({
 
   const total = pack.cards.length;
   const coin = useMemo(() => coinEntry(pack), [pack]);
+
+  const recordSavedEntryIds = useCallback((entries: { nickname: string; entry_id?: number }[]) => {
+    setSavedEntryIds((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const entry of entries) {
+        if (typeof entry.entry_id === "number" && entry.entry_id > 0) {
+          const key = entry.nickname.trim().toLowerCase();
+          if (next[key] !== entry.entry_id) {
+            next[key] = entry.entry_id;
+            changed = true;
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
 
   const loadBoard = useCallback(
     async (code: string) => {
@@ -403,13 +587,14 @@ export default function ChanceGame({
       try {
         const resp = await fetchGroupBoard(code, pack.id);
         setStoredEntries(resp.entries.map((entry) => groupEntryToPlayerEntry(pack, entry)));
+        recordSavedEntryIds(resp.entries);
       } catch (err) {
-        setBoardError(err instanceof Error ? err.message : "Could not load the group board right now.");
+        setBoardError(readerSafeBoardError(err, "Could not load the group board right now."));
       } finally {
         setBoardLoading(false);
       }
     },
-    [pack, isLegacyPack],
+    [pack, isLegacyPack, recordSavedEntryIds],
   );
 
   // Read the link, the group board, and anything kept on this phone after first paint.
@@ -532,7 +717,14 @@ export default function ChanceGame({
     const taken = new Set(
       [...names, ...storedEntries.map((p) => p.name), ...game.link.map((p) => p.name), COIN_NAME, TOGETHER_NAME].map((n) => n.toLowerCase()),
     );
-    setNames((all) => [...all, uniqueName(clean, taken)]);
+    // Compute before calling setNames so React StrictMode double-invoking the updater
+    // never sees `taken` already mutated and appends a spurious "Ann 2".
+    const nextName = uniqueName(clean, taken);
+    setNames((all) =>
+      all.length >= MAX_HERE || all.some((n) => n.toLowerCase() === nextName.toLowerCase())
+        ? all
+        : [...all, nextName],
+    );
     setNameDraft("");
   }, [nameDraft, names, storedEntries, game.link]);
 
@@ -568,6 +760,9 @@ export default function ChanceGame({
     setSaved(null);
     setNames([]);
     setJoinedGroups([]);
+    setSavedEntryIds({});
+    setPublicBoard(null);
+    setPublicPage(1);
     setPendingJoinBoard(false);
     savedKeysRef.current.clear();
     autoSubmittedRef.current = null;
@@ -583,6 +778,9 @@ export default function ChanceGame({
     setSaved(null);
     setNames([]);
     setJoinedGroups([]);
+    setSavedEntryIds({});
+    setPublicBoard(null);
+    setPublicPage(1);
     setPendingJoinBoard(false);
     savedKeysRef.current.clear();
     autoSubmittedRef.current = null;
@@ -682,16 +880,17 @@ export default function ChanceGame({
             step_times: roundedTimes,
           });
           setStoredEntries(resp.entries.map((entry) => groupEntryToPlayerEntry(pack, entry)));
+          recordSavedEntryIds(resp.entries);
           savedKeysRef.current.add(player.name.toLowerCase());
         } catch (err) {
-          if (err instanceof GuessApiError && err.status === 409) {
+          if (err instanceof GuessApiError && (err.status === 409 || err.reason === "nickname_refused")) {
             setSaveStatus("conflict");
             setSaveError(err.message);
             setConflictOldName(player.name);
             setConflictName("");
           } else {
             setSaveStatus("error");
-            setSaveError(err instanceof Error ? err.message : "Could not save your finished game right now.");
+            setSaveError(readerSafeBoardError(err, "Could not save your finished game right now."));
           }
           return;
         }
@@ -699,9 +898,46 @@ export default function ChanceGame({
       setJoinedGroups((prev) => (prev.includes(code) ? prev : [...prev, code]));
       setPendingJoinBoard(false);
       setSaveStatus("saved");
+      setPublicRefreshTick((t) => t + 1);
     },
-    [pack, storedEntries],
+    [pack, storedEntries, recordSavedEntryIds],
   );
+
+  const primaryEntryId = useMemo(() => {
+    const first = game.here[0]?.name.trim().toLowerCase();
+    return first ? (savedEntryIds[first] ?? null) : null;
+  }, [game.here, savedEntryIds]);
+
+  const myEntryIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const p of game.here) {
+      const id = savedEntryIds[p.name.trim().toLowerCase()];
+      if (typeof id === "number" && id > 0) ids.add(id);
+    }
+    return ids;
+  }, [game.here, savedEntryIds]);
+
+  useEffect(() => {
+    if (isLegacyPack || game.phase !== "results") return;
+    let cancelled = false;
+    setPublicBoardLoading(true);
+    setPublicBoardError(null);
+    fetchPublicBoard(pack.id, publicPage, 20, primaryEntryId)
+      .then((res) => {
+        if (!cancelled) setPublicBoard(res);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setPublicBoardError(readerSafeBoardError(err, "Could not load today's leaderboard right now."));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPublicBoardLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLegacyPack, game.phase, pack.id, publicPage, primaryEntryId, publicRefreshTick]);
 
   // If the stored board already contains this phone's identical answers, no add button is needed.
   useEffect(() => {
@@ -908,11 +1144,16 @@ export default function ChanceGame({
                 Add
               </button>
             </div>
-            <p className="mt-2 text-sm text-text-secondary">
+            <p className="mt-2 text-sm text-text-secondary" data-testid="name-board-notice">
               {isLegacyPack
                 ? "One name to play alone. Add more to pass one phone around. Names stay on this phone and in the link you send."
-                : "One name to play alone. Add more to pass one phone around. Finished games stay on this group's board for 30 days."}
+                : "One name to play alone. Add more to pass one phone around. Your name and score go on today's public board for 30 days. A nickname is fine."}
             </p>
+            {!isLegacyPack && nameDraft.trim().length > 0 && !isAllowedNicknameChars(nameDraft) && (
+              <p className="mt-1 text-xs font-semibold text-accent-danger" data-testid="name-char-hint">
+                Letters, numbers, spaces, apostrophes, and hyphens only.
+              </p>
+            )}
             <button
               type="button"
               className={`${PRIMARY} mt-3`}
@@ -1348,6 +1589,19 @@ export default function ChanceGame({
         </div>
 
         <StepTable pack={pack} rows={stepRows} shown={pack.steps.length} />
+
+        {!isLegacyPack && (
+          <PublicBoardPanel
+            pack={pack}
+            board={publicBoard}
+            loading={publicBoardLoading}
+            error={publicBoardError}
+            myEntryIds={myEntryIds}
+            primaryEntryId={primaryEntryId}
+            onPageChange={(nextPage) => setPublicPage(nextPage)}
+            onRetry={() => setPublicRefreshTick((t) => t + 1)}
+          />
+        )}
 
         <section className={PANEL} data-testid="fun-vote">
           <div className="text-sm font-black text-text-primary">Which step was the most fun?</div>
