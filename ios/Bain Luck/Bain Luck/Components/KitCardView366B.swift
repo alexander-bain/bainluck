@@ -1125,6 +1125,16 @@ struct KitAxisBodyView366B: View {
             : chosen.joined(separator: ", ")
     }
 
+    static func formatPercentDotValue(_ scaledPercent: Double) -> String {
+        if scaledPercent <= 0 {
+            return "0%"
+        }
+        if scaledPercent >= 100 {
+            return "100%"
+        }
+        return formatProbability(scaledPercent / 100.0)
+    }
+
     private func compactDotValue(_ dot: KitV1DotMark) -> String {
         let scale = axisBody.scale
         let isPercent = scale.scaleKind == .percent
@@ -1137,10 +1147,7 @@ struct KitAxisBodyView366B: View {
             return dot.x
         }()
         if isPercent {
-            if scaled > 0 && scaled < 1.0 {
-                return "<1%"
-            }
-            return "\(Int(scaled.rounded()))%"
+            return Self.formatPercentDotValue(scaled)
         }
         let formatted = abs(scaled.rounded() - scaled) < 0.05
             ? "\(Int(scaled.rounded()))"

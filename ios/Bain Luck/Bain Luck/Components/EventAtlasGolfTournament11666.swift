@@ -271,11 +271,7 @@ enum EventAtlasGolfTournament11666 {
 
     nonisolated static func wholePercentProbabilityText(_ p: Double) -> String {
         let clamped = max(0.0, min(1.0, p))
-        let pct = clamped * 100.0
-        if pct > 0 && pct < 0.5 {
-            return "<1%"
-        }
-        return "\(Int(pct.rounded()))%"
+        return formatProbability(clamped)
     }
 
     nonisolated static func liveStreamingProbabilityText(_ p: Double) -> String {
