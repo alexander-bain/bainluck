@@ -515,36 +515,12 @@ struct FeedView: View {
         imageColor: Color,
         count: Int
     ) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(imageColor)
-                .dynamicTypeSize(...DynamicTypeSize.accessibility3)
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundStyle(imageColor)
-                .textCase(nil)
-                .lineLimit(2)
-                .allowsTightening(true)
-                .minimumScaleFactor(0.75)
-                .fixedSize(horizontal: false, vertical: true)
-                .layoutPriority(1)
-            Text("\(count)")
-                .font(.caption2)
-                .fontWeight(.medium)
-                .foregroundStyle(DS.textSecondaryReadable)
-                .dynamicTypeSize(...DynamicTypeSize.accessibility3)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1)
-                .background(Color.secondary.opacity(0.12))
-                .clipShape(Capsule())
-                .fixedSize()
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
+        SectionBandHeaderView(
+            title: title,
+            systemImage: systemImage,
+            imageColor: imageColor,
+            count: count
+        )
     }
 
     private func leagueHeaderRow(_ group: SportsLeagueGroup401B) -> some View {
