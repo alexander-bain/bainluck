@@ -276,6 +276,41 @@ struct MachinerySubjectArtView: View {
     }
 }
 
+/// Keeps master's exact Dynamic Type curves below accessibility sizes (`.xSmall`..`.xxxLarge`)
+/// so no larger ordinary size ever shrinks below `master`, while un-capping and scaling
+/// monotonically from `.accessibility1` through `.accessibility5` (`#13662`).
+nonisolated enum MachineryDynamicTypeCurve13662 {
+    static func resolved(
+        ordinaryScaled: CGFloat,
+        ordinaryCap: CGFloat,
+        axScaled: CGFloat,
+        isAccessibilitySize: Bool
+    ) -> CGFloat {
+        isAccessibilitySize ? axScaled : min(ordinaryScaled, ordinaryCap)
+    }
+
+    static func accessibilityStepIndex(_ size: DynamicTypeSize) -> Int? {
+        switch size {
+        case .accessibility1: return 1
+        case .accessibility2: return 2
+        case .accessibility3: return 3
+        case .accessibility4: return 4
+        case .accessibility5: return 5
+        default: return nil
+        }
+    }
+
+    /// Monotonic AX1..AX5 ramp anchored above master's `22`/`20` caps while bounding compact
+    /// `320 pt` Hub Grid headers below the single-word hyphenation threshold (`"Championship"`).
+    static func compactHubAXTitleSize(step: Int) -> CGFloat {
+        22.2 + 2.6 * CGFloat(max(0, step - 1))
+    }
+
+    static func compactHubAXRowSize(step: Int) -> CGFloat {
+        20.2 + 2.5 * CGFloat(max(0, step - 1))
+    }
+}
+
 /// Reusable `"Show all N <noun> (+K more)"` / `"Show top 3"` expander button.
 struct MachineryShowAllButton: View {
     let expanded: Bool
@@ -285,7 +320,17 @@ struct MachineryShowAllButton: View {
     let onToggle: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .caption) private var fontSize: CGFloat = 13
+
+    private var effectiveFontSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: fontSize,
+            ordinaryCap: 20,
+            axScaled: fontSize,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
 
     var body: some View {
         if totalCount > visibleLimit {
@@ -295,7 +340,7 @@ struct MachineryShowAllButton: View {
                         ? "Show top \(visibleLimit)"
                         : "Show all \(totalCount) \(noun) (+\(totalCount - visibleLimit) more)"
                 )
-                .font(.system(size: min(fontSize, 20), weight: .semibold))
+                .font(.system(size: effectiveFontSize, weight: .semibold))
                 .foregroundStyle(colorScheme == .dark ? DS.emerald : DS.greenReadable)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1584,6 +1629,28 @@ private struct MachineryOutcomeBarRow441A: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
 
+    private var progressBar: some View {
+        let display = outcome.display441A
+        let fillColor: Color = display.state == .subOnePercent
+            ? (colorScheme == .dark ? Color.white.opacity(0.32) : DS.textMuted.opacity(0.65))
+            : barColor
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(trackBgColor)
+                if display.barWidthPercent > 0 {
+                    let frac = CGFloat(min(100, display.barWidthPercent)) / 100.0
+                    let width = display.state == .subOnePercent
+                        ? max(4, geo.size.width * 0.02)
+                        : max(4, geo.size.width * frac)
+                    Capsule()
+                        .fill(fillColor)
+                        .frame(width: min(geo.size.width, width))
+                }
+            }
+        }
+        .frame(height: 6)
+    }
+
     var body: some View {
         let display = outcome.display441A
         let isMuted = display.muted
@@ -1592,78 +1659,102 @@ private struct MachineryOutcomeBarRow441A: View {
         let labelColor = isMuted ? secondaryInk : (isFav ? primaryInk : secondaryInk)
         let titleWeight: Font.Weight = isMuted ? .medium : (isFav ? .semibold : .medium)
         let valueWeight: Font.Weight = isMuted ? .medium : (isFav ? .bold : .semibold)
-        let fillColor: Color = display.state == .subOnePercent
-            ? (colorScheme == .dark ? Color.white.opacity(0.32) : DS.textMuted.opacity(0.65))
-            : barColor
 
-        HStack(alignment: .center, spacing: 10) {
-            if !scaleOrdered {
-                MachinerySubjectArtView(
-                    art: outcome.art,
-                    width: artWidth,
-                    height: artHeight,
-                    reservesWidthWhenEmpty: listHasArt,
-                    emptySlotIsPoster: listUsesPoster,
-                    subjectName: outcome.name
-                )
-                .saturation(isUnpricedOrOut ? 0 : 1)
-                .opacity(artOpacity)
-            }
-            VStack(alignment: .leading, spacing: rowSpacing) {
-                if (dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn) && isUnpricedOrOut {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(outcome.name)
-                            .font(.system(size: rowFontSize, weight: titleWeight))
-                            .foregroundStyle(labelColor)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(display.label)
-                            .font(.system(size: rowFontSize, weight: valueWeight))
-                            .foregroundStyle(labelColor)
-                            .fixedSize(horizontal: false, vertical: true)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: max(rowSpacing, 6)) {
+                Text(outcome.name)
+                    .font(.system(size: rowFontSize, weight: titleWeight))
+                    .foregroundStyle(labelColor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .center, spacing: 8) {
+                    if !scaleOrdered {
+                        MachinerySubjectArtView(
+                            art: outcome.art,
+                            width: artWidth,
+                            height: artHeight,
+                            reservesWidthWhenEmpty: listHasArt,
+                            emptySlotIsPoster: listUsesPoster,
+                            subjectName: outcome.name
+                        )
+                        .saturation(isUnpricedOrOut ? 0 : 1)
+                        .opacity(artOpacity)
                     }
-                } else {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(outcome.name)
-                            .font(.system(size: rowFontSize, weight: titleWeight))
-                            .foregroundStyle(labelColor)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 6)
-                        HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            Text(display.label)
-                                .font(.system(size: rowFontSize, weight: valueWeight).monospacedDigit())
+                    Text(display.label)
+                        .font(.system(size: rowFontSize, weight: valueWeight).monospacedDigit())
+                        .foregroundStyle(labelColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !isUnpricedOrOut,
+                       outcome.servedProbability != nil,
+                       let m = SourceMarkButton(
+                           sourceMark,
+                           number: outcome.servedProbability,
+                           subject: outcome.name,
+                           subtitle: marketTitle,
+                           numberSize: min(rowFontSize, 22),
+                           compactRow: true
+                       ) {
+                        m
+                    }
+                }
+                progressBar
+            }
+        } else {
+            HStack(alignment: .center, spacing: 10) {
+                if !scaleOrdered {
+                    MachinerySubjectArtView(
+                        art: outcome.art,
+                        width: artWidth,
+                        height: artHeight,
+                        reservesWidthWhenEmpty: listHasArt,
+                        emptySlotIsPoster: listUsesPoster,
+                        subjectName: outcome.name
+                    )
+                    .saturation(isUnpricedOrOut ? 0 : 1)
+                    .opacity(artOpacity)
+                }
+                VStack(alignment: .leading, spacing: rowSpacing) {
+                    if isNarrowTwoColumn && isUnpricedOrOut {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(outcome.name)
+                                .font(.system(size: rowFontSize, weight: titleWeight))
                                 .foregroundStyle(labelColor)
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                            if !isUnpricedOrOut,
-                               outcome.servedProbability != nil,
-                               let m = SourceMarkButton(
-                                   sourceMark,
-                                   number: outcome.servedProbability,
-                                   subject: outcome.name,
-                                   subtitle: marketTitle,
-                                   numberSize: min(rowFontSize, 18),
-                                   compactRow: true
-                               ) {
-                                m
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(display.label)
+                                .font(.system(size: rowFontSize, weight: valueWeight))
+                                .foregroundStyle(labelColor)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(outcome.name)
+                                .font(.system(size: rowFontSize, weight: titleWeight))
+                                .foregroundStyle(labelColor)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 6)
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text(display.label)
+                                    .font(.system(size: rowFontSize, weight: valueWeight).monospacedDigit())
+                                    .foregroundStyle(labelColor)
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                if !isUnpricedOrOut,
+                                   outcome.servedProbability != nil,
+                                   let m = SourceMarkButton(
+                                       sourceMark,
+                                       number: outcome.servedProbability,
+                                       subject: outcome.name,
+                                       subtitle: marketTitle,
+                                       numberSize: min(rowFontSize, 18),
+                                       compactRow: true
+                                   ) {
+                                    m
+                                }
                             }
                         }
                     }
+                    progressBar
                 }
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(trackBgColor)
-                        if display.barWidthPercent > 0 {
-                            let frac = CGFloat(min(100, display.barWidthPercent)) / 100.0
-                            let width = display.state == .subOnePercent
-                                ? max(4, geo.size.width * 0.02)
-                                : max(4, geo.size.width * frac)
-                            Capsule()
-                                .fill(fillColor)
-                                .frame(width: min(geo.size.width, width))
-                        }
-                    }
-                }
-                .frame(height: 6)
             }
         }
     }
@@ -1676,8 +1767,31 @@ private struct MachinerySiblingFieldsSectionView: View {
     var columnCount: Int = 1
     @State private var expanded = false
     @Environment(\.colorScheme) private var colorScheme
-    @ScaledMetric(relativeTo: .subheadline) private var titleSize: CGFloat = 14
-    @ScaledMetric(relativeTo: .caption) private var rowSize: CGFloat = 13
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @ScaledMetric(relativeTo: .subheadline) private var ordinaryTitleSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .caption) private var ordinaryRowSize: CGFloat = 13
+    @ScaledMetric(relativeTo: .subheadline) private var axRegularRowSize: CGFloat = 13
+
+    private var titleSize: CGFloat {
+        guard let step = MachineryDynamicTypeCurve13662.accessibilityStepIndex(dynamicTypeSize) else {
+            return min(ordinaryTitleSize, 22)
+        }
+        if horizontalSizeClass == .regular {
+            return max(ordinaryTitleSize, MachineryDynamicTypeCurve13662.compactHubAXTitleSize(step: step))
+        }
+        return MachineryDynamicTypeCurve13662.compactHubAXTitleSize(step: step)
+    }
+
+    private var rowSize: CGFloat {
+        guard let step = MachineryDynamicTypeCurve13662.accessibilityStepIndex(dynamicTypeSize) else {
+            return min(ordinaryRowSize, 20)
+        }
+        if horizontalSizeClass == .regular {
+            return max(axRegularRowSize, MachineryDynamicTypeCurve13662.compactHubAXRowSize(step: step))
+        }
+        return MachineryDynamicTypeCurve13662.compactHubAXRowSize(step: step)
+    }
 
     private var cardBgColor: Color {
         colorScheme == .dark ? Color(red: 0.11, green: 0.11, blue: 0.12) : DS.cardBg
@@ -1711,14 +1825,15 @@ private struct MachinerySiblingFieldsSectionView: View {
 
                 NavigationLink(value: Route.futuresDetail(id: market.marketId)) {
                     VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .firstTextBaseline, spacing: 4) {
                             Text(market.title)
-                                .font(.system(size: min(titleSize, 22), weight: .bold))
+                                .font(.system(size: titleSize, weight: .bold))
                                 .foregroundStyle(primaryInk)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 6)
+                            Spacer(minLength: 4)
                             Image(systemName: "chevron.right")
                                 .font(.caption.weight(.semibold))
+                                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                                 .foregroundStyle(secondaryInk)
                         }
 
@@ -1745,7 +1860,7 @@ private struct MachinerySiblingFieldsSectionView: View {
                                     artHeight: rowIsPoster ? 38 : 28,
                                     listHasArt: listHasArt,
                                     listUsesPoster: true,
-                                    rowFontSize: min(rowSize, 20),
+                                    rowFontSize: rowSize,
                                     rowSpacing: 4,
                                     barColor: barColor,
                                     trackBgColor: trackBgColor,
@@ -1948,11 +2063,59 @@ struct MachineryDiscoverCardView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.machineryPreloadedImages12288) private var preloadedImages
     @Environment(\.discoverCardLikeAction420D) private var likeAction
-    @ScaledMetric(relativeTo: .caption2) private var kickerSize: CGFloat = 11
-    @ScaledMetric(relativeTo: .headline) private var titleSize: CGFloat = 17
-    @ScaledMetric(relativeTo: .subheadline) private var rowSize: CGFloat = 14
-    @ScaledMetric(relativeTo: .caption) private var subSize: CGFloat = 12
-    @ScaledMetric(relativeTo: .title3) private var duelPctSize: CGFloat = 21
+    @ScaledMetric(relativeTo: .caption2) private var ordinaryKickerSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .headline) private var rawTitleSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .subheadline) private var ordinaryRowSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .caption) private var ordinarySubSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .title3) private var rawDuelPctSize: CGFloat = 21
+    @ScaledMetric(relativeTo: .headline) private var axKickerSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .headline) private var axRowSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .headline) private var axSubSize: CGFloat = 12
+
+    private var kickerSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: ordinaryKickerSize,
+            ordinaryCap: 17,
+            axScaled: max(axKickerSize, 17.5),
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
+
+    private var titleSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: rawTitleSize,
+            ordinaryCap: 26,
+            axScaled: rawTitleSize,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
+
+    private var rowSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: ordinaryRowSize,
+            ordinaryCap: 22,
+            axScaled: axRowSize,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
+
+    private var subSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: ordinarySubSize,
+            ordinaryCap: 19,
+            axScaled: axSubSize,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
+
+    private var duelPctSize: CGFloat {
+        MachineryDynamicTypeCurve13662.resolved(
+            ordinaryScaled: rawDuelPctSize,
+            ordinaryCap: 26,
+            axScaled: rawDuelPctSize,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
+    }
 
     private var cardBgColor: Color {
         colorScheme == .dark ? Color(red: 0.11, green: 0.11, blue: 0.12) : DS.cardBg
@@ -1978,19 +2141,19 @@ struct MachineryDiscoverCardView: View {
         let content = VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(card.kicker.uppercased())
-                    .font(.system(size: min(kickerSize, 17), weight: .bold))
+                    .font(.system(size: kickerSize, weight: .bold))
                     .tracking(0.5)
                     .foregroundStyle(colorScheme == .dark ? DS.emerald : DS.greenReadable)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(card.title)
-                    .font(.system(size: min(titleSize, 26), weight: .bold))
+                    .font(.system(size: titleSize, weight: .bold))
                     .foregroundStyle(primaryInk)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if !card.subtitle.isEmpty {
                     Text(card.subtitle)
-                        .font(.system(size: min(subSize, 19)))
+                        .font(.system(size: subSize))
                         .foregroundStyle(secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -2014,15 +2177,18 @@ struct MachineryDiscoverCardView: View {
                 Rectangle().fill(borderColor).frame(height: 1).padding(.bottom, 4)
                 if !card.footer.isEmpty {
                     Text(card.footer)
-                        .font(.system(size: min(subSize, 18)))
+                        .font(.system(size: subSize))
                         .foregroundStyle(secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                HStack(spacing: 4) {
+                HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .firstTextBaseline : .center, spacing: 4) {
                     Text(card.openContainerCallToAction)
-                    Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 }
-                .font(.system(size: min(subSize, 18), weight: .semibold))
+                .font(.system(size: subSize, weight: .semibold))
                 .foregroundStyle(colorScheme == .dark ? DS.emerald : DS.greenReadable)
             }
         }
@@ -2185,16 +2351,16 @@ struct MachineryDiscoverCardView: View {
                     HStack(alignment: .center, spacing: 8) {
                         MachinerySubjectArtView(art: r.awayArt, width: 24, height: 24, reservesWidthWhenEmpty: listHasArt, subjectName: r.awayShort, defaultSubjectKind: "team")
                         Text(r.awayShort)
-                            .font(.system(size: min(rowSize, 22), weight: .semibold))
+                            .font(.system(size: rowSize, weight: .semibold))
                             .foregroundStyle(primaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 8)
                         HStack(alignment: .firstTextBaseline, spacing: 3) {
                             Text("\(r.awayPct)%")
-                                .font(.system(size: min(rowSize, 22), weight: .bold).monospacedDigit())
+                                .font(.system(size: rowSize, weight: .bold).monospacedDigit())
                                 .foregroundStyle(primaryInk)
                                 .fixedSize(horizontal: true, vertical: false)
-                            if let m = SourceMarkButton(r.awaySourceMark, number: Double(r.awayPct) / 100.0, subject: r.awayShort, numberSize: min(rowSize, 18), compactRow: true) {
+                            if let m = SourceMarkButton(r.awaySourceMark, number: Double(r.awayPct) / 100.0, subject: r.awayShort, numberSize: min(rowSize, 22), compactRow: true) {
                                 m
                             }
                         }
@@ -2202,15 +2368,15 @@ struct MachineryDiscoverCardView: View {
                     HStack(alignment: .center, spacing: 8) {
                         MachinerySubjectArtView(art: r.homeArt, width: 24, height: 24, reservesWidthWhenEmpty: listHasArt, subjectName: r.homeShort, defaultSubjectKind: "team")
                         (Text("at ").foregroundStyle(secondaryInk) + Text(r.homeShort).foregroundStyle(primaryInk))
-                            .font(.system(size: min(rowSize, 22), weight: .semibold))
+                            .font(.system(size: rowSize, weight: .semibold))
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 8)
                         HStack(alignment: .firstTextBaseline, spacing: 3) {
                             Text("\(r.homePct)%")
-                                .font(.system(size: min(rowSize, 22), weight: .bold).monospacedDigit())
+                                .font(.system(size: rowSize, weight: .bold).monospacedDigit())
                                 .foregroundStyle(primaryInk)
                                 .fixedSize(horizontal: true, vertical: false)
-                            if let m = SourceMarkButton(r.sourceMark, number: Double(r.homePct) / 100.0, subject: r.homeShort, numberSize: min(rowSize, 18), compactRow: true) {
+                            if let m = SourceMarkButton(r.sourceMark, number: Double(r.homePct) / 100.0, subject: r.homeShort, numberSize: min(rowSize, 22), compactRow: true) {
                                 m
                             }
                         }
@@ -2249,7 +2415,7 @@ struct MachineryDiscoverCardView: View {
                     artHeight: rowIsPoster ? 40 : 32,
                     listHasArt: listHasArt,
                     listUsesPoster: listUsesPoster,
-                    rowFontSize: min(rowSize, 22),
+                    rowFontSize: rowSize,
                     rowSpacing: 5,
                     barColor: barColor,
                     trackBgColor: trackBgColor,
@@ -2328,15 +2494,15 @@ struct MachineryDiscoverCardView: View {
                                         Circle().fill(leftColor).frame(width: 9, height: 9)
                                     }
                                     Text(left.name)
-                                        .font(.system(size: min(rowSize, 20), weight: .semibold))
+                                        .font(.system(size: rowSize, weight: .semibold))
                                         .foregroundStyle(primaryInk)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                                     Text(left.probabilityLabel)
-                                        .font(.system(size: min(duelPctSize, 26), weight: .heavy).monospacedDigit())
+                                        .font(.system(size: duelPctSize, weight: .heavy).monospacedDigit())
                                         .foregroundStyle(primaryInk)
-                                    if let m = SourceMarkButton(left.sourceMark, number: left.probability, subject: left.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
+                                    if let m = SourceMarkButton(left.sourceMark, number: left.probability, subject: left.name, subtitle: card.title, numberSize: min(rowSize, 22), compactRow: true) {
                                         m
                                     }
                                 }
@@ -2348,7 +2514,7 @@ struct MachineryDiscoverCardView: View {
                             VStack(alignment: .trailing, spacing: 2) {
                                 HStack(spacing: 6) {
                                     Text(right.name)
-                                        .font(.system(size: min(rowSize, 20), weight: .semibold))
+                                        .font(.system(size: rowSize, weight: .semibold))
                                         .foregroundStyle(primaryInk)
                                         .multilineTextAlignment(.trailing)
                                         .fixedSize(horizontal: false, vertical: true)
@@ -2358,9 +2524,9 @@ struct MachineryDiscoverCardView: View {
                                 }
                                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                                     Text(right.probabilityLabel)
-                                        .font(.system(size: min(duelPctSize, 26), weight: .heavy).monospacedDigit())
+                                        .font(.system(size: duelPctSize, weight: .heavy).monospacedDigit())
                                         .foregroundStyle(primaryInk)
-                                    if let m = SourceMarkButton(right.sourceMark, number: right.probability, subject: right.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
+                                    if let m = SourceMarkButton(right.sourceMark, number: right.probability, subject: right.name, subtitle: card.title, numberSize: min(rowSize, 22), compactRow: true) {
                                         m
                                     }
                                 }
@@ -2397,9 +2563,9 @@ struct MachineryDiscoverCardView: View {
                             .fill(secondaryInk.opacity(colorScheme == .dark ? 0.42 : 0.28))
                             .frame(width: 7, height: 7)
                         Text("\(middle.name) \(middle.probabilityLabel)")
-                            .font(.system(size: min(subSize, 17), weight: .medium).monospacedDigit())
+                            .font(.system(size: subSize, weight: .medium).monospacedDigit())
                             .foregroundStyle(secondaryInk)
-                        if let m = SourceMarkButton(middle.sourceMark, number: middle.probability, subject: middle.name, subtitle: card.title, numberSize: min(subSize, 16), compactRow: true) {
+                        if let m = SourceMarkButton(middle.sourceMark, number: middle.probability, subject: middle.name, subtitle: card.title, numberSize: min(subSize, 20), compactRow: true) {
                             m
                         }
                     }
@@ -2419,15 +2585,15 @@ struct MachineryDiscoverCardView: View {
                 Circle().fill(dotColor).frame(width: 10, height: 10)
             }
             Text(outcome.name)
-                .font(.system(size: min(rowSize, 22), weight: .semibold))
+                .font(.system(size: rowSize, weight: .semibold))
                 .foregroundStyle(primaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 6)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(outcome.probabilityLabel)
-                    .font(.system(size: min(duelPctSize, 26), weight: .heavy).monospacedDigit())
+                    .font(.system(size: duelPctSize, weight: .heavy).monospacedDigit())
                     .foregroundStyle(primaryInk)
-                if let m = SourceMarkButton(outcome.sourceMark, number: outcome.probability, subject: outcome.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
+                if let m = SourceMarkButton(outcome.sourceMark, number: outcome.probability, subject: outcome.name, subtitle: card.title, numberSize: min(rowSize, 22), compactRow: true) {
                     m
                 }
             }
