@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models.models import CuFactLabel
+from app.routes import admin_cu_labeling
+from app.services import get_db
 from app.utils.cu_fact_labeling import (
+    build_answer_key_bundle,
     build_answer_key_rows,
-    compute_cu_fact_agreement,
     extract_subject_candidates,
+    get_claim_vocabulary,
     order_queue_markets,
     select_shared_100_ids,
     validate_label_submission,
@@ -21,28 +26,42 @@ from app.utils.cu_fact_labeling import (
 
 def _sample_label(
     *,
+    dataset_split: str = "sealed",
     market_id: int = 101,
     rater: str = "rater-one",
     role: str = "primary",
+    subjects_answer: dict | None = None,
     geography: str = "us",
     event_date: str | None = "2026-06-15",
     no_single_day: bool = False,
     structure: str = "neither",
+    claim_frame: dict | None = None,
     stakes: int | None = 3,
     breadth: int | None = 3,
     evidence_note: str | None = None,
 ) -> dict:
     return {
-        "dataset_split": "sealed",
+        "dataset_split": dataset_split,
         "market_id": market_id,
         "rater": rater,
         "role": role,
-        "subjects_answer": {"selection_kind": "candidate", "selected": ["Boston Celtics"]},
+        "subjects_answer": subjects_answer
+        if subjects_answer is not None
+        else {"selection_kind": "candidate", "selected": ["Boston Celtics"]},
         "event_date_answer": event_date,
         "no_single_day": no_single_day,
         "geography_answer": geography,
         "structure_answer": structure,
-        "claim_frame": {"measure": "wins", "comparison": "gte", "value": "50", "unit": "wins"},
+        "claim_frame": claim_frame
+        if claim_frame is not None
+        else {
+            "measure": "wins",
+            "comparator": "gte",
+            "value": "50",
+            "unit": "wins",
+            "horizon_kind": "annual",
+            "window_date": None,
+        },
         "stakes": stakes,
         "breadth": breadth,
         "evidence_note": evidence_note,
@@ -72,7 +91,6 @@ def test_tiebreak_rejects_taste_and_requires_written_evidence():
         _sample_label(rater="labeler-a", role="primary", geography="local"),
         _sample_label(rater="labeler-b", role="second", geography="us"),
     ]
-    # Taste fields are forbidden in tiebreak mode
     with pytest.raises(ValueError, match="stakes and breadth"):
         validate_label_submission(
             _sample_label(
@@ -85,7 +103,6 @@ def test_tiebreak_rejects_taste_and_requires_written_evidence():
             existing_market_rows=pair,
         )
 
-    # Written evidence is mandatory in tiebreak mode
     with pytest.raises(ValueError, match="evidence_note"):
         validate_label_submission(
             _sample_label(
@@ -112,12 +129,46 @@ def test_tiebreak_rejects_taste_and_requires_written_evidence():
     assert ok["stakes"] is None and ok["breadth"] is None and ok["geography_answer"] == "local"
 
 
-def test_agreement_metrics_exact_for_facts_within_one_for_taste_and_flags_below_80():
+def test_claim_frame_uses_writer_vocabulary_and_none_of_these():
+    vocab = get_claim_vocabulary()
+    assert "wins" in vocab["measures"]
+    assert "gte" in vocab["comparators"]
+    assert "annual" in vocab["horizon_kinds"]
+    assert vocab["special_options"] == ["none_of_these"]
+
+    ok = validate_label_submission(
+        _sample_label(
+            claim_frame={
+                "measure": "wins",
+                "comparator": "none_of_these",
+                "value": "50",
+                "unit": "wins",
+                "horizon_kind": "annual",
+                "window_date": "",
+            }
+        )
+    )
+    assert ok["claim_frame"] == {
+        "measure": "wins",
+        "comparator": "none_of_these",
+        "value": "50",
+        "unit": "wins",
+        "horizon_kind": "annual",
+        "window_date": None,
+    }
+
+    with pytest.raises(ValueError, match="claim_frame.measure"):
+        validate_label_submission(
+            _sample_label(claim_frame={"measure": "freeform_unknown_measure"})
+        )
+
+
+def test_agreement_and_scorecard_answer_key_matching_contract():
     rows = []
     # 5 paired markets:
-    # - geography disagrees on 2/5 (60% < 80% -> flagged)
-    # - stakes differs by 1 on all 5 (100% within-1 agreement)
-    # - breadth differs by 2 on 2/5 (60% < 80% -> flagged)
+    # - geography disagrees on 2/5 (60% < 80%)
+    # - stakes differs by 1 on all 5 (100% within-1 -> scorable as [3, 4])
+    # - breadth differs by 3 on 2/5 (60% < 80% -> withheld from scorecard answers)
     for idx in range(5):
         mid = 500 + idx
         rows.append(
@@ -126,6 +177,15 @@ def test_agreement_metrics_exact_for_facts_within_one_for_taste_and_flags_below_
                 rater="labeler-a",
                 role="primary",
                 geography="us",
+                subjects_answer={"selection_kind": "candidate", "selected": ["Boston Celtics"]},
+                claim_frame={
+                    "measure": "wins",
+                    "comparator": "none_of_these",
+                    "value": "50",
+                    "unit": "wins",
+                    "horizon_kind": "annual",
+                    "window_date": None,
+                },
                 stakes=3,
                 breadth=4,
             )
@@ -136,33 +196,94 @@ def test_agreement_metrics_exact_for_facts_within_one_for_taste_and_flags_below_
                 rater="labeler-b",
                 role="second",
                 geography="local" if idx < 2 else "us",
+                subjects_answer={"selection_kind": "candidate", "selected": ["Boston Celtics"]},
+                claim_frame={
+                    "measure": "wins",
+                    "comparator": "none_of_these",
+                    "value": "50",
+                    "unit": "wins",
+                    "horizon_kind": "annual",
+                    "window_date": None,
+                },
                 stakes=4,
                 breadth=1 if idx < 2 else 3,
             )
         )
-    # Tiebreak resolved one of the two fact disagreements
     rows.append(
         _sample_label(
             market_id=500,
             rater="reviewer-c",
             role="tiebreak",
             geography="local",
+            claim_frame={
+                "measure": "wins",
+                "comparator": "none_of_these",
+                "value": "50",
+                "unit": "wins",
+                "horizon_kind": "annual",
+                "window_date": None,
+            },
             stakes=None,
             breadth=None,
             evidence_note="Confirmed district seat in title.",
         )
     )
+    # Single not_sure market omits entities from scorecard answers.
+    rows.append(
+        _sample_label(
+            market_id=599,
+            rater="labeler-a",
+            role="primary",
+            subjects_answer={"selection_kind": "not_sure", "selected": []},
+            stakes=2,
+            breadth=2,
+        )
+    )
 
-    report = compute_cu_fact_agreement(rows, split="sealed")
+    markets_by_id = {
+        500 + idx: {
+            "market_id": 500 + idx,
+            "source": "kalshi",
+            "category": "politics" if idx == 0 else "sports",
+            "outcome_names": ["Yes", "No"],
+            "draw_bucket": "reader_weighted",
+        }
+        for idx in range(5)
+    }
+    markets_by_id[599] = {"market_id": 599, "source": "polymarket", "category": "other", "outcome_names": ["Yes", "No"]}
+
+    bundle = build_answer_key_bundle(markets_by_id, rows, split="sealed")
+    report = bundle["agreement"]
     assert report["paired_markets"] == 5
     assert report["resolved_tiebreaks"] == 1
     assert report["needs_tiebreak"] == 1
-    assert set(report["below_80_fields"]) == {"geography", "breadth"}
-    by_field = {f["field"]: f for f in report["fields"]}
-    assert by_field["stakes"]["metric"] == "within_1"
-    assert by_field["stakes"]["agreement_rate"] == 1.0
-    assert by_field["geography"]["metric"] == "exact"
-    assert by_field["geography"]["agreement_rate"] == 0.6
+    assert bundle["withheld_taste_fields"] == ["breadth"]
+
+    by_mid = {row["market_id"]: row for row in bundle["rows"]}
+    m500 = by_mid[500]
+    assert m500["resolution_source"] == "tiebreak"
+    assert m500["answers"]["geography"] == "local"
+    assert m500["answers"]["entities"] == ["Boston Celtics"]  # plain strings, never {"type": "unknown"}
+    assert m500["answers"]["frame"] == {
+        "measure": "wins",
+        "comparator": None,
+        "value": "50",
+        "unit": "wins",
+        "horizon_kind": "annual",
+        "window_date": None,
+    }
+    assert m500["answers"]["stakes"] == [3, 4]  # both raters kept even when tiebreak resolved facts
+    assert "breadth" not in m500["answers"]  # < 80% agreement goes to Alex, never scored
+
+    # Unresolved fact disagreement on market 501 omits only the disputed fact field.
+    m501 = by_mid[501]
+    assert "geography" not in m501["answers"]
+    assert m501["answers"]["stakes"] == [3, 4]
+    assert "breadth" not in m501["answers"]
+
+    # not_sure omits entities instead of scoring [].
+    assert "entities" not in by_mid[599]["answers"]
+    assert by_mid[599]["answers"]["stakes"] == 2
 
 
 def test_shared_100_selection_and_dev_priority_queue_ordering():
@@ -214,7 +335,7 @@ def test_answer_key_export_respects_tiebreak_override():
     assert exported[0]["answers"]["geography"] == "local"
 
 
-def test_migration_and_router_wiring():
+def test_migration_router_and_sealed_protection(monkeypatch):
     assert CuFactLabel.__tablename__ == "cu_fact_labels"
     mig_path = (
         Path(__file__).resolve().parents[1]
@@ -232,7 +353,59 @@ def test_migration_and_router_wiring():
     assert "/api/admin/cu-labeling/label" in routes
     assert "/api/admin/cu-labeling/agreement" in routes
     assert "/api/admin/cu-labeling/export-answer-key" in routes
+    assert "/api/admin/cu-labeling/score-sealed" in routes
 
-    client = TestClient(app)
-    resp = client.get("/api/admin/cu-labeling/queue", params={"rater": "tester"})
-    assert resp.status_code == 403
+    async def _fake_db():
+        yield AsyncMock()
+
+    monkeypatch.setattr(admin_cu_labeling, "_check_admin_secret", lambda *args, **kwargs: None)
+    monkeypatch.setattr(admin_cu_labeling, "frozen_split_exists", lambda split: False)
+    monkeypatch.setattr(admin_cu_labeling, "load_frozen_split", lambda split: [])
+    monkeypatch.setattr(admin_cu_labeling, "_db_rows_for_split", AsyncMock(return_value=[]))
+    app.dependency_overrides[get_db] = _fake_db
+    try:
+        client = TestClient(app)
+
+        # Queue announces missing frozen dataset file + ships full claim vocabulary.
+        q_resp = client.get("/api/admin/cu-labeling/queue", params={"rater": "tester"})
+        assert q_resp.status_code == 200
+        q_body = q_resp.json()
+        assert q_body["dataset_file_present"] is False
+        assert "not loaded" in q_body["dataset_file_missing_message"]
+        assert "wins" in q_body["claim_vocabulary"]["measures"]
+
+        # Sealed export is forbidden so sealed answers cannot leave the server.
+        sealed_export = client.get("/api/admin/cu-labeling/export-answer-key", params={"split": "sealed"})
+        assert sealed_export.status_code == 403
+
+        # Dev export remains permitted.
+        dev_export = client.get("/api/admin/cu-labeling/export-answer-key", params={"split": "dev"})
+        assert dev_export.status_code == 200
+        assert dev_export.json()["dataset"] == "dev"
+
+        # Server-side sealed scorecard refuses partial runs unless allow_missing_predictions=True,
+        # and returns aggregate scorecard only (never sealed answers).
+        monkeypatch.setattr(
+            admin_cu_labeling,
+            "_run_sealed_scorecard",
+            lambda *args, **kwargs: {
+                "status": "measured",
+                "missing_predictions": 1,
+                "fields": [],
+            },
+        )
+        partial = client.post(
+            "/api/admin/cu-labeling/score-sealed",
+            json={"predictions": [], "as_of": "2026-06-15"},
+        )
+        assert partial.status_code == 422
+
+        allowed = client.post(
+            "/api/admin/cu-labeling/score-sealed",
+            json={"predictions": [], "as_of": "2026-06-15", "allow_missing_predictions": True},
+        )
+        assert allowed.status_code == 200
+        body = allowed.json()
+        assert set(body.keys()) == {"scorecard", "agreement", "withheld_taste_fields"}
+    finally:
+        app.dependency_overrides.pop(get_db, None)

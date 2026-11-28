@@ -18,9 +18,11 @@ from app.utils.cu_fact_labeling import (
     VALID_ROLES,
     VALID_SCOPES,
     VALID_SPLITS,
-    build_answer_key_rows,
+    build_answer_key_bundle,
     compute_cu_fact_agreement,
     extract_subject_candidates,
+    frozen_split_exists,
+    get_claim_vocabulary,
     load_frozen_split,
     load_repeatability_priority_ids,
     order_queue_markets,
@@ -29,6 +31,11 @@ from app.utils.cu_fact_labeling import (
 )
 
 router = APIRouter()
+
+DEFAULT_DATASET_MISSING_MESSAGE = (
+    "The frozen market file for this set is not loaded on this server yet, "
+    "so no cards are available to check."
+)
 
 
 def _row_to_dict(row: CuFactLabel) -> dict[str, Any]:
@@ -93,6 +100,42 @@ class CuFactLabelPayload(BaseModel):
     evidence_note: str | None = None
 
 
+class SealedScorecardPayload(BaseModel):
+    predictions: list[dict[str, Any]]
+    as_of: str | None = None
+    writer_rev: int | str | None = None
+    model: str | None = None
+    cost: dict[str, Any] | None = None
+    run_id: str | None = None
+    allow_missing_predictions: bool = False
+
+
+def _run_sealed_scorecard(
+    answer_key_rows: list[dict[str, Any]],
+    prediction_rows: list[dict[str, Any]],
+    *,
+    as_of: str,
+    writer_rev: int | str | None,
+    model: str | None,
+    cost: dict[str, Any] | None,
+    run_id: str | None,
+    withheld_fields: list[str],
+) -> dict[str, Any]:
+    from app.utils.cu_eval_scorecard import score_cu_eval_run
+
+    return score_cu_eval_run(
+        answer_key_rows,
+        prediction_rows,
+        as_of=as_of,
+        writer_rev=writer_rev,
+        model=model,
+        dataset="sealed",
+        cost=cost,
+        run_id=run_id,
+        withheld_fields=withheld_fields,
+    )
+
+
 def _build_blind_market_payload(
     market: dict[str, Any],
     market_rows: list[dict[str, Any]],
@@ -135,8 +178,9 @@ async def cu_labeling_queue(
     _check_admin_secret(secret, request=request)
     cleaned_rater = _validate_queue_params(split, role, scope, rater)
 
-    markets = load_frozen_split(split)
-    priority_ids = load_repeatability_priority_ids() if split == "dev" else None
+    file_present = frozen_split_exists(split)
+    markets = load_frozen_split(split) if file_present else []
+    priority_ids = load_repeatability_priority_ids() if (split == "dev" and file_present) else None
     ordered = order_queue_markets(
         markets,
         split=split,
@@ -168,6 +212,9 @@ async def cu_labeling_queue(
         "role": role,
         "scope": scope,
         "rater": cleaned_rater,
+        "dataset_file_present": file_present,
+        "dataset_file_missing_message": None if file_present else DEFAULT_DATASET_MISSING_MESSAGE,
+        "claim_vocabulary": get_claim_vocabulary(),
         "total_in_scope": len(ordered),
         "completed_by_rater": completed_by_rater,
         "remaining": len(queue_items),
@@ -276,19 +323,74 @@ async def cu_labeling_agreement(
 async def cu_labeling_export_answer_key(
     request: Request,
     secret: str = Query(None),
-    split: str = Query("sealed"),
+    split: str = Query("dev"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Export resolved answer-key JSON for backend/scripts/score_cu_eval.py."""
+    """Export development-set answer-key JSON; sealed answers never leave the server."""
     _check_admin_secret(secret, request=request)
     if split not in VALID_SPLITS:
         raise HTTPException(status_code=400, detail=f"Invalid split {split!r}")
+    if split == "sealed":
+        raise HTTPException(
+            status_code=403,
+            detail="Sealed answer keys cannot leave the server; POST predictions to /api/admin/cu-labeling/score-sealed instead.",
+        )
     markets = load_frozen_split(split)
     markets_by_id = {int(m["market_id"]): m for m in markets}
     rows = await _db_rows_for_split(db, split)
-    exported = build_answer_key_rows(markets_by_id, rows, split=split)
+    bundle = build_answer_key_bundle(markets_by_id, rows, split=split)
     return {
         "dataset": split,
-        "count": len(exported),
-        "rows": exported,
+        "count": len(bundle["rows"]),
+        "withheld_taste_fields": bundle["withheld_taste_fields"],
+        "agreement": bundle["agreement"],
+        "rows": bundle["rows"],
+    }
+
+
+@router.post("/cu-labeling/score-sealed")
+async def cu_labeling_score_sealed(
+    request: Request,
+    payload: SealedScorecardPayload,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Score predictions against sealed human labels strictly on the server."""
+    _check_admin_secret(secret, request=request)
+    markets = load_frozen_split("sealed")
+    markets_by_id = {int(m["market_id"]): m for m in markets}
+    rows = await _db_rows_for_split(db, "sealed")
+    bundle = build_answer_key_bundle(markets_by_id, rows, split="sealed")
+    answer_rows = bundle["rows"]
+    withheld = bundle["withheld_taste_fields"]
+    as_of = payload.as_of or datetime.now(timezone.utc).date().isoformat()
+
+    try:
+        scorecard = _run_sealed_scorecard(
+            answer_rows,
+            payload.predictions,
+            as_of=as_of,
+            writer_rev=payload.writer_rev,
+            model=payload.model,
+            cost=payload.cost,
+            run_id=payload.run_id,
+            withheld_fields=withheld,
+        )
+    except ImportError as import_err:
+        raise HTTPException(
+            status_code=503,
+            detail="Scorecard evaluator is not yet available on this server build.",
+        ) from import_err
+
+    missing = int(scorecard.get("missing_predictions", 0) or 0)
+    if missing > 0 and not payload.allow_missing_predictions:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Refusing sealed scorecard: {missing} sealed market(s) lack predictions.",
+        )
+
+    return {
+        "scorecard": scorecard,
+        "agreement": bundle["agreement"],
+        "withheld_taste_fields": withheld,
     }

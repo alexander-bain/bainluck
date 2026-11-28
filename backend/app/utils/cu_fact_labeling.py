@@ -19,6 +19,16 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.utils.cu_frame import (
+    COMPARATORS,
+    FRAME_SLOTS,
+    HORIZON_KINDS,
+    MEASURES,
+    normalize_comparator,
+    normalize_horizon_kind,
+    normalize_measure,
+)
+
 VALID_SPLITS: tuple[str, ...] = ("sealed", "dev")
 VALID_ROLES: tuple[str, ...] = ("primary", "second", "tiebreak")
 VALID_SCOPES: tuple[str, ...] = ("shared_100", "all")
@@ -26,7 +36,8 @@ VALID_STRUCTURES: tuple[str, ...] = ("ladder", "dated_bucket", "neither")
 VALID_SUBJECT_MODES: tuple[str, ...] = ("candidate", "custom", "none_of_these", "not_sure")
 FACT_FIELDS: tuple[str, ...] = ("subjects", "event_date", "geography", "structure", "claim_frame")
 TASTE_FIELDS: tuple[str, ...] = ("stakes", "breadth")
-CLAIM_SLOTS: tuple[str, ...] = ("measure", "comparison", "value", "unit", "deadline")
+CLAIM_SLOTS: tuple[str, ...] = FRAME_SLOTS
+NONE_OF_THESE = "none_of_these"
 
 SHARED_100_SEED_PREFIX = "cu-shared-100-v1:"
 SHARED_100_TARGET = 100
@@ -72,6 +83,28 @@ _GENERIC_STOP = frozenset({
     "Less",
 })
 _BINARY_OUTCOMES = frozenset({"yes", "no", "over", "under", "draw", "tie"})
+
+
+def frozen_split_exists(
+    split: str,
+    *,
+    dataset_paths: dict[str, Path] | None = None,
+) -> bool:
+    if split not in VALID_SPLITS:
+        raise ValueError(f"Unsupported dataset split: {split!r}")
+    paths = dataset_paths or DEFAULT_DATASET_PATHS
+    path = paths.get(split)
+    return bool(path and path.exists())
+
+
+def get_claim_vocabulary() -> dict[str, list[str]]:
+    """Return writer claim choices (with 'none_of_these') for the labeling UI."""
+    return {
+        "measures": sorted(MEASURES),
+        "comparators": sorted(COMPARATORS),
+        "horizon_kinds": sorted(HORIZON_KINDS),
+        "special_options": [NONE_OF_THESE],
+    }
 
 
 def load_frozen_split(
@@ -235,6 +268,32 @@ def normalize_geography_answer(raw: Any) -> str | None:
     return text[:64]
 
 
+def _normalize_vocab_slot(raw: Any, slot: str) -> str | None:
+    if raw is None:
+        return None
+    text = " ".join(str(raw).split()).strip()
+    if not text:
+        return None
+    if text.lower().replace(" ", "_") == NONE_OF_THESE:
+        return NONE_OF_THESE
+    if slot == "measure":
+        norm = normalize_measure(text)
+        if not norm:
+            raise ValueError(f"claim_frame.measure {text!r} must be a known measure or 'none_of_these'")
+        return norm
+    if slot == "comparator":
+        norm = normalize_comparator(text)
+        if not norm:
+            raise ValueError(f"claim_frame.comparator {text!r} must be a known comparator or 'none_of_these'")
+        return norm
+    if slot == "horizon_kind":
+        norm = normalize_horizon_kind(text)
+        if not norm:
+            raise ValueError(f"claim_frame.horizon_kind {text!r} must be a known deadline kind or 'none_of_these'")
+        return norm
+    return text
+
+
 def normalize_claim_frame(raw: Any) -> dict[str, str | None] | None:
     if raw is None:
         return None
@@ -244,12 +303,16 @@ def normalize_claim_frame(raw: Any) -> dict[str, str | None] | None:
     any_set = False
     for slot in CLAIM_SLOTS:
         val = raw.get(slot)
-        if val is None:
-            cleaned[slot] = None
-            continue
-        s = " ".join(str(val).split()).strip()
-        cleaned[slot] = s or None
-        if s:
+        if slot in {"measure", "comparator", "horizon_kind"}:
+            s = _normalize_vocab_slot(val, slot)
+        else:
+            if val is None:
+                s = None
+            else:
+                trimmed = " ".join(str(val).split()).strip()
+                s = trimmed or None
+        cleaned[slot] = s
+        if s is not None:
             any_set = True
     return cleaned if any_set else None
 
@@ -548,32 +611,28 @@ def compute_cu_fact_agreement(rows: list[dict[str, Any]], *, split: str) -> dict
 def _row_to_scorecard_answers(
     row: dict[str, Any],
     *,
-    taste_a: dict[str, Any] | None = None,
-    taste_b: dict[str, Any] | None = None,
+    taste_pair: tuple[dict[str, Any], dict[str, Any]] | None = None,
+    taste_single: dict[str, Any] | None = None,
+    withheld_taste_fields: set[str] | frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     subj = row.get("subjects_answer") or {}
     mode = subj.get("selection_kind")
     selected = subj.get("selected") or []
-    if mode in {"candidate", "custom"}:
-        entities: Any = [{"name": s, "type": "unknown"} for s in selected]
-    else:
-        entities = []
 
     structure = row.get("structure_answer")
     junk_flags = [structure] if structure in {"ladder", "dated_bucket"} else []
 
     claim = row.get("claim_frame") or {}
-    has_claim = any(claim.get(k) for k in CLAIM_SLOTS)
-    frame = (
-        {
-            "measure": claim.get("measure"),
-            "comparator": claim.get("comparison"),
-            "value": claim.get("value"),
-            "unit": claim.get("unit"),
-            "deadline": claim.get("deadline"),
-        }
-        if has_claim
-        else None
+    frame_candidate = {
+        "measure": claim.get("measure"),
+        "comparator": None if claim.get("comparator") == NONE_OF_THESE else claim.get("comparator"),
+        "value": claim.get("value"),
+        "unit": claim.get("unit"),
+        "horizon_kind": None if claim.get("horizon_kind") == NONE_OF_THESE else claim.get("horizon_kind"),
+        "window_date": claim.get("window_date"),
+    }
+    frame: dict[str, Any] | None = (
+        frame_candidate if any(v is not None for v in frame_candidate.values()) else None
     )
 
     answers: dict[str, Any] = {
@@ -581,21 +640,40 @@ def _row_to_scorecard_answers(
         "event_date": None if row.get("no_single_day") else row.get("event_date_answer"),
         "junk_flags": junk_flags,
         "frame": frame,
-        "entities": entities,
     }
-    if taste_a and taste_b is None:
-        answers["stakes"] = taste_a.get("stakes")
-        answers["breadth"] = taste_a.get("breadth")
+    if mode in {"candidate", "custom"}:
+        answers["entities"] = list(selected)
+    elif mode == "none_of_these":
+        answers["entities"] = []
+    # When selection_kind == "not_sure", omit "entities" so it is not scored as a false mismatch.
+
+    for taste_field in TASTE_FIELDS:
+        if taste_field in withheld_taste_fields:
+            continue
+        if taste_pair is not None:
+            va = taste_pair[0].get(taste_field)
+            vb = taste_pair[1].get(taste_field)
+            vals = sorted({v for v in (va, vb) if isinstance(v, int) and not isinstance(v, bool)})
+            if vals:
+                answers[taste_field] = vals[0] if len(vals) == 1 else vals
+        elif taste_single is not None:
+            val = taste_single.get(taste_field)
+            if isinstance(val, int) and not isinstance(val, bool):
+                answers[taste_field] = val
     return answers
 
 
-def build_answer_key_rows(
+def build_answer_key_bundle(
     markets_by_id: dict[int, dict[str, Any]],
     rows: list[dict[str, Any]],
     *,
     split: str,
-) -> list[dict[str, Any]]:
-    """Build scorecard-compatible answer rows from primary/second/tiebreak labels."""
+) -> dict[str, Any]:
+    """Build answer-key rows alongside agreement & withheld (<80% agreement) taste fields."""
+    agreement = compute_cu_fact_agreement(rows, split=split)
+    withheld_taste_fields = [f for f in TASTE_FIELDS if f in agreement["below_80_fields"]]
+    withheld_set = set(withheld_taste_fields)
+
     by_market: dict[int, list[dict[str, Any]]] = {}
     for row in rows:
         if row.get("dataset_split") != split:
@@ -612,7 +690,9 @@ def build_answer_key_rows(
         meta = markets_by_id.get(mid) or {}
         answers = _row_to_scorecard_answers(
             source_row,
-            taste_a=single if tiebreak is None and pair is None else None,
+            taste_pair=pair,
+            taste_single=single if pair is None and tiebreak is None else None,
+            withheld_taste_fields=withheld_set,
         )
         # If pair differed on facts and no tiebreak yet, drop un-broken fields so scorecard
         # only scores resolved facts; if pair existed without tiebreak, include agreed fields only.
@@ -641,13 +721,35 @@ def build_answer_key_rows(
                 "unresolved_fact_fields": unresolved,
                 "market_meta": {
                     "market_id": mid,
+                    "title": meta.get("title") or meta.get("name"),
                     "source": meta.get("source"),
                     "category": meta.get("llm_sport_category") or meta.get("category"),
                     "outcome_names": meta.get("outcome_names") or [],
                     "outcome_relation": meta.get("outcome_relation"),
                     "draw_bucket": meta.get("draw_bucket"),
+                    "event_id": meta.get("event_id"),
+                    "linked_game_id": meta.get("linked_game_id"),
+                    "linked_start": meta.get("linked_start"),
+                    "start_source": meta.get("start_source"),
+                    "linked_league": meta.get("linked_league"),
+                    "home_team_league": meta.get("home_team_league"),
+                    "away_team_league": meta.get("away_team_league"),
                 },
                 "answers": answers,
             }
         )
-    return exported
+    return {
+        "rows": exported,
+        "agreement": agreement,
+        "withheld_taste_fields": withheld_taste_fields,
+    }
+
+
+def build_answer_key_rows(
+    markets_by_id: dict[int, dict[str, Any]],
+    rows: list[dict[str, Any]],
+    *,
+    split: str,
+) -> list[dict[str, Any]]:
+    """Build scorecard-compatible answer rows from primary/second/tiebreak labels."""
+    return build_answer_key_bundle(markets_by_id, rows, split=split)["rows"]

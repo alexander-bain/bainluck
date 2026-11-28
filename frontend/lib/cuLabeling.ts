@@ -1,4 +1,4 @@
-/** Types and pure validation/draft helpers for /admin/cu-labeling (#13900). */
+/** Types and pure validation/draft helpers for /admin/cu-labeling. */
 
 export type CuSplit = "sealed" | "dev";
 export type CuRole = "primary" | "second" | "tiebreak";
@@ -6,12 +6,114 @@ export type CuScope = "shared_100" | "all";
 export type CuStructure = "ladder" | "dated_bucket" | "neither";
 export type CuSubjectMode = "candidate" | "custom" | "none_of_these" | "not_sure";
 
+export const DEFAULT_CLAIM_MEASURES: readonly string[] = [
+  "appointment",
+  "approval_rating",
+  "asset_price",
+  "atp_points",
+  "award_result",
+  "bankruptcy_filing",
+  "box_office_revenue",
+  "ceasefire",
+  "close_price",
+  "daily_views",
+  "data_center_moratorium",
+  "economic_growth",
+  "election_result",
+  "employment",
+  "event_count",
+  "exchange_rate",
+  "goals",
+  "high_temperature",
+  "housing_starts",
+  "index_close",
+  "inflation_rate",
+  "interest_rate",
+  "low_temperature",
+  "magnitude",
+  "market_cap",
+  "nomination",
+  "points",
+  "poll_share",
+  "precipitation",
+  "price_high",
+  "price_low",
+  "price_record_high",
+  "price_record_low",
+  "ranking",
+  "release_date",
+  "result",
+  "revenue",
+  "rt_score",
+  "runs",
+  "snowfall",
+  "subscriber_count",
+  "touchdowns",
+  "tweet_count",
+  "unemployment_rate",
+  "victory_margin",
+  "vote_share",
+  "wins",
+];
+
+export const DEFAULT_CLAIM_COMPARATORS: readonly string[] = [
+  "gte",
+  "gt",
+  "lte",
+  "lt",
+  "eq",
+  "ne",
+  "range",
+];
+
+export const DEFAULT_CLAIM_HORIZON_KINDS: readonly string[] = [
+  "intraday",
+  "daily",
+  "weekly",
+  "monthly",
+  "quarterly",
+  "annual",
+  "multi_year",
+  "open_ended",
+];
+
+export const COMPARATOR_LABELS: Record<string, string> = {
+  gte: "At least (>=)",
+  gt: "More than (>)",
+  lte: "At most (<=)",
+  lt: "Fewer than (<)",
+  eq: "Exactly (=)",
+  ne: "Not equal (!=)",
+  range: "Between (range)",
+  none_of_these: "None of these",
+};
+
+export const HORIZON_LABELS: Record<string, string> = {
+  intraday: "Same day (intraday)",
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly",
+  quarterly: "Quarterly",
+  annual: "Yearly (annual)",
+  multi_year: "Multi-year",
+  open_ended: "Open-ended",
+  none_of_these: "None of these",
+};
+
+export interface CuClaimVocabulary {
+  measures: string[];
+  comparators: string[];
+  horizon_kinds: string[];
+  special_options: string[];
+}
+
 export interface CuClaimFrameDraft {
   measure: string;
-  comparison: string;
+  comparator: string;
   value: string;
   unit: string;
-  deadline: string;
+  horizon_kind: string;
+  window_date: string;
 }
 
 export interface CuFactLabelDraft {
@@ -66,6 +168,9 @@ export interface CuQueueResponse {
   role: CuRole;
   scope: CuScope;
   rater: string;
+  dataset_file_present: boolean;
+  dataset_file_missing_message: string | null;
+  claim_vocabulary?: CuClaimVocabulary;
   total_in_scope: number;
   completed_by_rater: number;
   remaining: number;
@@ -104,10 +209,11 @@ export function emptyCuDraft(): CuFactLabelDraft {
     structure: "",
     claim: {
       measure: "",
-      comparison: "",
+      comparator: "",
       value: "",
       unit: "",
-      deadline: "",
+      horizon_kind: "",
+      window_date: "",
     },
     stakes: null,
     breadth: null,
@@ -119,6 +225,13 @@ export function normalizeRaterName(raw: string): string {
   return raw.trim().replace(/\s+/g, " ");
 }
 
+export function formatMeasureChoiceLabel(measure: string): string {
+  if (measure === "none_of_these") return "None of these";
+  return measure
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
 export function buildSubmissionPayload(params: {
   split: CuSplit;
   role: CuRole;
@@ -128,7 +241,7 @@ export function buildSubmissionPayload(params: {
 }): { ok: true; payload: Record<string, unknown> } | { ok: false; error: string } {
   const rater = normalizeRaterName(params.rater);
   if (!rater || rater.length > 64) {
-    return { ok: false, error: "Type your labeler name (1-64 characters) first." };
+    return { ok: false, error: "Type your name (1-64 characters) first." };
   }
 
   const { draft, role, split, marketId } = params;
@@ -137,7 +250,7 @@ export function buildSubmissionPayload(params: {
   if (draft.subjectMode === "candidate") {
     selected = draft.selectedCandidates.map((s) => s.trim()).filter(Boolean);
     if (selected.length === 0) {
-      return { ok: false, error: "Select at least one subject candidate, custom entry, or 'None of these' / 'Not sure'." };
+      return { ok: false, error: "Select at least one person/team, custom entry, or 'None of these' / 'Not sure'." };
     }
   } else if (draft.subjectMode === "custom") {
     selected = draft.customSubject
@@ -145,12 +258,12 @@ export function buildSubmissionPayload(params: {
       .map((s) => s.trim())
       .filter(Boolean);
     if (selected.length === 0) {
-      return { ok: false, error: "Enter at least one custom subject name." };
+      return { ok: false, error: "Enter at least one custom name." };
     }
   }
 
   if (!draft.noSingleDay && !/^\d{4}-\d{2}-\d{2}$/.test(draft.eventDate.trim())) {
-    return { ok: false, error: "Enter YYYY-MM-DD for the event's own day or select 'No single day'." };
+    return { ok: false, error: "Enter YYYY-MM-DD for the event's own day or check 'No single day'." };
   }
 
   const geography = draft.geography.trim();
@@ -159,19 +272,19 @@ export function buildSubmissionPayload(params: {
   }
 
   if (!draft.structure) {
-    return { ok: false, error: "Select the market structure (`ladder`, `dated_bucket`, or `neither`)." };
+    return { ok: false, error: "Choose whether this market is a ladder, dated options, or neither." };
   }
 
   if (role === "tiebreak") {
     if (!draft.evidenceNote.trim()) {
-      return { ok: false, error: "Write the textual evidence note for tiebreak before saving." };
+      return { ok: false, error: "Write a short note quoting the evidence before saving." };
     }
   } else {
     if (draft.stakes === null || draft.stakes < 1 || draft.stakes > 5) {
-      return { ok: false, error: "Rate stakes from 1 to 5." };
+      return { ok: false, error: "Rate how much this matters from 1 to 5." };
     }
     if (draft.breadth === null || draft.breadth < 1 || draft.breadth > 5) {
-      return { ok: false, error: "Rate breadth from 1 to 5." };
+      return { ok: false, error: "Rate how many people care from 1 to 5." };
     }
   }
 
@@ -196,7 +309,7 @@ export function buildSubmissionPayload(params: {
       geography_answer: geography,
       structure_answer: draft.structure,
       claim_frame,
-      // Taste is never submitted or tie-broken in tiebreak role (#13900).
+      // Taste scores are never submitted or tie-broken in tie-break mode.
       stakes: role === "tiebreak" ? null : draft.stakes,
       breadth: role === "tiebreak" ? null : draft.breadth,
       evidence_note: draft.evidenceNote.trim() || null,
