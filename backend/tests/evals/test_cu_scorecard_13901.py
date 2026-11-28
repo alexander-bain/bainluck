@@ -327,3 +327,133 @@ def test_input_only_slices_and_recomputed_cu_event_facts_decider():
 
     # Market shape slice ignores prediction junk_flags=["ladder"] and classifies binary by inputs.
     assert set(result["slices"]["by_market_shape"].keys()) == {"binary"}
+
+
+def test_matching_rules_for_entities_junk_flags_frame_and_taste_tolerance():
+    answers = [
+        {
+            "market_id": 2001,
+            "market_meta": {
+                "source": "kalshi",
+                "category": "sports",
+                "outcome_names": ["Above 7,000", "Above 8,000"],
+                "draw_bucket": "reader_weighted",
+            },
+            "answers": {
+                "entities": ["Bill Belichick"],
+                "junk_flags": ["ladder"],
+                "frame": {
+                    "measure": "wins",
+                    "comparator": "gte",
+                    "value": "7000",
+                    "unit": "wins",
+                    "horizon_kind": "annual",
+                    "window_date": "2026-06-15",
+                },
+                "stakes": 2,
+                "breadth": [2, 4],
+            },
+        },
+        {
+            "market_id": 2002,
+            "market_meta": {
+                "source": "polymarket",
+                "category": "economics",
+                "outcome_names": ["Yes", "No"],
+                "draw_bucket": "roster_spread",
+            },
+            "answers": {
+                "entities": [],
+                "junk_flags": [],
+                "stakes": 3,
+                "breadth": [1, 2],
+            },
+        },
+        {
+            "market_id": 2003,
+            "market_meta": {
+                "source": "polymarket",
+                "category": "tech",
+                "outcome_names": ["Yes", "No"],
+                "draw_bucket": "roster_spread",
+            },
+            "answers": {
+                "entities": ["AI"],
+                "junk_flags": ["ladder"],
+            },
+        },
+    ]
+    preds = [
+        {
+            "market_id": 2001,
+            "profile": {
+                # Ignores type ("person"), whole-word containment matches "Bill Belichick",
+                # and counts "UNC" as an extra writer-only name without marking wrong.
+                "entities": [
+                    {"name": "belichick", "type": "person"},
+                    {"name": "UNC", "type": "org"},
+                ],
+                # Extra unasked flag duplicate_phrasing does not fail a ladder/dated_bucket/neither label.
+                "junk_flags": ["ladder", "duplicate_phrasing"],
+                # Comma in thousands value matches canonical 7000.
+                "frame": {
+                    "measure": "wins",
+                    "comparator": "gte",
+                    "value": "7,000",
+                    "unit": "wins",
+                    "horizon_kind": "annual",
+                    "window_date": "2026-06-15",
+                },
+                "stakes": 3,  # within +-1 of 2 -> right
+                "breadth": 5,  # within +-1 of [2, 4] -> right
+            },
+        },
+        {
+            "market_id": 2002,
+            "profile": {
+                "entities": [],  # right on none_of_these
+                "junk_flags": ["duplicate_phrasing"],  # ignored unasked flag on neither -> right
+                "stakes": 5,  # outside +-1 of 3 -> wrong
+                "breadth": 4,  # outside +-1 of [1, 2] -> wrong
+            },
+        },
+        {
+            "market_id": 2003,
+            "profile": {
+                # Whole-word check prevents "AI" matching inside "Bain".
+                "entities": [{"name": "Bain", "type": "org"}],
+                # Missing ladder flag (writer said neither []) -> wrong.
+                "junk_flags": [],
+            },
+        },
+    ]
+
+    result = score_cu_eval_run(
+        answers,
+        preds,
+        as_of="2026-06-15",
+        dataset="sealed",
+        withheld_fields=["oddity"],
+    )
+    assert result["withheld_fields"] == ["oddity"]
+    by_field = {row["field"]: row for row in result["fields"]}
+    assert by_field["entities"]["total"]["right"] == 2
+    assert by_field["entities"]["total"]["wrong"] == 1
+    assert by_field["entities"]["extra_names"] == 2  # "UNC" on 2001 + unmatched "Bain" on 2003
+    assert by_field["junk_flags"]["total"]["right"] == 2
+    assert by_field["junk_flags"]["total"]["wrong"] == 1
+    assert by_field["frame"]["total"]["right"] == 1
+    assert by_field["stakes"]["total"]["right"] == 1
+    assert by_field["stakes"]["total"]["wrong"] == 1
+    assert by_field["breadth"]["total"]["right"] == 1
+    assert by_field["breadth"]["total"]["wrong"] == 1
+
+    # Slices pull source, category, and draw_bucket=reader_weighted from market_meta.
+    assert set(result["slices"]["by_venue"].keys()) == {"kalshi", "polymarket"}
+    assert set(result["slices"]["by_category"].keys()) == {"economics", "sports", "tech"}
+    assert result["slices"]["by_exposure"]["readers_see"]["market_count"] == 1
+    assert result["slices"]["by_exposure"]["rest"]["market_count"] == 2
+
+    table = format_scorecard_table(result)
+    assert "Extra writer-only entity names (not counted wrong): 2" in table
+    assert "Withheld taste fields (<80% agreement): oddity" in table

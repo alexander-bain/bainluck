@@ -17,7 +17,9 @@ from app.utils.cu_frame import NO_SUBJECT_MARKER, UNRESOLVED_PREFIX
 from app.utils.cu_junk_flags import cu_junk_flags
 
 SAID_NOT_KNOWN_TOKENS = frozenset({"unknown", "not_sure", "not sure", "idk", "unsure", "abstain"})
+ASKED_STRUCTURE_FLAGS = frozenset({"ladder", "dated_bucket"})
 _CANONICAL_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_THOUSANDS_COMMA_RE = re.compile(r"(?<=\d),(?=\d{3}\b)")
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,7 @@ class FieldSpec:
     default_decider: str  # "code" | "model" | "code_and_model"
     kind: str  # "str" | "date" | "int" | "flags" | "frame" | "subject" | "entities"
     in_pilot_core: bool = False
+    tolerance: int = 0
 
 
 CU_SCORECARD_FIELDS: tuple[FieldSpec, ...] = (
@@ -38,8 +41,8 @@ CU_SCORECARD_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("temporal_class", "How time works", "model", "str", in_pilot_core=True),
     FieldSpec("event_date", "Day of the event", "code_and_model", "date"),
     FieldSpec("recurrence", "How often it repeats", "model", "str"),
-    FieldSpec("stakes", "Real-world stakes", "code_and_model", "int", in_pilot_core=True),
-    FieldSpec("breadth", "How wide the audience is", "code_and_model", "int", in_pilot_core=True),
+    FieldSpec("stakes", "Real-world stakes", "code_and_model", "int", in_pilot_core=True, tolerance=1),
+    FieldSpec("breadth", "How wide the audience is", "code_and_model", "int", in_pilot_core=True, tolerance=1),
     FieldSpec("oddity", "How unusual it is", "model", "int", in_pilot_core=True),
     FieldSpec("arc", "Kind of story", "model", "str"),
     FieldSpec("junk_flags", "Format warnings", "code_and_model", "flags"),
@@ -101,6 +104,60 @@ def _is_said_not_known(value: Any, kind: str) -> bool:
     return False
 
 
+def _subject_tokens(name: str) -> tuple[str, ...]:
+    cleaned = re.sub(r"['’]", "", name.strip().lower())
+    cleaned = re.sub(r"[^\w]+", " ", cleaned).replace("_", " ")
+    return tuple(tok for tok in cleaned.split() if tok)
+
+
+def _contains_token_subsequence(seq: tuple[str, ...], sub: tuple[str, ...]) -> bool:
+    if not sub or len(sub) > len(seq):
+        return False
+    return any(seq[idx : idx + len(sub)] == sub for idx in range(len(seq) - len(sub) + 1))
+
+
+def _subjects_match(labeled: str, predicted: str) -> bool:
+    """True when either normalized subject is a contiguous whole-word match of the other."""
+    ltok = _subject_tokens(labeled)
+    ptok = _subject_tokens(predicted)
+    if not ltok or not ptok:
+        return False
+    return _contains_token_subsequence(ptok, ltok) or _contains_token_subsequence(ltok, ptok)
+
+
+def _extract_entity_names(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    names: list[str] = []
+    for entry in value:
+        raw = entry.get("name") if isinstance(entry, dict) else entry
+        text = str(raw or "").strip()
+        if text:
+            names.append(text)
+    return names
+
+
+def _evaluate_entities(expected: Any, predicted: Any) -> tuple[str, int]:
+    """Compare named subjects ignoring type, using whole-word containment.
+
+    Every labeled subject must be matched by at least one writer name for the
+    row to score right. Extra writer names are counted separately, not as wrong.
+    """
+    if _is_said_not_known(predicted, "entities"):
+        return ("said_not_known", 0)
+    labeled = _extract_entity_names(expected)
+    if predicted is None:
+        return ("blank", 0)
+    pred_names = _extract_entity_names(predicted)
+    if not labeled:
+        return ("right", 0) if not pred_names else ("wrong", len(pred_names))
+    if not pred_names:
+        return ("blank", 0)
+    all_found = all(any(_subjects_match(lbl, pred) for pred in pred_names) for lbl in labeled)
+    extra = sum(1 for pred in pred_names if not any(_subjects_match(lbl, pred) for lbl in labeled))
+    return ("right" if all_found else "wrong", extra)
+
+
 def normalize_field_value(value: Any, kind: str) -> Any:
     """Normalize a predicted or ground-truth field value for exact comparison."""
     if _is_blank_value(value, kind):
@@ -132,27 +189,33 @@ def normalize_field_value(value: Any, kind: str) -> Any:
             if raw_slot is None or (isinstance(raw_slot, str) and raw_slot.strip() == ""):
                 canonical[slot] = None
             elif slot == "value":
-                canonical[slot] = str(raw_slot).strip().lower()
+                text_val = str(raw_slot).strip().lower()
+                canonical[slot] = _THOUSANDS_COMMA_RE.sub("", text_val)
             else:
                 canonical[slot] = str(raw_slot).strip().lower()
         return tuple(sorted(canonical.items()))
     if kind == "entities":
-        items = []
-        for entry in value:
-            if isinstance(entry, dict):
-                name = str(entry.get("name") or "").strip().lower()
-                etype = str(entry.get("type") or "").strip().lower()
-            else:
-                name = str(entry or "").strip().lower()
-                etype = ""
-            if name:
-                items.append((name, etype))
-        return tuple(sorted(set(items)))
+        return tuple(sorted({_subject_tokens(name) for name in _extract_entity_names(value)}))
     return value
+
+
+def _extract_expected_ints(expected: Any) -> list[int]:
+    if isinstance(expected, (list, tuple)):
+        out: list[int] = []
+        for item in expected:
+            norm = normalize_field_value(item, "int")
+            if isinstance(norm, int):
+                out.append(norm)
+        return out
+    norm = normalize_field_value(expected, "int")
+    return [norm] if isinstance(norm, int) else []
 
 
 def classify_field_prediction(expected: Any, predicted: Any, spec: FieldSpec) -> str:
     """Return 'right', 'wrong', 'blank', or 'said_not_known' for one field cell."""
+    if spec.kind == "entities":
+        return _evaluate_entities(expected, predicted)[0]
+
     if _is_said_not_known(predicted, spec.kind):
         # If truth explicitly expects unknown/not_sure (e.g. unpriced liveness),
         # returning that value is right rather than an evasion.
@@ -161,6 +224,27 @@ def classify_field_prediction(expected: Any, predicted: Any, spec: FieldSpec) ->
         if norm_expected is not None and norm_expected == norm_pred:
             return "right"
         return "said_not_known"
+
+    if spec.key == "junk_flags":
+        norm_expected = normalize_field_value(expected, "flags")
+        if predicted is None:
+            return "blank"
+        norm_pred = normalize_field_value(predicted, "flags")
+        expected_set = set(norm_expected or ())
+        scope = ASKED_STRUCTURE_FLAGS | expected_set
+        filtered_pred = {flag for flag in (norm_pred or ()) if flag in scope}
+        return "right" if filtered_pred == expected_set else "wrong"
+
+    if spec.kind == "int":
+        expected_ints = _extract_expected_ints(expected)
+        if _is_blank_value(predicted, "int"):
+            return "right" if expected is None else "blank"
+        norm_pred = normalize_field_value(predicted, "int")
+        if isinstance(norm_pred, int) and expected_ints:
+            if any(abs(norm_pred - target) <= spec.tolerance for target in expected_ints):
+                return "right"
+            return "wrong"
+        return "wrong"
 
     norm_expected = normalize_field_value(expected, spec.kind)
     norm_pred = normalize_field_value(predicted, spec.kind)
@@ -255,7 +339,7 @@ def _infer_exposure(row: dict[str, Any]) -> str:
         return explicit.strip().lower()
     if row.get("readers_see") or row.get("is_reader_visible"):
         return "readers_see"
-    if row.get("sampling_bucket") == "readers_see":
+    if row.get("sampling_bucket") == "readers_see" or row.get("draw_bucket") == "reader_weighted":
         return "readers_see"
     return "rest"
 
@@ -289,7 +373,7 @@ def _extract_answer_fields(answer_row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _init_field_accumulator(spec: FieldSpec) -> dict[str, Any]:
-    return {
+    acc: dict[str, Any] = {
         "field": spec.key,
         "label": spec.label,
         "default_decider": spec.default_decider,
@@ -297,6 +381,9 @@ def _init_field_accumulator(spec: FieldSpec) -> dict[str, Any]:
         "model": _empty_counts(),
         "total": _empty_counts(),
     }
+    if spec.key == "entities":
+        acc["extra_names"] = 0
+    return acc
 
 
 def _finalize_field_rows(accumulators: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -313,16 +400,17 @@ def _finalize_field_rows(accumulators: dict[str, dict[str, Any]]) -> list[dict[s
             primary = "model"
         else:
             primary = spec.default_decider
-        rows.append(
-            {
-                "field": entry["field"],
-                "label": entry["label"],
-                "decided_by": primary,
-                "code": entry["code"],
-                "model": entry["model"],
-                "total": entry["total"],
-            }
-        )
+        row: dict[str, Any] = {
+            "field": entry["field"],
+            "label": entry["label"],
+            "decided_by": primary,
+            "code": entry["code"],
+            "model": entry["model"],
+            "total": entry["total"],
+        }
+        if "extra_names" in entry:
+            row["extra_names"] = entry["extra_names"]
+        rows.append(row)
     return rows
 
 
@@ -354,7 +442,11 @@ def _score_subset(
                 predicted_val = pred_profile.get("temporal")
             else:
                 predicted_val = pred_profile.get(spec.key)
-            outcome = classify_field_prediction(expected_val, predicted_val, spec)
+            if spec.key == "entities":
+                outcome, extra_names = _evaluate_entities(expected_val, predicted_val)
+                field_accs["entities"]["extra_names"] += extra_names
+            else:
+                outcome = classify_field_prediction(expected_val, predicted_val, spec)
             decider = infer_field_decider(spec.key, pred_row, market_meta)
 
             _record_outcome(field_accs[spec.key][decider], outcome)
@@ -436,6 +528,7 @@ def score_cu_eval_run(
     dataset: str = "sealed",
     cost: dict[str, Any] | None = None,
     run_id: str | None = None,
+    withheld_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     """Score a CU writer run against an answer key across fields and slices."""
     answers_by_id = _index_rows_by_market_id(answer_key_rows)
@@ -452,20 +545,20 @@ def score_cu_eval_run(
     }
     for mid in market_ids:
         ans_row = answers_by_id[mid]
-        venue = str(ans_row.get("source") or ans_row.get("venue") or "unknown").strip().lower() or "unknown"
-        category = str(
-            ans_row.get("category")
-            or ans_row.get("llm_sport_category")
-            or _extract_answer_fields(ans_row).get("topic")
-            or "unknown"
-        ).strip().lower() or "unknown"
         slice_inputs = (
             {**ans_row, **ans_row["market_meta"]}
             if isinstance(ans_row.get("market_meta"), dict)
             else ans_row
         )
+        venue = str(slice_inputs.get("source") or slice_inputs.get("venue") or "unknown").strip().lower() or "unknown"
+        category = str(
+            slice_inputs.get("category")
+            or slice_inputs.get("llm_sport_category")
+            or _extract_answer_fields(ans_row).get("topic")
+            or "unknown"
+        ).strip().lower() or "unknown"
         shape = _infer_market_shape(slice_inputs)
-        exposure = _infer_exposure(ans_row)
+        exposure = _infer_exposure(slice_inputs)
 
         slice_buckets["by_venue"].setdefault(venue, []).append(mid)
         slice_buckets["by_category"].setdefault(category, []).append(mid)
@@ -479,7 +572,7 @@ def score_cu_eval_run(
             for group_key, group_ids in sorted(groups.items())
         }
 
-    return {
+    payload: dict[str, Any] = {
         "status": "measured",
         "as_of": as_of,
         "run_id": run_id,
@@ -490,6 +583,9 @@ def score_cu_eval_run(
         **overall,
         "slices": slices_out,
     }
+    if withheld_fields:
+        payload["withheld_fields"] = list(withheld_fields)
+    return payload
 
 
 def _fmt_counts(counts: dict[str, int]) -> str:
@@ -538,6 +634,11 @@ def format_scorecard_table(scorecard: dict[str, Any]) -> str:
     lines.append(
         f"{'ALL MODEL DECISIONS':<39} {'':<18} {_fmt_counts(dt.get('model', _empty_counts()))}"
     )
+    entities_row = next((r for r in scorecard.get("fields", []) if r.get("field") == "entities"), None)
+    if entities_row and entities_row.get("extra_names"):
+        lines.append(f"Extra writer-only entity names (not counted wrong): {entities_row['extra_names']}")
+    if scorecard.get("withheld_fields"):
+        lines.append(f"Withheld taste fields (<80% agreement): {', '.join(scorecard['withheld_fields'])}")
     return "\n".join(lines)
 
 
