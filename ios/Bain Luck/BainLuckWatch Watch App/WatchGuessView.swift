@@ -76,7 +76,7 @@ struct WatchGuessView: View {
                     .font(.system(size: 44, weight: .heavy, design: .rounded))
                     .foregroundStyle(.blue)
                     .padding(.vertical, 2)
-                    .accessibilityLabel(spokenProbabilityText("\(q.threshold)%"))
+                    .accessibilityLabel(spokenProbabilityText(q.thresholdText))
 
                 HStack(spacing: 6) {
                     Button { Task { await vm.submitGuess("higher") } } label: {
@@ -138,7 +138,7 @@ struct WatchGuessView: View {
 
             Text(q.actualProbabilityText)
                 .font(.system(size: 38, weight: .heavy, design: .rounded))
-                .accessibilityLabel(spokenProbabilityText("\(q.actualPct)%"))
+                .accessibilityLabel(spokenProbabilityText(q.actualProbabilityText))
 
             Text(q.subject)
                 .font(.system(size: 12))
