@@ -20,6 +20,7 @@ created.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -32,6 +33,7 @@ from app.utils import request_cache as _rc
 
 DETAIL_TTL = 15.0
 SUBROUTE_TTL = 60.0
+RESOLVED_TIMELINE_TTL = 900.0
 
 #: Per-worker ceiling on cached body bytes. Oldest entries evict first.
 MAX_BYTES = 16 * 1024 * 1024
@@ -83,6 +85,33 @@ def history_key(
     )
 
 
+def probability_timeline_key(
+    market_id: int,
+    top: int,
+    hours: int,
+    representation: str,
+    history_range: Optional[str],
+) -> tuple:
+    """Cache key for ``GET /api/futures/{market_id}/probability-timeline``."""
+    from app.utils import full_range_live as _full_range_live
+
+    clean_range = (
+        history_range.strip().lower()
+        if isinstance(history_range, str) and history_range.strip()
+        else None
+    )
+    return (
+        "probability_timeline",
+        int(market_id),
+        int(top),
+        int(hours),
+        "verified_title" if representation == "verified_title" else "source",
+        clean_range,
+        int(_full_range_live.OLDER_LIVE_INSTANT_CAP),
+        os.getenv("SERVE_OBSERVED_SPANS", ""),
+    )
+
+
 def progression_key(
     market_id: int,
     top_n: int,
@@ -118,6 +147,23 @@ def history_ttl(payload) -> float:
     venue = payload.get("venue_history")
     if isinstance(venue, dict) and venue.get("fill") == "requested":
         return 0.0
+    return SUBROUTE_TTL
+
+
+def probability_timeline_ttl(payload, *, resolved_full: bool = False) -> float:
+    """TTL for cached ``probability-timeline`` payloads, skipping transient failures."""
+    if not isinstance(payload, dict):
+        return 0.0
+    venue = payload.get("venue_history")
+    if isinstance(venue, dict) and (
+        venue.get("fill") == "requested" or venue.get("state") == "unavailable"
+    ):
+        return 0.0
+    archive = payload.get("archive_history")
+    if isinstance(archive, dict) and archive.get("state") == "unavailable":
+        return 0.0
+    if resolved_full:
+        return RESOLVED_TIMELINE_TTL if payload.get("timeline") else 0.0
     return SUBROUTE_TTL
 
 

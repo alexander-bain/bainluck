@@ -7570,7 +7570,7 @@ async def _consider_generic_history_fill(
 
 
 @router.get("/{market_id}/probability-timeline")
-async def get_probability_timeline(
+async def get_probability_timeline_cached(
     market_id: int,
     top: int = Query(10, ge=1, le=50, description="Number of top outcomes to show"),
     hours: int = Query(168, ge=1, le=8760, description="Hours of history (default 7 days)"),
@@ -7585,6 +7585,43 @@ async def get_probability_timeline(
         ),
     ),
     history_range: Optional[str] = Query(None, alias="range", description=_FULL_RANGE_DOC),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/{market_id}/probability-timeline``."""
+    cache_meta: dict[str, bool] = {}
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.probability_timeline_key(
+            market_id,
+            top,
+            hours,
+            representation,
+            history_range,
+        ),
+        fresh=fresh,
+        build=lambda: get_probability_timeline(
+            market_id=market_id,
+            top=top,
+            hours=hours,
+            db=db,
+            representation=representation,
+            history_range=history_range,
+            _cache_meta=cache_meta,
+        ),
+        ttl_for=lambda payload: _futures_page_cache.probability_timeline_ttl(
+            payload,
+            resolved_full=bool(cache_meta.get("resolved_full")),
+        ),
+    )
+
+
+async def get_probability_timeline(
+    market_id: int,
+    top: int = 10,
+    hours: int = 168,
+    db: AsyncSession = Depends(get_db),
+    representation: str = REPRESENTATION_SOURCE,
+    history_range: Optional[str] = None,
+    _cache_meta: Optional[dict[str, bool]] = None,
 ):
     """
     Get a time-bucketed probability timeline for a futures market.
@@ -7745,6 +7782,20 @@ async def get_probability_timeline(
             "outcomes": [],
         }, representation)
 
+    # Determine the top N outcomes by current probability (#7284: the BOARD's
+    # probability, not the stored one, so the table cannot be ordered by one
+    # number and labelled with another; a withheld row reads `None` here and
+    # sinks, exactly as it does on the ladder). Live snapshot and older-live reads
+    # still cover all `charted_outcomes` to compute the synthetic "Field" median,
+    # whereas archive and generic-venue admission are scoped to `top_outcome_id_list`.
+    sorted_outcomes = sorted(
+        charted_outcomes,
+        key=lambda o: canonical_board[o.id]["probability"] or 0,
+        reverse=True,
+    )
+    top_outcome_id_list = [o.id for o in sorted_outcomes[:top]]
+    top_outcome_ids = set(top_outcome_id_list)
+
     # Fetch all snapshots
     snapshot_query = (
         select(FuturesOddsSnapshot)
@@ -7789,7 +7840,7 @@ async def get_probability_timeline(
     # below behaves exactly as it did.
     venue = await _load_generic_venue_history(market, charted_outcomes, _field_ids, db)
     venue_rows = venue.in_window(
-        ARCHIVE_LIFETIME_FLOOR if full_range else cutoff, snapshots, all_outcome_ids
+        ARCHIVE_LIFETIME_FLOOR if full_range else cutoff, snapshots, top_outcome_id_list
     )
     # An UNKNOWN venue point (rule 5) is not drawn, but it is a real venue
     # observation, so it still claims the archive interval it sits in.
@@ -7803,7 +7854,7 @@ async def get_probability_timeline(
     # may adopt and cut to the served one after. Kalshi markets only. `range=full`
     # reads its whole lifetime instead.
     archive = await load_archive_history(
-        db, market, all_outcome_ids,
+        db, market, top_outcome_id_list,
         since=min(cutoff, now - timedelta(hours=2160)),
         full_range=full_range,
     )
@@ -7876,7 +7927,7 @@ async def get_probability_timeline(
                 list(ext_result.scalars().all()), charted_outcomes, _field_ids
             )
             extended_venue_rows = venue.in_window(
-                extended_cutoff, extended_snapshots, all_outcome_ids
+                extended_cutoff, extended_snapshots, top_outcome_id_list
             )
             if (len(extended_snapshots) + len(extended_venue_rows)) > (
                 len(snapshots) + len(venue_rows)
@@ -7892,13 +7943,13 @@ async def get_probability_timeline(
     _timeline_unknown: list = []
     if older_live is not None:
         _timeline_claims, _timeline_unknown = await older_live.archive_claims(
-            db, archive, _timeline_claims, all_outcome_ids,
+            db, archive, _timeline_claims, top_outcome_id_list,
             supported=_support_filter(charted_outcomes, _field_ids),
         )
     archive_by_outcome = archive.served(
         ARCHIVE_LIFETIME_FLOOR if full_range else window_start,
         claims=_timeline_claims,
-        outcome_ids=all_outcome_ids,
+        outcome_ids=top_outcome_id_list,
         unresolved=_timeline_unknown,
     )
     # Determine bucket size based on market state.
@@ -7909,18 +7960,6 @@ async def get_probability_timeline(
     else:
         bucket_seconds = 3600  # 1 hour
 
-    # Determine the top N outcomes by current probability.
-    #
-    # #7284: the BOARD's probability, not the stored one, so the table cannot be
-    # ordered by one number and labelled with another. A withheld row reads
-    # `None` here and sinks, exactly as it does on the ladder (`probability ?? 0`
-    # is the clients' own rule).
-    sorted_outcomes = sorted(
-        charted_outcomes,
-        key=lambda o: canonical_board[o.id]["probability"] or 0,
-        reverse=True,
-    )
-    top_outcome_ids = {o.id for o in sorted_outcomes[:top]}
     if not snapshots and not venue_rows and not archive_by_outcome:
         # #683 — nothing to DRAW is not nothing to SAY. When every candidate was
         # withheld UNKNOWN (rule 7), the empty chart still carries the same
@@ -8290,6 +8329,16 @@ async def get_probability_timeline(
             live_basis=_live_basis, older_live=older_live,
         ),
     }
+    if _cache_meta is not None:
+        _cache_meta["resolved_full"] = bool(
+            full_range
+            and isinstance(getattr(market, "status", None), str)
+            and market.status.lower() == "resolved"
+            and representation == REPRESENTATION_SOURCE
+            and archive.state != "unavailable"
+            and not (venue.applicable and venue.state in ("cold", "unavailable"))
+            and not (older_live is not None and older_live.unresolved)
+        )
     # #9387: last, after every history read, and only when opted in.
     return await _finish_verified_timeline(
         db, market, payload, representation,

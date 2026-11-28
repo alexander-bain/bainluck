@@ -265,3 +265,143 @@ class TestResponseShape:
         assert "timestamp" in entry
         assert "outcomes" in entry
         assert isinstance(entry["outcomes"], dict)
+
+
+class TestFullRangeTopNArchiveAndVenueScoping:
+    """#13573: full-range archive & venue admission read only top-N outcomes while
+    live snapshot and older-live reads preserve exact Field medians."""
+
+    async def test_top_n_scoping_keeps_exact_field_median(self):
+        from app.models.models import FuturesOddsSnapshot
+        from app.routes import futures as futures_routes
+
+        now = datetime.now(timezone.utc)
+        older_ts = now - timedelta(hours=200)
+        mid_ts = now - timedelta(hours=100)
+        recent_ts = now - timedelta(hours=2)
+        outcomes = [
+            _make_outcome(1, "Leader A", 0.30),
+            _make_outcome(2, "Leader B", 0.25),
+            _make_outcome(3, "Leader C", 0.20),
+            _make_outcome(4, "Field X", 0.10),
+            _make_outcome(5, "Field Y", 0.08),
+            _make_outcome(6, "Field Z", 0.07),
+        ]
+        for o in outcomes:
+            o.external_id = f"EXT-{o.id}"
+            o.rank = o.id
+            o.opening_probability = o.current_probability
+            o.probability_change_24h = 0.0
+            o.team = None
+            o.team_id = None
+            o.is_winner = None
+            o.resolution_source = None
+        market = _make_market(1, "Golf Championship", outcomes, commence_time=None)
+        market.source = "kalshi"
+        market.status = "open"
+        market.sport = None
+
+        older_snaps = [_make_snapshot(o.id, o.current_probability, older_ts) for o in outcomes]
+        mid_snaps = [_make_snapshot(o.id, o.current_probability, mid_ts) for o in outcomes]
+        recent_snaps = [_make_snapshot(o.id, o.current_probability, recent_ts) for o in outcomes]
+        for s in older_snaps + mid_snaps + recent_snaps:
+            s.yes_bid = 0.01
+            s.yes_ask = 0.99
+            s.last_price = s.probability
+
+        seen_calls: dict[str, object] = {"snapshot_queries": []}
+
+        async def _fake_execute(stmt, *_args, **_kwargs):
+            entities = {d.get("entity") for d in getattr(stmt, "column_descriptions", ())}
+            if FuturesOddsSnapshot in entities:
+                params = stmt.compile().params
+                requested_ids = sorted(
+                    next(v for v in params.values() if isinstance(v, (list, tuple)))
+                )
+                seen_calls["snapshot_queries"].append(requested_ids)
+                since = next(v for v in params.values() if isinstance(v, datetime))
+                res = MagicMock()
+                res.scalars.return_value.all.return_value = [
+                    s
+                    for s in (recent_snaps + mid_snaps)
+                    if s.outcome_id in requested_ids and s.captured_at >= since
+                ]
+                return res
+            res = MagicMock()
+            res.scalar_one_or_none.return_value = market
+            return res
+
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=_fake_execute)
+
+        older_live = MagicMock()
+        older_live.rows = older_snaps
+        older_live.first = older_ts
+        older_live.thinned = True
+        older_live.unresolved = 0
+        older_live.withhold_venue = AsyncMock(return_value=([], []))
+
+        async def _fake_archive_claims(_db, _archive, claims, outcome_ids, *, supported):
+            seen_calls["archive_claims"] = list(outcome_ids)
+            return list(claims), []
+
+        older_live.archive_claims = _fake_archive_claims
+
+        fake_venue = MagicMock()
+        fake_venue.applicable = False
+        fake_venue.refusals = []
+        fake_venue.state = "empty"
+
+        def _fake_in_window(_floor, _snaps, outcome_ids):
+            seen_calls["venue_in_window"] = list(outcome_ids)
+            return []
+
+        fake_venue.in_window = _fake_in_window
+
+        fake_archive = MagicMock()
+        fake_archive.state = "warm"
+        fake_archive.describe = MagicMock(return_value={"points_served": 0})
+        fake_archive.range_block = MagicMock(return_value={"live_thinned": True})
+
+        def _fake_served(_floor, *, claims, outcome_ids, unresolved):
+            seen_calls["archive_served"] = list(outcome_ids)
+            return {}
+
+        fake_archive.served = _fake_served
+
+        async def _fake_load_archive(_db, _market, outcome_ids, *, since, full_range):
+            seen_calls["load_archive_history"] = list(outcome_ids)
+            return fake_archive
+
+        async def _fake_read_older(_db, outcome_ids, *, before):
+            seen_calls["read_older_live"] = list(outcome_ids)
+            return older_live
+
+        with (
+            patch.object(futures_routes, "_withheld_price_outcome_ids", AsyncMock(return_value=set())),
+            patch.object(futures_routes, "grammy_nominee_fields", AsyncMock(return_value={})),
+            patch.object(futures_routes, "read_older_live", _fake_read_older),
+            patch.object(futures_routes, "_load_generic_venue_history", AsyncMock(return_value=fake_venue)),
+            patch.object(futures_routes, "load_archive_history", _fake_load_archive),
+            patch.object(futures_routes, "add_timeline_steps", AsyncMock()),
+        ):
+            full_resp = await get_probability_timeline(
+                market_id=1, top=3, hours=168, db=db, history_range="full",
+            )
+            seen_calls["full_snapshot_queries"] = list(seen_calls["snapshot_queries"])
+            seen_calls["snapshot_queries"] = []
+            extended_resp = await get_probability_timeline(
+                market_id=1, top=3, hours=24, db=db, history_range=None,
+            )
+
+        assert seen_calls["full_snapshot_queries"] == [[1, 2, 3, 4, 5, 6]]
+        assert seen_calls["snapshot_queries"] == [[1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]]
+        assert seen_calls["read_older_live"] == [1, 2, 3, 4, 5, 6]
+        assert seen_calls["venue_in_window"] == [1, 2, 3]
+        assert seen_calls["load_archive_history"] == [1, 2, 3]
+        assert seen_calls["archive_claims"] == [1, 2, 3]
+        assert seen_calls["archive_served"] == [1, 2, 3]
+        assert len(full_resp["timeline"]) >= 3
+        assert len(extended_resp["timeline"]) >= 2
+        for entry in full_resp["timeline"] + extended_resp["timeline"]:
+            assert entry["outcomes"]["Field"] == pytest.approx(0.25)

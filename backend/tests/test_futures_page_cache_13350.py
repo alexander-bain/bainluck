@@ -90,6 +90,36 @@ class TestTTLsAndKeys:
         assert fpc.progression_key(10, 32, None) != fpc.progression_key(10, 40, None)
         assert fpc.progression_key(10, 32, "abc") != fpc.progression_key(10, 32, None)
         assert fpc.group_key("polymarket:1") != fpc.group_key("polymarket:2")
+        assert fpc.probability_timeline_key(10, 20, 168, "source", "full") != fpc.probability_timeline_key(
+            10, 10, 168, "source", "full"
+        )
+        assert fpc.probability_timeline_key(10, 20, 168, "source", "full") != fpc.probability_timeline_key(
+            10, 20, 24, "source", "full"
+        )
+        assert fpc.probability_timeline_key(10, 20, 168, "source", "full") != fpc.probability_timeline_key(
+            10, 20, 168, "verified_title", "full"
+        )
+        assert fpc.probability_timeline_key(10, 20, 168, "source", "full") != fpc.probability_timeline_key(
+            10, 20, 168, "source", None
+        )
+
+    def test_probability_timeline_ttl_and_cap_isolation(self, monkeypatch):
+        from app.utils import full_range_live
+
+        assert fpc.RESOLVED_TIMELINE_TTL == 900.0
+        assert fpc.probability_timeline_ttl({"timeline": [{"t": 1}]}, resolved_full=True) == 900.0
+        assert fpc.probability_timeline_ttl({"timeline": []}, resolved_full=True) == 0.0
+        assert fpc.probability_timeline_ttl({"timeline": [{"t": 1}]}, resolved_full=False) == 60.0
+        assert fpc.probability_timeline_ttl({"venue_history": {"fill": "requested"}}, resolved_full=True) == 0.0
+        assert fpc.probability_timeline_ttl({"venue_history": {"state": "unavailable"}}, resolved_full=True) == 0.0
+        assert fpc.probability_timeline_ttl({"archive_history": {"state": "unavailable"}}, resolved_full=True) == 0.0
+        assert fpc.probability_timeline_ttl("bad", resolved_full=True) == 0.0
+
+        monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 4000)
+        k_4000 = fpc.probability_timeline_key(70709343, 20, 168, "source", "full")
+        monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 2000)
+        k_2000 = fpc.probability_timeline_key(70709343, 20, 168, "source", "full")
+        assert k_4000 != k_2000
 
 
 class TestLRUMemoryAndExpiry:
@@ -356,3 +386,42 @@ class TestFiveEndpointsSingleflightAndPriceTruth:
         resp = await waiter
         assert resp.status_code == 200
         assert calls == 2
+
+    async def test_probability_timeline_route_coalesces_caches_and_respects_fresh(self, monkeypatch):
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def _fake_timeline(**kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                entered.set()
+                await release.wait()
+            meta = kwargs.get("_cache_meta")
+            if meta is not None:
+                meta["resolved_full"] = True
+            return {"market_id": kwargs["market_id"], "timeline": [{"t": calls}], "outcomes": []}
+
+        monkeypatch.setattr(futures_routes, "get_probability_timeline", _fake_timeline)
+
+        async with _route_client() as client:
+            path = "/api/futures/70709343/probability-timeline?top=20&hours=168&range=full"
+            burst_tasks = [asyncio.create_task(client.get(path)) for _ in range(3)]
+            await entered.wait()
+            await asyncio.sleep(0)
+            release.set()
+            burst = await asyncio.gather(*burst_tasks)
+            assert calls == 1
+            assert [r.headers.get("X-Feed-Cache") for r in burst].count("miss") == 1
+            assert [r.headers.get("X-Feed-Cache") for r in burst].count("coalesced") == 2
+
+            hit = await client.get(path)
+            assert hit.status_code == 200
+            assert hit.headers.get("X-Feed-Cache") == "hit"
+            assert calls == 1
+
+            bypass = await client.get(f"{path}&fresh=true")
+            assert bypass.status_code == 200
+            assert bypass.headers.get("X-Feed-Cache") == "bypass"
+            assert calls == 2
