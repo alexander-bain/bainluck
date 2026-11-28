@@ -760,7 +760,7 @@ _SECTION_THEME_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b(?:sandbox\s+escape|training\s+pause|self-improvement|millennium\s+prize|#1\s+ai|frontier\s+model|humanity.?s\s+last\s+exam|benchmark|agi|superintelligence)\b", re.I), "AI & safety"),
     (re.compile(r"\b(?:earbuds|headphones|clip-on|hardware|wearable|(?:hardware|wearable|ai|consumer)\s+device|smart\s+glasses|headset)\b", re.I), "hardware & devices"),
     (re.compile(r"\b(?:valuation|market\s+cap|ipo|revenue|trillion|billion)\b", re.I), "market valuations"),
-    (re.compile(r"\b(?:s&p\s+500|nasdaq|bankrupt\w*|default|acqui\w*|merger|spin[- ]?off|stock\s+split|auditor)\b", re.I), "corporate milestones"),
+    (re.compile(r"\b(?:s&p\s+500|nasdaq|bankrupt\w*|default|be\s+acquired|corporate\s+acquisition|buyout|takeover|merger|spin[- ]?off|stock\s+split|auditor)\b", re.I), "corporate milestones"),
     (re.compile(r"\b(?:operate\s+in|expand\s+to|service\s+in\s+[A-Z])\b", re.I), "city expansion"),
     (re.compile(r"\b(?:join\s+a\s+new|found\s+a\s+new|resign|step\s+down|removed|removal|oust|ceo|chair|(?:join|leave|sit\s+on|appointed\s+to)\s+(?:the\s+)?board|board\s+of\s+directors)\b", re.I), "career & roles"),
     (re.compile(r"\b(?:halftime\s+show|super\s+bowl|coachella|big\s+game|meet\s+[A-Z]|concert|world\s+tour|eras\s+tour|perform\s+at|public\s+appearance)\b", re.I), "public appearances"),
@@ -1763,7 +1763,8 @@ def _build_scoreboard_grid_section(
             2 <= len(words) <= 4
             and low not in seen_low
             and not any(banned in low for banned in _BANNED_SECTION_HEADINGS)
-            and (not bkey or bkey not in seen_base)
+            and bool(bkey)
+            and bkey not in seen_base
             and _passes_taste_and_harm(cand)
         )
 
@@ -1780,9 +1781,15 @@ def _build_scoreboard_grid_section(
         for t in all_titles
         if t
     ]
+    cleaned_sb_low = [c.lower() for c in cleaned_sb if c]
     hl_direct, err_direct = derive_common_headline(None, cleaned_sb)
     if not err_direct and hl_direct and not hl_direct.lower().endswith(" outlook") and _sb_ok(hl_direct):
-        scoreboard_hl = hl_direct
+        sig_hl = [
+            w.lower() for w in hl_direct.split()
+            if len(w) > 2 and w.lower() not in _GENERIC_STOPWORDS
+        ]
+        if sig_hl and cleaned_sb_low and all(all(tok in c for c in cleaned_sb_low) for tok in sig_hl):
+            scoreboard_hl = hl_direct
     if scoreboard_hl is None:
         # Stem-normalized common content tokens (e.g. capture/captures/captured + city/cities -> Cities Russia Captures).
         tok_sets = [
@@ -2514,7 +2521,10 @@ def _build_countdown_section(
         variant="countdown",
         kicker=f"{kicker} · SOON",
         common_headline=headline,
-        stat_caption=_caption_for_row(first_title, f"stands at {first_pct_str} with {first_days} days left"),
+        stat_caption=_caption_for_row(
+            first_title,
+            f"stands at {first_pct_str} with {first_days} {'day' if first_days == 1 else 'days'} left",
+        ),
         source_count=src_count,
         route_slug=slug,
         body={"header_layout": "none", "header_marks": [], "items": items},

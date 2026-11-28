@@ -777,6 +777,7 @@ async def get_kit_container_pages_preview(
             "timings_ms": None,
             "count": 0,
             "pages": [],
+            "ranked_audit": [],
         }
 
     if rc is None:
@@ -793,6 +794,7 @@ async def get_kit_container_pages_preview(
             "timings_ms": None,
             "count": 0,
             "pages": [],
+            "ranked_audit": [],
         }
 
     try:
@@ -811,6 +813,7 @@ async def get_kit_container_pages_preview(
             "timings_ms": None,
             "count": 0,
             "pages": [],
+            "ranked_audit": [],
         }
 
     if cached_raw:
@@ -830,9 +833,11 @@ async def get_kit_container_pages_preview(
                 "timings_ms": None,
                 "count": 0,
                 "pages": [],
+                "ranked_audit": [],
             }
         if isinstance(cached, dict):
             pages = cached.get("pages") or []
+            ranked_audit = list(cached.get("ranked_audit") or [])
             if pages:
                 return {
                     "kit_page_version": 1,
@@ -845,6 +850,7 @@ async def get_kit_container_pages_preview(
                     "timings_ms": cached.get("timings_ms"),
                     "count": len(pages),
                     "pages": pages,
+                    "ranked_audit": ranked_audit,
                 }
             return {
                 "kit_page_version": 1,
@@ -857,6 +863,7 @@ async def get_kit_container_pages_preview(
                 "timings_ms": cached.get("timings_ms"),
                 "count": 0,
                 "pages": [],
+                "ranked_audit": ranked_audit,
             }
 
     return {
@@ -870,6 +877,7 @@ async def get_kit_container_pages_preview(
         "timings_ms": None,
         "count": 0,
         "pages": [],
+        "ranked_audit": [],
     }
 
 

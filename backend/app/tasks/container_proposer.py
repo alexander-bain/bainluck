@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import importlib
 import json
 import logging
 import time
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 CONTAINER_PREVIEWS_REDIS_KEY = "containers:kit_previews:v1"
 CONTAINER_PREVIEWS_DECK_KEY_PREFIX = "containers:kit_previews:v1:deck:"
 CONTAINER_PREVIEWS_TTL_SECONDS = 7 * 86400
+
+
+def _roundup_containers_module() -> Any:
+    return importlib.import_module("app.utils.roundup_containers")
 
 
 def compute_deck_id(pages: list[dict[str, Any]], *, snapshot_captured_at: str) -> str:
@@ -54,6 +59,7 @@ async def load_covered_market_ids(
     """Load market IDs already covered by persisted containers, Midterms, and round-ups."""
     from app.tasks.grouping_sentinel import _GRAPH_SQL, collection_ids, definition_coverage
 
+    _roundup_containers_module().ensure_optional_roundup_candidates()
     covered: set[int] = set(collection_ids())
     try:
         rows = (await session.execute(text(_GRAPH_SQL))).all()
@@ -90,17 +96,28 @@ async def load_covered_public_set_names(
     *,
     failed_reads: list[str] | None = None,
 ) -> set[str]:
-    """Load slug and title strings of published public containers for covered-core overlap checks."""
+    """Load slug and name strings of published containers and active public round-ups."""
+    rc = _roundup_containers_module()
+    rc.ensure_optional_roundup_candidates()
     names: set[str] = set()
+    for prod in list(rc.ROUNDUP_PRODUCERS.values()):
+        if prod.enabled is not None and not prod.enabled():
+            continue
+        if getattr(prod, "stage", "public") != "public":
+            continue
+        if getattr(prod, "slug", None):
+            names.add(str(prod.slug))
+        if getattr(prod, "name", None):
+            names.add(str(prod.name))
     try:
-        rows = (await session.execute(text("SELECT slug, title FROM containers"))).all()
+        rows = (await session.execute(text("SELECT slug, name FROM containers"))).all()
         for r in rows:
             slug_val = r[0] if not hasattr(r, "slug") else r.slug
-            title_val = r[1] if not hasattr(r, "title") else r.title
+            name_val = r[1] if not hasattr(r, "name") else r.name
             if slug_val:
                 names.add(str(slug_val))
-            if title_val:
-                names.add(str(title_val))
+            if name_val:
+                names.add(str(name_val))
     except Exception:
         logger.warning("[container-proposer] container name lookup failed; continuing with ID coverage only", exc_info=True)
         if failed_reads is not None and "container_names" not in failed_reads:
@@ -113,6 +130,26 @@ async def load_covered_public_set_names(
     return names
 
 
+_MAX_STORED_AUDIT_ROWS = 25
+
+
+def _compact_audit_entry(item: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "rank": item.get("rank"),
+        "label": item.get("label"),
+        "kicker": item.get("kicker"),
+        "family_size": item.get("family_size"),
+        "interest_score": item.get("interest_score"),
+        "accepted": bool(item.get("accepted")),
+        "selected_for_preview": bool(item.get("selected_for_preview")),
+        "refusal_reason": item.get("refusal_reason"),
+    }
+    for extra in ("covered_member_count", "total_member_count", "slug", "headline"):
+        if item.get(extra) is not None:
+            out[extra] = item.get(extra)
+    return out
+
+
 def merge_preview_store(
     existing: Mapping[str, Any] | None,
     new_pages: list[dict[str, Any]],
@@ -121,6 +158,7 @@ def merge_preview_store(
     covered_ids_count: int = 0,
     coverage_failed_reads: Iterable[str] = (),
     timings_ms: Mapping[str, float] | None = None,
+    ranked_audit: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Build tonight's preview deck strictly from tonight's pages with frozen deck_id."""
     prev_fps: set[str] = set()
@@ -150,6 +188,11 @@ def merge_preview_store(
     updated_at_iso = now.isoformat()
     deck_id = compute_deck_id(ordered_pages, snapshot_captured_at=updated_at_iso)
     failed_list = list(dict.fromkeys(str(r) for r in coverage_failed_reads if r))
+    compact_audit = [
+        _compact_audit_entry(item)
+        for item in list(ranked_audit)[:_MAX_STORED_AUDIT_ROWS]
+        if isinstance(item, Mapping)
+    ]
     return {
         "kit_page_version": 1,
         "status": "ready" if ordered_pages else "not_built_yet",
@@ -163,6 +206,7 @@ def merge_preview_store(
         "added_last_run": added,
         "updated_last_run": updated,
         "pages": ordered_pages,
+        "ranked_audit": compact_audit,
     }
 
 
@@ -284,6 +328,7 @@ async def run_nightly_container_proposer(
             covered_ids_count=len(resolved_covered),
             coverage_failed_reads=failed_list,
             timings_ms=timings_ms,
+            ranked_audit=result.get("ranked_audit") or (),
         )
         serialized = json.dumps(stored_payload)
         redis_client.set(
