@@ -272,6 +272,7 @@ def select_closest_window_events(
     minimum: int = 4,
     league: Optional[str] = None,
     footer_template: str = "The 4 closest of {n} games tonight",
+    extra_eligible_count: int = 0,
 ) -> RoundupMembers | RoundupRefusal:
     """Pure selector for ``window_events_closest``.
 
@@ -329,7 +330,7 @@ def select_closest_window_events(
             )
         )
 
-    total_eligible = len(eligible)
+    total_eligible = len(eligible) + max(0, int(extra_eligible_count))
     if total_eligible < required:
         return _rc().RoundupRefusal(
             (("window", f"eligible_{total_eligible}_below_minimum_{required}"),)
@@ -377,6 +378,122 @@ CardLoader = Callable[
 ]
 
 
+def _precheck_event_window_eligibility(
+    ev: Any,
+    *,
+    effective_now: datetime,
+    window_start: datetime,
+    window_end: datetime,
+    league: Optional[str],
+    team_lookup: Any,
+) -> Optional[tuple[str, str]]:
+    """Cheap pre-hydration check mirroring ``is_event_eligible_for_window``.
+
+    Returns ``(sport_key, commence_iso)`` when eligible, or ``None`` when
+    ineligible before hitting ``OddsSnapshot`` hydration (#11259).
+    """
+    from app.routes.events import _team_for_event
+    from app.utils.league_classification import get_league_class
+
+    sport_obj = getattr(ev, "sport", None)
+    sport_key = str(getattr(sport_obj, "key", None) or "").strip()
+    if sport_key:
+        if not _matches_league_filter(sport_key, league):
+            return None
+        if get_league_class(sport_key) == "pro_minor":
+            return None
+    elif league:
+        return None
+
+    status = str(getattr(ev, "status", None) or "").strip().lower()
+    commence = _parse_dt(getattr(ev, "commence_time", None))
+    if commence is None:
+        return None
+
+    if status == "live":
+        if commence >= window_end or commence < (window_start - timedelta(hours=6)):
+            return None
+        if (
+            getattr(ev, "home_score", None) is None
+            and getattr(ev, "away_score", None) is None
+        ):
+            return None
+    elif status in {"scheduled", "upcoming", "pre", ""}:
+        if commence < effective_now or commence >= window_end:
+            return None
+    else:
+        return None
+
+    home_name = (getattr(ev, "home_team_name", None) or "").strip()
+    away_name = (getattr(ev, "away_team_name", None) or "").strip()
+    if not home_name or not away_name:
+        return None
+    if team_lookup is not None:
+        home_team = _team_for_event(
+            team_lookup,
+            home_name,
+            sport_key or None,
+            team_id=getattr(ev, "home_team_id", None),
+        )
+        away_team = _team_for_event(
+            team_lookup,
+            away_name,
+            sport_key or None,
+            team_id=getattr(ev, "away_team_id", None),
+        )
+        if not (
+            home_team
+            and getattr(home_team, "logo_url_small", None)
+            and away_team
+            and getattr(away_team, "logo_url_small", None)
+        ):
+            return None
+
+    return sport_key, commence.astimezone(timezone.utc).isoformat()
+
+
+async def _hydrate_ordered_cards(
+    db: Any,
+    ids_to_hydrate: list[int],
+    events_by_id: Mapping[int, Any],
+    folded_map: Mapping[int, Any],
+) -> tuple[Optional[list[dict[str, Any]]], Optional[Any]]:
+    from app.routes.containers import _hydrate_event_cards
+    from app.utils.aggregation import newest_source_reading_time
+    from app.utils.proven_duplicates import FoldedBlendView
+
+    if not ids_to_hydrate:
+        return [], None
+    cards_by_id, _failed = await _hydrate_event_cards(db, ids_to_hydrate)
+    if _failed:
+        return None, _rc().RoundupRefusal((("window", f"hydrate_failed_{len(_failed)}"),))
+    ordered_cards: list[dict[str, Any]] = []
+    for i in ids_to_hydrate:
+        if i not in cards_by_id:
+            continue
+        card = dict(cards_by_id[i])
+        if (
+            "hero_probability_observed_at" not in card
+            and card.get("hero_probability_source") == "blend"
+            and i in events_by_id
+        ):
+            ev = events_by_id[i]
+            folded = folded_map.get(i)
+            blend_view = (
+                FoldedBlendView(ev, folded.win_probability_sources)
+                if folded is not None and folded.win_probability_sources is not None
+                else ev
+            )
+            observed_at = newest_source_reading_time(
+                blend_view, require_complete=True
+            )
+            card["hero_probability_observed_at"] = (
+                observed_at.isoformat() if observed_at is not None else None
+            )
+        ordered_cards.append(card)
+    return ordered_cards, None
+
+
 async def produce_window_events_closest(
     definition: Mapping[str, Any],
     db: Any,
@@ -404,14 +521,17 @@ async def produce_window_events_closest(
     minimum = int(rule.get("minimum", count))
     league = rule.get("league")
     footer_template = str(definition.get("footer") or "")
+    extra_eligible_count = 0
 
     if load_cards is not None:
         ordered_cards = list(await load_cards(db, window_start, window_end))
     else:
         from sqlalchemy import and_, or_, select
+        from sqlalchemy.orm import joinedload
         from app.models import Event
-        from app.routes.containers import _hydrate_event_cards
-        from app.utils.aggregation import newest_source_reading_time
+        from app.routes.events import _build_team_lookup
+        from app.utils.draw_priced_winner import sport_prices_a_draw
+        from app.utils.hero_probability import resolve_hero
         from app.utils.proven_duplicates import (
             FoldedBlendView,
             folded_card_numbers_batch,
@@ -421,6 +541,7 @@ async def produce_window_events_closest(
             return _rc().RoundupRefusal((("window", "unsupported_session"),))
         res = await db.execute(
             select(Event)
+            .options(joinedload(Event.sport))
             .where(
                 Event.status.notin_(
                     (
@@ -459,45 +580,135 @@ async def produce_window_events_closest(
                 if isinstance(ev_id, int) and not isinstance(ev_id, bool) and ev_id > 0:
                     candidate_ids.append(ev_id)
                     events_by_id[ev_id] = row
-        if len(candidate_ids) < max(minimum, count):
+        required = max(1, minimum, count)
+        if len(candidate_ids) < required:
             return _rc().RoundupRefusal(
-                (("window", f"candidates_{len(candidate_ids)}_below_minimum_{max(minimum, count)}"),)
+                (("window", f"candidates_{len(candidate_ids)}_below_minimum_{required}"),)
             )
 
-        cards_by_id, _failed = await _hydrate_event_cards(db, candidate_ids)
-        if _failed:
-            return _rc().RoundupRefusal(
-                (("window", f"hydrate_failed_{len(_failed)}"),)
+        folded_map: dict[int, Any] = {}
+        ids_to_hydrate = list(candidate_ids)
+        backup_non_draw_ids: list[int] = []
+
+        if events_by_id:
+            team_lookup = None
+            all_names = sorted(
+                {
+                    name
+                    for ev in events_by_id.values()
+                    for name in (
+                        getattr(ev, "home_team_name", None),
+                        getattr(ev, "away_team_name", None),
+                    )
+                    if name
+                }
             )
-        folded_map = (
-            await folded_card_numbers_batch(db, list(events_by_id.values()))
-            if events_by_id
-            else {}
-        )
-        ordered_cards = []
-        for i in candidate_ids:
-            if i not in cards_by_id:
-                continue
-            card = dict(cards_by_id[i])
-            if (
-                "hero_probability_observed_at" not in card
-                and card.get("hero_probability_source") == "blend"
-                and i in events_by_id
-            ):
-                ev = events_by_id[i]
-                folded = folded_map.get(i)
+            if all_names:
+                try:
+                    team_lookup = await _build_team_lookup(db, all_names)
+                except Exception:  # noqa: BLE001 — fail open when fake DB omits Team
+                    team_lookup = None
+
+            pre_eligible: list[tuple[int, Any, str, str]] = []
+            for ev_id in candidate_ids:
+                ev = events_by_id.get(ev_id)
+                if ev is None:
+                    continue
+                checked = _precheck_event_window_eligibility(
+                    ev,
+                    effective_now=effective_now,
+                    window_start=window_start,
+                    window_end=window_end,
+                    league=league,
+                    team_lookup=team_lookup,
+                )
+                if checked is not None:
+                    pre_eligible.append((ev_id, ev, checked[0], checked[1]))
+
+            if len(pre_eligible) < required:
+                return _rc().RoundupRefusal(
+                    (("window", f"eligible_{len(pre_eligible)}_below_minimum_{required}"),)
+                )
+
+            folded_map = await folded_card_numbers_batch(
+                db, [ev for _id, ev, _sk, _ci in pre_eligible]
+            )
+            non_draw_ranked: list[tuple[float, str, int]] = []
+            draw_ids: list[int] = []
+            for ev_id, ev, sport_key, commence_iso in pre_eligible:
+                folded = folded_map.get(ev_id)
                 blend_view = (
-                    FoldedBlendView(ev, folded.win_probability_sources)
+                    FoldedBlendView(
+                        ev, folded.win_probability_sources, opening=folded.opening
+                    )
                     if folded is not None and folded.win_probability_sources is not None
                     else ev
                 )
-                observed_at = newest_source_reading_time(
-                    blend_view, require_complete=True
+                hero = resolve_hero(blend_view)
+                if hero is None or hero.source != "blend":
+                    continue
+                hp = float(hero.home_probability)
+                ap = float(hero.away_probability)
+                if not (
+                    math.isfinite(hp)
+                    and math.isfinite(ap)
+                    and 0.0 < hp < 1.0
+                    and 0.0 < ap < 1.0
+                ):
+                    continue
+                if sport_key and sport_prices_a_draw(sport_key):
+                    draw_ids.append(ev_id)
+                else:
+                    non_draw_ranked.append((max(hp, ap), commence_iso, ev_id))
+
+            if (len(non_draw_ranked) + len(draw_ids)) < required:
+                return _rc().RoundupRefusal(
+                    (
+                        (
+                            "window",
+                            f"eligible_{len(non_draw_ranked) + len(draw_ids)}_below_minimum_{required}",
+                        ),
+                    )
                 )
-                card["hero_probability_observed_at"] = (
-                    observed_at.isoformat() if observed_at is not None else None
+
+            non_draw_ranked.sort()
+            shortlist_cap = max(count * 3, 12)
+            shortlisted_non_draw = [
+                ev_id for _p, _ci, ev_id in non_draw_ranked[:shortlist_cap]
+            ]
+            backup_non_draw_ids = [
+                ev_id for _p, _ci, ev_id in non_draw_ranked[shortlist_cap:]
+            ]
+            selected_set = set(shortlisted_non_draw) | set(draw_ids)
+            ids_to_hydrate = [
+                ev_id for ev_id in candidate_ids if ev_id in selected_set
+            ]
+            extra_eligible_count = len(backup_non_draw_ids)
+
+        ordered_cards, refusal = await _hydrate_ordered_cards(
+            db, ids_to_hydrate, events_by_id, folded_map
+        )
+        if refusal is not None:
+            return refusal
+        ordered_cards = ordered_cards or []
+        if backup_non_draw_ids:
+            survived = sum(
+                1
+                for card in ordered_cards
+                if is_event_eligible_for_window(
+                    card, effective_now, window_start, window_end, league=league
                 )
-            ordered_cards.append(card)
+                and _extract_blended_leader(card) is not None
+            )
+            if survived < required:
+                extra_cards, extra_refusal = await _hydrate_ordered_cards(
+                    db, backup_non_draw_ids, events_by_id, folded_map
+                )
+                if extra_refusal is not None:
+                    return extra_refusal
+                ordered_cards.extend(extra_cards or ())
+                extra_eligible_count = 0
+
     return select_closest_window_events(
         ordered_cards,
         now=effective_now,
@@ -507,6 +718,7 @@ async def produce_window_events_closest(
         minimum=minimum,
         league=league,
         footer_template=footer_template,
+        extra_eligible_count=extra_eligible_count,
     )
 
 
