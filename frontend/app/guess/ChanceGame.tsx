@@ -26,6 +26,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import BainLuckMark from "@/components/BainLuckMark";
+import { SIGNED_IN_MARKER } from "@/hooks/useAuth";
+import { hasStoredAccountSession } from "@/lib/adminAccountSession";
+import { BACKEND_AUTH_KEY } from "@/lib/firebase";
 import {
   cleanName,
   coinEntry,
@@ -59,13 +62,24 @@ import {
   totalPoints,
 } from "@/lib/guess/engine";
 import {
+  adminHideGuessEntry,
+  adminUnhideGuessEntry,
+  cleanDailyNickname,
   evaluateGroupVisitOnResults,
+  fetchAdminHiddenEntries,
   fetchGroupBoard,
+  fetchPublicBoard,
+  formatDayLabel,
+  formatOrdinal,
   generateGroupCode,
   groupEntryToPlayerEntry,
   GuessApiError,
+  isAllowedNicknameChars,
   mergeGroupPlayers,
+  readerSafeBoardError,
   submitGroupEntry,
+  type AdminHiddenEntry,
+  type PublicBoardResponse,
 } from "@/lib/guess/api";
 import { decodeGroup, encodeGroup, mergeFromLink, shareMessage, stepShareMessage, uniqueName } from "@/lib/guess/link";
 import { roastHistory } from "@/lib/guess/roast";
@@ -111,6 +125,7 @@ const FACES: { emoji: string; label: string }[] = [
 
 const MAX_HERE = 6;
 const CHART_LINES = 8;
+const EMPTY_ENTRY_IDS = new Set<number>();
 
 interface Game {
   phase: Phase;
@@ -188,7 +203,71 @@ function Header({ pack, right }: { pack: GamePack; right: string }) {
   );
 }
 
+interface AdminHideTarget {
+  board: "group" | "public";
+  entryId: number;
+  nickname: string;
+}
+
+interface BoardAdminModerationProps {
+  confirmTarget: AdminHideTarget | null;
+  busy: boolean;
+  error: string | null;
+  onRequestHide: (target: AdminHideTarget) => void;
+  onConfirmHide: () => void;
+  onCancelHide: () => void;
+}
+
+function AdminHideConfirmStrip({
+  target,
+  busy,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  target: AdminHideTarget;
+  busy: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="mt-2 rounded-2xl border-2 border-surface-border bg-surface-elevated p-3"
+      data-testid="admin-hide-confirm"
+      role="region"
+      aria-label={`Hide ${target.nickname}`}
+    >
+      <p className="text-sm font-bold text-text-primary">
+        Hide {target.nickname} from both boards?
+      </p>
+      {error && <p className="mt-1 text-xs font-semibold text-accent-danger">{error}</p>}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="min-h-[36px] rounded-xl bg-text-primary px-3 text-xs font-black text-white disabled:opacity-50"
+          disabled={busy}
+          onClick={onConfirm}
+          data-testid="admin-hide-confirm-yes"
+        >
+          {busy ? "Hiding…" : "Confirm hide"}
+        </button>
+        <button
+          type="button"
+          className="min-h-[36px] rounded-xl border border-surface-border bg-surface-card px-3 text-xs font-bold text-text-primary disabled:opacity-50"
+          disabled={busy}
+          onClick={onCancel}
+          data-testid="admin-hide-confirm-cancel"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface StepRow {
+  entryId: number | null;
   name: string;
   dot: string;
   /** True for someone whose game came in the link. */
@@ -203,40 +282,80 @@ interface StepRow {
 }
 
 /** Every player's score step by step. `shown` is how many steps have been played. */
-function StepTable({ pack, rows, shown }: { pack: GamePack; rows: StepRow[]; shown: number }) {
+function StepTable({
+  pack,
+  rows,
+  shown,
+  adminModeration,
+}: {
+  pack: GamePack;
+  rows: StepRow[];
+  shown: number;
+  adminModeration?: BoardAdminModerationProps;
+}) {
   const steps = pack.steps.slice(0, shown);
+  const confirmHere = adminModeration?.confirmTarget?.board === "group" ? adminModeration.confirmTarget : null;
   return (
-    <div className={`${PANEL} overflow-x-auto`} data-testid="step-table">
+    <div className="rounded-3xl border-2 border-surface-border bg-surface-card p-2.5 sm:p-4 overflow-x-auto" data-testid="step-table">
+      {confirmHere && adminModeration && (
+        <div className="mb-2">
+          <AdminHideConfirmStrip
+            target={confirmHere}
+            busy={adminModeration.busy}
+            error={adminModeration.error}
+            onConfirm={adminModeration.onConfirmHide}
+            onCancel={adminModeration.onCancelHide}
+          />
+        </div>
+      )}
       <table className="w-full text-left">
         <thead>
-          <tr className="text-xs font-black uppercase tracking-wide text-text-secondary">
-            <th className="pb-1 font-black">Step by step</th>
+          <tr className="text-xs font-bold min-[390px]:font-black min-[390px]:uppercase tracking-normal min-[390px]:tracking-wide text-text-secondary">
+            <th className="pb-1 pr-1 font-bold min-[390px]:font-black">Step by step</th>
             {steps.map((step) => (
-              <th key={step.name} className="pb-1 text-right font-black">
+              <th key={step.name} className="pb-1 pl-1 text-right font-bold min-[390px]:font-black whitespace-nowrap">
                 {step.name}
               </th>
             ))}
-            {shown > 1 && <th className="pb-1 text-right font-black">Total</th>}
+            {shown > 1 && <th className="pb-1 pl-1 text-right font-bold min-[390px]:font-black whitespace-nowrap">Total</th>}
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.name} className="border-t border-surface-border align-top">
-              <td className="py-1.5 pr-2">
-                <span className="flex items-center gap-1.5">
+              <td className="py-1.5 pr-1">
+                <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                   <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${row.dot}`} aria-hidden="true" />
-                  <span className="max-w-[96px] truncate text-sm font-bold text-text-primary">{row.name}</span>
+                  <span className="min-w-0 break-words text-xs min-[390px]:text-sm font-bold leading-tight text-text-primary">
+                    {row.name}
+                  </span>
                 </span>
                 {row.earlier && <span className="block pl-4 text-xs text-text-secondary">played earlier</span>}
                 {row.chance !== null && <span className="block pl-4 text-xs tabular-nums text-text-secondary">{percent(row.chance)} to win</span>}
+                {adminModeration && row.entryId !== null && (
+                  <button
+                    type="button"
+                    className="mt-1 ml-4 rounded-lg border border-surface-border px-2 py-0.5 text-xs font-bold text-text-secondary hover:text-text-primary"
+                    onClick={() =>
+                      adminModeration.onRequestHide({
+                        board: "group",
+                        entryId: row.entryId as number,
+                        nickname: row.name,
+                      })
+                    }
+                    data-testid={`group-hide-${row.entryId}`}
+                  >
+                    Hide
+                  </button>
+                )}
               </td>
               {steps.map((step, s) => (
                 <td key={step.name} className="py-1.5 pl-1 text-right">
-                  <span className="block whitespace-nowrap text-sm font-black tabular-nums text-text-primary">{row.labels[s]}</span>
+                  <span className="block whitespace-nowrap text-xs min-[390px]:text-sm font-black tabular-nums text-text-primary">{row.labels[s]}</span>
                   {row.times[s] > 0 && <span className="block text-xs tabular-nums text-text-secondary">{timeLabel(row.times[s])}</span>}
                 </td>
               ))}
-              {shown > 1 && <td className="py-1.5 pl-1 text-right text-sm font-black tabular-nums text-text-primary">{row.total}</td>}
+              {shown > 1 && <td className="py-1.5 pl-1 text-right text-xs min-[390px]:text-sm font-black tabular-nums text-text-primary">{row.total}</td>}
             </tr>
           ))}
         </tbody>
@@ -307,6 +426,250 @@ function BoardErrorBanner({ message, canRetry, onRetry }: { message: string; can
   );
 }
 
+function PublicBoardPanel({
+  pack,
+  isToday,
+  board,
+  loading,
+  error,
+  myEntryIds,
+  primaryEntryId,
+  onPageChange,
+  onRetry,
+  adminModeration,
+}: {
+  pack: GamePack;
+  isToday: boolean;
+  board: PublicBoardResponse | null;
+  loading: boolean;
+  error: string | null;
+  myEntryIds: Set<number>;
+  primaryEntryId: number | null;
+  onPageChange: (nextPage: number) => void;
+  onRetry: () => void;
+  adminModeration?: BoardAdminModerationProps;
+}) {
+  const stepNames = pack.steps.map((s) => s.name);
+  const dayLabel = formatDayLabel(pack.id);
+  const dayPossessive = isToday ? "today's" : `${dayLabel}'s`;
+  const headingText = isToday ? "Everyone who played today" : `Everyone who played on ${dayLabel}`;
+  const readyBoard =
+    board && typeof board.total_count === "number" && Array.isArray(board.entries) ? board : null;
+  const confirmHere = adminModeration?.confirmTarget?.board === "public" ? adminModeration.confirmTarget : null;
+  return (
+    <section className="rounded-3xl border-2 border-surface-border bg-surface-card p-2.5 sm:p-4 space-y-2.5" data-testid="public-board">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-sm font-black text-text-primary">{headingText}</h3>
+        {readyBoard && (
+          <span className="shrink-0 whitespace-nowrap text-xs font-bold tabular-nums text-text-secondary" data-testid="public-board-count">
+            {readyBoard.total_count} {readyBoard.total_count === 1 ? "game" : "games"}
+          </span>
+        )}
+      </div>
+
+      {confirmHere && adminModeration && (
+        <AdminHideConfirmStrip
+          target={confirmHere}
+          busy={adminModeration.busy}
+          error={adminModeration.error}
+          onConfirm={adminModeration.onConfirmHide}
+          onCancel={adminModeration.onCancelHide}
+        />
+      )}
+
+      {readyBoard?.me && (
+        <p
+          className="rounded-2xl border border-surface-border bg-surface-elevated px-3 py-2 text-sm font-black text-text-primary"
+          data-testid="public-board-place"
+        >
+          You finished {formatOrdinal(readyBoard.me.rank)} of {readyBoard.total_count}.
+        </p>
+      )}
+
+      {error && (
+        <div className="space-y-2" data-testid="public-board-error">
+          <p className="text-sm text-text-secondary">{error}</p>
+          <button type="button" className={QUIET} onClick={onRetry} data-testid="public-board-retry">
+            Try again
+          </button>
+        </div>
+      )}
+
+      {!error && loading && !readyBoard && (
+        <p className="text-sm text-text-secondary" data-testid="public-board-loading">
+          Loading {dayPossessive} board…
+        </p>
+      )}
+
+      {readyBoard && readyBoard.entries.length === 0 && (
+        <p className="text-sm text-text-secondary" data-testid="public-board-empty">
+          No finished games saved on {dayPossessive} public board yet.
+        </p>
+      )}
+
+      {readyBoard && readyBoard.entries.length > 0 && (
+        <div className="overflow-x-auto" data-testid="public-board-scroll">
+          <table className="w-full text-left" data-testid="public-board-table">
+            <thead>
+              <tr className="text-xs font-bold min-[390px]:font-black min-[390px]:uppercase tracking-normal min-[390px]:tracking-wide text-text-secondary">
+                <th className="pb-1 pr-1 font-bold min-[390px]:font-black">#</th>
+                <th className="pb-1 pr-1 font-bold min-[390px]:font-black">Player</th>
+                {stepNames.map((name) => (
+                  <th key={name} className="pb-1 pl-1 text-right font-bold min-[390px]:font-black whitespace-nowrap">
+                    {name}
+                  </th>
+                ))}
+                <th className="pb-1 pl-1 text-right font-bold min-[390px]:font-black whitespace-nowrap">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {readyBoard.entries.map((entry) => {
+                const isPrimary = primaryEntryId !== null && entry.entry_id === primaryEntryId;
+                const isMine = myEntryIds.has(entry.entry_id);
+                return (
+                  <tr
+                    key={entry.entry_id}
+                    data-testid={isMine ? "public-board-row-me" : `public-board-row-${entry.entry_id}`}
+                    className={`border-t border-surface-border align-middle ${
+                      isMine ? "bg-surface-elevated" : ""
+                    }`}
+                  >
+                    <td className="py-1.5 pr-1 text-xs font-black tabular-nums text-text-secondary">
+                      {entry.rank}
+                    </td>
+                    <td className="py-1.5 pr-1">
+                      <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                        <span className="min-w-0 break-words text-xs min-[390px]:text-sm font-bold leading-tight text-text-primary">
+                          {entry.nickname}
+                        </span>
+                        {isMine && (
+                          <span
+                            className="shrink-0 rounded-full bg-text-primary px-2 py-0.5 text-xs font-black uppercase tracking-wide text-white"
+                            data-testid={isPrimary ? "public-board-you-badge" : undefined}
+                          >
+                            {isPrimary ? "You" : "Here"}
+                          </span>
+                        )}
+                      </span>
+                      {adminModeration && (
+                        <button
+                          type="button"
+                          className="mt-1 rounded-lg border border-surface-border px-2 py-0.5 text-xs font-bold text-text-secondary hover:text-text-primary"
+                          onClick={() =>
+                            adminModeration.onRequestHide({
+                              board: "public",
+                              entryId: entry.entry_id,
+                              nickname: entry.nickname,
+                            })
+                          }
+                          data-testid={`public-hide-${entry.entry_id}`}
+                        >
+                          Hide
+                        </button>
+                      )}
+                    </td>
+                    {stepNames.map((stepName, sIdx) => (
+                      <td
+                        key={`${entry.entry_id}:${stepName}`}
+                        className="py-1.5 pl-1 text-right text-xs font-bold whitespace-nowrap tabular-nums text-text-secondary"
+                      >
+                        {entry.step_labels?.[sIdx] ?? String(entry.step_points?.[sIdx] ?? 0)}
+                      </td>
+                    ))}
+                    <td className="py-1.5 pl-1 text-right text-xs min-[390px]:text-sm font-black tabular-nums text-text-primary">
+                      {entry.points}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {readyBoard && readyBoard.total_pages > 1 && (
+        <div className="flex items-center justify-between gap-2 pt-1" data-testid="public-board-pager">
+          <button
+            type="button"
+            className={QUIET}
+            disabled={readyBoard.page <= 1 || loading}
+            onClick={() => onPageChange(readyBoard.page - 1)}
+            data-testid="public-board-prev"
+          >
+            Previous
+          </button>
+          <span className="text-xs font-bold tabular-nums text-text-secondary" data-testid="public-board-page-label">
+            Page {readyBoard.page} of {readyBoard.total_pages}
+          </span>
+          <button
+            type="button"
+            className={QUIET}
+            disabled={readyBoard.page >= readyBoard.total_pages || loading}
+            onClick={() => onPageChange(readyBoard.page + 1)}
+            data-testid="public-board-next"
+          >
+            Next
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AdminHiddenPanel({
+  isToday,
+  dayLabel,
+  entries,
+  busyId,
+  error,
+  onUnhide,
+}: {
+  isToday: boolean;
+  dayLabel: string;
+  entries: AdminHiddenEntry[];
+  busyId: number | null;
+  error: string | null;
+  onUnhide: (entryId: number) => void;
+}) {
+  if (entries.length === 0 && !error) return null;
+  return (
+    <section className={`${PANEL} space-y-2`} data-testid="admin-hidden-panel">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-sm font-black text-text-primary">
+          {isToday ? "Hidden today" : `Hidden on ${dayLabel}`}
+        </h3>
+        <span className="text-xs font-bold tabular-nums text-text-secondary">{entries.length}</span>
+      </div>
+      {error && <p className="text-xs font-semibold text-accent-danger">{error}</p>}
+      <ul className="space-y-1.5">
+        {entries.map((entry) => (
+          <li
+            key={entry.entry_id}
+            className="flex items-center justify-between gap-2 rounded-2xl border border-surface-border bg-surface-elevated px-3 py-2"
+            data-testid={`admin-hidden-row-${entry.entry_id}`}
+          >
+            <div className="min-w-0">
+              <div className="break-words [overflow-wrap:anywhere] text-sm font-bold text-text-primary">
+                {entry.nickname}
+              </div>
+              <div className="text-xs text-text-secondary">{entry.points} points</div>
+            </div>
+            <button
+              type="button"
+              className="min-h-[36px] shrink-0 rounded-xl border border-surface-border bg-surface-card px-3 text-xs font-bold text-text-primary disabled:opacity-50"
+              disabled={busyId === entry.entry_id}
+              onClick={() => onUnhide(entry.entry_id)}
+              data-testid={`admin-unhide-${entry.entry_id}`}
+            >
+              {busyId === entry.entry_id ? "Putting back…" : "Put back"}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function EditionNotices({
   earlierDayNotice,
   expiredDayNotice,
@@ -354,6 +717,7 @@ export default function ChanceGame({
   pack,
   initialGroupCode = null,
   isLegacyPack = false,
+  isToday = true,
   initialGroupError = null,
   earlierDayNotice = null,
   expiredDayNotice = null,
@@ -363,6 +727,7 @@ export default function ChanceGame({
   pack: GamePack;
   initialGroupCode?: string | null;
   isLegacyPack?: boolean;
+  isToday?: boolean;
   initialGroupError?: string | null;
   earlierDayNotice?: string | null;
   expiredDayNotice?: string | null;
@@ -381,19 +746,55 @@ export default function ChanceGame({
   const [joinedGroups, setJoinedGroups] = useState<string[]>([]);
   const [pendingJoinBoard, setPendingJoinBoard] = useState<boolean>(false);
   const [storedEntries, setStoredEntries] = useState<PlayerEntry[]>([]);
+  const [savedEntryIds, setSavedEntryIds] = useState<Record<string, number>>({});
   const [boardLoading, setBoardLoading] = useState<boolean>(Boolean(initialGroupCode && !isLegacyPack));
   const [boardError, setBoardError] = useState<string | null>(initialGroupError);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "conflict" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [conflictName, setConflictName] = useState("");
   const [conflictOldName, setConflictOldName] = useState("");
+  const [publicBoard, setPublicBoard] = useState<PublicBoardResponse | null>(null);
+  const [publicBoardLoading, setPublicBoardLoading] = useState(false);
+  const [publicBoardError, setPublicBoardError] = useState<string | null>(null);
+  const [publicPage, setPublicPage] = useState(1);
+  const [publicRefreshTick, setPublicRefreshTick] = useState(0);
+  const [showStartBoard, setShowStartBoard] = useState(false);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [hiddenEntries, setHiddenEntries] = useState<AdminHiddenEntry[]>([]);
+  const [pendingHide, setPendingHide] = useState<AdminHideTarget | null>(null);
+  const [hideBusy, setHideBusy] = useState(false);
+  const [unhideBusyId, setUnhideBusyId] = useState<number | null>(null);
+  const [moderationError, setModerationError] = useState<string | null>(null);
   // When the card in front of the current player was shown, to time the decision.
   const shownAt = useRef<{ at: string; time: number }>({ at: "", time: 0 });
   const savedKeysRef = useRef<Set<string>>(new Set());
   const autoSubmittedRef = useRef<string | null>(null);
 
+  const dayLabel = useMemo(() => formatDayLabel(pack.id), [pack.id]);
+  const dayPossessive = isToday ? "today's" : `${dayLabel}'s`;
+  const cleanDraftName = useCallback(
+    (raw: string) => (isLegacyPack ? cleanName(raw) : cleanDailyNickname(raw)),
+    [isLegacyPack],
+  );
   const total = pack.cards.length;
   const coin = useMemo(() => coinEntry(pack), [pack]);
+
+  const recordSavedEntryIds = useCallback((entries: { nickname: string; entry_id?: number }[]) => {
+    setSavedEntryIds((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const entry of entries) {
+        if (typeof entry.entry_id === "number" && entry.entry_id > 0) {
+          const key = entry.nickname.trim().toLowerCase();
+          if (next[key] !== entry.entry_id) {
+            next[key] = entry.entry_id;
+            changed = true;
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
 
   const loadBoard = useCallback(
     async (code: string) => {
@@ -403,13 +804,14 @@ export default function ChanceGame({
       try {
         const resp = await fetchGroupBoard(code, pack.id);
         setStoredEntries(resp.entries.map((entry) => groupEntryToPlayerEntry(pack, entry)));
+        recordSavedEntryIds(resp.entries);
       } catch (err) {
-        setBoardError(err instanceof Error ? err.message : "Could not load the group board right now.");
+        setBoardError(readerSafeBoardError(err, "Could not load the group board right now."));
       } finally {
         setBoardLoading(false);
       }
     },
-    [pack, isLegacyPack],
+    [pack, isLegacyPack, recordSavedEntryIds],
   );
 
   // Read the link, the group board, and anything kept on this phone after first paint.
@@ -420,6 +822,7 @@ export default function ChanceGame({
     const local = loadGame(pack);
     const priorJoined = Array.from(new Set(local?.joinedGroups ?? []));
     setJoinedGroups(priorJoined);
+    setShowStartBoard(false);
 
     if (local && local.phase !== "home") {
       const extra = mergeFromLink([...local.here, ...local.link], fromLink);
@@ -465,7 +868,16 @@ export default function ChanceGame({
 
   const card: PackCard = pack.cards[Math.min(game.index, total - 1)];
   const step = stepOf(pack, Math.min(game.index, total - 1));
-  const people = useMemo(() => mergeGroupPlayers(game.here, storedEntries, game.link), [game.here, storedEntries, game.link]);
+  const hiddenIdSet = useMemo(() => new Set(hiddenEntries.map((e) => e.entry_id)), [hiddenEntries]);
+  const people = useMemo(() => {
+    const merged = mergeGroupPlayers(game.here, storedEntries, game.link);
+    if (!adminToken || hiddenIdSet.size === 0) return merged;
+    return merged.filter((p) => {
+      if (p.from === "house") return true;
+      const eid = p.entryId ?? savedEntryIds[p.name.trim().toLowerCase()];
+      return !(typeof eid === "number" && hiddenIdSet.has(eid));
+    });
+  }, [game.here, storedEntries, game.link, adminToken, hiddenIdSet, savedEntryIds]);
   const coinOn = people.length <= 2;
   const board = useMemo(() => (coinOn ? [...people, coin] : people), [coinOn, people, coin]);
   const done = game.phase === "play" || game.phase === "home" ? game.index : game.phase === "results" ? total : game.index + 1;
@@ -494,16 +906,23 @@ export default function ChanceGame({
   // Every player's score step by step, in the order of the board.
   const stepRows: StepRow[] = useMemo(() => {
     const chanceOf = new Map(rows.map((row) => [row.name, row.chance]));
-    return standings(pack, board, done).map((s) => ({
-      name: s.entry.name,
-      dot: s.entry.from === "house" ? HOUSE_DOT : dotOf(s.entry.name),
-      earlier: s.entry.from === "link" || s.entry.from === "server",
-      labels: pack.steps.map((_, i) => stepScoreLabel(pack, s.entry, i)),
-      times: pack.steps.map((_, i) => s.entry.times[i] ?? 0),
-      total: s.points,
-      chance: chanceOf.get(s.entry.name) ?? null,
-    }));
-  }, [pack, board, done, dotOf, rows]);
+    return standings(pack, board, done).map((s) => {
+      const resolvedId =
+        s.entry.from === "house"
+          ? null
+          : (s.entry.entryId ?? savedEntryIds[s.entry.name.trim().toLowerCase()] ?? null);
+      return {
+        entryId: resolvedId,
+        name: s.entry.name,
+        dot: s.entry.from === "house" ? HOUSE_DOT : dotOf(s.entry.name),
+        earlier: s.entry.from === "link" || s.entry.from === "server",
+        labels: pack.steps.map((_, i) => stepScoreLabel(pack, s.entry, i)),
+        times: pack.steps.map((_, i) => s.entry.times[i] ?? 0),
+        total: s.points,
+        chance: chanceOf.get(s.entry.name) ?? null,
+      };
+    });
+  }, [pack, board, done, dotOf, rows, savedEntryIds]);
 
   const line: RoastLine | null = useMemo(() => {
     if (game.phase !== "reveal") return null;
@@ -527,17 +946,24 @@ export default function ChanceGame({
   // ---- actions -------------------------------------------------------------
 
   const addName = useCallback(() => {
-    const clean = cleanName(nameDraft);
+    const clean = cleanDraftName(nameDraft);
     if (!clean || names.length >= MAX_HERE) return;
     const taken = new Set(
       [...names, ...storedEntries.map((p) => p.name), ...game.link.map((p) => p.name), COIN_NAME, TOGETHER_NAME].map((n) => n.toLowerCase()),
     );
-    setNames((all) => [...all, uniqueName(clean, taken)]);
+    // Compute before calling setNames so React StrictMode double-invoking the updater
+    // never sees `taken` already mutated and appends a spurious "Ann 2".
+    const nextName = uniqueName(clean, taken);
+    setNames((all) =>
+      all.length >= MAX_HERE || all.some((n) => n.toLowerCase() === nextName.toLowerCase())
+        ? all
+        : [...all, nextName],
+    );
     setNameDraft("");
-  }, [nameDraft, names, storedEntries, game.link]);
+  }, [cleanDraftName, nameDraft, names, storedEntries, game.link]);
 
   const start = useCallback(() => {
-    const pending = cleanName(nameDraft);
+    const pending = cleanDraftName(nameDraft);
     const taken = new Set(
       [...names, ...storedEntries.map((p) => p.name), ...game.link.map((p) => p.name), COIN_NAME, TOGETHER_NAME].map((n) => n.toLowerCase()),
     );
@@ -546,11 +972,13 @@ export default function ChanceGame({
     setNameDraft("");
     savedKeysRef.current.clear();
     autoSubmittedRef.current = null;
+    setShowStartBoard(false);
+    setPublicPage(1);
     setPendingJoinBoard(false);
     setSaveStatus("idle");
     setSaveError(null);
     setGame((g) => ({ phase: "play", index: 0, turn: 0, here: all.map((n) => emptyEntry(pack, n, "here")), link: g.link }));
-  }, [nameDraft, names, storedEntries, game.link, pack]);
+  }, [cleanDraftName, nameDraft, names, storedEntries, game.link, pack]);
 
   const carryOn = useCallback(() => {
     if (!saved) return;
@@ -558,6 +986,8 @@ export default function ChanceGame({
       setGroupCode(saved.groupCode);
       void loadBoard(saved.groupCode);
     }
+    setShowStartBoard(false);
+    setPublicPage(1);
     setPendingJoinBoard(false);
     setGame({ phase: saved.phase, index: saved.index, turn: saved.turn, here: saved.here, link: saved.link });
     setSaved(null);
@@ -568,6 +998,10 @@ export default function ChanceGame({
     setSaved(null);
     setNames([]);
     setJoinedGroups([]);
+    setSavedEntryIds({});
+    setPublicBoard(null);
+    setShowStartBoard(false);
+    setPublicPage(1);
     setPendingJoinBoard(false);
     savedKeysRef.current.clear();
     autoSubmittedRef.current = null;
@@ -583,6 +1017,10 @@ export default function ChanceGame({
     setSaved(null);
     setNames([]);
     setJoinedGroups([]);
+    setSavedEntryIds({});
+    setPublicBoard(null);
+    setShowStartBoard(false);
+    setPublicPage(1);
     setPendingJoinBoard(false);
     savedKeysRef.current.clear();
     autoSubmittedRef.current = null;
@@ -682,16 +1120,17 @@ export default function ChanceGame({
             step_times: roundedTimes,
           });
           setStoredEntries(resp.entries.map((entry) => groupEntryToPlayerEntry(pack, entry)));
+          recordSavedEntryIds(resp.entries);
           savedKeysRef.current.add(player.name.toLowerCase());
         } catch (err) {
-          if (err instanceof GuessApiError && err.status === 409) {
+          if (err instanceof GuessApiError && (err.status === 409 || err.reason === "nickname_refused")) {
             setSaveStatus("conflict");
             setSaveError(err.message);
             setConflictOldName(player.name);
             setConflictName("");
           } else {
             setSaveStatus("error");
-            setSaveError(err instanceof Error ? err.message : "Could not save your finished game right now.");
+            setSaveError(readerSafeBoardError(err, "Could not save your finished game right now."));
           }
           return;
         }
@@ -699,8 +1138,115 @@ export default function ChanceGame({
       setJoinedGroups((prev) => (prev.includes(code) ? prev : [...prev, code]));
       setPendingJoinBoard(false);
       setSaveStatus("saved");
+      setPublicRefreshTick((t) => t + 1);
     },
-    [pack, storedEntries],
+    [pack, storedEntries, recordSavedEntryIds],
+  );
+
+  const primaryEntryId = useMemo(() => {
+    const first = game.here[0]?.name.trim().toLowerCase();
+    return first ? (savedEntryIds[first] ?? null) : null;
+  }, [game.here, savedEntryIds]);
+
+  const myEntryIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const p of game.here) {
+      const id = savedEntryIds[p.name.trim().toLowerCase()];
+      if (typeof id === "number" && id > 0) ids.add(id);
+    }
+    return ids;
+  }, [game.here, savedEntryIds]);
+
+  const publicBoardRequestEntryId = game.phase === "results" ? primaryEntryId : null;
+
+  useEffect(() => {
+    if (isLegacyPack || (game.phase !== "results" && !(game.phase === "home" && showStartBoard))) return;
+    let cancelled = false;
+    setPublicBoardLoading(true);
+    setPublicBoardError(null);
+    fetchPublicBoard(pack.id, publicPage, 20, publicBoardRequestEntryId)
+      .then((res) => {
+        if (!cancelled) setPublicBoard(res);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setPublicBoardError(readerSafeBoardError(err, `Could not load ${dayPossessive} board right now.`));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPublicBoardLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLegacyPack, game.phase, showStartBoard, pack.id, dayPossessive, publicPage, publicBoardRequestEntryId, publicRefreshTick]);
+
+  const refreshAdminHidden = useCallback(
+    async (token: string) => {
+      const resp = await fetchAdminHiddenEntries(pack.id, token, groupCode);
+      if (resp.authorized) {
+        setHiddenEntries(resp.entries);
+      }
+    },
+    [pack.id, groupCode],
+  );
+
+  useEffect(() => {
+    if (isLegacyPack || (game.phase !== "results" && !(game.phase === "home" && showStartBoard))) return;
+    if (!hasStoredAccountSession(SIGNED_IN_MARKER, BACKEND_AUTH_KEY)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await (await import("@/lib/firebase")).getIdTokenAfterAuthReady();
+        if (!token || cancelled) return;
+        const resp = await fetchAdminHiddenEntries(pack.id, token, groupCode);
+        if (!cancelled && resp.authorized) {
+          setAdminToken(token);
+          setHiddenEntries(resp.entries);
+        }
+      } catch {
+        // Non-admin reader or unavailable auth check: stay hidden from readers cleanly.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLegacyPack, game.phase, showStartBoard, pack.id, groupCode]);
+
+  const handleConfirmHide = useCallback(async () => {
+    if (!adminToken || !pendingHide) return;
+    setHideBusy(true);
+    setModerationError(null);
+    try {
+      await adminHideGuessEntry(pendingHide.entryId, adminToken);
+      setPendingHide(null);
+      if (groupCode) await loadBoard(groupCode);
+      setPublicRefreshTick((t) => t + 1);
+      await refreshAdminHidden(adminToken);
+    } catch (err) {
+      setModerationError(readerSafeBoardError(err, "Could not hide that entry right now."));
+    } finally {
+      setHideBusy(false);
+    }
+  }, [adminToken, pendingHide, groupCode, loadBoard, refreshAdminHidden]);
+
+  const handleUnhideEntry = useCallback(
+    async (entryId: number) => {
+      if (!adminToken) return;
+      setUnhideBusyId(entryId);
+      setModerationError(null);
+      try {
+        await adminUnhideGuessEntry(entryId, adminToken);
+        if (groupCode) await loadBoard(groupCode);
+        setPublicRefreshTick((t) => t + 1);
+        await refreshAdminHidden(adminToken);
+      } catch (err) {
+        setModerationError(readerSafeBoardError(err, "Could not put that entry back right now."));
+      } finally {
+        setUnhideBusyId(null);
+      }
+    },
+    [adminToken, groupCode, loadBoard, refreshAdminHidden],
   );
 
   // If the stored board already contains this phone's identical answers, no add button is needed.
@@ -740,7 +1286,7 @@ export default function ChanceGame({
   }, [isLegacyPack, game.phase, game.here, groupCode, joinedGroups, pendingJoinBoard, pack.id, submitFinishedPlayers]);
 
   const renameConflictAndSave = useCallback(() => {
-    const nextName = cleanName(conflictName);
+    const nextName = cleanDraftName(conflictName);
     if (!nextName || !conflictOldName) return;
     const taken = new Set(
       [...storedEntries.map((p) => p.name), ...game.link.map((p) => p.name), COIN_NAME, TOGETHER_NAME].map((n) =>
@@ -758,7 +1304,7 @@ export default function ChanceGame({
       ...g,
       here: g.here.map((p) => (p.name === conflictOldName ? { ...p, name: safeName } : p)),
     }));
-  }, [conflictName, conflictOldName, storedEntries, game.link]);
+  }, [cleanDraftName, conflictName, conflictOldName, storedEntries, game.link]);
 
   const retrySave = useCallback(() => {
     if (!groupCode) return;
@@ -783,6 +1329,27 @@ export default function ChanceGame({
         : !isLegacyPack && groupCode
           ? `${window.location.origin}/guess?group=${encodeURIComponent(groupCode)}&day=${encodeURIComponent(pack.id)}${hashPart}`
           : `${window.location.origin}/guess${hashPart}`;
+
+  const boardAdminModeration = useMemo<BoardAdminModerationProps | undefined>(
+    () =>
+      adminToken
+        ? {
+            confirmTarget: pendingHide,
+            busy: hideBusy,
+            error: moderationError,
+            onRequestHide: (target) => {
+              setModerationError(null);
+              setPendingHide(target);
+            },
+            onConfirmHide: () => void handleConfirmHide(),
+            onCancelHide: () => {
+              setPendingHide(null);
+              setModerationError(null);
+            },
+          }
+        : undefined,
+    [adminToken, pendingHide, hideBusy, moderationError, handleConfirmHide],
+  );
 
   // ---- screens -------------------------------------------------------------
 
@@ -904,25 +1471,73 @@ export default function ChanceGame({
                 placeholder={names.length === 0 ? "Your first name" : "Another name"}
                 className="min-h-[48px] min-w-0 flex-1 rounded-2xl border-2 border-surface-border bg-surface-card px-4 text-base font-bold text-text-primary placeholder:text-text-muted"
               />
-              <button type="button" className={QUIET} onClick={addName} disabled={!cleanName(nameDraft) || names.length >= MAX_HERE}>
+              <button type="button" className={QUIET} onClick={addName} disabled={!cleanDraftName(nameDraft) || names.length >= MAX_HERE}>
                 Add
               </button>
             </div>
-            <p className="mt-2 text-sm text-text-secondary">
+            <p className="mt-2 text-sm text-text-secondary" data-testid="name-board-notice">
               {isLegacyPack
                 ? "One name to play alone. Add more to pass one phone around. Names stay on this phone and in the link you send."
-                : "One name to play alone. Add more to pass one phone around. Finished games stay on this group's board for 30 days."}
+                : `One name to play alone. Add more to pass one phone around. Your name and score go on ${dayPossessive} public board for 30 days. A nickname is fine.`}
             </p>
+            {!isLegacyPack && nameDraft.trim().length > 0 && !isAllowedNicknameChars(nameDraft) && (
+              <p className="mt-1 text-xs font-semibold text-accent-danger" data-testid="name-char-hint">
+                Letters, numbers, spaces, periods, apostrophes, and hyphens only.
+              </p>
+            )}
             <button
               type="button"
               className={`${PRIMARY} mt-3`}
               onClick={start}
-              disabled={names.length === 0 && !cleanName(nameDraft)}
+              disabled={names.length === 0 && !cleanDraftName(nameDraft)}
               data-testid="start-button"
             >
               Start
             </button>
           </div>
+
+          {!isLegacyPack && (
+            <div className="space-y-3" data-testid="start-board-section">
+              <button
+                type="button"
+                className={`${QUIET} w-full`}
+                aria-expanded={showStartBoard}
+                onClick={() => {
+                  if (!showStartBoard) setPublicPage(1);
+                  setShowStartBoard((open) => !open);
+                }}
+                data-testid="start-board-toggle"
+              >
+                {showStartBoard ? `Hide ${dayPossessive} board` : `See ${dayPossessive} board`}
+              </button>
+              {showStartBoard && (
+                <>
+                  <PublicBoardPanel
+                    pack={pack}
+                    isToday={isToday}
+                    board={publicBoard}
+                    loading={publicBoardLoading}
+                    error={publicBoardError}
+                    myEntryIds={EMPTY_ENTRY_IDS}
+                    primaryEntryId={null}
+                    onPageChange={(nextPage) => setPublicPage(nextPage)}
+                    onRetry={() => setPublicRefreshTick((t) => t + 1)}
+                    adminModeration={boardAdminModeration}
+                  />
+                  {adminToken && (
+                    <AdminHiddenPanel
+                      isToday={isToday}
+                      dayLabel={dayLabel}
+                      entries={hiddenEntries}
+                      busyId={unhideBusyId}
+                      error={moderationError}
+                      onUnhide={(entryId) => void handleUnhideEntry(entryId)}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           <ol className="space-y-1.5" data-testid="steps">
             {pack.steps.map((info, i) => (
@@ -1313,7 +1928,7 @@ export default function ChanceGame({
                 <button
                   type="button"
                   onClick={renameConflictAndSave}
-                  disabled={!cleanName(conflictName)}
+                  disabled={!cleanDraftName(conflictName)}
                   data-testid="conflict-save-button"
                   className={QUIET}
                 >
@@ -1347,7 +1962,38 @@ export default function ChanceGame({
           )}
         </div>
 
-        <StepTable pack={pack} rows={stepRows} shown={pack.steps.length} />
+        <StepTable
+          pack={pack}
+          rows={stepRows}
+          shown={pack.steps.length}
+          adminModeration={boardAdminModeration}
+        />
+
+        {!isLegacyPack && (
+          <PublicBoardPanel
+            pack={pack}
+            isToday={isToday}
+            board={publicBoard}
+            loading={publicBoardLoading}
+            error={publicBoardError}
+            myEntryIds={myEntryIds}
+            primaryEntryId={primaryEntryId}
+            onPageChange={(nextPage) => setPublicPage(nextPage)}
+            onRetry={() => setPublicRefreshTick((t) => t + 1)}
+            adminModeration={boardAdminModeration}
+          />
+        )}
+
+        {!isLegacyPack && adminToken && (
+          <AdminHiddenPanel
+            isToday={isToday}
+            dayLabel={dayLabel}
+            entries={hiddenEntries}
+            busyId={unhideBusyId}
+            error={moderationError}
+            onUnhide={(entryId) => void handleUnhideEntry(entryId)}
+          />
+        )}
 
         <section className={PANEL} data-testid="fun-vote">
           <div className="text-sm font-black text-text-primary">Which step was the most fun?</div>
@@ -1378,7 +2024,7 @@ export default function ChanceGame({
           <p className="mt-1 text-sm text-text-secondary">
             {isLegacyPack
               ? "Whoever opens the link plays the same cards and sees your guess after each one. They can send it on, and the link keeps everyone."
-              : "Whoever opens this link plays today's cards against this group board and lands on the same standings when finished."}
+              : `Whoever opens this link plays ${dayPossessive} cards against this group board and lands on the same standings when finished.`}
           </p>
           <SharePanel message={message} canShare={canShare} testId="share-panel" />
         </section>

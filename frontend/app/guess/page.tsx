@@ -21,6 +21,7 @@ interface ResolvedEdition {
   pack: GamePack;
   initialGroupCode: string | null;
   isLegacyPack: boolean;
+  isToday: boolean;
   initialGroupError: string | null;
   earlierDayNotice: string | null;
   expiredDayNotice: string | null;
@@ -45,6 +46,7 @@ export default function GuessPage() {
         pack: legacyPack,
         initialGroupCode: null,
         isLegacyPack: true,
+        isToday: true,
         initialGroupError: null,
         earlierDayNotice: null,
         expiredDayNotice: null,
@@ -58,12 +60,14 @@ export default function GuessPage() {
 
     try {
       const resp = await fetchTodayPack(rawDay);
+      const isToday = resp.is_today !== false;
       const earlierNotice =
-        resp.is_today === false ? `You are viewing ${formatDayLabel(resp.day)}'s cards and board.` : null;
+        !isToday ? `You are viewing ${formatDayLabel(resp.day)}'s cards and board.` : null;
       setEdition({
         pack: resp.pack,
         initialGroupCode: validGroup,
         isLegacyPack: false,
+        isToday,
         initialGroupError: groupErr,
         earlierDayNotice: earlierNotice,
         expiredDayNotice: null,
@@ -77,6 +81,7 @@ export default function GuessPage() {
             pack: todayResp.pack,
             initialGroupCode: null,
             isLegacyPack: false,
+            isToday: todayResp.is_today !== false,
             initialGroupError: null,
             earlierDayNotice: null,
             expiredDayNotice: "That day's cards and board are gone (games are kept for 30 days). Here are today's cards.",
@@ -88,6 +93,7 @@ export default function GuessPage() {
             pack: LATEST_PACK,
             initialGroupCode: null,
             isLegacyPack: true,
+            isToday: true,
             initialGroupError: null,
             earlierDayNotice: null,
             expiredDayNotice: null,
@@ -96,14 +102,18 @@ export default function GuessPage() {
           return;
         }
       }
+      const unscheduled = err instanceof GuessApiError && err.reason === "unscheduled";
       setEdition({
         pack: LATEST_PACK,
         initialGroupCode: null,
         isLegacyPack: true,
+        isToday: true,
         initialGroupError: null,
         earlierDayNotice: null,
         expiredDayNotice: null,
-        fallbackNotice: "Today's live cards could not be reached, so you are playing the built-in set.",
+        fallbackNotice: unscheduled
+          ? "No new cards today. Here is the latest set."
+          : "Today's live cards could not be reached, so you are playing the built-in set.",
       });
     }
   }, []);
@@ -133,6 +143,7 @@ export default function GuessPage() {
             pack={edition.pack}
             initialGroupCode={edition.initialGroupCode}
             isLegacyPack={edition.isLegacyPack}
+            isToday={edition.isToday}
             initialGroupError={edition.initialGroupError}
             earlierDayNotice={edition.earlierDayNotice}
             expiredDayNotice={edition.expiredDayNotice}

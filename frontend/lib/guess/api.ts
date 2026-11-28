@@ -3,7 +3,6 @@
 // and merges stored group entries with local and `#g=` link entries without duplicates.
 
 import { API_URL } from "../api";
-import { cleanName } from "./engine";
 import type { GamePack, PlayerEntry } from "./types";
 
 export const GROUP_CODE_RE = /^[a-z0-9]{8,24}$/;
@@ -19,12 +18,36 @@ export interface DailyEditionResponse {
 }
 
 export interface GroupBoardEntry {
+  entry_id?: number;
   nickname: string;
   answers: number[];
   step_times: number[];
   points: number;
   step_points: number[];
+  step_labels?: string[];
   total_time_seconds: number;
+}
+
+export interface PublicBoardEntry {
+  entry_id: number;
+  rank: number;
+  nickname: string;
+  points: number;
+  step_points: number[];
+  step_labels: string[];
+  total_time_seconds: number;
+}
+
+export interface PublicBoardResponse {
+  day: string;
+  edition_code: string;
+  steps: { name: string }[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  entries: PublicBoardEntry[];
+  me: PublicBoardEntry | null;
 }
 
 export interface GroupBoardResponse {
@@ -41,13 +64,108 @@ export interface GroupEntrySubmissionPayload {
   step_times: number[];
 }
 
+export interface AdminHiddenEntry {
+  entry_id: number;
+  nickname: string;
+  points: number;
+  total_time_seconds: number;
+  hidden_at: string | null;
+  in_group: boolean;
+}
+
+export interface AdminHiddenResponse {
+  authorized: boolean;
+  day: string;
+  entries: AdminHiddenEntry[];
+}
+
 export class GuessApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  reason: string | null;
+  constructor(status: number, message: string, reason: string | null = null) {
     super(message);
     this.name = "GuessApiError";
     this.status = status;
+    this.reason = reason;
   }
+}
+
+const EXTRA_LATIN_FOLDS: Record<string, string> = {
+  ø: "o",
+  ð: "d",
+  đ: "d",
+  þ: "th",
+  ł: "l",
+  ß: "ss",
+  æ: "ae",
+  œ: "oe",
+  ı: "i",
+};
+
+function foldNicknameLetter(ch: string): string {
+  let mapped = "";
+  for (const c of ch.toLowerCase()) {
+    mapped += EXTRA_LATIN_FOLDS[c] ?? c;
+  }
+  const plain = mapped.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return plain.length > 0 && /^[a-z]+$/.test(plain) ? plain : "";
+}
+
+export function cleanDailyNickname(raw: string): string {
+  const normalized = raw
+    .replace(/[\x00-\x1f\x7f]+/g, " ")
+    .normalize("NFC")
+    .replace(/[’‘ʼ]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+  return Array.from(normalized).slice(0, 12).join("").trim();
+}
+
+export function isAllowedNicknameChars(raw: string): boolean {
+  const normalized = cleanDailyNickname(raw);
+  if (!normalized) return false;
+  let hasLetterOrDigit = false;
+  for (const ch of normalized) {
+    if (ch === " " || ch === "." || ch === "'" || ch === "-") {
+      continue;
+    }
+    if (ch >= "0" && ch <= "9") {
+      hasLetterOrDigit = true;
+      continue;
+    }
+    if (foldNicknameLetter(ch)) {
+      hasLetterOrDigit = true;
+      continue;
+    }
+    return false;
+  }
+  return hasLetterOrDigit;
+}
+
+export function formatOrdinal(n: number): string {
+  const num = Math.trunc(Math.abs(n));
+  const mod100 = num % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${num}th`;
+  switch (num % 10) {
+    case 1:
+      return `${num}st`;
+    case 2:
+      return `${num}nd`;
+    case 3:
+      return `${num}rd`;
+    default:
+      return `${num}th`;
+  }
+}
+
+export function readerSafeBoardError(err: unknown, fallback: string): string {
+  if (
+    err instanceof GuessApiError &&
+    (err.status === 409 || err.status === 429 || err.reason === "nickname_refused")
+  ) {
+    return err.message;
+  }
+  return fallback;
 }
 
 export function isValidGroupCode(raw: string | null | undefined): raw is string {
@@ -80,21 +198,24 @@ export function generateGroupCode(): string {
   return out.join("");
 }
 
-async function readErrorDetail(res: Response, fallback: string): Promise<string> {
+async function readErrorInfo(res: Response, fallback: string): Promise<{ detail: string; reason: string | null }> {
   try {
-    const body = (await res.json()) as { detail?: unknown };
-    if (typeof body?.detail === "string" && body.detail.trim()) return body.detail;
+    const body = (await res.json()) as { detail?: unknown; reason?: unknown };
+    const detail = typeof body?.detail === "string" && body.detail.trim() ? body.detail : fallback;
+    const reason = typeof body?.reason === "string" && body.reason.trim() ? body.reason : null;
+    return { detail, reason };
   } catch {
     // Non-JSON body; keep the caller-friendly fallback message.
   }
-  return fallback;
+  return { detail: fallback, reason: null };
 }
 
 export async function fetchTodayPack(day?: string | null): Promise<DailyEditionResponse> {
   const qs = day ? `?day=${encodeURIComponent(day)}` : "";
   const res = await fetch(`${API_URL}/api/guess/today${qs}`, { cache: "no-store" });
   if (!res.ok) {
-    throw new GuessApiError(res.status, await readErrorDetail(res, "Today's cards are not ready right now."));
+    const info = await readErrorInfo(res, "Today's cards are not ready right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
   }
   const data = (await res.json()) as DailyEditionResponse;
   if (!data?.pack || !Array.isArray(data.pack.cards) || data.pack.cards.length === 0) {
@@ -107,9 +228,72 @@ export async function fetchGroupBoard(groupCode: string, day?: string | null): P
   const qs = day ? `?day=${encodeURIComponent(day)}` : "";
   const res = await fetch(`${API_URL}/api/guess/groups/${encodeURIComponent(groupCode)}${qs}`, { cache: "no-store" });
   if (!res.ok) {
-    throw new GuessApiError(res.status, await readErrorDetail(res, "Could not load the group board right now."));
+    const info = await readErrorInfo(res, "Could not load the group board right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
   }
   return (await res.json()) as GroupBoardResponse;
+}
+
+export async function fetchPublicBoard(
+  day: string,
+  page = 1,
+  pageSize = 20,
+  entryId?: number | null,
+): Promise<PublicBoardResponse> {
+  const params = new URLSearchParams({
+    day,
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  if (typeof entryId === "number" && Number.isInteger(entryId) && entryId > 0) {
+    params.set("entry_id", String(entryId));
+  }
+  const res = await fetch(`${API_URL}/api/guess/board?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) {
+    const info = await readErrorInfo(res, "Could not load the public board right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
+  }
+  return (await res.json()) as PublicBoardResponse;
+}
+
+export async function fetchAdminHiddenEntries(
+  day: string,
+  token: string,
+  groupCode?: string | null,
+): Promise<AdminHiddenResponse> {
+  const params = new URLSearchParams({ day });
+  if (groupCode) params.set("group_code", groupCode);
+  const res = await fetch(`${API_URL}/api/guess/admin/hidden?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const info = await readErrorInfo(res, "Admin check failed.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
+  }
+  return (await res.json()) as AdminHiddenResponse;
+}
+
+export async function adminHideGuessEntry(entryId: number, token: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/guess/admin/entries/${entryId}/hide`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const info = await readErrorInfo(res, "Could not hide that entry right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
+  }
+}
+
+export async function adminUnhideGuessEntry(entryId: number, token: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/guess/admin/entries/${entryId}/unhide`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const info = await readErrorInfo(res, "Could not put that entry back right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
+  }
 }
 
 export async function submitGroupEntry(groupCode: string, payload: GroupEntrySubmissionPayload): Promise<GroupBoardResponse> {
@@ -126,14 +310,16 @@ export async function submitGroupEntry(groupCode: string, payload: GroupEntrySub
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new GuessApiError(res.status, await readErrorDetail(res, "Could not save your finished game right now."));
+    const info = await readErrorInfo(res, "Could not save your finished game right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
   }
   return (await res.json()) as GroupBoardResponse;
 }
 
 export function groupEntryToPlayerEntry(pack: GamePack, row: GroupBoardEntry): PlayerEntry {
-  const name = cleanName(row.nickname) || row.nickname.slice(0, 12);
+  const name = cleanDailyNickname(row.nickname) || row.nickname.slice(0, 12);
   return {
+    entryId: typeof row.entry_id === "number" && row.entry_id > 0 ? row.entry_id : undefined,
     name,
     guesses: pack.cards.map((_, i) => (typeof row.answers[i] === "number" ? row.answers[i] : null)),
     ratings: pack.cards.map(() => 0),

@@ -23,7 +23,74 @@ export interface SavedGame {
 // `SLOT` alone was used by earlier single-slot or `byPack`-mapped builds; it
 // is still read as a fallback and cleared alongside its set.
 const SLOT = "bainluck_guess_v1";
+const SLOT_PREFIX = `${SLOT}:`;
+const RETENTION_DAYS = 30;
+const DAY_PACK_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const slotFor = (packId: string) => `${SLOT}:${packId}`;
+
+function parseDayMs(dayStr: string): number | null {
+  const m = DAY_PACK_RE.exec(dayStr.trim());
+  if (!m) return null;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isExpiredDayPack(packId: string, cutoffMs: number): boolean {
+  const dayMs = parseDayMs(packId);
+  return dayMs !== null && dayMs < cutoffMs;
+}
+
+/** Remove saved daily `/guess` slots older than 30 days PT while keeping recent and legacy sets. */
+export function pruneExpiredSavedGames(now: Date = new Date()): void {
+  try {
+    const todayPt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+    const todayMs = parseDayMs(todayPt) ?? now.getTime();
+    const cutoffMs = todayMs - RETENTION_DAYS * 86_400_000;
+
+    const expiredKeys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (!key || !key.startsWith(SLOT_PREFIX)) continue;
+      const packId = key.slice(SLOT_PREFIX.length);
+      if (isExpiredDayPack(packId, cutoffMs)) {
+        expiredKeys.push(key);
+      }
+    }
+    for (const key of expiredKeys) {
+      window.localStorage.removeItem(key);
+    }
+
+    const legacyText = window.localStorage.getItem(SLOT);
+    if (!legacyText) return;
+    const parsed = JSON.parse(legacyText) as Record<string, unknown>;
+    if (parsed && typeof parsed.byPack === "object" && parsed.byPack !== null && !Array.isArray(parsed.byPack)) {
+      const map = { ...(parsed.byPack as Record<string, unknown>) };
+      let changed = false;
+      for (const packId of Object.keys(map)) {
+        if (isExpiredDayPack(packId, cutoffMs)) {
+          delete map[packId];
+          changed = true;
+        }
+      }
+      if (changed) {
+        if (Object.keys(map).length === 0) {
+          window.localStorage.removeItem(SLOT);
+        } else {
+          window.localStorage.setItem(SLOT, JSON.stringify({ byPack: map }));
+        }
+      }
+    } else if (parsed && typeof parsed.packId === "string" && isExpiredDayPack(parsed.packId, cutoffMs)) {
+      window.localStorage.removeItem(SLOT);
+    }
+  } catch {
+    // Storage unavailable or malformed; never disrupt play.
+  }
+}
 
 function cleanEntry(pack: GamePack, raw: unknown, from: PlayerEntry["from"]): PlayerEntry | null {
   if (!raw || typeof raw !== "object") return null;
@@ -67,6 +134,7 @@ function readLegacyRaw(packId: string): Record<string, unknown> | null {
 
 export function loadGame(pack: GamePack): SavedGame | null {
   try {
+    pruneExpiredSavedGames();
     const perSetText = window.localStorage.getItem(slotFor(pack.id));
     const raw = perSetText
       ? (JSON.parse(perSetText) as Record<string, unknown>)
@@ -97,6 +165,7 @@ export function loadGame(pack: GamePack): SavedGame | null {
 
 export function saveGame(game: SavedGame): void {
   try {
+    pruneExpiredSavedGames();
     window.localStorage.setItem(slotFor(game.packId), JSON.stringify(game));
   } catch {
     // Storage is a convenience. A phone that refuses it still plays.
