@@ -301,6 +301,38 @@ final class SubOnePercentEveryNumberedRowTests: XCTestCase {
         for (p, exp) in [(0.004, "<1%"), (0.006, "<1%"), (0.0099, "<1%"), (0.01, "1%"), (0.996, ">99%")] {
             XCTAssertEqual(DiscoverRoundupCardModel.probabilityText(probability: p, renderedPercent: nil), exp)
         }
+
+        // MyStuffView.eventCopyProbabilityText (Copy Probability string outside Text(...))
+        for (p, exp) in [(0.004, "<1%"), (0.006, "<1%"), (0.0099, "<1%"), (0.01, "1%"), (0.996, ">99%")] {
+            let feedJSON = """
+            [{
+              "type": "event",
+              "score": 40,
+              "data": {
+                "id": 99100,
+                "sport": "basketball_nba",
+                "sport_name": "NBA",
+                "away_team": "Portland Trail Blazers",
+                "home_team": "Minnesota Timberwolves",
+                "status": "scheduled",
+                "commence_time": "2026-11-28T01:00:00Z",
+                "hero_probability_source": "blend",
+                "hero_probability_observed_at": "2026-11-27T20:00:00Z",
+                "current_odds": {
+                  "away_probability": \(1.0 - p),
+                  "home_probability": \(p)
+                }
+              }
+            }]
+            """
+            let items = try decodeSnake([FeedItem].self, feedJSON)
+            let event = try XCTUnwrap(items.first?.event)
+            XCTAssertEqual(
+                MyStuffView.eventCopyProbabilityText(event),
+                "Minnesota Timberwolves: \(exp)",
+                "MyStuffView.eventCopyProbabilityText at p=\(p)"
+            )
+        }
     }
 
     func testCaptureRepresentativeCards() throws {

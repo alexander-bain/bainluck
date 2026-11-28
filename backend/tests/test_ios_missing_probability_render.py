@@ -196,127 +196,158 @@ def _strip_comments(src: str) -> str:
     return "".join(out)
 
 
-def _extract_balanced_text_calls(code: str) -> list[tuple[int, str]]:
-    """Extract balanced `(line_number, full_Text_call_text)` spans from comment-free Swift."""
-    spans: list[tuple[int, str]] = []
+def _extract_string_literals(code: str) -> list[tuple[int, str]]:
+    """Extract every Swift string literal `(line_number, raw_literal)` from comment-free code.
+
+    Handles `\"\"\"...\"\"\"` multi-line strings, `\"...\"` single-line strings,
+    and nested quotes inside `\\(...)` interpolations.
+    """
+    literals: list[tuple[int, str]] = []
     n = len(code)
-    for m in re.finditer(r"(?<![A-Za-z0-9_])Text\s*\(", code):
-        start = m.start()
-        j = m.end() - 1
-        paren_depth = 0
-        string_paren_depths: list[int] = []
-        triple_string = False
+    i = 0
 
-        while j < n:
-            ch = code[j]
-            if string_paren_depths and paren_depth == string_paren_depths[-1]:
-                if ch == "\\" and code[j + 1 : j + 2] == "(":
+    while i < n:
+        ch = code[i]
+        if code[i : i + 3] == '"""' or ch == '"':
+            triple = code[i : i + 3] == '"""'
+            start = i
+            i += 3 if triple else 1
+            paren_depth = 0
+            string_paren_depths = [0]
+
+            while i < n:
+                c = code[i]
+                if string_paren_depths and paren_depth == string_paren_depths[-1]:
+                    if c == "\\" and code[i + 1 : i + 2] == "(":
+                        paren_depth += 1
+                        i += 2
+                        continue
+                    if c == "\\" and i + 1 < n:
+                        i += 2
+                        continue
+                    if triple and len(string_paren_depths) == 1 and code[i : i + 3] == '"""':
+                        i += 3
+                        string_paren_depths.pop()
+                        break
+                    if (not triple or len(string_paren_depths) > 1) and c == '"':
+                        i += 1
+                        string_paren_depths.pop()
+                        if not string_paren_depths:
+                            break
+                        continue
+                    i += 1
+                    continue
+
+                if code[i : i + 3] == '"""':
+                    string_paren_depths.append(paren_depth)
+                    i += 3
+                    continue
+                if ch == '"' and c == '"':
+                    string_paren_depths.append(paren_depth)
+                    i += 1
+                    continue
+                if c == '"':
+                    string_paren_depths.append(paren_depth)
+                    i += 1
+                    continue
+                if c == "(":
                     paren_depth += 1
-                    j += 2
-                    continue
-                if ch == "\\" and j + 1 < n:
-                    j += 2
-                    continue
-                if triple_string and code[j : j + 3] == '"""':
-                    string_paren_depths.pop()
-                    triple_string = False
-                    j += 3
-                    continue
-                if not triple_string and ch == '"':
-                    string_paren_depths.pop()
-                    j += 1
-                    continue
-                j += 1
-                continue
+                elif c == ")" and paren_depth > 0:
+                    paren_depth -= 1
+                i += 1
 
-            if code[j : j + 3] == '"""':
-                string_paren_depths.append(paren_depth)
-                triple_string = True
-                j += 3
-                continue
-            if ch == '"':
-                string_paren_depths.append(paren_depth)
-                j += 1
-                continue
-            if ch == "(":
-                paren_depth += 1
-            elif ch == ")":
-                paren_depth -= 1
-                if paren_depth == 0:
-                    j += 1
-                    break
-            j += 1
+            line_no = code[:start].count("\n") + 1
+            literals.append((line_no, code[start:i]))
+            continue
+        i += 1
 
-        line_no = code[:start].count("\n") + 1
-        spans.append((line_no, code[start:j]))
-    return spans
+    return literals
 
 
-HAND_ROLLED_PERCENT_IN_TEXT_RE = re.compile(
+HAND_ROLLED_PERCENT_IN_STRING_RE = re.compile(
     r"(?:\bInt\b|\bround)\s*\([^;]*?\*\s*100(?:\.0)?\b"
 )
 
 
-def _find_hand_rolled_text_percents(src: str) -> list[tuple[int, str]]:
-    """Return `(line, normalized_Text_call)` for any `Text(...)` computing a percent via `* 100`."""
+def _find_hand_rolled_percent_strings(src: str) -> list[tuple[int, str]]:
+    """Return `(line, normalized_literal)` for ANY Swift string computing a percent via `* 100`."""
     code = _strip_comments(src)
     hits: list[tuple[int, str]] = []
-    for line_no, span in _extract_balanced_text_calls(code):
-        if "%" in span and HAND_ROLLED_PERCENT_IN_TEXT_RE.search(span):
-            hits.append((line_no, " ".join(span.split())))
+    for line_no, literal in _extract_string_literals(code):
+        if "%" in literal and HAND_ROLLED_PERCENT_IN_STRING_RE.search(literal):
+            hits.append((line_no, " ".join(literal.split())))
     return hits
 
 
 # Exact non-probability exceptions under `ios/Bain Luck/Bain Luck/`.
-# Keyed by `(rel_path, normalized_Text_call) -> expected_count` so no whole
-# file is exempted and zero market-probability renders are allow-listed.
-NON_PROBABILITY_HAND_ROLLED_TEXT_ALLOWLIST: dict[tuple[str, str], int] = {
-    # Swift Charts Y-axis tick labels must show exact scale origins ("0%", "50%", "100%").
+# Keyed by `(rel_path, normalized_string_literal) -> expected_count` so no whole
+# file is exempted and zero market-probability formatters/strings are allow-listed.
+NON_PROBABILITY_HAND_ROLLED_STRING_ALLOWLIST: dict[tuple[str, str], int] = {
+    # 10 chart Y-axis scale ticks (`0%`..`100%` scale marks, never outcome probabilities;
+    # verified `OddsChartView.axisLabel(for:)` only renders Y-axis ticks via `RacingWinPodiumAdapter10868`).
     (
         "Components/EventAtlasGolfTournament11666.swift",
-        'Text("\\(Int((d * 100).rounded()))%")',
+        '"\\(Int((d * 100).rounded()))%"',
     ): 2,
     (
         "Components/MLBFinalCards11284.swift",
-        'Text("\\(Int((v * 100).rounded()))%")',
+        '"\\(Int((v * 100).rounded()))%"',
     ): 1,
     (
         "Components/MLBFinalCards11284.swift",
-        'Text("\\(Int((chance * 100).rounded()))%")',
+        '"\\(Int((chance * 100).rounded()))%"',
     ): 1,
     (
         "Components/NBAEventCards9483.swift",
-        'Text("\\(Int((chance * 100).rounded()))%")',
+        '"\\(Int((chance * 100).rounded()))%"',
     ): 1,
     (
         "Components/NFLEventCards9483.swift",
-        'Text("\\(Int((chance * 100).rounded()))%")',
+        '"\\(Int((chance * 100).rounded()))%"',
+    ): 1,
+    (
+        "Components/OddsChartView.swift",
+        '"\\(Int((value * 100).rounded()))%"',
     ): 1,
     (
         "Components/PlayerMilestoneProfileView.swift",
-        'Text("\\(Int((chance * 100).rounded()))%")',
+        '"\\(Int((chance * 100).rounded()))%"',
     ): 1,
     (
         "Components/RaceChartView.swift",
-        'Text("\\(Int((value * 100).rounded()))%")',
+        '"\\(Int((value * 100).rounded()))%"',
+    ): 1,
+    (
+        "Utilities/RaceChart.swift",
+        '"\\(Int(($0 * 100).rounded()))%"',
     ): 1,
     # Signed 24h delta badge (`MovementBadge`, gated by `abs(m) >= 0.01`, point move not chance).
     (
         "Views/DiscoverView.swift",
-        'Text("\\(abs(Int((m * 100).rounded())))%")',
+        '"\\(abs(Int((m * 100).rounded())))%"',
     ): 1,
     # User prediction hit-rate accuracy ratios (`correct / total` legitimately spans 0%..100%).
     (
         "Views/MyStuffView.swift",
-        'Text("\\(Int(stats.accuracy * 100))%")',
+        '"\\(Int(stats.accuracy * 100))%"',
     ): 1,
     (
         "Views/PredictionStatsView.swift",
-        'Text("\\(Int(stats.accuracy * 100))%")',
+        '"\\(Int(stats.accuracy * 100))%"',
     ): 1,
     (
         "Views/PredictionStatsView.swift",
-        'Text("\\(Int(data.accuracy * 100))%")',
+        '"\\(Int(data.accuracy * 100))%"',
+    ): 1,
+    # Dev-only source blend weight diagnostic string (`mark.dev?.weights`, gated by dev overlay).
+    (
+        "Components/SourceMarkView12581.swift",
+        '"\\(src.name) \\(Int((w * 100).rounded()))%"',
+    ): 1,
+    # Raw 3-way bookmaker overround sum diagnostic (sum of 3 legs, e.g. 104%, not a single chance).
+    (
+        "Components/EventAtlasSoccerCards11666.swift",
+        '"Raw 3-way sum \\(Int(($0 * 100.0).rounded()))%"',
     ): 1,
 }
 
@@ -418,30 +449,33 @@ class TestTheGuardCanActuallyFail:
         assert "tail" not in stripped
 
     def test_planted_hand_rolled_percent_in_text_is_detected(self):
-        """Scanning `ios/Bain Luck/Bain Luck/` must catch every floor and rounded mutant."""
+        """Scanning `ios/Bain Luck/Bain Luck/` must catch floor, rounded, helper, and string mutants."""
         mutants = [
             'if let prob = future.probability {\n    Text("\\(Int(prob * 100))%")\n}',
             'Text("\\(Int((prob * 100).rounded()))%")',
             'Text(\n    "\\(Int((prob * 100.0).rounded()))%"\n)',
             'Text("Based on \\(Int(round(prob * 100)))% chance")',
             'Text("\\(label ?? "fallback"): \\(Int(prob * 100))%")',
+            'private func formatPct(_ p: Double) -> String {\n    "\\(Int(round(p * 100)))%"\n}',
+            'let text = "\\(leader.name): \\(Int(prob * 100))%"',
+            'return "\\(Int((p * 100.0).rounded()))%"',
         ]
         for mutant in mutants:
-            assert _find_hand_rolled_text_percents(mutant), f"missed mutant: {mutant!r}"
+            assert _find_hand_rolled_percent_strings(mutant), f"missed mutant: {mutant!r}"
 
         safe = [
-            '// Text("\\(Int(prob * 100))%")\nText(formatProbability(prob))',
-            '/* Text("\\(Int((prob * 100).rounded()))%") */\nText(formatProbabilityOrDash(prob))',
+            '// "\\(Int(prob * 100))%"\nText(formatProbability(prob))',
+            '/* Text("\\(Int((prob * 100).rounded()))%") */\nlet s = formatProbabilityOrDash(prob)',
         ]
         for snippet in safe:
-            assert _find_hand_rolled_text_percents(snippet) == [], (
+            assert _find_hand_rolled_percent_strings(snippet) == [], (
                 f"false positive on {snippet!r}"
             )
 
 
 class TestNoViewHandRollsProbabilityPercent:
-    """Class-level guard (#13892): no view in the app may build a probability
-    percent inside `Text(...)` with `Int(... * 100)` or `.rounded()` by hand."""
+    """Class-level guard (#13892 follow-up): no string anywhere in `ios/Bain Luck/Bain Luck/`
+    (inside or outside `Text(...)`) may build a probability percent via `* 100` with `Int(` or `round(`."""
 
     def test_no_view_hand_rolls_a_probability_percent(self):
         found_counts: Counter[tuple[str, str]] = Counter()
@@ -449,23 +483,23 @@ class TestNoViewHandRollsProbabilityPercent:
 
         for path in sorted(APP_ROOT.rglob("*.swift")):
             rel = path.relative_to(APP_ROOT).as_posix()
-            for line_no, norm_text in _find_hand_rolled_text_percents(path.read_text()):
-                key = (rel, norm_text)
+            for line_no, norm_literal in _find_hand_rolled_percent_strings(path.read_text()):
+                key = (rel, norm_literal)
                 found_counts[key] += 1
-                expected = NON_PROBABILITY_HAND_ROLLED_TEXT_ALLOWLIST.get(key, 0)
+                expected = NON_PROBABILITY_HAND_ROLLED_STRING_ALLOWLIST.get(key, 0)
                 if found_counts[key] > expected:
-                    unexpected.append(f"{rel}:{line_no}: {norm_text}")
+                    unexpected.append(f"{rel}:{line_no}: {norm_literal}")
 
         assert unexpected == [], (
-            "SwiftUI view hand-rolls a percent inside Text(...) using `* 100`; "
-            "route probability displays through `formatProbability(...)` or "
-            "`formatProbabilityOrDash(...)` so 0.1%..0.99% reads `<1%`: "
+            "App string hand-rolls a percent using `* 100`; route probability "
+            "formatting through `formatProbability(...)`, `formatProbabilityOrDash(...)`, "
+            "or `DiscoverRoundupCardModel.probabilityText(...)` so 0.1%..0.99% reads `<1%`: "
             f"{unexpected}"
         )
 
         drift = {
             key: (expected, found_counts[key])
-            for key, expected in NON_PROBABILITY_HAND_ROLLED_TEXT_ALLOWLIST.items()
+            for key, expected in NON_PROBABILITY_HAND_ROLLED_STRING_ALLOWLIST.items()
             if found_counts[key] != expected
         }
         assert drift == {}, (
