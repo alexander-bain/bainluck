@@ -811,6 +811,7 @@ def test_closed_bucket_cache_reuses_closed_buckets_on_live_refresh():
         build_stats=stats_cold,
         now=closed_end,
     )
+    assert len(first["timeline"]) == 20
     assert stats_cold["evaluated"] == 20
     assert stats_cold["reused"] == 0
     assert len(closed_cache) == 20
