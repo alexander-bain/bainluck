@@ -260,10 +260,10 @@ final class AppClip12307Tests: XCTestCase {
             headline: nil, priceCaption: nil, observedAt: nil, becomesLastRecordedAt: nil,
             spoken: "", lastRecordedFigure: nil
         )
-        XCTAssertEqual(ClipLoader12307.displayCaption(noResultReading, now: t0), EventState.suspendedLabel)
+        XCTAssertEqual(ClipLoader12307.displayCaption(noResultReading, now: t0), "No result reported")
 
         let suspendedSameLabelReading = SavedWidgetReading10875(
-            kind: .game, targetID: 1, title: "Test", status: EventState.suspendedLabel, phase: .noResult,
+            kind: .game, targetID: 1, title: "Test", status: "No result reported", phase: .noResult,
             rows: [
                 SavedWidgetOutcomeRow10875(id: "away", label: "Away", figure: nil, verdict: nil, emphasized: false),
                 SavedWidgetOutcomeRow10875(id: "home", label: "Home", figure: nil, verdict: nil, emphasized: false),

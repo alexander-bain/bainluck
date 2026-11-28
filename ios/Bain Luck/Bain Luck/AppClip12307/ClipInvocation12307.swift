@@ -181,7 +181,7 @@ enum ClipLoader12307 {
         case .unavailable:
             return missingValueAccessibilityLabel
         case .noResult:
-            return reading.status == EventState.suspendedLabel ? nil : EventState.suspendedLabel
+            return reading.status == "No result reported" ? nil : "No result reported"
         case .current, .lastRecorded, .openingLine, .result:
             return nil
         }
