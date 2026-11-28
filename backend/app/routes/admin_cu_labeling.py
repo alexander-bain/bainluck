@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import inspect
 import logging
 from typing import Any
 
@@ -16,11 +17,15 @@ from app.models.models import CuFactLabel, FuturesMarket
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
 from app.utils.cu_fact_labeling import (
+    PRACTICE_CARD_BY_ID,
     VALID_ROLES,
     VALID_SCOPES,
     VALID_SPLITS,
     build_answer_key_bundle,
+    build_venue_market_link,
     compute_cu_fact_agreement,
+    compute_practice_status,
+    evaluate_practice_submission,
     extract_subject_candidates,
     frozen_split_exists,
     get_claim_vocabulary,
@@ -70,6 +75,47 @@ async def _db_rows_for_split(db: AsyncSession, split: str) -> list[dict[str, Any
     return [_row_to_dict(r) for r in result.scalars().all()]
 
 
+async def _db_venue_metadata(
+    db: AsyncSession,
+    market_ids: list[int],
+) -> dict[int, dict[str, Any]]:
+    """Fetch static venue link metadata and rules text by PK (mock-safe)."""
+    if not market_ids:
+        return {}
+    stmt = select(
+        FuturesMarket.id,
+        FuturesMarket.source,
+        FuturesMarket.external_id,
+        FuturesMarket.market_metadata,
+        FuturesMarket.description,
+    ).where(FuturesMarket.id.in_(market_ids))
+    try:
+        query_result = await db.execute(stmt)
+        rows = query_result.all()
+        if inspect.iscoroutine(rows) or inspect.isawaitable(rows):
+            if hasattr(rows, "close"):
+                rows.close()
+            return {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("cu_labeling venue metadata lookup failed: %s", exc)
+        return {}
+    if not isinstance(rows, list):
+        return {}
+    out: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        try:
+            mid = int(row.id)
+        except Exception:  # noqa: BLE001
+            continue
+        out[mid] = {
+            "source": getattr(row, "source", None),
+            "external_id": getattr(row, "external_id", None),
+            "market_metadata": getattr(row, "market_metadata", None),
+            "description": getattr(row, "description", None),
+        }
+    return out
+
+
 def _validate_queue_params(split: str, role: str, scope: str, rater: str) -> str:
     if split not in VALID_SPLITS:
         raise HTTPException(status_code=400, detail=f"Invalid split {split!r}")
@@ -95,7 +141,7 @@ class CuFactLabelPayload(BaseModel):
     event_date_answer: str | None = None
     no_single_day: bool = False
     geography_answer: str
-    structure_answer: str
+    structure_answer: str | None = None
     claim_frame: dict[str, Any] | None = None
     stakes: int | None = None
     breadth: int | None = None
@@ -143,17 +189,42 @@ def _build_blind_market_payload(
     *,
     role: str,
     rater: str,
+    split: str = "sealed",
+    db_meta_row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble one market card without ever leaking discover_llm or peer answers."""
-    vis = visible_labels_for_rater(market_rows, role=role, rater=rater)
-    return {
+    if split == "practice":
+        norm_rater = " ".join(rater.split()).strip().lower()
+        own_label = next(
+            (
+                r
+                for r in market_rows
+                if " ".join(str(r.get("rater") or "").split()).strip().lower() == norm_rater
+            ),
+            None,
+        )
+        vis = {
+            "own_label": own_label,
+            "pair_complete": False,
+            "peer_labels": [],
+            "disagreeing_fact_fields": [],
+        }
+    else:
+        vis = visible_labels_for_rater(market_rows, role=role, rater=rater)
+
+    venue_link = build_venue_market_link(market, db_meta_row)
+    rules_text = market.get("rules_text") or (db_meta_row or {}).get("description") or ""
+    payload = {
         "market_id": int(market["market_id"]),
         "title": market.get("title") or "",
         "source": market.get("source") or "",
         "category": market.get("llm_sport_category") or market.get("category") or "",
         "draw_bucket": market.get("draw_bucket"),
-        "rules_text": market.get("rules_text") or "",
+        "rules_text": rules_text,
+        "linked_start": market.get("linked_start"),
         "resolution_date": market.get("resolution_date"),
+        "venue_url": venue_link["venue_url"],
+        "venue_link_label": venue_link["venue_link_label"],
         "outcomes": market.get("outcomes") or [],
         "outcome_names": market.get("outcome_names") or [],
         "subject_candidates": extract_subject_candidates(market),
@@ -162,6 +233,12 @@ def _build_blind_market_payload(
         "peer_labels": vis["peer_labels"],
         "disagreeing_fact_fields": vis["disagreeing_fact_fields"],
     }
+    if split == "practice" and vis["own_label"] is not None:
+        payload["practice_feedback"] = evaluate_practice_submission(
+            int(market["market_id"]),
+            vis["own_label"],
+        )
+    return payload
 
 
 @router.get("/cu-labeling/queue")
@@ -175,7 +252,7 @@ async def cu_labeling_queue(
     include_completed: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
-    """Serve one-by-one blind fact-labeling queue for primary, second, or tiebreak."""
+    """Serve one-by-one blind fact-labeling queue for practice, primary, second, or tiebreak."""
     _check_admin_secret(secret, request=request)
     cleaned_rater = _validate_queue_params(split, role, scope, rater)
 
@@ -190,19 +267,38 @@ async def cu_labeling_queue(
     )
 
     all_rows = await _db_rows_for_split(db, split)
+    practice_rows = all_rows if split == "practice" else await _db_rows_for_split(db, "practice")
+    practice_status = compute_practice_status(practice_rows, cleaned_rater)
+    sealed_locked = split == "sealed" and not practice_status["unlocked_sealed"]
+
     rows_by_market: dict[int, list[dict[str, Any]]] = {}
     for row in all_rows:
         rows_by_market.setdefault(int(row["market_id"]), []).append(row)
+
+    db_meta_by_id = (
+        {}
+        if sealed_locked
+        else await _db_venue_metadata(db, [int(m["market_id"]) for m in ordered])
+    )
 
     queue_items: list[dict[str, Any]] = []
     completed_by_rater = 0
     for market in ordered:
         mid = int(market["market_id"])
         mrows = rows_by_market.get(mid, [])
-        payload = _build_blind_market_payload(market, mrows, role=role, rater=cleaned_rater)
+        payload = _build_blind_market_payload(
+            market,
+            mrows,
+            role=role,
+            rater=cleaned_rater,
+            split=split,
+            db_meta_row=db_meta_by_id.get(mid),
+        )
         if payload["own_label"] is not None:
             completed_by_rater += 1
-        if role == "tiebreak" and not payload["disagreeing_fact_fields"]:
+        if sealed_locked:
+            continue
+        if split != "practice" and role == "tiebreak" and not payload["disagreeing_fact_fields"]:
             continue
         if not include_completed and payload["own_label"] is not None:
             continue
@@ -215,6 +311,8 @@ async def cu_labeling_queue(
         "rater": cleaned_rater,
         "dataset_file_present": file_present,
         "dataset_file_missing_message": None if file_present else DEFAULT_DATASET_MISSING_MESSAGE,
+        "sealed_locked": sealed_locked,
+        "practice_status": practice_status,
         "claim_vocabulary": get_claim_vocabulary(),
         "total_in_scope": len(ordered),
         "completed_by_rater": completed_by_rater,
@@ -230,8 +328,25 @@ async def cu_labeling_submit(
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
-    """Store one blind label or fact-only tiebreak row into cu_fact_labels."""
+    """Store one practice answer, blind label, or fact-only tiebreak row into cu_fact_labels."""
     _check_admin_secret(secret, request=request)
+
+    norm_split = str(payload.dataset_split or "").strip().lower()
+    if norm_split not in VALID_SPLITS:
+        raise HTTPException(status_code=400, detail=f"Invalid split {payload.dataset_split!r}")
+    if norm_split == "practice":
+        if int(payload.market_id) not in PRACTICE_CARD_BY_ID:
+            raise HTTPException(status_code=400, detail=f"Market {payload.market_id} is not part of the 5-card practice round.")
+        if str(payload.role or "").strip().lower() == "tiebreak":
+            raise HTTPException(status_code=400, detail="Practice cards cannot be submitted in tiebreak mode.")
+    elif norm_split == "sealed":
+        practice_rows = await _db_rows_for_split(db, "practice")
+        practice_status = compute_practice_status(practice_rows, payload.rater)
+        if not practice_status["unlocked_sealed"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Complete all 5 practice cards before labeling the sealed set.",
+            )
 
     market_name = (
         await db.execute(
@@ -310,7 +425,12 @@ async def cu_labeling_submit(
 
     saved = (await db.execute(stmt)).scalar_one()
     await db.commit()
-    return {"saved": True, "label": _row_to_dict(saved)}
+    resp: dict[str, Any] = {"saved": True, "label": _row_to_dict(saved)}
+    if clean["dataset_split"] == "practice":
+        updated_practice_rows = await _db_rows_for_split(db, "practice")
+        resp["practice_feedback"] = evaluate_practice_submission(clean["market_id"], clean)
+        resp["practice_status"] = compute_practice_status(updated_practice_rows, clean["rater"])
+    return resp
 
 
 @router.get("/cu-labeling/agreement")
@@ -341,10 +461,10 @@ async def cu_labeling_export_answer_key(
     _check_admin_secret(secret, request=request)
     if split not in VALID_SPLITS:
         raise HTTPException(status_code=400, detail=f"Invalid split {split!r}")
-    if split == "sealed":
+    if split in {"sealed", "practice"}:
         raise HTTPException(
             status_code=403,
-            detail="Sealed answer keys cannot leave the server; POST predictions to /api/admin/cu-labeling/score-sealed instead.",
+            detail="Only the development set answer key can be exported.",
         )
     markets = load_frozen_split(split)
     markets_by_id = {int(m["market_id"]): m for m in markets}

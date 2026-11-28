@@ -13,16 +13,22 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.models.models import CuFactLabel
 from app.routes import admin_cu_labeling
-from app.services import get_db
+from app.services import get_db, get_db_rw
 from app.utils.cu_fact_labeling import (
     CLAIM_SLOTS,
     DEFAULT_DATASET_PATHS,
     DEFAULT_REPEATABILITY_PATH,
+    EVENT_DATE_CANNOT_TELL,
+    PRACTICE_CARD_IDS,
     build_answer_key_bundle,
     build_answer_key_rows,
+    build_venue_market_link,
+    compute_practice_status,
+    evaluate_practice_submission,
     extract_subject_candidates,
     fact_disagreements,
     get_claim_vocabulary,
+    load_practice_markets,
     load_repeatability_priority_ids,
     order_queue_markets,
     select_shared_100_ids,
@@ -176,7 +182,7 @@ def test_agreement_and_scorecard_answer_key_matching_contract():
     rows = []
     # 5 paired markets:
     # - geography disagrees on 1/5 (m500 -> 80% exact, tiebroken to local)
-    # - structure disagrees on 1/5 (m501 -> 80% exact, left unresolved so omitted on m501)
+    # - event_date disagrees on 1/5 (m501 -> 80% exact, left unresolved so omitted on m501)
     # - stakes differs by 1 on all 5 (100% within-1 -> scorable as [3, 4])
     # - breadth differs by 3 on 2/5 (60% < 80% -> withheld from scorecard answers with examples)
     for idx in range(5):
@@ -187,6 +193,7 @@ def test_agreement_and_scorecard_answer_key_matching_contract():
                 rater="labeler-a",
                 role="primary",
                 geography="us",
+                event_date="2026-06-15",
                 structure="neither",
                 subjects_answer={"selection_kind": "candidate", "selected": ["Boston Celtics"]},
                 claim_frame={
@@ -207,7 +214,8 @@ def test_agreement_and_scorecard_answer_key_matching_contract():
                 rater="labeler-b",
                 role="second",
                 geography="local" if idx == 0 else "us",
-                structure="ladder" if idx == 1 else "neither",
+                event_date=EVENT_DATE_CANNOT_TELL if idx == 1 else "2026-06-15",
+                structure="neither",
                 subjects_answer={"selection_kind": "candidate", "selected": ["Boston Celtics"]},
                 claim_frame={
                     "measure": "wins",
@@ -290,9 +298,9 @@ def test_agreement_and_scorecard_answer_key_matching_contract():
     assert m500["answers"]["stakes"] == [3, 4]  # both raters kept even when tiebreak resolved facts
     assert "breadth" not in m500["answers"]  # < 80% agreement goes to Alex, never scored
 
-    # Unresolved fact disagreement on market 501 omits only the disputed fact field (structure/junk_flags).
+    # Unresolved fact disagreement on market 501 omits only the disputed fact field (event_date).
     m501 = by_mid[501]
-    assert "junk_flags" not in m501["answers"]
+    assert "event_date" not in m501["answers"]
     assert m501["answers"]["geography"] == "us"
     assert m501["answers"]["stakes"] == [3, 4]
     assert "breadth" not in m501["answers"]
@@ -693,17 +701,21 @@ def test_migration_router_and_sealed_protection(monkeypatch, caplog):
     try:
         client = TestClient(app)
 
-        # Queue announces missing frozen dataset file + ships full claim vocabulary.
+        # Queue announces missing frozen dataset file and sealed lock status.
         q_resp = client.get("/api/admin/cu-labeling/queue", params={"rater": "tester"})
         assert q_resp.status_code == 200
         q_body = q_resp.json()
         assert q_body["dataset_file_present"] is False
         assert "not loaded" in q_body["dataset_file_missing_message"]
+        assert q_body["sealed_locked"] is True
+        assert q_body["practice_status"]["required"] == 5
         assert "wins" in q_body["claim_vocabulary"]["measures"]
 
-        # Sealed export is forbidden so sealed answers cannot leave the server.
+        # Sealed & practice exports are forbidden so only dev exports leave the server.
         sealed_export = client.get("/api/admin/cu-labeling/export-answer-key", params={"split": "sealed"})
         assert sealed_export.status_code == 403
+        practice_export = client.get("/api/admin/cu-labeling/export-answer-key", params={"split": "practice"})
+        assert practice_export.status_code == 403
 
         # Dev export remains permitted.
         dev_export = client.get("/api/admin/cu-labeling/export-answer-key", params={"split": "dev"})
@@ -817,13 +829,47 @@ def test_live_datasets_and_real_score_sealed_route(monkeypatch):
         assert dev_body["total_in_scope"] == 200
         assert dev_body["items"][0]["market_id"] in shared_ids
 
-        # Sealed queue loads real cu_sealed_300_v1.json.
+        # Practice round loads 5 curated dev cards in order and locks sealed until completed.
+        practice_q = client.get("/api/admin/cu-labeling/queue", params={"split": "practice", "rater": "tester"})
+        assert practice_q.status_code == 200
+        practice_body = practice_q.json()
+        assert [item["market_id"] for item in practice_body["items"]] == list(PRACTICE_CARD_IDS)
+        assert practice_body["practice_status"]["completed"] == 0
+        assert practice_body["practice_status"]["unlocked_sealed"] is False
+        assert all(item["venue_url"] and item["venue_link_label"] for item in practice_body["items"])
+
+        # Sealed queue is locked until tester finishes all 5 practice cards.
+        sealed_locked = client.get("/api/admin/cu-labeling/queue", params={"split": "sealed", "scope": "all", "rater": "tester"})
+        assert sealed_locked.status_code == 200
+        locked_body = sealed_locked.json()
+        assert locked_body["sealed_locked"] is True
+        assert locked_body["items"] == []
+
+        # After saving all 5 practice cards for tester, sealed unlocks cleanly.
+        completed_practice_rows = [
+            _sample_label(dataset_split="practice", market_id=mid, rater="tester", role="primary")
+            for mid in PRACTICE_CARD_IDS
+        ]
+        monkeypatch.setattr(
+            admin_cu_labeling,
+            "_db_rows_for_split",
+            AsyncMock(side_effect=lambda _db, split: completed_practice_rows if split == "practice" else []),
+        )
         sealed_q = client.get("/api/admin/cu-labeling/queue", params={"split": "sealed", "scope": "all", "rater": "tester"})
         assert sealed_q.status_code == 200
         sealed_body = sealed_q.json()
         assert sealed_body["dataset_file_present"] is True
+        assert sealed_body["sealed_locked"] is False
         assert sealed_body["total_in_scope"] == 300
         first_sealed_id = int(sealed_body["items"][0]["market_id"])
+        assert sealed_body["items"][0]["venue_url"].startswith("https://")
+        assert sealed_body["items"][0]["venue_link_label"]
+
+        # Another rater remains locked until they finish their own 5 practice cards.
+        other_locked = client.get("/api/admin/cu-labeling/queue", params={"split": "sealed", "scope": "all", "rater": "other-person"})
+        assert other_locked.status_code == 200
+        assert other_locked.json()["sealed_locked"] is True
+        assert other_locked.json()["items"] == []
 
         # Real cu_eval_scorecard + zero sealed labels returns HTTP 200 no_labels_yet (not 503).
         no_labels = client.post(
@@ -870,3 +916,215 @@ def test_live_datasets_and_real_score_sealed_route(monkeypatch):
         assert m_body["scorecard"]["market_count"] == 1
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+def test_cannot_tell_event_date_validation_agreement_tiebreak_and_scorecard():
+    # Reject mixing no_single_day=True and event_date_answer="cannot_tell", and reject empty date.
+    with pytest.raises(ValueError, match="Cannot choose both"):
+        validate_label_submission(
+            _sample_label(event_date=EVENT_DATE_CANNOT_TELL, no_single_day=True)
+        )
+    with pytest.raises(ValueError, match="event_date_answer is required"):
+        validate_label_submission(_sample_label(event_date=None, no_single_day=False))
+
+    sub_a = validate_label_submission(
+        _sample_label(market_id=901, rater="a", role="primary", event_date=EVENT_DATE_CANNOT_TELL, no_single_day=False)
+    )
+    sub_b = validate_label_submission(
+        _sample_label(market_id=901, rater="b", role="second", event_date=EVENT_DATE_CANNOT_TELL, no_single_day=False)
+    )
+    sub_nsd = validate_label_submission(
+        _sample_label(market_id=902, rater="b", role="second", event_date=None, no_single_day=True)
+    )
+    assert sub_a["event_date_answer"] == EVENT_DATE_CANNOT_TELL
+    assert sub_a["no_single_day"] is False
+
+    # Two raters both choosing cannot_tell agree; cannot_tell vs no_single_day disagrees.
+    assert fact_disagreements(sub_a, sub_b) == []
+    assert fact_disagreements(sub_a, sub_nsd) == ["event_date"]
+
+    # Resolved cannot_tell omits "event_date" from scored answers and increments cannot_tell_event_date_count.
+    bundle = build_answer_key_bundle({}, [sub_a, sub_b], split="sealed")
+    assert bundle["cannot_tell_event_date_count"] == 1
+    assert len(bundle["rows"]) == 1
+    assert "event_date" not in bundle["rows"][0]["answers"]
+
+
+def test_optional_structure_and_claim_frame_omitted_from_card_submission():
+    sub = validate_label_submission(
+        {
+            "dataset_split": "sealed",
+            "market_id": 777,
+            "rater": "Grader One",
+            "role": "primary",
+            "subjects_answer": {"selection_kind": "candidate", "selected": ["Boston Celtics"]},
+            "event_date_answer": "2026-06-15",
+            "no_single_day": False,
+            "geography_answer": "us",
+            "stakes": 2,
+            "breadth": 3,
+        }
+    )
+    assert sub["structure_answer"] is None
+    assert sub["claim_frame"] is None
+
+    bundle = build_answer_key_bundle({}, [sub], split="sealed")
+    answers = bundle["rows"][0]["answers"]
+    assert "junk_flags" not in answers
+    assert "frame" not in answers
+    assert answers["event_date"] == "2026-06-15"
+    assert answers["geography"] == "us"
+
+
+def test_venue_market_link_variants_and_practice_round_feedback():
+    kalshi = build_venue_market_link(
+        {"market_id": 56862751, "source": "kalshi", "external_id": "KXCHINABIRTHLIMITS-26JUL08", "title": "Will China abolish birth limits?"}
+    )
+    assert kalshi == {
+        "venue_url": "https://kalshi.com/markets/kxchinabirthlimits",
+        "venue_link_label": "Open on Kalshi",
+    }
+
+    pm_slug = build_venue_market_link(
+        {"market_id": 71609185, "source": "polymarket", "external_id": "1434884", "title": "Will Marvell (MRVL) beat quarterly earnings?"},
+        {"market_metadata": {"polymarket_event_slug": "will-marvell-beat-quarterly-earnings"}},
+    )
+    assert pm_slug == {
+        "venue_url": "https://polymarket.com/event/will-marvell-beat-quarterly-earnings",
+        "venue_link_label": "Open on Polymarket",
+    }
+
+    pm_search = build_venue_market_link(
+        {"market_id": 71609185, "source": "polymarket", "external_id": "1434884", "title": "Will Marvell (MRVL) beat quarterly earnings?"}
+    )
+    assert pm_search["venue_url"].startswith("https://polymarket.com/markets?_q=")
+    assert pm_search["venue_link_label"] == "Find on Polymarket"
+
+    odds = build_venue_market_link({"market_id": 99999, "source": "odds_api", "title": "NASCAR cup"})
+    assert odds == {"venue_url": "https://bainluck.com/futures/99999", "venue_link_label": "Open on Bain Luck"}
+
+    practice_markets = load_practice_markets()
+    assert [m["market_id"] for m in practice_markets] == list(PRACTICE_CARD_IDS)
+
+    feedback_ok = evaluate_practice_submission(
+        71609185,
+        {
+            "subjects_answer": {"selection_kind": "candidate", "selected": ["Marvell"]},
+            "event_date_answer": EVENT_DATE_CANNOT_TELL,
+            "no_single_day": False,
+            "geography_answer": "us",
+        },
+    )
+    assert feedback_ok is not None
+    assert feedback_ok["all_facts_matched"] is True
+    assert compute_practice_status(
+        [
+            {"dataset_split": "practice", "market_id": mid, "rater": "  Alice  "}
+            for mid in PRACTICE_CARD_IDS[:3]
+        ],
+        "alice",
+    )["completed"] == 3
+
+
+def test_post_label_sealed_403_until_practice_complete_and_practice_returns_feedback(monkeypatch):
+    class _ScalarRes:
+        def __init__(self, val):
+            self._val = val
+
+        def scalar_one_or_none(self):
+            return self._val
+
+        def scalar_one(self):
+            return self._val
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _PracticeDb:
+        async def execute(self, stmt, *args, **kwargs):
+            text_sql = str(stmt)
+            if "INSERT INTO cu_fact_labels" in text_sql.upper() or ("cu_fact_labels" in text_sql and "VALUES" in text_sql):
+                row = CuFactLabel(
+                    id=1,
+                    dataset_split="practice",
+                    market_id=70733228,
+                    rater="Alice",
+                    role="primary",
+                    subjects_answer={"selection_kind": "candidate", "selected": ["Israel", "Iran"]},
+                    event_date_answer=None,
+                    no_single_day=True,
+                    geography_answer="global",
+                    structure_answer=None,
+                    claim_frame=None,
+                    stakes=4,
+                    breadth=4,
+                    evidence_note=None,
+                )
+                return _ScalarRes(row)
+            return _ScalarRes("Practice Market Title")
+
+        async def commit(self):
+            return None
+
+    async def _fake_rw():
+        yield _PracticeDb()
+
+    monkeypatch.setattr(admin_cu_labeling, "_check_admin_secret", lambda *args, **kwargs: None)
+    monkeypatch.setattr(admin_cu_labeling, "_db_rows_for_split", AsyncMock(return_value=[]))
+    app.dependency_overrides[get_db_rw] = _fake_rw
+    try:
+        client = TestClient(app)
+
+        blocked = client.post(
+            "/api/admin/cu-labeling/label",
+            json={
+                "dataset_split": "sealed",
+                "market_id": 68851041,
+                "rater": "Alice",
+                "role": "primary",
+                "subjects_answer": {"selection_kind": "candidate", "selected": ["Trump"]},
+                "event_date_answer": None,
+                "no_single_day": True,
+                "geography_answer": "us",
+                "stakes": 3,
+                "breadth": 4,
+            },
+        )
+        assert blocked.status_code == 403
+        assert "5 practice cards" in blocked.json()["detail"]
+
+        monkeypatch.setattr(
+            admin_cu_labeling,
+            "_db_rows_for_split",
+            AsyncMock(
+                return_value=[
+                    _sample_label(dataset_split="practice", market_id=70733228, rater="Alice", role="primary")
+                ]
+            ),
+        )
+        saved = client.post(
+            "/api/admin/cu-labeling/label",
+            json={
+                "dataset_split": "practice",
+                "market_id": 70733228,
+                "rater": "Alice",
+                "role": "primary",
+                "subjects_answer": {"selection_kind": "candidate", "selected": ["Israel", "Iran"]},
+                "event_date_answer": None,
+                "no_single_day": True,
+                "geography_answer": "global",
+                "stakes": 4,
+                "breadth": 4,
+            },
+        )
+        assert saved.status_code == 200
+        body = saved.json()
+        assert body["saved"] is True
+        assert body["practice_feedback"]["all_facts_matched"] is True
+        assert body["practice_status"]["completed"] == 1
+        assert body["practice_status"]["unlocked_sealed"] is False
+    finally:
+        app.dependency_overrides.pop(get_db_rw, None)
