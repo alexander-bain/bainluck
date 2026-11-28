@@ -3986,3 +3986,57 @@ class GuessGroupEntry(Base):
         ),
         Index("ix_guess_group_entries_day_group", "day_pt", "group_code"),
     )
+
+
+class CuFactLabel(Base):
+    """Human fact-labeling and blind dual-rater agreement record (#13900).
+
+    Isolated from Discover's gold-set tables (`ranking_judgments`, `ranking_grades`)
+    so Content Understanding fact evaluations never mix into feed training/evals.
+    """
+
+    __tablename__ = "cu_fact_labels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dataset_split: Mapped[str] = mapped_column(String(16), nullable=False)
+    market_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("futures_markets.id"), nullable=False
+    )
+    rater: Mapped[str] = mapped_column(String(64), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    subjects_answer: Mapped[Optional[dict]] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=True
+    )
+    event_date_answer: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    no_single_day: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    geography_answer: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    structure_answer: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    claim_frame: Mapped[Optional[dict]] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=True
+    )
+    stakes: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
+    breadth: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
+    evidence_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_split",
+            "market_id",
+            "rater",
+            "role",
+            name="uq_cu_fact_labels_split_market_rater_role",
+        ),
+        Index("ix_cu_fact_labels_split_market", "dataset_split", "market_id"),
+        Index(
+            "ix_cu_fact_labels_split_rater_role",
+            "dataset_split",
+            "rater",
+            "role",
+        ),
+    )
