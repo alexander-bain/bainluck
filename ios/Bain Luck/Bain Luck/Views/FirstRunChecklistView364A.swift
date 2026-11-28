@@ -180,6 +180,17 @@ struct FirstRunChecklistView364A: View {
                     topBarTrailingControls
                 }
             }
+
+            VStack(alignment: .leading, spacing: 6) {
+                brandWordmark
+                    .fixedSize(horizontal: true, vertical: false)
+                if state.completedCount > 0 {
+                    progressBadgeView
+                }
+                if state.completedCount < state.totalCount {
+                    skipButton
+                }
+            }
         }
     }
 
@@ -313,33 +324,38 @@ struct FirstRunChecklistView364A: View {
         return Button {
             onOpenRow(row)
         } label: {
-            HStack(spacing: 10) {
-                ChecklistThumbnail364A(
-                    urlString: preview?.imageUrl,
-                    sfSymbol: preview?.sfSymbol ?? "checkmark",
-                    accentHex: preview?.accentHex ?? "#005CC2",
-                    size: 34
-                )
-                .opacity(isRowLit ? 1.0 : 0.42)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .center, spacing: 8) {
+                            ChecklistThumbnail364A(
+                                urlString: preview?.imageUrl,
+                                sfSymbol: preview?.sfSymbol ?? "checkmark",
+                                accentHex: preview?.accentHex ?? "#005CC2",
+                                size: 30
+                            )
+                            .opacity(isRowLit ? 1.0 : 0.42)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(row.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
-                        .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
-                        .layoutPriority(1)
+                            Text(row.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .layoutPriority(1)
 
-                    HStack(spacing: 6) {
+                            Spacer(minLength: 6)
+
+                            rowStatusIcon(isDone: isDone, enabled: isRowLit)
+                        }
+
                         if let note = mutedNote ?? preview?.subtitle, !note.isEmpty {
                             Text(note)
                                 .font(.caption)
                                 .foregroundStyle(isRowLit && row == .syncDevices ? DS.blueReadable : DS.textSecondaryReadable)
-                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                                .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
-                                .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
+
                         if let badgePillText {
                             Text(badgePillText)
                                 .font(.caption2.weight(.bold).monospacedDigit())
@@ -350,13 +366,51 @@ struct FirstRunChecklistView364A: View {
                                 .fixedSize(horizontal: true, vertical: false)
                         }
                     }
+                } else {
+                    HStack(spacing: 10) {
+                        ChecklistThumbnail364A(
+                            urlString: preview?.imageUrl,
+                            sfSymbol: preview?.sfSymbol ?? "checkmark",
+                            accentHex: preview?.accentHex ?? "#005CC2",
+                            size: 34
+                        )
+                        .opacity(isRowLit ? 1.0 : 0.42)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.84)
+                                .layoutPriority(1)
+
+                            HStack(spacing: 6) {
+                                if let note = mutedNote ?? preview?.subtitle, !note.isEmpty {
+                                    Text(note)
+                                        .font(.caption)
+                                        .foregroundStyle(isRowLit && row == .syncDevices ? DS.blueReadable : DS.textSecondaryReadable)
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.84)
+                                }
+                                if let badgePillText {
+                                    Text(badgePillText)
+                                        .font(.caption2.weight(.bold).monospacedDigit())
+                                        .foregroundStyle(DS.blueReadable)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 2)
+                                        .background(DS.blueReadable.opacity(colorScheme == .dark ? 0.18 : 0.10), in: Capsule())
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                            }
+                        }
+
+                        Spacer(minLength: 6)
+
+                        rowStatusIcon(isDone: isDone, enabled: isRowLit)
+                    }
                 }
-
-                Spacer(minLength: 6)
-
-                rowStatusIcon(isDone: isDone, enabled: isRowLit)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 10 : 12)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -385,9 +439,12 @@ struct FirstRunChecklistView364A: View {
                 Text("Go to Discover \u{2192}")
                     .font(.headline)
                     .foregroundStyle(solidButtonForeground)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.8)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
                     .padding(.horizontal, 12)
+                    .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 10 : 0)
                     .frame(maxWidth: .infinity, minHeight: 46)
                     .background(DS.blueReadable, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }

@@ -248,7 +248,7 @@ struct PreferencesView: View {
 
     #if os(iOS)
     private var preferencesTitleDisplayMode: NavigationBarItem.TitleDisplayMode {
-        if sizeClass == .regular { return .inline }
+        if sizeClass == .regular || dynamicTypeSize.isAccessibilitySize { return .inline }
         return .large
     }
     #endif
@@ -1115,7 +1115,7 @@ struct PreferencesView: View {
                             Spacer(minLength: 8)
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.secondary)
                         }
                         VStack(alignment: .leading, spacing: 2) {
                             Text("App icon")
@@ -1195,40 +1195,27 @@ struct PreferencesView: View {
     #if os(iOS)
     private var gameAlertsRow: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle(isOn: Binding(
-                get: { gameAlertsEnabled },
-                set: { enabled in
-                    gameAlertsEnabled = enabled
-                    if enabled {
-                        Task {
-                            notificationAuthStatus = await GameAlertsPreference13083.shared.optInAndRequestPermission()
+            preferenceSwitchContent(
+                title: "Game alerts",
+                subtitle: GameAlertsPreference13083.subtitle,
+                subtitleColor: .secondary.opacity(0.75),
+                iconName: "bell.badge.fill",
+                iconAlignment: .top,
+                isOn: Binding(
+                    get: { gameAlertsEnabled },
+                    set: { enabled in
+                        gameAlertsEnabled = enabled
+                        if enabled {
+                            Task {
+                                notificationAuthStatus = await GameAlertsPreference13083.shared.optInAndRequestPermission()
+                            }
+                        } else {
+                            GameAlertsPreference13083.shared.setEnabled(false)
                         }
-                    } else {
-                        GameAlertsPreference13083.shared.setEnabled(false)
                     }
-                }
-            )) {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "bell.badge.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 2)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Game alerts")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(GameAlertsPreference13083.subtitle)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary.opacity(0.75))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-            .toggleStyle(.switch)
-            .tint(Color.accentColor)
-            .accessibilityIdentifier("preferences.gameAlertsToggle")
+                ),
+                accessibilityIdentifier: "preferences.gameAlertsToggle"
+            )
 
             if gameAlertsEnabled && notificationAuthStatus == .denied {
                 Divider()
@@ -1458,34 +1445,23 @@ struct PreferencesView: View {
     }
 
     private var analyticsConsentRow: some View {
-        Toggle(isOn: Binding(
-            get: { analyticsConsentGranted },
-            set: { granted in
-                telemetryPersistence = TelemetryConsent.shared.set(granted ? .analytics : .none)
-                analyticsConsentGranted = TelemetryConsent.shared.isGranted
-            }
-        )) {
-            HStack(spacing: 10) {
-                Image(systemName: "chart.bar.doc.horizontal")
-                    .font(.system(size: 20))
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Share usage analytics")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.primary)
-                    Text(analyticsConsentSubtitle)
-                        .font(.caption2)
-                        .foregroundStyle(
-                            telemetryPersistence == .unavailable
-                                ? Color.orange
-                                : Color.secondary.opacity(0.7)
-                        )
+        preferenceSwitchContent(
+            title: "Share usage analytics",
+            subtitle: analyticsConsentSubtitle,
+            subtitleColor: telemetryPersistence == .unavailable
+                ? Color.orange
+                : Color.secondary.opacity(0.7),
+            iconName: "chart.bar.doc.horizontal",
+            iconAlignment: .center,
+            isOn: Binding(
+                get: { analyticsConsentGranted },
+                set: { granted in
+                    telemetryPersistence = TelemetryConsent.shared.set(granted ? .analytics : .none)
+                    analyticsConsentGranted = TelemetryConsent.shared.isGranted
                 }
-            }
-        }
-        .toggleStyle(.switch)
-        .tint(Color.accentColor)
+            ),
+            accessibilityIdentifier: nil
+        )
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .background(Color.cardBackground)
@@ -1494,12 +1470,86 @@ struct PreferencesView: View {
         .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
     }
 
+    @ViewBuilder
+    private func preferenceSwitchContent(
+        title: String,
+        subtitle: String,
+        subtitleColor: Color,
+        iconName: String,
+        iconAlignment: VerticalAlignment,
+        isOn: Binding<Bool>,
+        accessibilityIdentifier: String?
+    ) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            let switchControl = Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(Color.accentColor)
+                .accessibilityLabel(title)
+                .modifier(OptionalAccessibilityIdentifierModifier(identifier: accessibilityIdentifier))
+            VStack(alignment: .leading, spacing: 6) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 10) {
+                        Text(title)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 8)
+                        switchControl
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(title)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Spacer(minLength: 0)
+                            switchControl
+                        }
+                    }
+                }
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(subtitleColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            Toggle(isOn: isOn) {
+                HStack(alignment: iconAlignment, spacing: 10) {
+                    Image(systemName: iconName)
+                        .font(.system(size: 20))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, iconAlignment == .top ? 2 : 0)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(subtitle)
+                            .font(.caption2)
+                            .foregroundStyle(subtitleColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(Color.accentColor)
+            .modifier(OptionalAccessibilityIdentifierModifier(identifier: accessibilityIdentifier))
+        }
+    }
+
     // MARK: - Shared Components
 
     private func sectionHeader(emoji: String, title: String, count: Int?) -> some View {
         HStack {
             Text("\(emoji) \(title)")
                 .font(.title3).fontWeight(.bold)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 1 : nil)
+                .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 0.68 : 1.0)
+                .allowsTightening(true)
             Spacer()
             if let count, count > 0 {
                 HStack(spacing: 2) {
@@ -1514,5 +1564,17 @@ struct PreferencesView: View {
             }
         }
         .padding(.horizontal)
+    }
+}
+
+private struct OptionalAccessibilityIdentifierModifier: ViewModifier {
+    let identifier: String?
+
+    func body(content: Content) -> some View {
+        if let identifier, !identifier.isEmpty {
+            content.accessibilityIdentifier(identifier)
+        } else {
+            content
+        }
     }
 }
