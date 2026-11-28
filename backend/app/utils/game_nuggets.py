@@ -664,13 +664,13 @@ def _resolve_known_team(raw: str, *, home_team: str, away_team: str) -> Optional
 
     raw_toks = {
         tok
-        for tok in re.findall(r"[a-z0-9]+", low)
+        for tok in re.findall(r"[^\W_]+", low)
         if len(tok) >= 4 and tok not in _TEAM_MATCH_STOPWORDS
     }
     if not raw_toks:
         return None
-    a_toks = {tok for tok in re.findall(r"[a-z0-9]+", a_low) if len(tok) >= 4 and tok not in _TEAM_MATCH_STOPWORDS}
-    h_toks = {tok for tok in re.findall(r"[a-z0-9]+", h_low) if len(tok) >= 4 and tok not in _TEAM_MATCH_STOPWORDS}
+    a_toks = {tok for tok in re.findall(r"[^\W_]+", a_low) if len(tok) >= 4 and tok not in _TEAM_MATCH_STOPWORDS}
+    h_toks = {tok for tok in re.findall(r"[^\W_]+", h_low) if len(tok) >= 4 and tok not in _TEAM_MATCH_STOPWORDS}
     a_hits = len(raw_toks & a_toks)
     h_hits = len(raw_toks & h_toks)
     if a_hits > 0 and h_hits == 0:
@@ -771,11 +771,12 @@ _OU_LINE_RE = re.compile(
 _PAREN_LINE_RE = re.compile(r"\(([+-]?[0-9]+(?:\.[0-9]+)?)\)")
 _SIDE_PAREN_RE = re.compile(r"\(\s*(over|under)\s*\)", re.IGNORECASE)
 _UNREADABLE_CLAIM_RE = re.compile(r"[:?]|\bo/u\b|\bover/under\b|\bvs\.?\b", re.IGNORECASE)
+_SPREAD_TEAM_TOK_RE = r"(?:[^\W_]|['.-])+"
 _SPREAD_PAREN_TEAM_RE = re.compile(
-    r"([A-Za-z0-9'.-]+(?:\s+[A-Za-z0-9'.-]+){0,3})\s*\(\s*([+-]?\d+(?:\.\d+)?)\s*\)"
+    rf"({_SPREAD_TEAM_TOK_RE}(?:\s+{_SPREAD_TEAM_TOK_RE}){{0,4}})\s*\(\s*([+-]?\d+(?:\.\d+)?)\s*\)"
 )
 _SPREAD_INLINE_TEAM_RE = re.compile(
-    r"([A-Za-z0-9'.-]+(?:\s+[A-Za-z0-9'.-]+){0,3})\s+([+-]\d+(?:\.\d+)?)\b"
+    rf"({_SPREAD_TEAM_TOK_RE}(?:\s+{_SPREAD_TEAM_TOK_RE}){{0,4}})\s+([+-]\d+(?:\.\d+)?)\b"
 )
 _GOAL_SPORT_TOKENS = ("soccer", "hockey", "nhl", "ahl", "khl")
 
@@ -1013,7 +1014,19 @@ def _parse_spread_threshold(
         m = pattern.search(mname_clean)
         if not m:
             continue
-        raw_team = re.sub(r"^(?:1H|2H|1Q|2Q|3Q|4Q|spread|point\s+spread)\b[:\s-]*", "", m.group(1), flags=re.I).strip()
+        raw_team = m.group(1)
+        for _ in range(2):
+            nxt = re.sub(
+                r"^(?:1H|2H|1Q|2Q|3Q|4Q|1P|2P|3P|(?:1st|first|2nd|second|3rd|third|4th|fourth)\s+(?:half|quarter|period)|overtime|spread|point\s+spread)\b[:\s-]*",
+                "",
+                raw_team,
+                flags=re.I,
+            ).strip()
+            if nxt == raw_team:
+                break
+            raw_team = nxt
+        if not raw_team or not re.search(r"[^\W\d_]", raw_team):
+            continue
         try:
             val = float(m.group(2))
         except ValueError:
@@ -1028,10 +1041,16 @@ def _parse_spread_threshold(
                 and {named_team.lower(), subj_name.lower()} == {home_team.lower(), away_team.lower()}
             ):
                 return -val
-        thresh_fallback = row.get("threshold")
-        if isinstance(thresh_fallback, (int, float)) and not isinstance(thresh_fallback, bool):
-            return float(thresh_fallback)
-        return val
+        out_low = out_name.lower()
+        if (
+            not out_name
+            or out_low in {"yes", "no", "over", "under", "draw", "tie"}
+            or not re.search(r"[^\W\d_]", out_name)
+        ):
+            return None
+        if _resolve_known_team(out_name, home_team=raw_team, away_team="") is not None:
+            return val
+        return -val
 
     thresh = row.get("threshold")
     if isinstance(thresh, (int, float)) and not isinstance(thresh, bool):
