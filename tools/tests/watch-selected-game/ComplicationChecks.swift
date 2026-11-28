@@ -63,8 +63,11 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     precondition(WatchComplicationProjection.snapshot(game: homeOnly, savedAt: clock)?.detail == "46% · Scheduled",
                  "Missing away stays missing and uses scalar home rounding")
     let zero = try detail("\"status\":\"live\",\"hero_probability\":0,\"hero_probability_away\":1,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\"")
-    precondition(WatchComplicationProjection.snapshot(game: zero, savedAt: clock)?.detail == "0% · Live",
-                 "A valid zero forecast is not missing data")
+    precondition(WatchComplicationProjection.snapshot(game: zero, savedAt: clock)?.detail == "<1% · Live",
+                 "An extreme zero forecast on an open market renders <1% rather than 0%")
+    let hundred = try detail("\"status\":\"live\",\"hero_probability\":1,\"hero_probability_away\":0,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\"")
+    precondition(WatchComplicationProjection.snapshot(game: hundred, savedAt: clock)?.detail == ">99% · Live",
+                 "An extreme 100% forecast on an open market renders >99% rather than 100%")
     for status in ["closed", "unknown", "delayed"] {
         let unsupported = try detail("\"status\":\"\(status)\",\"hero_probability\":0.6,\"hero_probability_observed_at\":\"2026-10-04T17:58:00Z\",\"home_score\":4,\"away_score\":2,\"score_observed_at\":\"2026-10-04T17:58:00Z\"")
         precondition(WatchComplicationProjection.snapshot(game: unsupported, savedAt: clock) == nil,

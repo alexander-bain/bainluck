@@ -184,7 +184,16 @@ nonisolated enum WatchComplicationProjection {
               validObservation(observedAt, savedAt: savedAt) else {
             return nil
         }
-        guard let formatted = WatchPinsPercent12640.format(probability) else {
+        let subOne = ExternalSurfaceProbabilityFormat.isSubOne(probability)
+        let above99 = ExternalSurfaceProbabilityFormat.isAboveNinetyNine(probability)
+        let rounded: Int
+        if subOne {
+            rounded = 1
+        } else if above99 {
+            rounded = 99
+        } else if let whole = renderedPercent(probability) {
+            rounded = min(max(whole, 1), 99)
+        } else {
             return nil
         }
         let reading = WatchRectangularReading(
@@ -195,15 +204,15 @@ nonisolated enum WatchComplicationProjection {
             awayName: trimmedOutcome,
             home: nil,
             away: nil,
-            homePercent: formatted.rounded,
+            homePercent: rounded,
             homeScore: nil,
             awayScore: nil,
             commenceTime: nil,
             stateLabel: "Market",
             observedAt: observedAt,
             scoreObservedAt: nil,
-            subOnePercent: formatted.subOne ? true : nil,
-            aboveNinetyNinePercent: formatted.aboveNinetyNine ? true : nil
+            subOnePercent: subOne ? true : nil,
+            aboveNinetyNinePercent: above99 ? true : nil
         )
         guard let pct = reading.formattedHomePercent else { return nil }
         let detail = "\(trimmedOutcome) \(pct)"
