@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import importlib
 import json
 import logging
 import time
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 CONTAINER_PREVIEWS_REDIS_KEY = "containers:kit_previews:v1"
 CONTAINER_PREVIEWS_DECK_KEY_PREFIX = "containers:kit_previews:v1:deck:"
 CONTAINER_PREVIEWS_TTL_SECONDS = 7 * 86400
+
+
+def _roundup_containers_module() -> Any:
+    return importlib.import_module("app.utils.roundup_containers")
 
 
 def compute_deck_id(pages: list[dict[str, Any]], *, snapshot_captured_at: str) -> str:
@@ -53,9 +58,8 @@ async def load_covered_market_ids(
 ) -> set[int]:
     """Load market IDs already covered by persisted containers, Midterms, and round-ups."""
     from app.tasks.grouping_sentinel import _GRAPH_SQL, collection_ids, definition_coverage
-    from app.utils.roundup_containers import ensure_optional_roundup_candidates
 
-    ensure_optional_roundup_candidates()
+    _roundup_containers_module().ensure_optional_roundup_candidates()
     covered: set[int] = set(collection_ids())
     try:
         rows = (await session.execute(text(_GRAPH_SQL))).all()
@@ -93,11 +97,10 @@ async def load_covered_public_set_names(
     failed_reads: list[str] | None = None,
 ) -> set[str]:
     """Load slug and name strings of published containers and active public round-ups."""
-    from app.utils.roundup_containers import ROUNDUP_PRODUCERS, ensure_optional_roundup_candidates
-
-    ensure_optional_roundup_candidates()
+    rc = _roundup_containers_module()
+    rc.ensure_optional_roundup_candidates()
     names: set[str] = set()
-    for prod in list(ROUNDUP_PRODUCERS.values()):
+    for prod in list(rc.ROUNDUP_PRODUCERS.values()):
         if prod.enabled is not None and not prod.enabled():
             continue
         if getattr(prod, "stage", "public") != "public":
