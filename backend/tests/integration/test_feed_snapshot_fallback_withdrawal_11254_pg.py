@@ -464,3 +464,62 @@ async def test_a_cancelled_first_pass_returns_nothing_and_runs_no_second(windowe
     assert {n: _q(got.get(i)) for n, i in ids.items()} == {
         n: case[1] for n, case in _WINDOW_CASES.items()
     }
+
+
+async def test_positive_pass2_cache_and_recent_withdrawal_invalidation_on_pg(windowed_db):
+    """#13573: positive >3h Pass-2 hits skip full history scans on subsequent reads
+    and still invalidate immediately on real Postgres when a withdrawal arrives."""
+    from sqlalchemy import event
+
+    from app.utils.feed_snapshot_fallback import clear_snapshot_fallback_empty_cache
+
+    maker, engine, ids = windowed_db
+    target_id = ids["all_old_history"]
+    empty_id = ids["no_rows"]
+
+    executed_sqls: list[str] = []
+
+    def _on_sql(_conn, _cursor, statement, _params, _ctx, _many):
+        if "FROM win_prob_snapshots" in statement:
+            executed_sqls.append(statement)
+
+    clear_snapshot_fallback_empty_cache()
+    event.listen(engine.sync_engine, "before_cursor_execute", _on_sql)
+    try:
+        async with maker() as session:
+            # Cold read runs Pass 1 + Pass 2 and populates positive (0.25) and empty (None).
+            got1 = await read_snapshot_fallbacks(session, [target_id, empty_id], now=_NOW)
+            assert _q(got1.get(target_id)) == Decimal("0.2500")
+            assert empty_id not in got1
+            assert sum("WITH retired AS" in s for s in executed_sqls) == 2
+
+            # 2 minutes later: Pass 1 + bounded withdrawal check run, full Pass-2 scan skipped.
+            executed_sqls.clear()
+            t1 = _NOW + timedelta(minutes=2)
+            got2 = await read_snapshot_fallbacks(session, [target_id, empty_id], now=t1)
+            assert _q(got2.get(target_id)) == Decimal("0.2500")
+            assert empty_id not in got2
+            assert sum("WITH retired AS" in s for s in executed_sqls) == 1  # Pass 1 only
+
+            # Insert a withdrawal for kalshi in [t2 - 3h, t2]; Pass 2 must re-run and drop 0.25.
+            t2 = _NOW + timedelta(minutes=4)
+            session.add(
+                WinProbSnapshot(
+                    event_id=target_id,
+                    source="kalshi",
+                    captured_at=_NOW + timedelta(minutes=3),
+                    home_win_probability=None,
+                    away_win_probability=None,
+                    game_state=_WITHDRAWN,
+                    reading_count=1,
+                )
+            )
+            await session.commit()
+
+            executed_sqls.clear()
+            got3 = await read_snapshot_fallbacks(session, [target_id, empty_id], now=t2)
+            assert target_id not in got3
+            assert sum("WITH retired AS" in s for s in executed_sqls) == 2  # Pass 1 + Pass 2
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", _on_sql)
+        clear_snapshot_fallback_empty_cache()
