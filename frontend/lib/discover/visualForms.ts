@@ -1198,7 +1198,7 @@ export const PAIRED_METRIC_REGISTER: Record<string, PairedMetricSet> = {
     category: "entertainment",
     kicker: "OSCARS 2027 · BEST ANIMATED FEATURE",
     title: "Wildwood leads Best Animated Feature at 86% to win",
-    subtitle: "Top 4 animated films by win % (#6330235 + #58492239) · Sourced TMDB credits & posters",
+    subtitle: "Top 4 animated films by win %",
     selection_rule: "top_4_by_stage_2_then_stage_1",
     stage_1_label: "Nominated",
     stage_2_label: "Wins",

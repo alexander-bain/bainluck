@@ -3,6 +3,21 @@ import SwiftUI
 
 // MARK: - Decision 364: A — Single-Screen Five-Row First-Run Checklist (#11934)
 
+private enum ChecklistColumn364A {
+    static let maxWidth: CGFloat = 680
+}
+
+private extension View {
+    func checklistReadableColumn364A(
+        alignment: Alignment = .leading,
+        maxWidth: CGFloat = ChecklistColumn364A.maxWidth
+    ) -> some View {
+        self
+            .frame(maxWidth: maxWidth, alignment: alignment)
+            .frame(maxWidth: .infinity)
+    }
+}
+
 /// Shared live thumbnail helper that checks `machineryPreloadedImages12288` first
 /// (making offline simulator renders crisp and network-free), then falls back to
 /// `AsyncImage` over HTTPS, or a tinted SF Symbol badge when no URL is served.
@@ -74,6 +89,10 @@ struct FirstRunChecklistView364A: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    private var columnMaxWidth: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 800 : ChecklistColumn364A.maxWidth
+    }
+
     private var solidButtonForeground: Color {
         colorScheme == .dark ? Color(hex: "#0F172A") : .white
     }
@@ -89,13 +108,13 @@ struct FirstRunChecklistView364A: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 8)
-            .frame(maxWidth: 680, alignment: .leading)
+            .frame(maxWidth: columnMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
             .background(DS.surface)
 
             #if os(iOS)
             GeometryReader { proxy in
-                checklistScrollBody(columnWidth: min(680, max(1, proxy.size.width)))
+                checklistScrollBody(columnWidth: min(columnMaxWidth, max(1, proxy.size.width)))
             }
             #else
             checklistScrollBody(columnWidth: nil)
@@ -121,7 +140,7 @@ struct FirstRunChecklistView364A: View {
                 }
                 rowsCard
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 12 : 16)
             .padding(.top, 2)
             .padding(.bottom, 14)
 
@@ -131,7 +150,7 @@ struct FirstRunChecklistView364A: View {
                     .frame(maxWidth: .infinity)
             } else {
                 column
-                    .frame(maxWidth: 680, alignment: .leading)
+                    .frame(maxWidth: columnMaxWidth, alignment: .leading)
                     .frame(maxWidth: .infinity)
             }
         }
@@ -166,6 +185,17 @@ struct FirstRunChecklistView364A: View {
                     .fixedSize(horizontal: true, vertical: false)
                 HStack(spacing: 8) {
                     topBarTrailingControls
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                brandWordmark
+                    .fixedSize(horizontal: true, vertical: false)
+                if state.completedCount > 0 {
+                    progressBadgeView
+                }
+                if state.completedCount < state.totalCount {
+                    skipButton
                 }
             }
         }
@@ -301,33 +331,37 @@ struct FirstRunChecklistView364A: View {
         return Button {
             onOpenRow(row)
         } label: {
-            HStack(spacing: 10) {
-                ChecklistThumbnail364A(
-                    urlString: preview?.imageUrl,
-                    sfSymbol: preview?.sfSymbol ?? "checkmark",
-                    accentHex: preview?.accentHex ?? "#005CC2",
-                    size: 34
-                )
-                .opacity(isRowLit ? 1.0 : 0.42)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .center, spacing: 8) {
+                            ChecklistThumbnail364A(
+                                urlString: preview?.imageUrl,
+                                sfSymbol: preview?.sfSymbol ?? "checkmark",
+                                accentHex: preview?.accentHex ?? "#005CC2",
+                                size: 30
+                            )
+                            .opacity(isRowLit ? 1.0 : 0.42)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(row.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
-                        .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
-                        .layoutPriority(1)
+                            Spacer(minLength: 6)
 
-                    HStack(spacing: 6) {
+                            rowStatusIcon(isDone: isDone, enabled: isRowLit)
+                        }
+
+                        Text(row.title)
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+
                         if let note = mutedNote ?? preview?.subtitle, !note.isEmpty {
                             Text(note)
                                 .font(.caption)
                                 .foregroundStyle(isRowLit && row == .syncDevices ? DS.blueReadable : DS.textSecondaryReadable)
-                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                                .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
-                                .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
+
                         if let badgePillText {
                             Text(badgePillText)
                                 .font(.caption2.weight(.bold).monospacedDigit())
@@ -338,13 +372,51 @@ struct FirstRunChecklistView364A: View {
                                 .fixedSize(horizontal: true, vertical: false)
                         }
                     }
+                } else {
+                    HStack(spacing: 10) {
+                        ChecklistThumbnail364A(
+                            urlString: preview?.imageUrl,
+                            sfSymbol: preview?.sfSymbol ?? "checkmark",
+                            accentHex: preview?.accentHex ?? "#005CC2",
+                            size: 34
+                        )
+                        .opacity(isRowLit ? 1.0 : 0.42)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.84)
+                                .layoutPriority(1)
+
+                            HStack(spacing: 6) {
+                                if let note = mutedNote ?? preview?.subtitle, !note.isEmpty {
+                                    Text(note)
+                                        .font(.caption)
+                                        .foregroundStyle(isRowLit && row == .syncDevices ? DS.blueReadable : DS.textSecondaryReadable)
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.84)
+                                }
+                                if let badgePillText {
+                                    Text(badgePillText)
+                                        .font(.caption2.weight(.bold).monospacedDigit())
+                                        .foregroundStyle(DS.blueReadable)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 2)
+                                        .background(DS.blueReadable.opacity(colorScheme == .dark ? 0.18 : 0.10), in: Capsule())
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                            }
+                        }
+
+                        Spacer(minLength: 6)
+
+                        rowStatusIcon(isDone: isDone, enabled: isRowLit)
+                    }
                 }
-
-                Spacer(minLength: 6)
-
-                rowStatusIcon(isDone: isDone, enabled: isRowLit)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 10 : 12)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -373,15 +445,19 @@ struct FirstRunChecklistView364A: View {
                 Text("Go to Discover \u{2192}")
                     .font(.headline)
                     .foregroundStyle(solidButtonForeground)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.8)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
                     .padding(.horizontal, 12)
+                    .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 10 : 0)
                     .frame(maxWidth: .infinity, minHeight: 46)
                     .background(DS.blueReadable, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
+            .checklistReadableColumn364A(alignment: .center, maxWidth: columnMaxWidth)
             .accessibilityIdentifier("checklist364A.goToDiscoverButton")
         }
         .background(DS.surface)
@@ -401,12 +477,14 @@ struct MyStuffChecklistBanner364A: View {
     var body: some View {
         if state.showsInMyStuff {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
+                HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 8) {
                     Text("Getting started \u{00B7} \(state.progressText)")
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(DS.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.85)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
                     Button {
                         state.dismissedFromMyStuff = true
@@ -430,15 +508,17 @@ struct MyStuffChecklistBanner364A: View {
                         Button {
                             onOpenRow(row)
                         } label: {
-                            HStack(spacing: 8) {
+                            HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .firstTextBaseline : .center, spacing: 8) {
                                 Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(isDone ? DS.greenReadable : (lit ? DS.blueReadable : DS.textMuted))
                                 Text(row.title)
                                     .font(.footnote.weight(isDone ? .medium : .semibold))
                                     .foregroundStyle(isDone ? DS.textSecondaryReadable : (lit ? DS.textPrimary : DS.textMuted))
-                                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                                    .minimumScaleFactor(0.84)
+                                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
                                 if !isDone {
                                     Image(systemName: "chevron.right")
@@ -657,6 +737,7 @@ struct FirstRunLookupStepView364A: View {
                     }
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
         }
         .background(DS.surface)
@@ -923,6 +1004,7 @@ struct FirstRunFollowStepView364A: View {
                     }
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
 
             Divider()
@@ -936,6 +1018,7 @@ struct FirstRunFollowStepView364A: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .checklistReadableColumn364A(alignment: .center)
             .background(DS.surface)
         }
         .background(DS.surface)
@@ -1105,6 +1188,7 @@ struct FirstRunExploreSetsStepView364A: View {
                     }
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
 
             Divider()
@@ -1118,6 +1202,7 @@ struct FirstRunExploreSetsStepView364A: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .checklistReadableColumn364A(alignment: .center)
             .background(DS.surface)
         }
         .background(DS.surface)
@@ -1193,6 +1278,7 @@ struct FirstRunSignInStepView364A: View {
                     }
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
         }
         .background(DS.surface)
@@ -1373,6 +1459,7 @@ struct FirstRunAlertsStepView364A: View {
                     .padding(.top, 4)
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
         }
         .background(DS.surface)
@@ -1421,6 +1508,7 @@ struct FirstRunLeaveToDiscoverPreview364A: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .checklistReadableColumn364A()
 
             Divider()
 
@@ -1436,6 +1524,7 @@ struct FirstRunLeaveToDiscoverPreview364A: View {
                     }
                 }
                 .padding(16)
+                .checklistReadableColumn364A()
             }
         }
         .background(DS.surface)
@@ -1479,6 +1568,7 @@ private struct StepTopBar364A: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .checklistReadableColumn364A()
     }
 }
 

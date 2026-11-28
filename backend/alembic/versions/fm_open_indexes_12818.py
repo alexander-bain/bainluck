@@ -1,0 +1,124 @@
+"""#12818: add three open-market partial indexes on futures_markets.
+
+MIGRATION-CLASS (D45 / notice 47b): merged and applied only on Alex's separate
+go. Prepared ahead of Step 1 open-catalog growth (55k -> 179.2k open markets):
+
+1. ``ix_fm_open_volume_24h``:
+   Covers open markets sorted by 24h volume (``enrich_cu_v2_profiles`` Phase 1,
+   ``enrich_market_images``, and ``/api/events/search-suggestions`` tier-1
+   volume scans across all open markets, including event-linked ones omitted
+   by ``ix_fm_feed_open_volume``). Omits ``updated_at`` so poll stamp-only
+   rewrites retain PostgreSQL HOT updates when heap pages have room.
+2. ``ix_fm_open_resolution_date``:
+   Covers open markets with a ``resolution_date`` (e.g. ``daily_digest``,
+   open expiry windows, and resolution-date scans across all open markets).
+3. ``ix_fm_open_pm_event_slug``:
+   C-collated partial expression index on
+   ``((market_metadata ->> 'polymarket_event_slug') COLLATE "C")`` for open
+   markets, serving ``_verified_title_candidates_stmt``'s bytewise prefix
+   range predicate (``>= stem AND < upper``) even under cached generic plans.
+
+THE UNDO LINE (D51):
+
+    alembic downgrade anon_install_counts_434a
+
+Deploy safety:
+Fully transactional single-unit migration (preserves ``env.py`` lock-timeout
+retry under ``app.utils.migration_lock_budget``), and no ``CONCURRENTLY`` inside
+``upgrade()`` (gotcha #31 / ``test_futures_stamp_semantics.py``). Because
+``CREATE INDEX IF NOT EXISTS`` is used, an operator may optionally pre-build
+these CONCURRENTLY via ``psql`` ahead of the release if desired, making release
+application a metadata no-op:
+
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_fm_open_volume_24h
+        ON futures_markets (volume_24h DESC NULLS LAST, id)
+        WHERE status = 'open';
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_fm_open_resolution_date
+        ON futures_markets (resolution_date ASC, volume_24h DESC NULLS LAST, id)
+        WHERE status = 'open' AND resolution_date IS NOT NULL;
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_fm_open_pm_event_slug
+        ON futures_markets (((market_metadata ->> 'polymarket_event_slug') COLLATE "C"))
+        WHERE status = 'open' AND (market_metadata ->> 'polymarket_event_slug') IS NOT NULL;
+
+Revision ID: fm_open_indexes_12818
+Revises: anon_install_counts_434a
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+from sqlalchemy import text
+
+revision: str = "fm_open_indexes_12818"
+down_revision: Union[str, None] = "anon_install_counts_434a"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+EXPECTED_INDEXES: tuple[str, ...] = (
+    "ix_fm_open_volume_24h",
+    "ix_fm_open_resolution_date",
+    "ix_fm_open_pm_event_slug",
+)
+
+
+def upgrade() -> None:
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_fm_open_volume_24h
+        ON futures_markets (volume_24h DESC NULLS LAST, id)
+        WHERE status = 'open'
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_fm_open_resolution_date
+        ON futures_markets (resolution_date ASC, volume_24h DESC NULLS LAST, id)
+        WHERE status = 'open' AND resolution_date IS NOT NULL
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_fm_open_pm_event_slug
+        ON futures_markets (((market_metadata ->> 'polymarket_event_slug') COLLATE "C"))
+        WHERE status = 'open' AND (market_metadata ->> 'polymarket_event_slug') IS NOT NULL
+        """
+    )
+    # Fail loudly if a pre-built CONCURRENTLY index exists in an INVALID state
+    # (`CREATE INDEX IF NOT EXISTS` silently skips existing invalid indexes).
+    rows = op.get_bind().execute(
+        text(
+            """
+            SELECT c.relname, i.indisvalid
+            FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indexrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = current_schema()
+              AND c.relname IN (
+                  'ix_fm_open_volume_24h',
+                  'ix_fm_open_resolution_date',
+                  'ix_fm_open_pm_event_slug'
+              )
+            """
+        )
+    ).all()
+    validity = {str(name): bool(is_valid) for name, is_valid in rows}
+    invalid_or_missing = [
+        name for name in EXPECTED_INDEXES if not validity.get(name, False)
+    ]
+    if invalid_or_missing:
+        raise RuntimeError(
+            f"{revision}: index(es) missing or invalid (indisvalid=false): "
+            f"{', '.join(invalid_or_missing)}"
+        )
+
+
+def downgrade() -> None:
+    op.drop_index(
+        "ix_fm_open_pm_event_slug", table_name="futures_markets", if_exists=True
+    )
+    op.drop_index(
+        "ix_fm_open_resolution_date", table_name="futures_markets", if_exists=True
+    )
+    op.drop_index(
+        "ix_fm_open_volume_24h", table_name="futures_markets", if_exists=True
+    )

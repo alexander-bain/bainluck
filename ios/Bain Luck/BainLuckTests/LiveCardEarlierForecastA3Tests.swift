@@ -194,7 +194,7 @@ final class LiveCardEarlierForecastA3Tests: XCTestCase {
             of: "privatefuncliveCardBaseline11296(_served:EventDetail)->(away:Double,home:Double)?{"))
         XCTAssertTrue(page[body.upperBound...].hasPrefix(
             "letevent=vm.headline(served)"
-            + "lethasScore=EventDetailView.showsScore(status:event.status,away:event.awayScore,home:event.homeScore)"
+            + "lethasScore=EventDetailView.showsScore(status:event.status,away:event.awayScore,home:event.homeScore)&&event.scoreSourceUnavailable!=true"
             + "returnLivePregameComparison11296.servedHalves("
             + "liveForecast11296(event,hasScore:hasScore),projection:event.pregameProjection)}"),
                       "exactly when the headline prints its admitted pair, that pair's served halves")

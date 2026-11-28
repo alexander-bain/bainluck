@@ -180,7 +180,8 @@ extension FeedEventData {
             espn: d.espn, ei: d.ei, pulse: d.pulse, winProbabilitySources: d.winProbabilitySources,
             confidenceTier: nil, confidenceScore: nil,
             homeImageUrl: nil, awayImageUrl: nil, homeFlagUrl: nil, awayFlagUrl: nil,
-            endedAt: nil, discoverMarqueeFinal: nil, venueClosedNoWinner: d.venueClosedNoWinner
+            endedAt: nil, discoverMarqueeFinal: nil, venueClosedNoWinner: d.venueClosedNoWinner,
+            heroProbability: d.heroProbability, heroProbabilityAway: d.heroProbabilityAway
         )
     }
 }

@@ -424,10 +424,14 @@ final class EventAtlasHeadlineE1_11666Tests: XCTestCase {
             contentsOf: root.appendingPathComponent("Components/EventHeadlinePhase9483.swift"),
             encoding: .utf8
         )
+        let card = try String(
+            contentsOf: root.appendingPathComponent("Components/EventSportHeadlineCard12472.swift"),
+            encoding: .utf8
+        )
         XCTAssertTrue(page.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {"))
-        XCTAssertTrue(page.contains("EventAtlasHeadlineControlRow11666("))
-        XCTAssertTrue(page.contains("embeddedInHero: true)"))
-        XCTAssertTrue(page.contains("if !ReleaseSurfaces.isEventPageAtlasEnabled(),"))
+        XCTAssertTrue(page.contains("EventSportHeadlineCard12472("))
+        XCTAssertTrue(card.contains("private var trailingControls: some View"))
+        XCTAssertTrue(card.contains("ekgButton"))
         XCTAssertTrue(phaseFile.contains("if ReleaseSurfaces.isEventPageAtlasEnabled() {"))
         XCTAssertTrue(phaseFile.contains("EventAtlasPregameMarkView11666(text: baseline)"))
     }

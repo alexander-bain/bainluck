@@ -1,7 +1,8 @@
 """#10090: custody of a normal-policy Kalshi quote observation, never an estimator.
 
-A book callback may select a cached original trade under the ordinary price
-policy (`_kalshi_yes_probability`). That accepted selection carries an identity
+A book callback may select a cached original trade that the current book still
+supports under `_kalshi_yes_probability`. A lone ask supplies no quote identity.
+An accepted selection carries an identity
 from the socket; the consumer records it here as received, then as landed (the
 exact committed observation) or held (the actually applied overlay bound). The
 blend refresher may let the bundled Challenger primary row speak at that price

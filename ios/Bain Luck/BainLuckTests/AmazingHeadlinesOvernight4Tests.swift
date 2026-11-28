@@ -330,12 +330,13 @@ final class AmazingHeadlinesOvernight4Tests: XCTestCase {
         XCTAssertEqual(countdownModel.plainMetaText, "Premier League · In 35m")
 
         // Never invent a draw when only home/away (no explicit drawProbability and no 3-way gameMarkets):
-        // resolves 2-row unified card with home chance only (away withheld per #5271), never nil.
+        // resolves 2-row unified card with home chance and Ruling 250: A away notice, never nil or `1 - home`.
         let twoWayOnly = try soccerBeforeFixture(homeProb: 0.52, drawProb: nil, awayProb: 0.48)
         XCTAssertEqual(EventSportHeadlines12472.kind(for: twoWayOnly, now: fixedNow), .soccerBeforeGame)
         let twoWayModel = try XCTUnwrap(resolveHeadline(twoWayOnly, hasScore: false, numberStreams: false))
         XCTAssertEqual(twoWayModel.rows.count, 2)
-        XCTAssertEqual(twoWayModel.rows[0].cells.last, "")
+        XCTAssertEqual(twoWayModel.rows[0].cells.last, "No recent probability")
+        XCTAssertNil(twoWayModel.rows[0].rawProbability)
         XCTAssertEqual(twoWayModel.rows[1].cells.last, "52%")
 
         // Fallback to gameMarkets.other explicit 3-way rows when currentOdds omits drawProbability

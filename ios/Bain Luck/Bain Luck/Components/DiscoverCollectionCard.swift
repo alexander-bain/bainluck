@@ -7,6 +7,8 @@ struct DiscoverCollectionCard: View {
     @Binding var navigationPath: NavigationPath
     var onOpen: (() -> Void)? = nil
 
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
@@ -36,6 +38,11 @@ struct DiscoverCollectionCard: View {
                 .font(.subheadline)
                 .foregroundStyle(DS.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 0, verticalPadding: 4)
+                    .padding(.top, 4)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

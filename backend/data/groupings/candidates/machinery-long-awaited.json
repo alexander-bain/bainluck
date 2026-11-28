@@ -37,7 +37,7 @@
         "key": "long_awaited_releases",
         "title": "Will It Finally Happen?",
         "item_noun": "releases",
-        "note": "Games, albums, books, and franchises fans have been waiting years to see.",
+        "note": "Games, albums, novels, and franchises fans have been waiting years to see.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "long-awaited",

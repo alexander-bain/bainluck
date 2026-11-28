@@ -9,6 +9,7 @@ struct HeatMapCardView: View {
     let data: FeedFuturesData
     @Binding var navigationPath: NavigationPath
     var onOpen: (() -> Void)? = nil
+    var now: Date = Date()
 
     /// #6343 — the price-age reveal, open or closed. See `PriceAgeMarkView`.
     @State private var revealedPriceAge: String?
@@ -22,19 +23,27 @@ struct HeatMapCardView: View {
     /// text-size setting instead of a hardcoded 11pt.
     @ScaledMetric(relativeTo: .caption) private var labelFontSize: CGFloat = 12
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     // MARK: - Derived data
 
     private var sortedPoints: [FeedDiscoverThresholdPoint] {
-        (data.discoverCard?.thresholdPoints ?? [])
+        let priced = (data.discoverCard?.thresholdPoints ?? [])
             .filter { $0.probability != nil }
-            .sorted { ($0.value ?? 0) < ($1.value ?? 0) }
+        let distOutcomes = data.discoverCard?.distributionOutcomes
+        return heatMapSortedPoints(priced, distributionOutcomes: distOutcomes, now: now)
     }
 
     /// #8713 — the rungs the cells draw: a window around the rung the caption
     /// names, not the first five. See `heatMapDrawnRungs`.
     private var cells: [HeatMapCell] {
-        heatMapDrawnRungs(sortedPoints, maxCells: maxCells).map { point in
+        heatMapDrawnRungs(
+            sortedPoints,
+            maxCells: maxCells,
+            distributionOutcomes: data.discoverCard?.distributionOutcomes,
+            now: now
+        ).map { point in
             HeatMapCell(
                 label: compactThresholdLabel(point.label),
                 probability: point.probability ?? 0
@@ -66,10 +75,14 @@ struct HeatMapCardView: View {
         return "Resolves \(text)"
     }
 
-    private var lastAbove50Label: String? {
+    var lastAbove50Label: String? {
         // Derive from ALL thresholds (not the capped cells) so the crossover
         // summary stays correct even when cells overflow past maxCells.
-        guard let rung = heatMapBetterThanEvenRung(sortedPoints) else { return nil }
+        guard let rung = heatMapBetterThanEvenRung(
+            sortedPoints,
+            distributionOutcomes: data.discoverCard?.distributionOutcomes,
+            now: now
+        ) else { return nil }
         return compactThresholdLabel(rung.label)
     }
 
@@ -93,13 +106,14 @@ struct HeatMapCardView: View {
             .padding(.bottom, 3)
 
             // Market name
+            let useStackedRungs = dynamicTypeSize.isAccessibilitySize || isNarrowTwoColumn
             Text(data.name)
                 .font(dynamicTypeSize.isAccessibilitySize ? .headline : .system(size: 15, weight: .semibold))
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+                .lineLimit(useStackedRungs ? nil : 3)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 16)
 
-            if dynamicTypeSize.isAccessibilitySize {
+            if useStackedRungs {
                 // At accessibility text sizes, stack each threshold rung on its own
                 // full-width row so 4–5 numeric thresholds ("1430+"…"1460+") never
                 // squeeze into 60pt columns and truncate to identical "14…".
@@ -136,69 +150,118 @@ struct HeatMapCardView: View {
             Divider()
                 .padding(.top, 14)
 
-            HStack(spacing: 6) {
-                if let threshold = lastAbove50Label {
-                    // #4645 — the caption composes with the rung's own words
-                    // instead of prefixing them. "Above 50% through" was written
-                    // for the DATE ladder it shipped with, where the rung label
-                    // is a date and the sentence closes ("Above 50% through
-                    // Before 2027"). Every other ladder's label carries its own
-                    // comparator, so the line stacked two of them on two
-                    // unrelated quantities and stopped mid-sentence: the phone
-                    // printed "Above 50% through ≥$6.40"
-                    // (artifacts-native-091/before-ladder-s9000.png), the web
-                    // twin "Above 50% through Above 67" (#4645). The thing worth
-                    // saying is the same for both ladders — this is the furthest
-                    // rung the market still calls better than even — and saying
-                    // it this way needs no branch. Web says the same words
-                    // (FuturesCard.tsx, PR #4656): one card family, notice 35.
-                    // #8647 — which end of the ladder is "furthest" depends on
-                    // the axis; `heatMapBetterThanEvenRung` says which.
-                    Text("More likely than not:")
-                        .font(.system(size: 12))
-                        .foregroundStyle(DS.textSecondary)
-                    Text(threshold)
-                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundStyle(DS.emerald)
-                } else {
-                    Text("All below 50%")
-                        .font(.system(size: 12))
-                        .foregroundStyle(DS.textSecondary)
+            if useStackedRungs {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let threshold = lastAbove50Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("More likely than not:")
+                                .font(.system(size: 12))
+                                .foregroundStyle(DS.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(threshold)
+                                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                .foregroundStyle(DS.emerald)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else {
+                        Text("All below 50%")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 6) {
+                        if overflowCount > 0 {
+                            Text("+\(overflowCount) more")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(DS.textMuted)
+                        }
+                        SignalBarsView(tier: data.confidenceTier)
+                        if let mark = data.discoverPriceAgeMark(
+                            onReveal: { revealedPriceAge = revealedPriceAge == $0 ? nil : $0 }
+                        ) {
+                            mark
+                        }
+                        if let src = SourceLabels.cardFaceLabel(
+                            for: data.source,
+                            sources: data.sources,
+                            sourceCount: data.sourceCount
+                        ) {
+                            Text(src)
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(.blue)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.blue.opacity(0.10), in: Capsule())
+                        }
+                    }
                 }
-                if overflowCount > 0 {
-                    Text("+\(overflowCount) more")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 12)
+            } else {
+                HStack(spacing: 6) {
+                    if let threshold = lastAbove50Label {
+                        // #4645 — the caption composes with the rung's own words
+                        // instead of prefixing them. "Above 50% through" was written
+                        // for the DATE ladder it shipped with, where the rung label
+                        // is a date and the sentence closes ("Above 50% through
+                        // Before 2027"). Every other ladder's label carries its own
+                        // comparator, so the line stacked two of them on two
+                        // unrelated quantities and stopped mid-sentence: the phone
+                        // printed "Above 50% through ≥$6.40"
+                        // (artifacts-native-091/before-ladder-s9000.png), the web
+                        // twin "Above 50% through Above 67" (#4645). The thing worth
+                        // saying is the same for both ladders — this is the furthest
+                        // rung the market still calls better than even — and saying
+                        // it this way needs no branch. Web says the same words
+                        // (FuturesCard.tsx, PR #4656): one card family, notice 35.
+                        // #8647 — which end of the ladder is "furthest" depends on
+                        // the axis; `heatMapBetterThanEvenRung` says which.
+                        Text("More likely than not:")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.textSecondary)
+                        Text(threshold)
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .foregroundStyle(DS.emerald)
+                    } else {
+                        Text("All below 50%")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.textSecondary)
+                    }
+                    if overflowCount > 0 {
+                        Text("+\(overflowCount) more")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DS.textMuted)
+                    }
+                    Spacer()
+                    // #490: confidence signal (1-3 bars) — renders nothing when absent.
+                    SignalBarsView(tier: data.confidenceTier)
+                    // #6343 — the same mark the hero futures card draws, on the same
+                    // rule (`discoverPriceAgeMark`). Four card views render a futures
+                    // card and wiring only one would leave the mark on the MINORITY of
+                    // the feed: in the read this shipped against, 11 of 16 datable
+                    // cards were `outcome_distribution` and the 60.2h PGA ladder — one
+                    // of the two genuinely stale specimens — was one of them.
+                    if let mark = data.discoverPriceAgeMark(
+                        onReveal: { revealedPriceAge = revealedPriceAge == $0 ? nil : $0 }
+                    ) {
+                        mark
+                    }
+                    // #4351: named, or not drawn. Card faces omit Kalshi/Polymarket.
+                    if let src = SourceLabels.cardFaceLabel(
+                        for: data.source,
+                        sources: data.sources,
+                        sourceCount: data.sourceCount
+                    ) {
+                        Text(src)
+                            .font(.system(size: 9, weight: .heavy))
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.blue.opacity(0.10), in: Capsule())
+                    }
                 }
-                Spacer()
-                // #490: confidence signal (1-3 bars) — renders nothing when absent.
-                SignalBarsView(tier: data.confidenceTier)
-                // #6343 — the same mark the hero futures card draws, on the same
-                // rule (`discoverPriceAgeMark`). Four card views render a futures
-                // card and wiring only one would leave the mark on the MINORITY of
-                // the feed: in the read this shipped against, 11 of 16 datable
-                // cards were `outcome_distribution` and the 60.2h PGA ladder — one
-                // of the two genuinely stale specimens — was one of them.
-                if let mark = data.discoverPriceAgeMark(
-                    onReveal: { revealedPriceAge = revealedPriceAge == $0 ? nil : $0 }
-                ) {
-                    mark
-                }
-                // #4351: named, or not drawn. Card faces omit Kalshi/Polymarket.
-                if let src = SourceLabels.cardFaceLabel(
-                    for: data.source,
-                    sources: data.sources,
-                    sourceCount: data.sourceCount
-                ) {
-                    Text(src)
-                        .font(.system(size: 9, weight: .heavy))
-                        .foregroundStyle(.blue)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Color.blue.opacity(0.10), in: Capsule())
-                }
+                .padding(.top, 12)
             }
-            .padding(.top, 12)
 
             // #6343 — the tap reveal, inline under the footer for the reason
             // `LiquidityMarkView` gives: a popover on a phone covers the number
@@ -206,6 +269,11 @@ struct HeatMapCardView: View {
             // the affordance does not differ by card shape.
             if let revealedPriceAge {
                 LiquidityRevealCaption(sentence: revealedPriceAge)
+                    .padding(.top, 8)
+            }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 0, verticalPadding: 4)
                     .padding(.top, 8)
             }
         }
@@ -228,10 +296,13 @@ struct HeatMapCardView: View {
 
     @ViewBuilder
     private func cellView(_ cell: HeatMapCell) -> some View {
-        let pct = Int((cell.probability * 100).rounded())
+        let parts = DiscoverRoundupCardModel.probabilityParts(
+            probability: cell.probability,
+            renderedPercent: nil
+        )
         let color = cellTextColor(cell.probability)
         (
-            Text("\(pct)")
+            Text("\(parts.marker ?? "")\(parts.digits)")
                 .font(.system(size: 14, weight: .bold, design: .monospaced))
                 .foregroundColor(color)
             +
@@ -246,7 +317,10 @@ struct HeatMapCardView: View {
 
     @ViewBuilder
     private func accessibilityCellRow(_ cell: HeatMapCell) -> some View {
-        let pct = Int((cell.probability * 100).rounded())
+        let parts = DiscoverRoundupCardModel.probabilityParts(
+            probability: cell.probability,
+            renderedPercent: nil
+        )
         let color: Color = cell.probability >= 0.50 ? .white : (cell.probability >= 0.30 ? .primary : .secondary)
         HStack(spacing: 8) {
             Text(cell.label)
@@ -255,7 +329,7 @@ struct HeatMapCardView: View {
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            Text("\(pct)%")
+            Text("\(parts.marker ?? "")\(parts.digits)%")
                 .font(.caption.weight(.bold).monospacedDigit())
                 .foregroundColor(color)
                 .lineLimit(1)
@@ -297,6 +371,24 @@ struct HeatMapCardView: View {
     }
 }
 
+// MARK: - Date-ladder rung resolution & sorting
+
+func heatMapSortedPoints(
+    _ points: [FeedDiscoverThresholdPoint],
+    distributionOutcomes: [FeedDiscoverDistributionOutcome]? = nil,
+    now: Date = Date()
+) -> [FeedDiscoverThresholdPoint] {
+    let distDates = DiscoverGroupRows.distributionDatesByLabel(distributionOutcomes)
+    return points.sorted { lhs, rhs in
+        if let lDate = DiscoverGroupRows.resolveRungDateIso(point: lhs, distDatesByLabel: distDates, now: now),
+           let rDate = DiscoverGroupRows.resolveRungDateIso(point: rhs, distDatesByLabel: distDates, now: now),
+           lDate != rDate {
+            return lDate < rDate
+        }
+        return (lhs.value ?? 0) < (rhs.value ?? 0)
+    }
+}
+
 // MARK: - The rung the caption names
 
 /// #8647 — the rung "More likely than not:" names: the MOST SPECIFIC rung the
@@ -307,44 +399,70 @@ struct HeatMapCardView: View {
 /// cumulative "before this date" question and chances RISE, so the last one is
 /// the loosest: the phone captioned the Anthropic-IPO ladder (futures 8430022,
 /// 6% by Nov 1, 56% by Dec 1 … 90% by Apr 1) "Before Apr 1, 2027". The earliest
-/// rung over even is the answer. An exclusive date ladder ("Before 2027 / 2027 /
-/// 2029 or later") has at most one rung over even, so it reads the same. Web
-/// applies the same rule (FuturesCard.tsx, PR #8650): one card family, notice 35.
+/// not-yet-passed rung over even is the answer.
+func heatMapBetterThanEvenRung(
+    _ points: [FeedDiscoverThresholdPoint],
+    distributionOutcomes: [FeedDiscoverDistributionOutcome]? = nil,
+    now: Date = Date()
+) -> FeedDiscoverThresholdPoint? {
+    heatMapBetterThanEvenIndex(points, distributionOutcomes: distributionOutcomes, now: now).map { points[$0] }
+}
+
 func heatMapBetterThanEvenRung(_ points: [FeedDiscoverThresholdPoint]) -> FeedDiscoverThresholdPoint? {
-    heatMapBetterThanEvenIndex(points).map { points[$0] }
+    heatMapBetterThanEvenRung(points, distributionOutcomes: nil, now: Date())
 }
 
 /// The position of `heatMapBetterThanEvenRung` in `points`.
-func heatMapBetterThanEvenIndex(_ points: [FeedDiscoverThresholdPoint]) -> Int? {
+func heatMapBetterThanEvenIndex(
+    _ points: [FeedDiscoverThresholdPoint],
+    distributionOutcomes: [FeedDiscoverDistributionOutcome]? = nil,
+    now: Date = Date()
+) -> Int? {
     let isOverEven: (FeedDiscoverThresholdPoint) -> Bool = { ($0.probability ?? 0) >= 0.50 }
     let isDateLadder = !points.isEmpty && points.allSatisfy { $0.source == "date_bucket" }
-    return isDateLadder ? points.firstIndex(where: isOverEven) : points.lastIndex(where: isOverEven)
+    guard isDateLadder else {
+        return points.lastIndex(where: isOverEven)
+    }
+    let todayIso = DiscoverGroupRows.utcDayString(now)
+    let distDates = DiscoverGroupRows.distributionDatesByLabel(distributionOutcomes)
+    let upcomingIndices = points.indices.filter { idx in
+        guard let dateIso = DiscoverGroupRows.resolveRungDateIso(point: points[idx], distDatesByLabel: distDates, now: now) else {
+            return true
+        }
+        return dateIso >= todayIso
+    }
+    if upcomingIndices.isEmpty {
+        return points.firstIndex(where: isOverEven)
+    }
+    return upcomingIndices.first(where: { isOverEven(points[$0]) })
+}
+
+func heatMapBetterThanEvenIndex(_ points: [FeedDiscoverThresholdPoint]) -> Int? {
+    heatMapBetterThanEvenIndex(points, distributionOutcomes: nil, now: Date())
 }
 
 // MARK: - The rungs the cells draw
 
 /// #8713 — which `maxCells` rungs the card draws when the ladder has more.
-///
-/// The cells were the first five rungs in ladder order. On a long date ladder
-/// those are the near-term, near-zero ones: the Anthropic-IPO card (futures
-/// 8430022, ten rungs) drew 1% 1% 1% 2% 6% over the caption "More likely than
-/// not: Before Dec 1, 2026", and the rungs that carry the story (56% … 90%) sat
-/// behind "+5 more". The card said two things.
-///
-/// The cells are now a contiguous window centred on the rung the caption names,
-/// clamped to the ladder's ends, so the reader sees the crossover with a rung or
-/// two either side of it. A ladder with no rung over even ("All below 50%") keeps
-/// the first rungs, as before. A ladder that fits draws every rung.
 func heatMapDrawnRungs(
     _ points: [FeedDiscoverThresholdPoint],
-    maxCells: Int
+    maxCells: Int,
+    distributionOutcomes: [FeedDiscoverDistributionOutcome]? = nil,
+    now: Date = Date()
 ) -> [FeedDiscoverThresholdPoint] {
     guard maxCells > 0, points.count > maxCells,
-          let anchor = heatMapBetterThanEvenIndex(points) else {
+          let anchor = heatMapBetterThanEvenIndex(points, distributionOutcomes: distributionOutcomes, now: now) else {
         return Array(points.prefix(max(0, maxCells)))
     }
     let start = min(max(0, anchor - maxCells / 2), points.count - maxCells)
     return Array(points[start..<(start + maxCells)])
+}
+
+func heatMapDrawnRungs(
+    _ points: [FeedDiscoverThresholdPoint],
+    maxCells: Int
+) -> [FeedDiscoverThresholdPoint] {
+    heatMapDrawnRungs(points, maxCells: maxCells, distributionOutcomes: nil, now: Date())
 }
 
 // MARK: - The date the header may print

@@ -10,6 +10,163 @@ from app.utils.outcome_display import normalize_display_probs
 
 
 @pytest.mark.parametrize(
+    "raw, normalize",
+    [([0.625, 0.185], False), ([0.815, 0.1, 0.05, 0.04], True),
+     ([0.90, 0.71], False)],
+)
+def test_kalshi_zero_bids_have_no_share_on_the_page_set_or_card(raw, normalize):
+    from app.routes.feed import _feed_display_scale
+    from app.utils.container_machinery import _canonical_market_outcome_map
+    from app.utils.outcome_display import mark_kalshi_ask_ceilings
+
+    market = SimpleNamespace(source="kalshi", status="open")
+    complete = [
+        SimpleNamespace(id=i, name=f"Named player {i}", current_probability=p,
+                        current_yes_bid=p - 0.001, current_yes_ask=p + 0.001)
+        for i, p in enumerate(raw)
+    ]
+    complete.extend([
+        SimpleNamespace(id=90, name="Five-cent ceiling", current_probability=0.05,
+                        current_yes_bid=0, current_yes_ask=0.05),
+        SimpleNamespace(id=91, name="One-cent ceiling", current_probability=0.01,
+                        current_yes_bid=0, current_yes_ask=0.01),
+    ])
+    page = [
+        {"id": o.id, "name": o.name, "probability": o.current_probability}
+        for o in complete
+    ]
+    card = deepcopy(page)
+    mark_kalshi_ask_ceilings(market, page, {o.id: o for o in complete})
+    expected_scale = sum(raw) if normalize else 1
+    assert normalize_display_probs(page) is normalize
+    _normalize_feed_probabilities(card, complete, market=market, mutually_exclusive=True)
+    assert _feed_display_scale(complete, market=market, mutually_exclusive=True) == pytest.approx(expected_scale)
+    set_rows, *_ = _canonical_market_outcome_map(page)
+    for surface in (page, set_rows, card):
+        assert [r["probability"] for r in surface[:-2]] == pytest.approx(
+            [p / expected_scale for p in raw]
+        )
+        assert [r["probability"] for r in surface[-2:]] == [0.05, 0.01]
+    assert [r.get("ask_ceiling") for r in page[-2:]] == [0.05, 0.01]
+    assert all("rendered_percent" not in r for r in page[-2:])
+
+
+def test_complete_kalshi_book_at_97_percent_is_normalized_on_all_surfaces():
+    from app.utils.container_machinery import _canonical_market_outcome_map
+    from app.utils.outcome_display import mark_kalshi_ask_ceilings
+
+    market = SimpleNamespace(source="kalshi", status="open")
+    complete = [
+        SimpleNamespace(id=1, name="Alice", current_probability=0.60, current_yes_bid=0.59),
+        SimpleNamespace(id=2, name="Bob", current_probability=0.37, current_yes_bid=0.36),
+    ]
+    page = [
+        {"id": row.id, "name": row.name, "probability": row.current_probability}
+        for row in complete
+    ]
+    card = deepcopy(page)
+    mark_kalshi_ask_ceilings(market, page, {row.id: row for row in complete})
+    set_rows, *_ = _canonical_market_outcome_map(page)
+    assert normalize_display_probs(page)
+    _normalize_feed_probabilities(card, complete, market=market, mutually_exclusive=True)
+    for surface in (page, set_rows, card):
+        assert [row["probability"] for row in surface] == pytest.approx(
+            [0.60 / 0.97, 0.37 / 0.97]
+        )
+        assert sum(row["rendered_percent"] for row in surface) == 100
+
+
+def test_kalshi_ask_only_ceiling_is_never_a_price_input():
+    from app.tasks.kalshi import _kalshi_yes_probability
+
+    assert _kalshi_yes_probability(0, 0.01, None) is None
+    assert _kalshi_yes_probability(0, 0.05, 0.71) is None
+    assert _kalshi_yes_probability(0.01, 0.03, 0.71) == pytest.approx(0.02)
+
+
+def test_a_partial_preview_does_not_round_supported_rows_up_to_100():
+    from app.utils.container_machinery import _canonical_market_outcome_map
+    from app.utils.outcome_display import mark_kalshi_ask_ceilings
+
+    market = SimpleNamespace(source="kalshi", status="open")
+    outcomes = [
+        SimpleNamespace(id=1, name="Alice", current_probability=0.61, current_yes_bid=0.60),
+        SimpleNamespace(id=2, name="Bob", current_probability=0.38, current_yes_bid=0.37),
+        SimpleNamespace(id=3, name="Carol", current_probability=None, current_yes_bid=0,
+                        current_yes_ask=0.05),
+    ]
+    page = [
+        {"id": outcome.id, "name": outcome.name, "probability": outcome.current_probability}
+        for outcome in outcomes
+    ]
+    preview = deepcopy(page[:2])
+    mark_kalshi_ask_ceilings(market, page, {outcome.id: outcome for outcome in outcomes})
+    assert normalize_display_probs(page) is False
+    _normalize_feed_probabilities(preview, outcomes, mutually_exclusive=True, market=market)
+    _apply_card_percents(preview)
+    set_rows, *_ = _canonical_market_outcome_map(page)
+    assert [row["probability"] for row in page[:2]] == [0.61, 0.38]
+    for surface in (preview, set_rows):
+        assert [row["rendered_percent"] for row in surface] == [61, 38]
+
+
+@pytest.mark.parametrize(
+    "book, divisor",
+    [
+        ("ceiling", 1.10),
+        ("withheld ceiling", 1.10),
+        ("unknown residual", 1),
+        ("stale ceiling", 1),
+    ],
+)
+def test_detail_set_and_card_distinguish_zero_bid_from_unknown_mass(book, divisor):
+    from datetime import datetime, timedelta, timezone
+
+    from app.routes.feed import _feed_display_scale, _field_has_withheld_legs
+    from app.routes.futures import _apply_verified_title_to_detail, _format_market_detail
+    from app.utils.container_machinery import _canonical_market_outcome_map
+    from app.utils.futures_verified_title import Refusal
+    from tests.test_midterms_complete_outcome_prices_11948 import _detail_field
+
+    market = _detail_field()
+    market.outcomes = market.outcomes[:3]
+    observed_at = datetime(2026, 11, 24, tzinfo=timezone.utc)
+    for outcome, (price, bid, ask) in zip(
+        market.outcomes, [(0.68, 0.65, 0.71), (0.42, 0.40, 0.44), (None, 0, 0.05)]
+    ):
+        outcome.current_probability = price
+        outcome.current_yes_bid = bid
+        outcome.current_yes_ask = ask
+        outcome.last_updated = observed_at
+
+    ceiling = market.outcomes[-1]
+    withheld = {ceiling.id} if book == "withheld ceiling" else set()
+    if book == "unknown residual":
+        ceiling.current_yes_bid = ceiling.current_yes_ask = None
+    elif book == "stale ceiling":
+        ceiling.last_updated -= timedelta(days=40)
+
+    detail = _format_market_detail(market, unsupported_price_outcome_ids=withheld)
+    set_detail = _format_market_detail(
+        market, unsupported_price_outcome_ids=withheld, normalize_numbers=False
+    )
+    _apply_verified_title_to_detail(
+        set_detail, Refusal("no_corroborating_venue"), market
+    )
+    set_rows, *_ = _canonical_market_outcome_map(set_detail["outcomes"])
+    card_outcomes = [outcome for outcome in market.outcomes if outcome.id not in withheld]
+    card_divisor = _feed_display_scale(
+        card_outcomes, market=market, mutually_exclusive=True,
+        field_complete=not _field_has_withheld_legs(market, market.outcomes, withheld),
+    )
+    assert card_divisor == pytest.approx(divisor)
+    for surface in (detail["outcomes"], set_rows):
+        by_id = {row["id"]: row["probability"] for row in surface}
+        for outcome in market.outcomes[:2]:
+            assert by_id[outcome.id] == pytest.approx(outcome.current_probability / divisor)
+
+
+@pytest.mark.parametrize(
     "prices",
     [[0.40, 0.39], [0.52, 0.51], [0.5, 0.4, 0.3], [0.5, 0.4, 0.004]],
 )

@@ -503,6 +503,35 @@ def feed_page_base_enabled() -> bool:
     return str(raw).strip().lower() not in _PAGE_BASE_OFF_VALUES
 
 
+#: Explicit contract version for cross-limit anonymous page-base reuse (#13573).
+#: Bump whenever ``limit`` begins altering ``apply_discover_display_chain`` or
+#: built-deck order/membership outside the final slice.
+FEED_PAGE_BASE_REUSE_VERSION: int = 1
+
+
+def feed_page_base_fallback_limits(
+    *,
+    limit: int,
+    include_events: bool = True,
+    include_futures: bool = True,
+) -> tuple[int, ...]:
+    """Prewarmed page-base ``limit`` candidates that build the identical deck (#13573).
+
+    Since #5101 (``DISCOVER_COMPOSITION_WINDOW = 20``), ``limit`` only slices the
+    finished deck at pagination rather than changing what ``get_feed`` builds.
+    Warming populates ``limit=50`` / ``limit=20`` (and ``limit=200`` for
+    events-only shapes), so any non-prewarmed ``limit`` (e.g. ``limit=5``) can
+    safely slice those warm bases instead of triggering a cold Discover build.
+    """
+    if include_futures:
+        candidates = (50, 20)
+    elif include_events:
+        candidates = (200,)
+    else:
+        return ()
+    return tuple(cand for cand in candidates if cand != int(limit))
+
+
 def feed_page_base_cache_key(
     *,
     sport: Optional[str] = None,

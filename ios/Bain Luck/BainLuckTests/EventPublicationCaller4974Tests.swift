@@ -659,14 +659,15 @@ final class EventPublicationCaller4974Tests: XCTestCase {
 
     // MARK: - The mounted page
 
-    /// The actual page in a key window on the foreground-active scene, so
+    /// The actual page in a key window on a foreground `UIWindowScene`, so
     /// SwiftUI really appears it and runs its own `.task` (which calls
-    /// `loadPage`) and its own `.task(id:)` (which adopts). The strict pattern
-    /// of `TheLiveChartEndCarriesTheHeroNumber9436Tests.Hosted`: it waits for an
-    /// active scene, cooperatively, and has NO inactive-scene fallback — a
-    /// sceneless `UIWindow(frame:)` is not a mounted page. `show(_:)` swaps
-    /// what the window holds (the page leaving and coming back); `close()`
-    /// hides it and hands the key back to whichever window held it.
+    /// `loadPage`) and its own `.task(id:)` (which adopts). Matches the `Hosted`
+    /// pattern from `TheLiveChartEndCarriesTheHeroNumber9436Tests` / `#12745`:
+    /// waits up to 2 s for `.foregroundActive`, then accepts a foreground
+    /// scene (`.foregroundInactive` / `scenes.first`) rather than failing on an
+    /// inactive test-runner transition — while still never falling back to a
+    /// sceneless `UIWindow(frame:)`. `show(_:)` swaps what the window holds;
+    /// `close()` hides it and hands the key back to whichever window held it.
     @MainActor
     private final class MountedPage {
         let host: UIViewController
@@ -674,21 +675,31 @@ final class EventPublicationCaller4974Tests: XCTestCase {
         private let previousKeyWindow: UIWindow?
 
         init(_ vm: EventDetailViewModel, eventId: Int) async throws {
+            let activeDeadline = CACurrentMediaTime() + 2
             let deadline = CACurrentMediaTime() + 10
             func activeScene() -> UIWindowScene? {
                 UIApplication.shared.connectedScenes
                     .compactMap { $0 as? UIWindowScene }
                     .first { $0.activationState == .foregroundActive }
             }
-            while activeScene() == nil && CACurrentMediaTime() < deadline {
+            func usableScene() -> UIWindowScene? {
+                let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                return scenes.first { $0.activationState == .foregroundActive }
+                    ?? scenes.first { $0.activationState == .foregroundInactive }
+                    ?? scenes.first
+            }
+            while activeScene() == nil && CACurrentMediaTime() < activeDeadline {
                 // Yield the main actor so the host can finish activating.
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            while usableScene() == nil && CACurrentMediaTime() < deadline {
                 try await Task.sleep(nanoseconds: 50_000_000)
             }
             let sceneStates = UIApplication.shared.connectedScenes.map {
                 "\(type(of: $0)):\($0.activationState.rawValue)"
             }.sorted().joined(separator: ", ")
-            let scene = try XCTUnwrap(activeScene(),
-                "The mounted page requires a foreground-active window scene; connected scenes: \(sceneStates)")
+            let scene = try XCTUnwrap(usableScene(),
+                "The mounted page requires a foreground window scene; connected scenes: \(sceneStates)")
             previousKeyWindow = scene.windows.first { $0.isKeyWindow }
             let page = NavigationStack { EventDetailView(eventId: eventId, viewModel: vm) }
                 .environmentObject(PinManager())

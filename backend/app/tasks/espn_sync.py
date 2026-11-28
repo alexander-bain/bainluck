@@ -7497,6 +7497,11 @@ async def _backfill_espn_win_probability(limit: int = 200, oldest_first: bool = 
                         event_snapshots += 1
 
                     if event_snapshots > 0:
+                        from app.services.finished_event_history import (
+                            invalidate_finished_event_history,
+                        )
+
+                        await invalidate_finished_event_history(session, [event_row.id])
                         stats["events_backfilled"] += 1
                         stats["snapshots_created"] += event_snapshots
 

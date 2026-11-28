@@ -66,6 +66,27 @@ enum DiscoverPictureChart191A {
             }
             return "Win chance chart for \(plottedTeamShortName): \(leftEndLabel), \(rightEndLabel)"
         }
+
+        var hasMovingSeries: Bool {
+            if threeWayPoints.count >= 2 {
+                return DiscoverCardChartRules13773.hasMovingThreeWaySpread(threeWayPoints)
+            }
+            return DiscoverCardChartRules13773.hasMovingSpread(points.map(\.probability))
+        }
+
+        var dateRange: (start: Date, end: Date)? {
+            if threeWayPoints.count >= 2,
+               let first = threeWayPoints.first?.date,
+               let last = threeWayPoints.last?.date {
+                return (first, last)
+            }
+            if points.count >= 2,
+               let first = points.first?.date,
+               let last = points.last?.date {
+                return (first, last)
+            }
+            return nil
+        }
     }
 
     /// #13092 — When a finished two-way `/api/feed` event omits `prematch_odds`
@@ -181,6 +202,15 @@ enum DiscoverPictureChart191A {
             return CompactGameCard12616.usableProbability(raw)
         }()
 
+        // Keep chart endpoints and upset/won badges aligned with the card's
+        // paired server-rounded `PrematchReading.percents` (e.g. 0.175 -> 17%
+        // alongside 83%) instead of re-rounding one side in isolation (#13092).
+        let pregameSideRenderedPercent: Int? = {
+            guard pregameSideProb != nil, let prematch else { return nil }
+            let idx = (pricesADraw || perspective == .home) ? 1 : 0
+            return idx < prematch.percents.count ? prematch.percents[idx] : nil
+        }()
+
         let currentSideProb: Double? = {
             guard isLive else { return nil }
             let raw = perspective == .home
@@ -208,7 +238,7 @@ enum DiscoverPictureChart191A {
 
         let leftEndLabel: String = {
             if let preP = pregameSideProb {
-                return "Pregame \(formatProbability(preP)) \(plottedTeamCode)"
+                return "Pregame \(formatProbability(preP, renderedPercent: pregameSideRenderedPercent)) \(plottedTeamCode)"
             }
             if let first = extractedPoints.first {
                 return "Start \(formatProbability(first.probability)) \(plottedTeamCode)"
@@ -305,28 +335,30 @@ enum DiscoverPictureChart191A {
             }
             let openingProb = pregameSideProb
                 ?? extractedPoints.first(where: { !$0.isEndpoint }).flatMap { CompactGameCard12616.usableProbability($0.probability) }
+            let openRendered: Int? = pregameSideProb != nil ? pregameSideRenderedPercent : nil
             let lowestInPlayProb = extractedPoints
                 .dropLast()
                 .compactMap { CompactGameCard12616.usableProbability($0.probability) }
                 .min()
 
             if let openP = openingProb {
-                let openPct = Int((openP * 100.0).rounded())
+                let openText = formatProbability(openP, renderedPercent: openRendered)
+                let openPct = openRendered ?? Int((openP * 100.0).rounded())
                 if openPct <= 40 {
-                    return "Upset \u{00B7} \(openPct)% pregame"
+                    return "Upset \u{00B7} \(openText) pregame"
                 }
                 if let minP = lowestInPlayProb {
                     let minPct = Int((minP * 100.0).rounded())
                     if minPct <= 25 {
-                        return "Rallied from \(minPct)%"
+                        return "Rallied from \(formatProbability(minP))"
                     }
                 }
-                return "\(openPct)% pregame \u{00B7} Won"
+                return "\(openText) pregame \u{00B7} Won"
             }
             if let minP = lowestInPlayProb {
                 let minPct = Int((minP * 100.0).rounded())
                 if minPct <= 25 {
-                    return "Rallied from \(minPct)%"
+                    return "Rallied from \(formatProbability(minP))"
                 }
             }
             return nil
@@ -514,7 +546,14 @@ final class DiscoverEventChartHistoryCache191A {
             return await existing.value
         }
         let task = Task<EventHistoryResponse?, Never> {
-            try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168)
+            guard let initial = try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168, range: "since_start") else {
+                return nil
+            }
+            if !isLive, initial.preWindowOmitted == true,
+               let full = try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 168, range: "all") {
+                return full
+            }
+            return initial
         }
         inflight[eventId] = task
         let result = await task.value
@@ -526,7 +565,7 @@ final class DiscoverEventChartHistoryCache191A {
         return entries[eventId]?.response
     }
 
-    private func store(_ response: EventHistoryResponse, for eventId: Int) {
+    func store(_ response: EventHistoryResponse, for eventId: Int) {
         entries[eventId] = Entry(response: response, fetchedAt: Date())
         order.removeAll { $0 == eventId }
         order.append(eventId)
@@ -534,6 +573,11 @@ final class DiscoverEventChartHistoryCache191A {
             let evicted = order.removeFirst()
             entries.removeValue(forKey: evicted)
         }
+    }
+
+    func remove(eventId: Int) {
+        entries.removeValue(forKey: eventId)
+        order.removeAll { $0 == eventId }
     }
 }
 
@@ -560,6 +604,7 @@ struct DiscoverPictureChartPanel191AView: View {
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.liveOddsRefreshActive) private var liveOddsRefreshActive
+    @Environment(\.timeZone) private var timeZone
     @ScaledMetric(relativeTo: .body) private var rawPlotHeight: CGFloat = 126
     @ScaledMetric(relativeTo: .caption2) private var yAxisFontSize: CGFloat = 9.5
 
@@ -585,7 +630,7 @@ struct DiscoverPictureChartPanel191AView: View {
     }
 
     private var isLoadingHistory: Bool {
-        let waiting = isLoadingOverrideForTesting ?? !didFinishLoad
+        let waiting = isLoadingOverrideForTesting ?? (preloadedHistory == nil && !didFinishLoad)
         return waiting && model.points.isEmpty && model.threeWayPoints.isEmpty
     }
 
@@ -688,9 +733,41 @@ struct DiscoverPictureChartPanel191AView: View {
         }
     }
 
+    private var xAxisDatePlaceholder: some View {
+        Text(" ")
+            .font(.system(size: min(yAxisFontSize, 10.5), weight: .medium).monospacedDigit())
+            .lineLimit(1)
+            .hidden()
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var xAxisDateRow: some View {
+        if let range = model.dateRange,
+           let labels = DiscoverCardChartRules13773.axisEndLabels(
+               start: range.start,
+               end: range.end,
+               timeZone: timeZone
+           ) {
+            HStack(spacing: 8) {
+                Text(labels.start)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 6)
+                Text(labels.end)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .font(.system(size: min(yAxisFontSize, 10.5), weight: .medium).monospacedDigit())
+            .foregroundStyle(DS.textSecondaryReadable)
+            .padding(.leading, dynamicTypeSize.isAccessibilitySize ? 0 : 38)
+            .accessibilityIdentifier("discover-card-191a-chart-xaxis")
+        }
+    }
+
     var body: some View {
         Group {
-            if isLoadingHistory || !model.points.isEmpty || !model.threeWayPoints.isEmpty {
+            if isLoadingHistory || model.hasMovingSeries {
                 VStack(alignment: .leading, spacing: 6) {
                     chartHeaderRow
                     if model.showsPregameLabel && !isLoadingHistory {
@@ -701,8 +778,10 @@ struct DiscoverPictureChartPanel191AView: View {
                     }
                     if isLoadingHistory {
                         loadingPlotPlaceholder.frame(height: plotHeight)
+                        xAxisDatePlaceholder
                     } else {
                         plotCanvas.frame(height: plotHeight)
+                        xAxisDateRow
                     }
                 }
                 .padding(.horizontal, 10)

@@ -480,7 +480,7 @@ async def load_unified_game_reads(
         ev0 = ev_list[0]
         try:
             abs_rows, complete = await _serve_fold_mod.serve_fold_absorbed_rows_with_completeness(
-                db, ev0
+                db, ev0, keep_page_survivor=True
             )
             if abs_rows:
                 runtime_absorbed_rows[int(ev0.id)] = abs_rows

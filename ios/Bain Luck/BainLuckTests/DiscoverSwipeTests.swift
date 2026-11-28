@@ -48,12 +48,15 @@ final class DiscoverSwipeTests: XCTestCase {
 
     // MARK: - A2. Commit threshold
 
-    func testCommitsRightBeyondThreshold() {
+    func testCommitsRightBeyondThresholdAndKeepsCardInPlace() {
         var s = DiscoverSwipeState()
         s.change(width: 150, height: 5)
         XCTAssertTrue(s.commits(width: 150))
+        XCTAssertEqual(s.opacity, 1.0, accuracy: 0.0001, "right drag keeps card opaque")
         XCTAssertEqual(s.end(width: 150), .right)
-        XCTAssertTrue(s.removing)
+        XCTAssertFalse(s.removing, "right swipe keeps card on Discover (#13769 / 420: D)")
+        XCTAssertEqual(s.offset, 0, "right swipe springs back to rest")
+        XCTAssertEqual(s.opacity, 1.0, accuracy: 0.0001)
     }
 
     func testCommitsLeftBeyondThreshold() {
@@ -134,9 +137,9 @@ final class DiscoverSwipeTests: XCTestCase {
 
     func testFixedStateIsVisibleAndSwipeableAfterTheCardReturns() {
         var s = DiscoverSwipeState()
-        s.change(width: 150, height: 5)
-        XCTAssertEqual(s.end(width: 150), .right)
-        XCTAssertEqual(s.opacity, 0, accuracy: 0.0001, "flying out, still invisible")
+        s.change(width: -150, height: 5)
+        XCTAssertEqual(s.end(width: -150), .left)
+        XCTAssertEqual(s.opacity, 0, accuracy: 0.0001, "left-swipe flying out is invisible")
 
         // The commit callback has run; the row may or may not have survived.
         s.settleAfterCommit()
@@ -144,17 +147,18 @@ final class DiscoverSwipeTests: XCTestCase {
         XCTAssertFalse(s.removing)
         XCTAssertEqual(s.opacity, 1, accuracy: 0.0001, "a returned card is VISIBLE again")
 
-        // And it accepts a second swipe.
+        // And it accepts a second swipe (either left or right).
         s.change(width: 200, height: 5)
         XCTAssertTrue(s.isHorizontal)
         XCTAssertEqual(s.offset, 200)
         XCTAssertEqual(s.end(width: 200), .right, "the second swipe registers")
+        XCTAssertFalse(s.removing)
     }
 
-    /// Opacity must clamp: `1 - 400/300` is negative.
+    /// Opacity must clamp: `1 - 380/300` on a left drag is negative.
     func testOpacityNeverGoesNegative() {
         var s = DiscoverSwipeState()
-        s.change(width: 380, height: 5)
+        s.change(width: -380, height: 5)
         XCTAssertGreaterThanOrEqual(s.opacity, 0)
     }
 

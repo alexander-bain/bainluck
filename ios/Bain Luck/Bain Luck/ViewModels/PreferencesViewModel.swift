@@ -108,6 +108,9 @@ final class PreferencesViewModel: ObservableObject {
     // MARK: - Remove Favorite
 
     func removeFavorite(teamId: Int, relationType: String) {
+        let removedSport = prefs?.favorites.first(where: {
+            $0.teamId == teamId && $0.relationType == relationType
+        })?.sportKey
         // Optimistic: remove from local state immediately
         prefs = prefs.map { current in
             PreferencesResponse(
@@ -125,6 +128,12 @@ final class PreferencesViewModel: ObservableObject {
             do {
                 _ = try await APIClient.shared.removeFavorite(teamId: teamId, relationType: relationType)
                 logger.info("Removed favorite: team \(teamId) (\(relationType))")
+                AnalyticsService.trackFollowTeam(
+                    action: "unfollow",
+                    sport: removedSport,
+                    relationType: relationType,
+                    surface: "preferences"
+                )
             } catch {
                 logger.error("Remove favorite failed: \(error)")
                 // Reload to restore correct state

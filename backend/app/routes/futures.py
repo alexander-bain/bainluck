@@ -4736,7 +4736,7 @@ def _leg_side_label(side: str, question: str) -> str:
 async def _withheld_price_outcome_ids(
     db: AsyncSession, market: FuturesMarket
 ) -> set[int]:
-    """Every outcome of this market whose served price is refused, all six arms.
+    """Every outcome of this market whose served probability is refused.
 
     #6993. THE ARMS WERE ALREADY COMPOSED — in the body of
     :func:`get_futures_market`, where only that route could reach them. The group
@@ -4763,7 +4763,8 @@ async def _withheld_price_outcome_ids(
     ids |= await _refuted_midpoint_outcome_ids(db, market)
     ids |= _book_refuted_outcome_ids(market)
     ids |= _empty_book_outcome_ids(market)
-    # Last, and reading the four above rather than the stored rows: its gate is a
+    ids |= futures_price_screen.zero_bid_outcome_ids(market)
+    # Read the remaining outcomes rather than the stored rows: the gate is a
     # fact about the column a reader is actually shown. See the arm's docstring.
     ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
     # #8265, after every other arm for the same reason: its ceiling is read from
@@ -5052,6 +5053,13 @@ async def _load_current_2027_super_bowl(db: AsyncSession) -> FuturesMarket | Non
     return market if market is not None and _is_current_2027_super_bowl(market) else None
 
 
+def _slug_prefix_upper_bound(stem: str) -> str:
+    """Return the smallest bytewise-greater string not starting with ``stem``."""
+    if not stem:
+        raise ValueError("slug prefix stem must be non-empty")
+    return stem[:-1] + chr(ord(stem[-1]) + 1)
+
+
 def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
     """Every row a venue's OWN identity could make a member — never a key join.
 
@@ -5060,7 +5068,9 @@ def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
     (it also keys MVP, coach and qualifier markets, and the sportsbook row's key
     carries no season).
     """
-    slug = FuturesMarket.market_metadata["polymarket_event_slug"].astext
+    slug_c = FuturesMarket.market_metadata["polymarket_event_slug"].astext.collate("C")
+    stem = spec.polymarket_slug_stem(edition)
+    slug_upper = _slug_prefix_upper_bound(stem)
     return select(
         FuturesMarket.id,
         FuturesMarket.source,
@@ -5083,7 +5093,8 @@ def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
             ),
             and_(
                 FuturesMarket.source == "polymarket",
-                slug.like(spec.polymarket_slug_stem(edition) + "%"),
+                slug_c >= stem,
+                slug_c < slug_upper,
             ),
         ),
     )
@@ -5327,6 +5338,11 @@ async def _resolve_verified_title(db: AsyncSession, market: FuturesMarket):
             if len(_VERIFIED_TITLE_CACHE.keys() | entries.keys()) > _VERIFIED_TITLE_CACHE_MAX:
                 _VERIFIED_TITLE_CACHE.clear()
         _VERIFIED_TITLE_CACHE.update({mid: (now + ttl, value) for mid, value in entries.items()})
+        super_bowl = entries.get(SUPER_BOWL_2027_BOARD_ID)
+        if isinstance(super_bowl, Composition):
+            from app.routes.title_feed_projection import remember_super_bowl_projection
+
+            await remember_super_bowl_projection(super_bowl, ttl)
     return verdict
 
 
@@ -5375,7 +5391,9 @@ def _overlay_current(row: dict, overlay, prob_key: str) -> bool:
     return True
 
 
-def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
+def _apply_verified_title_to_detail(
+    detail: dict, verdict, market, *, check_grouped_field_coverage: bool = False
+) -> None:
     """Effective verified mode uses the shared current values and club names.
 
     Outcome ids, array order, `source` and `bookmakers` stay the
@@ -5391,6 +5409,13 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     )
 
     _stamp_representation(detail, verdict)
+    field_complete = not detail.get("prices_withheld") or (
+        any(row.get("kalshi_no_bid") for row in detail["outcomes"])
+        and all(
+            row.get("probability") is not None or row.get("kalshi_no_bid")
+            for row in detail["outcomes"]
+        )
+    )
     changed = False
     if isinstance(verdict, Composition):
         game_at = verdict.canonical_card_fields.get("resolution_date")
@@ -5405,6 +5430,23 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
                     row["probability"],
                     overlay.aggregation_rule if overlay is not None else "unsupported",
                 )
+            if (
+                overlay is not None
+                and overlay.probability is not None
+                and any(source != "kalshi" for source in overlay.contributing_sources)
+            ):
+                row.pop("kalshi_no_bid", None)
+                row.pop("ask_ceiling", None)
+    if check_grouped_field_coverage:
+        from app.utils.futures_field_coverage import grouped_field_leader_is_unsupported
+
+        metadata = getattr(market, "market_metadata", None)
+        shape = metadata.get("shape") if isinstance(metadata, dict) else None
+        detail["field_price_coverage_incomplete"] = grouped_field_leader_is_unsupported(
+            detail,
+            expected_winners=shape.get("expected_winners") if isinstance(shape, dict) else None,
+            group_type=getattr(market, "group_type", None),
+        )
     # A source-only/refused composition can retain complete references. A
     # changed blend has no historical field with those same contributors;
     # its old source-only references are still withheld by _overlay_current.
@@ -5412,7 +5454,7 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
         normalized_field_comparisons(
             market,
             detail["outcomes"],
-            field_complete=not detail.get("prices_withheld"),
+            field_complete=field_complete,
         )
         if not changed
         else None
@@ -5424,7 +5466,7 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     if scaled is None:
         scaled = normalize_display_probs(
             detail["outcomes"], mutually_exclusive=detail.get("mutually_exclusive", True),
-            field_complete=not detail.get("prices_withheld"), question=detail.get("name"),
+            field_complete=field_complete, question=detail.get("name"),
         )
     if comparisons is not None:
         had_openings = any(
@@ -10122,6 +10164,7 @@ def _format_market_detail(
         drop_incoherent_near_certain,
         drop_unbacked_legs,
         encode_one_cent_kalshi_bounds,
+        mark_kalshi_ask_ceilings,
     )
 
     # Q480: one condition, one outcome. Dropped here, on the ORM rows, because the
@@ -10620,10 +10663,12 @@ def _format_market_detail(
     _board_status = getattr(market, "status", None)
     _board_verdict = _board_has_a_verdict(sorted_outcomes)
 
+    stale_outcome_ids: set[int] = set()
     if _board_status == "open":
-        withheld = withheld | stale_observation_keys(
+        stale_outcome_ids = stale_observation_keys(
             (o.id, o.last_updated) for o in sorted_outcomes
         )
+        withheld = withheld | stale_outcome_ids
 
         # 🔴 #8011 — AND THE RULE ABOVE HAS A BLIND SPOT THAT IS EXACTLY ITS OWN
         # DESIGN, WHICH IS WHY IT NEEDS A SECOND REFERENCE RATHER THAN A TWEAK.
@@ -10910,13 +10955,18 @@ def _format_market_detail(
         is_winner_of=_is_graded_winner,
     )
     raw_dominant_dropped = raw_outcome_count - len(outcomes)
+    source_outcomes = {o.id: o for o in sorted_outcomes}
+    mark_kalshi_ask_ceilings(
+        market, outcomes, source_outcomes, stale_outcome_ids=stale_outcome_ids
+    )
+    field_complete = not any(o["id"] in withheld and not o.get("kalshi_no_bid") for o in outcomes)
     # Ruling21-A: each end uses its own complete, recorded field. A raw
     # historical delta or today's divisor cannot stand in for that comparison.
     comparisons = (
         normalized_field_comparisons(
             market,
             outcomes,
-            field_complete=prices_withheld == 0,
+            field_complete=field_complete,
             now=datetime.now(timezone.utc),
         )
         if normalize_numbers
@@ -10925,7 +10975,7 @@ def _format_market_detail(
     scaled = normalize_numbers and normalize_display_probs(
         outcomes,
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
-        field_complete=prices_withheld == 0,
+        field_complete=field_complete,
         question=market.name,
     )
     if comparisons is not None:
@@ -11081,7 +11131,6 @@ def _format_market_detail(
         describe_field_normalization, futures_outcome_source_mark,
     )
 
-    source_outcomes = {o.id: o for o in sorted_outcomes}
     for row in outcomes:
         row["source_mark"] = futures_outcome_source_mark(
             market, source_outcomes[row["id"]], row,

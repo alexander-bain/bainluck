@@ -771,7 +771,7 @@ export default function OutcomeRow({
               data-testid="outcome-current-unavailable"
               className="text-xs text-text-secondary"
             >
-              No current price
+              No recent probability
             </div>
           ) : (
             <>

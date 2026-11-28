@@ -40,6 +40,7 @@ struct DiscoverInteractionProfile {
     enum Action {
         case detailOpen
         case like
+        case likeUndo
         case unlike
         case share
         case contextExpand
@@ -49,6 +50,7 @@ struct DiscoverInteractionProfile {
             switch self {
             case .detailOpen: return 1.5
             case .like: return 2.0
+            case .likeUndo: return 0.0
             case .unlike: return -1.0
             case .share: return 3.0
             case .contextExpand: return 0.35
@@ -131,6 +133,18 @@ struct DiscoverInteractionProfile {
     ///   still a game.
     mutating func record(category: String, action: Action, onSportsCard: Bool = false, now: Date = Date()) {
         let key = category.lowercased()
+        if action == .likeUndo {
+            let base = score(for: key, now: now)
+            guard base > 0 else { return }
+            let updated = max(0, base - Action.like.weight)
+            if updated == 0 {
+                entries.removeValue(forKey: key)
+            } else {
+                entries[key] = Entry(score: updated, updatedAt: now.timeIntervalSince1970)
+            }
+            save()
+            return
+        }
         // #9648: a sports negative is exact — the card, never the category.
         if action.weight < 0, onSportsCard || Self.isSportsKey(key) { return }
         // Decay first, then apply — otherwise a score that should have expired

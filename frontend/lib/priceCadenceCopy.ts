@@ -51,13 +51,13 @@
  * open Polymarket contracts stream too since #9561. A fixed cadence is no longer
  * a true sentence about an open board: it understates a streamed one, and no
  * other source's cadence is ours to promise either. So an open board says
- * nothing about cadence at all. "Limited price history available" stays beside
+ * nothing about cadence at all. "Limited probability history available" stays beside
  * it — snapshot history is a separate, still-sparse fact. Settled copy (#1803)
  * is unchanged; `dormant` (#8135) still returns silence, now the same silence.
  */
 
 /** Settled: never promise an update that cannot come. */
-const SETTLED_CADENCE = `Final — prices no longer update`;
+const SETTLED_CADENCE = `Final — probabilities no longer update`;
 
 /** The upper bound the retired open-board promise stated (#9567) — still #8135's unit. */
 export const CADENCE_PROMISE_CEILING_MS = 2 * 60 * 60 * 1000;
@@ -111,7 +111,7 @@ export function priceCadenceNote(
   // each caller keeps passing what only it knows.
   _options: PriceCadenceOptions = {}
 ): string | null {
-  // Settled outranks dormant: "Final — prices no longer update" is the stronger
+  // Settled outranks dormant: "Final — probabilities no longer update" is the stronger
   // and more useful fact, and every settled board goes dormant sooner or later.
   if (settled) return SETTLED_CADENCE;
   return null;

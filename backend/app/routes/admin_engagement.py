@@ -1179,6 +1179,8 @@ async def discover_engagement_summary(
         elif action == "challenge_complete":
             bucket["challenge_completes"] += n
             bucket["actions"] += n
+        elif action == "like_undo":
+            continue
         else:
             bucket["actions"] += n
 
@@ -1254,6 +1256,8 @@ async def discover_engagement_summary(
         elif action == "context_expand":
             bucket["context_expands"] += n
             bucket["actions"] += n
+        elif action == "like_undo":
+            continue
         else:
             bucket["actions"] += n
 
@@ -1688,7 +1692,7 @@ async def discover_engagement_summary(
         )
         .where(
             DiscoverInteraction.created_at >= cutoff,
-            DiscoverInteraction.action != "impression",
+            DiscoverInteraction.action.notin_(("impression", "like_undo")),
         )
         .group_by(DiscoverInteraction.item_type, DiscoverInteraction.item_id)
         .order_by(func.count(DiscoverInteraction.id).desc())

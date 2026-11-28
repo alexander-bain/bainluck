@@ -158,7 +158,11 @@ from app.utils.draw_priced_winner import (
 )
 from app.utils.market_identity import ticker_game_date
 from app.utils.game_market_class import (
+    OU_NON_TEAM_SUBJECT_RE,
+    extract_ou_subject,
+    fold_ascii,
     is_game_winner_market,
+    is_named_team_ou_market,
     kalshi_series_period,
     names_a_scoped_segment,
     outcomes_refute_game_winner,
@@ -23684,6 +23688,11 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
             return "half_total"
         if any(x in lower for x in _QUARTER_PATTERNS):
             return "quarter_total"
+        # #13754: "A vs. B: <Team> O/U N" (without "team") is one club's scoring
+        # ladder, never the combined-game total. Period & non-scoring checks above
+        # have already run so "1st Half <Team> O/U" stays period-scoped.
+        if is_named_team_ou_market(name):
+            return "team_total"
         # Name says "total" but no period marker — check ticker for period
         ticker_type = _classify_from_ticker(external_id) if external_id else None
         if ticker_type and ticker_type.endswith("_total"):
@@ -26574,7 +26583,7 @@ def _read_game_markets_memo(event_id: int):
     if entry is None:
         return None
     cached_ts, cached_status, cached_build, cached_response = entry
-    if cached_build != _current_build_id():
+    if cached_build != gmc.current_cache_version():
         return None
     age = _time.time() - cached_ts
     ttl = (
@@ -26640,13 +26649,15 @@ def _write_game_markets_memo(event_id: int, source_status, response) -> None:
     the bound is reached is the one holding the OLDEST CONTENT rather than the
     one this process happened to read first.
     """
+    from app.utils import game_markets_cache as gmc
+
     if len(_game_markets_cache) >= _GAME_MARKETS_MAX_SIZE:
         oldest_key = min(_game_markets_cache, key=lambda k: _game_markets_cache[k][0])
         del _game_markets_cache[oldest_key]
     _game_markets_cache[event_id] = (
         _memo_stamp(response),
         str(source_status or ""),
-        _current_build_id(),
+        gmc.current_cache_version(),
         response,
     )
 
@@ -28220,15 +28231,15 @@ async def _build_game_markets(
     # 7. Deduplicate totals — split game_total vs team_total vs period totals
     seen_thresholds: dict[float, dict] = {}
     team_total_items: list[dict] = []
-    home_lower = (event.home_team_name or "").lower()
-    away_lower = (event.away_team_name or "").lower()
+    home_lower = fold_ascii(event.home_team_name or "")
+    away_lower = fold_ascii(event.away_team_name or "")
     # A word both club names share ("york", "angeles") identifies neither.
     _home_words = {w for w in home_lower.split() if len(w) >= 4}
     _away_words = {w for w in away_lower.split() if len(w) >= 4}
     _home_words, _away_words = _home_words - _away_words, _away_words - _home_words
 
     def _clubs_named(text: str | None) -> set[str]:
-        low = (text or "").lower()
+        low = fold_ascii(text or "")
         named = set()
         if any(w in low for w in _home_words):
             named.add("home")
@@ -28255,6 +28266,16 @@ async def _build_game_markets(
             # points") or both, so only a one-club leg is left out.
             if len(_clubs_named(t.get("outcome_name"))) == 1:
                 continue
+            # #13754 fallback: a stored/market row whose O/U subject names one
+            # club of this event routes to `team_totals`, never `totals`.
+            _ou_subj = extract_ou_subject(t.get("market_name"))
+            if (
+                _ou_subj
+                and not OU_NON_TEAM_SUBJECT_RE.search(_ou_subj)
+                and len(_clubs_named(_ou_subj)) == 1
+            ):
+                t["market_type"] = "team_total"
+        if t["market_type"] == "game_total":
             key = t["threshold"]
             incumbent = seen_thresholds.get(key)
             if incumbent is None:
@@ -28283,7 +28304,12 @@ async def _build_game_markets(
             # capped Raiders rungs with Patriots prices. A text naming both clubs
             # attributes neither — an untagged row is served as it is, never
             # guessed onto a side.
-            named = _clubs_named(t.get("outcome_name")) or _clubs_named(t.get("market_name"))
+            _tt_subj = extract_ou_subject(t.get("market_name"))
+            named = (
+                _clubs_named(t.get("outcome_name"))
+                or (_clubs_named(_tt_subj) if _tt_subj else set())
+                or _clubs_named(t.get("market_name"))
+            )
             side = next(iter(named)) if len(named) == 1 else None
             if side == "home":
                 t["team_name"] = event.home_team_name
@@ -29618,7 +29644,7 @@ async def _build_game_markets(
 # defect (LAT-P136 / P127-2 — the defect is that it was the ONLY cache the tier
 # had; see `utils/related_futures_cache.py` for the ten-event cold measurement).
 _related_futures_cache: dict[int, tuple[float, str, str, dict]] = {}
-# event_id → (timestamp, source_status, build_id, response)
+# event_id → (timestamp, source_status, cache_version, response)
 _RELATED_FUTURES_LIVE_TTL = 60
 _RELATED_FUTURES_MAX_SIZE = 10
 
@@ -29700,6 +29726,13 @@ async def get_related_futures(
         _write_related_futures_memo(event_id, rfc.source_status_of(body), body)
         return body
     if state == "stale_ok" and body is not None:
+        live_ok, _live_reason = await rfc.confirm_scheduled_mirror_live(
+            db, event_id, body
+        )
+        if not live_ok:
+            state = "stale_too_old"
+            body = None
+    if state == "stale_ok" and body is not None:
         _strip_related_futures_american_odds(body)
         # Exactly one rebuild behind the mirror, fleet-wide-ish: single-flight is
         # per process (`_STALE_REFRESH_INFLIGHT`), and the shared slot the
@@ -29768,8 +29801,8 @@ def _read_related_futures_memo(event_id: int):
     entry = _related_futures_cache.get(event_id)
     if entry is None:
         return None
-    cached_at, cached_status, cached_build, cached_response = entry
-    if cached_build != _current_build_id():
+    cached_at, cached_status, cached_version, cached_response = entry
+    if cached_version != rfc.current_cache_version():
         return None
     age = _time.time() - cached_at
     ttl = (
@@ -29783,7 +29816,7 @@ def _read_related_futures_memo(event_id: int):
 
 
 def _write_related_futures_memo(event_id: int, source_status, response) -> None:
-    """The L1 write, with its size bound. Now stamped with the build (#6883).
+    """The L1 write, with its size bound. Stamped with `rfc.current_cache_version()`.
 
     The timestamp is the payload's own build time, not this moment — `_memo_stamp`,
     shared with the sibling tier, and the reason is #6394's: the read is not the
@@ -29794,13 +29827,15 @@ def _write_related_futures_memo(event_id: int, source_status, response) -> None:
     the bound is reached is the one holding the OLDEST CONTENT rather than the
     one this process happened to read first.
     """
+    from app.utils import related_futures_cache as rfc
+
     if len(_related_futures_cache) >= _RELATED_FUTURES_MAX_SIZE:
         oldest = min(_related_futures_cache, key=lambda k: _related_futures_cache[k][0])
         del _related_futures_cache[oldest]
     _related_futures_cache[event_id] = (
         _memo_stamp(response),
         str(source_status or ""),
-        _current_build_id(),
+        rfc.current_cache_version(),
         response,
     )
 
@@ -29833,6 +29868,9 @@ async def _publish_related_futures(
     # genuinely unencodable value would disable this cache SILENTLY.
     enveloped = jsonable_encoder(
         rfc.stamp(response, source_status=source_status, lifecycle_watermark=watermark)
+    )
+    enveloped = await rfc.attach_scheduled_commence_time(
+        db, event_id, response, source_status, enveloped
     )
     rfc.write(event_id, enveloped)
     served = rfc.with_availability(enveloped, rfc.AVAILABILITY_LIVE)
@@ -32444,8 +32482,12 @@ async def _load_fast_nugget_stakes(
 
     try:
         l2_rf, state = rfc.read(resolved_id)
-        if state in ("live", "stale_ok") and isinstance(l2_rf, dict):
+        if state == "live" and isinstance(l2_rf, dict):
             return l2_rf
+        if state == "stale_ok" and isinstance(l2_rf, dict):
+            live_ok, _ = await rfc.confirm_scheduled_mirror_live(db, resolved_id, l2_rf)
+            if live_ok:
+                return l2_rf
     except Exception as exc:
         logger.debug("nuggets: L2 related_futures cache read failed for event %s: %s", resolved_id, exc)
 
@@ -33653,6 +33695,7 @@ def _served_point_bounds(win_prob_history: dict, history: list):
 #: value a future client invents — is today's whole-journey payload, so an
 #: unrecognised range can never delete a point. Fail-open is the only safe
 #: direction for a parameter whose job is to omit data.
+EVENT_HISTORY_RANGE_ALL = "all"
 EVENT_HISTORY_RANGE_SINCE_START = "since_start"
 
 
@@ -33743,6 +33786,7 @@ def _omit_pre_kickoff_points(
     *,
     commence_time,
     start_is_kickoff: bool = True,
+    preserve_range_all_counts: bool = False,
     history: list,
     bookmaker_history: dict,
     win_prob_history: dict,
@@ -33882,12 +33926,22 @@ def _omit_pre_kickoff_points(
     for bookmaker in list(bookmaker_history):
         bookmaker_history[bookmaker] = _since_kickoff(bookmaker_history[bookmaker])
     for source in list(win_prob_history):
-        win_prob_history[source] = _since_kickoff(win_prob_history[source])
-        # Keep the advertised count honest — it is rendered.
+        before_len = len(win_prob_history[source])
+        kept = _since_kickoff(win_prob_history[source])
+        win_prob_history[source] = kept
+        # Keep the advertised count honest: explicit range=since_start follows
+        # len(kept) (#2000), while cold-miss range=all fallback preserves the
+        # range=all stored-reading count when nothing was trimmed and excludes
+        # any synthesized terminal `final` point when trimming ran (#7878/#8514).
         if source in win_prob_sources_meta:
-            win_prob_sources_meta[source]["snapshot_count"] = len(
-                win_prob_history[source]
-            )
+            if not preserve_range_all_counts:
+                win_prob_sources_meta[source]["snapshot_count"] = len(kept)
+            elif len(kept) < before_len:
+                win_prob_sources_meta[source]["snapshot_count"] = sum(
+                    1
+                    for p in kept
+                    if (p.get("evidence") or {}).get("kind") != "final"
+                )
 
     return omitted > 0
 
@@ -34755,15 +34809,26 @@ async def get_event_odds_history_cached(
     from app.utils import event_history_cache as ehc
     from app.utils import request_cache as _rc
 
-    key = ehc.cache_key(event_id, hours, chart_range)
+    if not isinstance(chart_range, str):
+        chart_range = EVENT_HISTORY_RANGE_ALL
 
-    def _respond(body: bytes, cache_control: Optional[str], state: str) -> Response:
+    key = ehc.cache_key(event_id, hours, chart_range)
+    finished_key = ehc.finished_cache_key(event_id, chart_range)
+
+    def _respond(
+        body: bytes,
+        cache_control: Optional[str],
+        state: str,
+        extra_headers: Optional[dict[str, str]] = None,
+    ) -> Response:
         headers = {"X-Feed-Cache": state}
         if cache_control:
             headers["Cache-Control"] = cache_control
+        if extra_headers:
+            headers.update(extra_headers)
         return Response(content=body, media_type="application/json", headers=headers)
 
-    async def _build(publish: bool) -> tuple[bytes, Optional[str]]:
+    async def _build(publish: bool) -> tuple[bytes, Optional[str], dict[str, str]]:
         sub = Response()
         marks, token = ehc.begin_marks()
         try:
@@ -34779,23 +34844,30 @@ async def get_event_odds_history_cached(
             ehc.end_marks(token)
         body = _encode_history_payload(payload)
         cache_control = sub.headers.get("cache-control")
-        if publish:
-            ehc.write(key, body, cache_control, ehc.lease_for(marks, payload))
-        return body, cache_control
+        extra_headers = {
+            name: val
+            for name in ("X-History-Served-Range", "X-History-Range-Fallback")
+            if (val := sub.headers.get(name))
+        }
+        lease = ehc.lease_for(marks, payload)
+        if publish and lease > 0:
+            target_key = finished_key if marks.finished else key
+            ehc.write(target_key, body, cache_control, lease)
+        return body, cache_control, extra_headers
 
     # #10090 R3: coalesced per (event, hours, range) by the #9296 barrier, and
     # still never published. A fresh history read is the other half of the
     # recovery pair, so the same broadcast that makes every open page re-read
     # detail makes every one of them re-read this.
     if fresh:
-        body, cache_control = await _coalesced_fresh_build(
+        body, cache_control, extra_headers = await _coalesced_fresh_build(
             _HISTORY_FRESH_BUILDS, key, time.time(), lambda: _build(publish=False)
         )
-        return _respond(body, cache_control, "bypass")
+        return _respond(body, cache_control, "bypass", extra_headers)
 
     flight_key = f"event_history:{key[0]}:{key[1]}:{key[2]}"
     while True:
-        hit = ehc.read(key)
+        hit = ehc.read(finished_key) or ehc.read(key)
         if hit is not None:
             return _respond(hit[0], hit[1], "hit")
 
@@ -34806,14 +34878,14 @@ async def get_event_odds_history_cached(
             # second build beside it. The leader resolves the future on every
             # exit, and its wait is never longer than building our own would be.
             try:
-                body, cache_control = await _asyncio.shield(fut)
+                body, cache_control, extra_headers = await _asyncio.shield(fut)
             except _asyncio.CancelledError:
                 raise
             except Exception:
                 # The leader exited without a body (failed, 404, or its reader
                 # went away). It is no longer running: re-check and claim.
                 continue
-            return _respond(body, cache_control, "coalesced")
+            return _respond(body, cache_control, "coalesced", extra_headers)
 
         try:
             built = await _build(publish=True)
@@ -34830,7 +34902,7 @@ async def get_event_odds_history_cached(
                 fut.exception()
             raise
         _rc.finish_build(flight_key, fut, result=built)
-        return _respond(built[0], built[1], "miss")
+        return _respond(built[0], built[1], "miss", built[2])
 
 
 async def get_event_odds_history(
@@ -34858,13 +34930,32 @@ async def get_event_odds_history(
     Each data point represents the consensus across all bookmakers at that time.
     """
     # Read-error and finished marks for the cache policy in front of this build
-    # (`get_event_odds_history_cached`); no-ops when called any other way.
+    # (`get_event_odds_history_cached`); fall back to a per-call completeness flag
+    # when `get_event_odds_history` is invoked directly so durable read-through
+    # still tracks partial reads cleanly without altering `ehc.build_is_complete()`.
     from app.utils.event_history_cache import (
-        build_is_complete as history_build_is_complete,
+        build_is_complete as _ehc_build_is_complete,
+        has_active_marks as _ehc_has_active_marks,
         mark_finished as _history_mark_finished,
-        mark_partial as _history_mark_partial,
+        mark_partial as _ehc_mark_partial,
+        mark_skip_cache as _history_mark_skip_cache,
     )
     from app.utils.history_coverage import served_history_coverage
+
+    _local_partial = False
+
+    if not isinstance(chart_range, str):
+        chart_range = EVENT_HISTORY_RANGE_ALL
+
+    def _history_mark_partial() -> None:
+        nonlocal _local_partial
+        _local_partial = True
+        _ehc_mark_partial()
+
+    def history_build_is_complete() -> bool:
+        if _ehc_has_active_marks():
+            return _ehc_build_is_complete()
+        return not _local_partial
 
     # Verify event exists
     event_result = await db.execute(
@@ -35074,6 +35165,11 @@ async def get_event_odds_history(
     prefetched_wp_snapshots = None
     prefetched_espn_snapshots = None
     _series_single_id = oriented_series_ids[0] if len(oriented_series_ids) == 1 else None
+    _finished_durable_active = False
+    _finished_fp = None
+    _finished_write_fn = None
+    _finished_write_source = None
+    _cold_miss_since_start_fallback = False
     if is_stale_open:
         # No cutoff and no end cap — see `_event_started_long_ago_unsettled` on
         # why `commence_time` cannot be trusted to bound this cohort.
@@ -35112,6 +35208,102 @@ async def get_event_odds_history(
         end_cap = _finished_event_end_cap(
             event.completed_at, event.commence_time, commence_cap
         )
+
+        # #13606 Part 1: once past end_cap (completed_at + 30m), serve complete
+        # finished game charts from `durable_state_snapshots` after verifying
+        # the in-memory `Event` state + 5 small indexed tables fingerprint.
+        _past_end_cap = end_cap is not None and now >= end_cap
+        if not fresh and _past_end_cap:
+            from app.services.finished_event_history import (
+                COLD_MISS_SINCE_START_FALLBACK,
+                FINISHED_HISTORY_READ_THROUGH_SOURCE,
+                build_fingerprint as _build_finished_fp,
+                claim_cold_materialization as _claim_finished_materialize,
+                cold_miss_mode as _finished_cold_miss_mode,
+                compute_small_tables_fingerprint as _compute_small_tables_fp,
+                derive_since_start_payload as _derive_finished_since_start,
+                durable_enabled as _finished_durable_enabled,
+                is_durable_bypassed as _finished_durable_bypassed,
+                read_finished_event_history_with_status as _read_finished_durable_status,
+                session_supports_durable as _session_supports_finished_durable,
+                write_finished_event_history as _write_finished_durable,
+            )
+
+            if (
+                not _finished_durable_bypassed()
+                and _finished_durable_enabled()
+                and _session_supports_finished_durable(db)
+            ):
+                _finished_durable_active = True
+                _finished_write_fn = _write_finished_durable
+                _finished_write_source = FINISHED_HISTORY_READ_THROUGH_SOURCE
+                _durable_status = "unavailable"
+                _tables_fp = await _compute_small_tables_fp(
+                    db, event_id, series_event_ids
+                )
+                if _tables_fp is not None:
+                    _finished_fp = _build_finished_fp(
+                        event, absorbed, series_event_ids, _tables_fp
+                    )
+                    _durable_status, _stored = await _read_finished_durable_status(
+                        db, event_id
+                    )
+                    if (
+                        _durable_status == "hit"
+                        and _stored is not None
+                        and _stored.get("fingerprint") == _finished_fp
+                        and isinstance(_stored.get("payload"), dict)
+                    ):
+                        _stored_payload = _stored["payload"]
+                        if chart_range == EVENT_HISTORY_RANGE_SINCE_START:
+                            return _derive_finished_since_start(
+                                _stored_payload,
+                                commence_time=event.commence_time,
+                                omit_fn=_omit_pre_kickoff_points,
+                                withhold_fn=_withhold_undrawable_source_series,
+                            )
+                        import copy as _copy
+
+                        return _copy.deepcopy(_stored_payload)
+
+                if _durable_status != "unavailable":
+                    _miss_mode = _finished_cold_miss_mode()
+                    if (
+                        chart_range == EVENT_HISTORY_RANGE_SINCE_START
+                        or _miss_mode == COLD_MISS_SINCE_START_FALLBACK
+                    ) and _claim_finished_materialize(event_id):
+                        try:
+                            from app.tasks import materialize_finished_event_charts
+
+                            materialize_finished_event_charts.apply_async(
+                                kwargs={"event_ids": [event_id]},
+                                queue="background",
+                                retry=False,
+                                ignore_result=True,
+                            )
+                        except Exception as _exc:  # noqa: BLE001
+                            logger.warning(
+                                "finished_event_history: cold enqueue failed for %s: %s",
+                                event_id, _exc,
+                            )
+                    if (
+                        chart_range != EVENT_HISTORY_RANGE_SINCE_START
+                        and _miss_mode == COLD_MISS_SINCE_START_FALLBACK
+                        and event.commence_time is not None
+                        and not _commence_time_is_venue_expiration(event)
+                        and _series_single_id is not None
+                    ):
+                        chart_range = EVENT_HISTORY_RANGE_SINCE_START
+                        _cold_miss_since_start_fallback = True
+                        _history_mark_skip_cache()
+                        if response is not None:
+                            response.headers["Cache-Control"] = "no-store"
+                            response.headers["X-History-Served-Range"] = (
+                                EVENT_HISTORY_RANGE_SINCE_START
+                            )
+                            response.headers["X-History-Range-Fallback"] = (
+                                EVENT_HISTORY_RANGE_SINCE_START
+                            )
 
         query = select(OddsSnapshot).where(
             OddsSnapshot.event_id.in_(oriented_series_ids)
@@ -37160,6 +37352,11 @@ async def get_event_odds_history(
     # reads routes — so a task that dispatches a task can grow a result consumer
     # nobody declared and leave its status poll hanging forever. The planner
     # decides and wins the claim; this line spends it.
+    from app.services.finished_event_history import (
+        in_materializer_context as _in_finished_materializer,
+        is_on_demand_refill_pending as _is_refill_pending,
+    )
+
     on_demand_backfill = None
     try:
         from app.tasks.event_chart_backfill import (
@@ -37193,7 +37390,10 @@ async def get_event_odds_history(
                 limit=THIN_MAX_EXPECTED_POINTS - _in_or_near_venue,
             )
         on_demand_backfill = await plan_on_demand_fill(
-            db, event, served_points=venue_points
+            db,
+            event,
+            served_points=venue_points,
+            allow_claim=not _in_finished_materializer(),
         )
         if on_demand_backfill and on_demand_backfill.get("enqueue"):
             from app.tasks import backfill_event_chart_history
@@ -37244,6 +37444,7 @@ async def get_event_odds_history(
             # could reach. Trimming to it would delete the contest, not the
             # pre-match half.
             start_is_kickoff=not _commence_time_is_venue_expiration(event),
+            preserve_range_all_counts=_cold_miss_since_start_fallback,
             history=history,
             bookmaker_history=bookmaker_history,
             win_prob_history=win_prob_history,
@@ -37259,7 +37460,7 @@ async def get_event_odds_history(
     # either range, and the rule is about the plot, not about the caller.
     _withhold_undrawable_source_series(win_prob_history, win_prob_sources_meta)
 
-    return {
+    payload = {
         "event_id": event_id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
@@ -37314,6 +37515,12 @@ async def get_event_odds_history(
         # a second request without it would tell this caller more. False on
         # every payload served today, including every `range=all` one.
         "pre_window_omitted": pre_window_omitted,
+        "served_range": chart_range,
+        "range_fallback": (
+            EVENT_HISTORY_RANGE_SINCE_START
+            if _cold_miss_since_start_fallback
+            else None
+        ),
         # #7878: false iff `commence_time` above is Kalshi's expected EXPIRATION
         # rather than a start — the venue's `occurrence_datetime`, which is
         # byte-identical to `expected_expiration_time` and is when the contract
@@ -37348,6 +37555,26 @@ async def get_event_odds_history(
         # you need side by side when this rail looks idle (gotcha #53).
         "on_demand_backfill": on_demand_backfill,
     }
+    _refill_pending = _is_refill_pending(on_demand_backfill)
+    if (
+        _finished_durable_active
+        and _finished_write_fn is not None
+        and _finished_write_source is not None
+        and chart_range != EVENT_HISTORY_RANGE_SINCE_START
+        and _finished_fp is not None
+        and history_build_is_complete()
+        and not _refill_pending
+    ):
+        await _finished_write_fn(
+            db,
+            event_id,
+            payload=payload,
+            fingerprint=_finished_fp,
+            source=_finished_write_source,
+            encoded_size_fn=_encode_history_payload,
+            commit=True,
+        )
+    return payload
 
 
 _LINE_MOVEMENT_DISAGREEMENT_BASIS = "admitted-source-pair-v2"

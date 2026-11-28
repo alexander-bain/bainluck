@@ -327,9 +327,11 @@ class TestTheBuildCheckStillBinds:
         assert events_route._read_game_markets_memo(7) is None
 
     def test_the_stored_entry_still_carries_the_running_build(self):
+        from app.utils import game_markets_cache as gmc
+
         events_route._write_game_markets_memo(7, "completed", _aged(1))
         assert (
-            events_route._game_markets_cache[7][2] == events_route._current_build_id()
+            events_route._game_markets_cache[7][2] == gmc.current_cache_version()
         )
 
     def test_the_stored_entry_still_carries_the_raw_source_status(self):

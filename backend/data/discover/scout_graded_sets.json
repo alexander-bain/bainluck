@@ -1,0 +1,1782 @@
+{
+  "schema_version": 1,
+  "description": "Alex's graded discover set decks carried forward so the Fun Scout does not re-stage already-graded sets (#13102, #13544).",
+  "graded_sets": [
+    {
+      "slug": "fresh-or-rotten",
+      "name": "Fresh or Rotten?",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-01",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:09:42.297Z",
+      "member_ids": [
+        61484910,
+        61484909,
+        67804442,
+        67804441,
+        67804589,
+        70170819
+      ],
+      "member_titles": [
+        "The Hunger Games: Sunrise on the Reaping \u00b7 Rotten Tomatoes score",
+        "I Play Rocky \u00b7 Rotten Tomatoes score",
+        "The Angry Birds Movie 3 \u00b7 Rotten Tomatoes score",
+        "Jumanji: Open World \u00b7 Rotten Tomatoes score",
+        "Focker-In-Law \u00b7 Rotten Tomatoes score",
+        "The Further Mis-Adventures of Cliff Booth \u00b7 Rotten Tomatoes score"
+      ]
+    },
+    {
+      "slug": "oscars-2027-winners",
+      "name": "Oscars 2027: Who Takes Home Gold",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-02",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:09:50.347Z",
+      "member_ids": [
+        57313556,
+        57368169,
+        57366460,
+        58495125,
+        58519933,
+        58492240
+      ],
+      "member_titles": [
+        "Oscars 2027: Best Picture Winner",
+        "Oscars 2027: Best Actor Winner",
+        "Oscars 2027: Best Actress Winner",
+        "Oscars 2027: Best Supporting Actor Winner",
+        "Oscars 2027: Best Director Winner",
+        "Oscars 2027: Best Supporting Actress Winner"
+      ]
+    },
+    {
+      "slug": "celebrity-engagements-2026",
+      "name": "Will They Put a Ring on It?",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-03",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:09:55.292Z",
+      "member_ids": [
+        109392,
+        129225,
+        114493,
+        56799671
+      ],
+      "member_titles": [
+        "Jaxson Dart and Madison Beer: Engaged before 2027?",
+        "Megan Thee Stallion and Klay Thompson engaged in 2026?",
+        "Kylie Jenner and Timoth\u00e9e Chalamet engaged in 2026?",
+        "Kim Kardashian and Lewis Hamilton engaged in 2026?"
+      ]
+    },
+    {
+      "slug": "big-game-without-football",
+      "name": "The Big Game, Minus the Football",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-04",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:09:58.597Z",
+      "member_ids": [
+        68313448,
+        69851900,
+        52755798,
+        69851892
+      ],
+      "member_titles": [
+        "Who will be in the 2027 Big Game halftime show?",
+        "What songs will be played at the 2027 Big Game halftime show?",
+        "Which brands will advertise during the Big Game?",
+        "Who will sing the national anthem at the 2027 Big Game?"
+      ]
+    },
+    {
+      "slug": "music-number-ones-2026",
+      "name": "2026's Biggest in Music",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-05",
+      "grade": "Fix",
+      "note": "It's weird to have three that are Spotify and one that is not.",
+      "graded_at": "2026-11-25T01:10:42.464Z",
+      "member_ids": [
+        113987,
+        114301,
+        27988658,
+        70733201
+      ],
+      "member_titles": [
+        "Top Spotify Artist 2026",
+        "Billboard #1 Artist 2026",
+        "Top Spotify Album 2026",
+        "Top US Spotify Song 2026"
+      ]
+    },
+    {
+      "slug": "finale-week",
+      "name": "Finale Week",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-06",
+      "grade": "Drop",
+      "note": "It's weird to have two that are from the voice and then two others, and one of them is not having anything to do with finales at all.",
+      "graded_at": "2026-11-25T01:11:07.881Z",
+      "member_ids": [
+        70160350,
+        70160372,
+        60481085,
+        62383618
+      ],
+      "member_titles": [
+        "Who will win The Voice Season 30?",
+        "The Voice Season 30 \u00b7 2nd Place",
+        "Dancing with the Stars Season 35 \u00b7 3rd Place",
+        "Golden Globe Nominations:  Best Television Series - Comedy or Musical"
+      ]
+    },
+    {
+      "slug": "dune-vs-avengers",
+      "name": "Dune vs. Avengers",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-07",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:11:22.815Z",
+      "member_ids": [
+        68365230,
+        114149,
+        63624401,
+        68365233,
+        59172754
+      ],
+      "member_titles": [
+        "\"Avengers: Doomsday\" Opening Weekend Box Office",
+        "Will Dune 3 or Avengers: Doomsday gross more on their opening weekend?",
+        "\"Avengers: Doomsday\" Rotten Tomatoes Score?",
+        "\"Dune: Part Three\" Opening Weekend Box Office",
+        "Dune vs Avengers: Highest Rotten Tomatoes Score"
+      ]
+    },
+    {
+      "slug": "earth-gets-rattled",
+      "name": "Earth Gets Rattled",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-08",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:11:30.131Z",
+      "member_ids": [
+        113701,
+        112828,
+        108294,
+        8861075
+      ],
+      "member_titles": [
+        "10.0 or above earthquake before 2027?",
+        "Will a major meteor strike hit Earth before 2030?",
+        "8.0 magnitude earthquake in Japan before 2030?",
+        "Magnitude 6.5+ earthquake in LA before 2027?"
+      ]
+    },
+    {
+      "slug": "us-year-end-charts",
+      "name": "America's Top Songs and Albums",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-09",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:11:40.049Z",
+      "member_ids": [
+        52755614,
+        52755613,
+        52755615,
+        52755618
+      ],
+      "member_titles": [
+        "Top U.S. Selling Album (Physical and Digital Sales Combined): 2026",
+        "Top U.S. Streamed Song (On-Demand Audio): 2026",
+        "Top U.S. Radio Song (Based on Audience Impressions): 2026",
+        "Top U.S. Selling CD Album: 2026"
+      ]
+    },
+    {
+      "slug": "who-gets-cast",
+      "name": "Who Gets Cast?",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-10",
+      "grade": "Fix",
+      "note": "The third one seems very different from the first two.",
+      "graded_at": "2026-11-25T01:12:01.066Z",
+      "member_ids": [
+        109214,
+        108242,
+        58858756
+      ],
+      "member_titles": [
+        "Avengers: Doomsday: Cast",
+        "Next Miami Vice film: Cast",
+        "Miles Morales live-action film actor?"
+      ]
+    },
+    {
+      "slug": "unsolved-problems",
+      "name": "Science's Hardest Problems",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-11",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:12:18.517Z",
+      "member_ids": [
+        60607593,
+        57017812,
+        53049401,
+        108232,
+        61461519
+      ],
+      "member_titles": [
+        "How many more Millennium Prize Problems will AI solve in 2026?",
+        "Will CMI declare a Millennium Prize Problem solved by ___?",
+        "When will the Riemann hypothesis win the Millennium Prize?",
+        "When will nuclear fusion be achieved?",
+        "When will an AI lab solve another Millennium Prize Problem?"
+      ]
+    },
+    {
+      "slug": "who-sells-records",
+      "name": "Who Still Sells Records?",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-12",
+      "grade": "Fix",
+      "note": "The first one has nothing to do with albums, and the headline is a little confusing because it's about selling records.",
+      "graded_at": "2026-11-25T01:12:51.000Z",
+      "member_ids": [
+        113335,
+        52755614,
+        52755618,
+        62383632
+      ],
+      "member_titles": [
+        "Which artists will release a new song in 2026?",
+        "Top U.S. Selling Album (Physical and Digital Sales Combined): 2026",
+        "Top U.S. Selling CD Album: 2026",
+        "Grand Theft Auto VI \u00b7 The Album: First Week Album Equivalent Units"
+      ]
+    },
+    {
+      "slug": "what-things-cost-2026",
+      "name": "What Stuff Costs Now",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-13",
+      "grade": "Drop",
+      "note": "I like the idea behind grouping these price markets, but in practice, it just ends up, for something like the Disneyland one, being a 70% chance that it's 200. In a grouping like this, that ends up not being very interesting.",
+      "graded_at": "2026-11-25T01:13:29.000Z",
+      "member_ids": [
+        60473224,
+        65521937,
+        52755932,
+        70385233
+      ],
+      "member_titles": [
+        "Diesel price at year-end 2026",
+        "Disneyland ticket price at year-end 2026",
+        "Creed Aventus: Price in 2026",
+        "Dozen eggs price in November?"
+      ]
+    },
+    {
+      "slug": "elon-wild-cards",
+      "name": "The Elon Wild Cards",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-14",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:13:38.451Z",
+      "member_ids": [
+        109315,
+        67231221,
+        108218,
+        52755564,
+        109633
+      ],
+      "member_titles": [
+        "How rich will Elon Musk get before 2027?",
+        "Elon Musk # tweets in November 2026?",
+        "Will Elon Musk visit Mars in his lifetime?",
+        "Tesla total deliveries in 2026",
+        "Next Superman film: Will Elon Musk be cast?"
+      ]
+    },
+    {
+      "slug": "opening-weekend-showdown",
+      "name": "Opening Weekend Showdown",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-15",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:13:44.001Z",
+      "member_ids": [
+        68365230,
+        65875241,
+        68365233
+      ],
+      "member_titles": [
+        "\"Avengers: Doomsday\" Opening Weekend Box Office",
+        "\"The Hunger Games: Sunrise on the Reaping\" Opening Weekend Box Office",
+        "\"Dune: Part Three\" Opening Weekend Box Office"
+      ]
+    },
+    {
+      "slug": "oscars-big-five",
+      "name": "The Oscars' Big Five",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-16",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:13:46.351Z",
+      "member_ids": [
+        57313556,
+        57368169,
+        57366460,
+        58495125,
+        58519933
+      ],
+      "member_titles": [
+        "Oscars 2027: Best Picture Winner",
+        "Oscars 2027: Best Actor Winner",
+        "Oscars 2027: Best Actress Winner",
+        "Oscars 2027: Best Supporting Actor Winner",
+        "Oscars 2027: Best Director Winner"
+      ]
+    },
+    {
+      "slug": "put-a-ring-on-it-2026",
+      "name": "Put a Ring on It",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-17",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:13:48.884Z",
+      "member_ids": [
+        109392,
+        129225,
+        114493,
+        56799671
+      ],
+      "member_titles": [
+        "Jaxson Dart and Madison Beer: Engaged before 2027?",
+        "Megan Thee Stallion and Klay Thompson engaged in 2026?",
+        "Kylie Jenner and Timoth\u00e9e Chalamet engaged in 2026?",
+        "Kim Kardashian and Lewis Hamilton engaged in 2026?"
+      ]
+    },
+    {
+      "slug": "auction-records",
+      "name": "Gavel Drop",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-18",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:13:54.151Z",
+      "member_ids": [
+        26513138,
+        26512980,
+        69442403
+      ],
+      "member_titles": [
+        "Most expensive auction work sold in 2026",
+        "Leonardo da Vinci's artwork break auction record this season?",
+        "Jean-Michel Basquiat's \u201cUntitled (Leonardo and His Five Grotesque Heads)\u201d Sale Price"
+      ]
+    },
+    {
+      "slug": "rotten-tomatoes-big-releases",
+      "name": "Fresh or Rotten?",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-19",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:13:58.134Z",
+      "member_ids": [
+        61484910,
+        61484909,
+        67804441,
+        63624401,
+        70170819
+      ],
+      "member_titles": [
+        "The Hunger Games: Sunrise on the Reaping \u00b7 Rotten Tomatoes score",
+        "I Play Rocky \u00b7 Rotten Tomatoes score",
+        "Jumanji: Open World \u00b7 Rotten Tomatoes score",
+        "\"Avengers: Doomsday\" Rotten Tomatoes Score?",
+        "The Further Mis-Adventures of Cliff Booth \u00b7 Rotten Tomatoes score"
+      ]
+    },
+    {
+      "slug": "gta-vi-countdown",
+      "name": "The GTA VI Countdown",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-20",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:14:02.333Z",
+      "member_ids": [
+        27594646,
+        108289,
+        66639375,
+        63336233,
+        59699716
+      ],
+      "member_titles": [
+        "GTA VI released by...?",
+        "Grand Theft Auto VI: Songs on radio at launch",
+        "Another GTA VI trailer released by...?",
+        "Rockstar releases PC version of GTA VI by...?",
+        "Grand Theft Auto VI: Metacritic score"
+      ]
+    },
+    {
+      "slug": "will-it-ever-come-out",
+      "name": "Will It Ever Come Out?",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-21",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:14:11.850Z",
+      "member_ids": [
+        109324,
+        59693617,
+        113343,
+        25924930,
+        112760,
+        113426
+      ],
+      "member_titles": [
+        "Stranger Things: New episode this year?",
+        "When will Drake release a new album?",
+        "Will Half-Life 3 be announced before 2027?",
+        "When will Kendrick Lamar release a new album?",
+        "When will Frank Ocean release a new album?",
+        "Will George R. R. Martin announce \"The Winds of Winter\" in 2026?"
+      ]
+    },
+    {
+      "slug": "game-awards-2026",
+      "name": "The Game Awards Night",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-22",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:14:15.384Z",
+      "member_ids": [
+        109614,
+        58399979,
+        58399980,
+        58399941,
+        58399939
+      ],
+      "member_titles": [
+        "The Game Awards: Game of the Year",
+        "The Game Awards: Best Game Direction",
+        "The Game Awards: Best Audio Design",
+        "The Game Awards: Best Narrative",
+        "The Game Awards: Best Mobile Game"
+      ]
+    },
+    {
+      "slug": "titles-of-2026",
+      "name": "How 2026 Gets Summed Up",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-23",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:14:21.380Z",
+      "member_ids": [
+        113334,
+        27467306,
+        67917806,
+        108254
+      ],
+      "member_titles": [
+        "Richest person on December 31, 2026?",
+        "TIME Person of the Year 2026",
+        "BBC Sports Personality of the Year Winner 2026",
+        "Time's Person of the Decade"
+      ]
+    },
+    {
+      "slug": "how-2026-gets-summed-up",
+      "name": "How 2026 Gets Summed Up",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-24",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:14:25.802Z",
+      "member_ids": [
+        27467306,
+        108254,
+        70081344,
+        67708476,
+        67708477
+      ],
+      "member_titles": [
+        "TIME Person of the Year 2026",
+        "Time's Person of the Decade",
+        "Will a single person become TIME's 2026 Person of the Year?",
+        "Merriam-Webster Word of the Year 2026 contains...?",
+        "Oxford Word of the Year 2026 contains...?"
+      ]
+    },
+    {
+      "slug": "what-things-cost",
+      "name": "What Things Cost",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-25",
+      "grade": "Fix",
+      "note": "This could potentially be interesting if we have the intelligence to contextualize each row, but if it's just a bunch of dollar values and percentages, it's at risk of being confusing or boring.",
+      "graded_at": "2026-11-25T01:14:56.397Z",
+      "member_ids": [
+        109226,
+        70170793,
+        112833,
+        65521937,
+        70385233
+      ],
+      "member_titles": [
+        "How high will gas prices in California get this year?",
+        "How high will US gas prices get in Nov 2026?",
+        "Costco raises hot dog combo price?",
+        "Disneyland ticket price at year-end 2026",
+        "Dozen eggs price in November?"
+      ]
+    },
+    {
+      "slug": "pure-long-shots",
+      "name": "Pure Long Shots",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-26",
+      "grade": "Fix",
+      "note": "I love the idea of grouping together long shots, but it's a little confusing to have two of the four be Elon Musk.",
+      "graded_at": "2026-11-25T01:15:13.252Z",
+      "member_ids": [
+        114131,
+        108218,
+        34191685,
+        109633
+      ],
+      "member_titles": [
+        "Major meteor strike (10kt+) in 2026?",
+        "Will Elon Musk visit Mars in his lifetime?",
+        "Is Earth flat?",
+        "Next Superman film: Will Elon Musk be cast?"
+      ]
+    },
+    {
+      "slug": "google-year-in-search",
+      "name": "What 2026 Googled",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-27",
+      "grade": "Keep",
+      "note": "I absolutely love this category. I would say, though, that if Google has one for number one movie, they probably have a few more that we should be including here.",
+      "graded_at": "2026-11-25T01:15:35.485Z",
+      "member_ids": [
+        70733263,
+        57792524,
+        56775630
+      ],
+      "member_titles": [
+        "#1 Searched Person on Google 2026?",
+        "#1 Searched Person on Google in the US 2026?",
+        "Google\u2019s Year in Search 2026 Global - Movies: #1 search"
+      ]
+    },
+    {
+      "slug": "this-year-or-never",
+      "name": "Will It Ever Come Out?",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-28",
+      "grade": "Fix",
+      "note": "This is a good idea for a category, but there's probably some more we should be including.",
+      "graded_at": "2026-11-25T01:15:51.134Z",
+      "member_ids": [
+        109324,
+        113343,
+        113426
+      ],
+      "member_titles": [
+        "Stranger Things: New episode this year?",
+        "Will Half-Life 3 be announced before 2027?",
+        "Will George R. R. Martin announce \"The Winds of Winter\" in 2026?"
+      ]
+    },
+    {
+      "slug": "box-office-2026",
+      "name": "2026 at the Box Office",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-29",
+      "grade": "Fix",
+      "note": "It's a little confusing to have the Hunger Games one in here, and having one market that just shows the third-biggest opening weekend is very weird. We have the biggest and the third biggest. We don't have the second biggest. A good group to consider would be a list of movies, and then we show, for",
+      "graded_at": "2026-11-25T01:16:34.336Z",
+      "member_ids": [
+        113356,
+        65875241,
+        56867562,
+        58610625
+      ],
+      "member_titles": [
+        "Which movie has biggest opening weekend in 2026?",
+        "\"The Hunger Games: Sunrise on the Reaping\" Opening Weekend Box Office",
+        "Which movie has 3rd biggest opening weekend in 2026?",
+        "Where will 2026 rank among the highest U.S. domestic box office years on record?"
+      ]
+    },
+    {
+      "slug": "game-awards-2026",
+      "name": "The Game Awards",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-30",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:16:43.169Z",
+      "member_ids": [
+        109614,
+        58399979,
+        58399980,
+        58399941,
+        58399939
+      ],
+      "member_titles": [
+        "The Game Awards: Game of the Year",
+        "The Game Awards: Best Game Direction",
+        "The Game Awards: Best Audio Design",
+        "The Game Awards: Best Narrative",
+        "The Game Awards: Best Mobile Game"
+      ]
+    },
+    {
+      "slug": "big-game-without-football",
+      "name": "The Big Game, Minus the Football",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-31",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:16:48.269Z",
+      "member_ids": [
+        68313448,
+        69851900,
+        52755798,
+        69851899,
+        69851892
+      ],
+      "member_titles": [
+        "Who will be in the 2027 Big Game halftime show?",
+        "What songs will be played at the 2027 Big Game halftime show?",
+        "Which brands will advertise during the Big Game?",
+        "First song at 2027 Big Game Halftime Show?",
+        "Who will sing the national anthem at the 2027 Big Game?"
+      ]
+    },
+    {
+      "slug": "who-makes-the-cover",
+      "name": "Who Shows Up",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-32",
+      "grade": "Fix",
+      "note": "Two of the three are about models, which is a confusing group because the third has nothing to do with models.",
+      "graded_at": "2026-11-25T01:17:04.520Z",
+      "member_ids": [
+        62368061,
+        56775621,
+        25922492
+      ],
+      "member_titles": [
+        "Who will host Saturday Night Live Season 52?",
+        "Vogue (US) 2026: Cover Models",
+        "Sports Illustrated Swimsuit Issue 2027: Cover model"
+      ]
+    },
+    {
+      "slug": "back-to-the-moon",
+      "name": "Back to the Moon",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-33",
+      "grade": "Fix",
+      "note": "Three of the four have to do with the moon, and the fourth one doesn't. This could possibly be about space, but it can't be labeled about the moon.",
+      "graded_at": "2026-11-25T01:17:23.536Z",
+      "member_ids": [
+        114306,
+        109473,
+        108247,
+        108236
+      ],
+      "member_titles": [
+        "Human moon landing in 2026?",
+        "NASA lands on the moon?",
+        "Which country will be the next to send humans to the Moon?",
+        "Will a humanoid robot walk on Mars before a human does?"
+      ]
+    },
+    {
+      "slug": "when-will-the-album-drop",
+      "name": "When Will the Album Drop?",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-34",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:17:29.236Z",
+      "member_ids": [
+        59693617,
+        25924930,
+        112760,
+        70150728
+      ],
+      "member_titles": [
+        "When will Drake release a new album?",
+        "When will Kendrick Lamar release a new album?",
+        "When will Frank Ocean release a new album?",
+        "When will Don Toliver release 'NITROUS'?"
+      ]
+    },
+    {
+      "slug": "gta-vi-countdown",
+      "name": "The GTA VI Countdown",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-35",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:17:33.137Z",
+      "member_ids": [
+        27594646,
+        66639375,
+        69851943,
+        63336233
+      ],
+      "member_titles": [
+        "GTA VI released by...?",
+        "Another GTA VI trailer released by...?",
+        "GTA VI Online released by...?",
+        "Rockstar releases PC version of GTA VI by...?"
+      ]
+    },
+    {
+      "slug": "taylor-chart-year",
+      "name": "Taylor's Chart Year",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-36",
+      "grade": "Fix",
+      "note": "Confusing to have two of the four be about Taylor Swift, but not the other two.",
+      "graded_at": "2026-11-25T01:17:45.571Z",
+      "member_ids": [
+        114301,
+        70733199,
+        61484886,
+        52756014
+      ],
+      "member_titles": [
+        "Billboard #1 Artist 2026",
+        "Top US Spotify Artist 2026",
+        "Taylor Swift \u00b7 Weeks at #1 on the Billboard 200 in 2026",
+        "Taylor Swift: Total weeks at #1 on the Billboard Hot 100 in 2026"
+      ]
+    },
+    {
+      "slug": "oscars-2027-big-nominations",
+      "name": "Oscars 2027: Who Gets Nominated",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-37",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:17:54.787Z",
+      "member_ids": [
+        27988771,
+        27988786,
+        65814231,
+        65809343,
+        66118096
+      ],
+      "member_titles": [
+        "Oscars 2027: Best Picture Nominations",
+        "Oscars 2027: Best Actor Nominations",
+        "Oscars 2027: Best Supporting Actress Nominations",
+        "Oscars 2027: Best Actress Nominations",
+        "Oscars 2027: Best Director Nominations"
+      ]
+    },
+    {
+      "slug": "festival-headliners-2027",
+      "name": "2027 Festival Headliners",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-38",
+      "grade": "Fix",
+      "note": "This is an absolutely bizarre collection of markets that don't seem to have anything to do with each other.",
+      "graded_at": "2026-11-25T01:18:12.321Z",
+      "member_ids": [
+        59693477,
+        59693478,
+        20566631
+      ],
+      "member_titles": [
+        "New Orleans Jazz & Heritage Festival 2027: Headliners",
+        "2027 Minnesota Yacht Club Festival: Headliners",
+        "Who will perform at Coachella 2027?"
+      ]
+    },
+    {
+      "slug": "tv-winners-season",
+      "name": "Who Wins TV This Season",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-39",
+      "grade": "Fix",
+      "note": "Confusing to have two of the four be Critics' Choice.",
+      "graded_at": "2026-11-25T01:18:24.955Z",
+      "member_ids": [
+        70160350,
+        57792626,
+        65536355,
+        65536347
+      ],
+      "member_titles": [
+        "Who will win The Voice Season 30?",
+        "#1 Searched TV Show on Google 2026?",
+        "Critics Choice Awards: Best Actress in a Drama Series",
+        "Critics Choice Awards: Best Supporting Actor in a Limited Series or Movie Made for Television"
+      ]
+    },
+    {
+      "slug": "starship-milestones",
+      "name": "Starship Milestones",
+      "deck_id": "discover-blind-40-v2-2026-11-23",
+      "card_id": "blind-40",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-25T01:19:06.855Z",
+      "member_ids": [
+        113766,
+        113322,
+        35418529,
+        70732719
+      ],
+      "member_titles": [
+        "How many SpaceX Starship launches reach space in 2026?",
+        "SpaceX Starship fully reusable before 2027?",
+        "Two SpaceX Starships dock together by\u2026?",
+        "SpaceX Starship Florida Launch by\u2026?"
+      ]
+    },
+    {
+      "slug": "who-gets-cast",
+      "name": "Who Gets the Part?",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-01",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        109214,
+        108242,
+        58858756,
+        108263
+      ],
+      "member_titles": [
+        "Avengers: Doomsday: Cast",
+        "Next Miami Vice film: Cast",
+        "Miles Morales live-action film actor?",
+        "Next James Bond film: Actress cast as Bond girl"
+      ]
+    },
+    {
+      "slug": "machinery-long-shots",
+      "name": "Long Shots People Talk About",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-02",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        109435,
+        113504,
+        109295,
+        34191685,
+        108218,
+        9997262
+      ],
+      "member_titles": [
+        "Will the U.S. confirm that aliens exist?",
+        "Will Jesus Christ return before 2027?",
+        "Will Taylor Swift meet with Pope Leo XIV before 2027?",
+        "Is Earth flat?",
+        "Will Elon Musk visit Mars in his lifetime?",
+        "Satoshi's identity be proven by...?"
+      ]
+    },
+    {
+      "slug": "moon-race",
+      "name": "Race Back to the Moon",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-03",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        114306,
+        109473,
+        108247,
+        25925970,
+        108236
+      ],
+      "member_titles": [
+        "Human moon landing in 2026?",
+        "NASA lands on the moon?",
+        "Which country will be the next to send humans to the Moon?",
+        "When will Blue Origin's New Glenn rocket launch?",
+        "Will a humanoid robot walk on Mars before a human does?"
+      ]
+    },
+    {
+      "slug": "rap-album-watch",
+      "name": "Rap Album Watch",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-04",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        59693617,
+        58492244,
+        52755943,
+        70150728
+      ],
+      "member_titles": [
+        "When will Drake release a new album?",
+        "Grammys 2027: Best Rap Album Winner",
+        "How long will Drake's album titled 'HABIBTI' be?",
+        "When will Don Toliver release 'NITROUS'?"
+      ]
+    },
+    {
+      "slug": "machinery-music-and-grammys-2026",
+      "name": "Grammys & Chart Leaders",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-05",
+      "grade": "Fix",
+      "note": "Which rows were picked feels a little random (why the rap album?). Going in a great direction.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        52755801,
+        56775571,
+        58492244,
+        114301,
+        109508
+      ],
+      "member_titles": [
+        "Grammy winner: Album of the Year",
+        "Grammy Winner: Best New Artist",
+        "Grammys 2027: Best Rap Album Winner",
+        "Billboard #1 Artist 2026",
+        "Top Song on Spotify in 2026?"
+      ]
+    },
+    {
+      "slug": "wrapped-2026",
+      "name": "Your Wrapped, Predicted",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-06",
+      "grade": "Fix",
+      "note": "Better in order: a list of songs, and for each the chance it finishes first, second or third. Same for albums.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        113987,
+        57574931,
+        35961535,
+        27988658,
+        70733201,
+        35961536
+      ],
+      "member_titles": [
+        "Top Spotify Artist 2026",
+        "#2 Spotify Song 2026",
+        "#2 Spotify Artist 2026",
+        "Top Spotify Album 2026",
+        "Top US Spotify Song 2026",
+        "#3 Spotify Artist 2026"
+      ]
+    },
+    {
+      "slug": "machinery-cast-delayed-cancelled",
+      "name": "Who gets cast, delayed, or cancelled",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-07",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        109214,
+        56867561,
+        109250,
+        108275
+      ],
+      "member_titles": [
+        "Avengers: Doomsday: Cast",
+        "Will Avengers: Secret Wars be delayed?",
+        "TV shows cancelled this year",
+        "Will The Simpsons announce it is ending?"
+      ]
+    },
+    {
+      "slug": "big-unsolved",
+      "name": "Science's Biggest Cliffhangers",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-08",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        57017812,
+        53049401,
+        108232,
+        61461519
+      ],
+      "member_titles": [
+        "Will CMI declare a Millennium Prize Problem solved by ___?",
+        "When will the Riemann hypothesis win the Millennium Prize?",
+        "When will nuclear fusion be achieved?",
+        "When will an AI lab solve another Millennium Prize Problem?"
+      ]
+    },
+    {
+      "slug": "cost-of-a-good-time",
+      "name": "The Cost of a Good Time",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-09",
+      "grade": "Fix",
+      "note": "Great, and better with a little context on each row, such as what the price is now.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        70170793,
+        112833,
+        65521937,
+        52755932,
+        70385233
+      ],
+      "member_titles": [
+        "How high will US gas prices get in Nov 2026?",
+        "Costco raises hot dog combo price?",
+        "Disneyland ticket price at year-end 2026",
+        "Creed Aventus: Price in 2026",
+        "Dozen eggs price in November?"
+      ]
+    },
+    {
+      "slug": "machinery-stage-and-cover",
+      "name": "Who gets the stage and the cover",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-10",
+      "grade": "Keep",
+      "note": "A little random, but fun.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        62368061,
+        109296,
+        109287,
+        56775621,
+        108505,
+        108504
+      ],
+      "member_titles": [
+        "Who will host Saturday Night Live Season 52?",
+        "Call Her Daddy: Guests this year",
+        "The Joe Rogan Experience: Guests in 2026",
+        "Vogue (US) 2026: Cover Models",
+        "Who will headline Coachella 2027?",
+        "Who will headline Rolling Loud Miami 2026?"
+      ]
+    },
+    {
+      "slug": "machinery-climate-water-and-energy",
+      "name": "Water, Rain & Climate Shifts",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-11",
+      "grade": "Fix",
+      "note": "Needs context on each row. Has potential.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        65521875,
+        63828305,
+        61980420,
+        108250,
+        108248
+      ],
+      "member_titles": [
+        "How much will it rain in Napa in November 2026 through March 2027?",
+        "Melbourne's wettest month of 2026?",
+        "Lowest Mississippi level at Baton Rouge by November 30?",
+        "What will be the largest source of global primary energy consumption in 2030?",
+        "US meets its climate goals?"
+      ]
+    },
+    {
+      "slug": "machinery-pop-culture-oddities",
+      "name": "Pop Culture Oddities",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-12",
+      "grade": "Fix",
+      "note": "A very random list. A pot-pourri set is not a bad idea, but each row needs context.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        67804457,
+        108306,
+        109309,
+        108254,
+        67804475,
+        58903285
+      ],
+      "member_titles": [
+        "\"All I Want for Christmas Is You\" \u00b7 Billboard Hot 100 rank (Dec 19, 2026)",
+        "What genre will Beyonce\u2019s next album be?",
+        "Will Taylor Swift (Taylor's Version) be announced this year?",
+        "Time's Person of the Decade",
+        "Which New York City restaurants earn a Michelin star in 2026?",
+        "Turner Prize 2026 Winner"
+      ]
+    },
+    {
+      "slug": "machinery-ai-model-leaderboard-2026",
+      "name": "The 2026 AI Model Leaderboard",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-13",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        109596,
+        62134324,
+        109623,
+        109322
+      ],
+      "member_titles": [
+        "Best AI at the end of 2026?",
+        "Next Claude Opus (5.6+) released by...?",
+        "Which AI company will have the best coding model at the end of 2026?",
+        "Which AI will be the first to hit 1550 on Text Arena?"
+      ]
+    },
+    {
+      "slug": "machinery-golden-globes-2027",
+      "name": "The 2027 Golden Globes",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-14",
+      "grade": "Fix",
+      "note": "There could be far more than these four. Say why these were chosen and how to see the rest.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        70160313,
+        70160296,
+        70160294,
+        70160314
+      ],
+      "member_titles": [
+        "Golden Globe Winner: Best Actress in a Motion Picture \u2013 Musical or Comedy",
+        "Golden Globe Winner: Best Actress in a Limited Series",
+        "Golden Globe Winner: Best Supporting Actress on TV",
+        "Golden Globe Winner: Best Actor in a Motion Picture \u2013 Musical or Comedy"
+      ]
+    },
+    {
+      "slug": "big-game-no-football",
+      "name": "The Big Game, No Football",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-15",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        68313448,
+        69851900,
+        52755798,
+        69851899,
+        69851892
+      ],
+      "member_titles": [
+        "Who will be in the 2027 Big Game halftime show?",
+        "What songs will be played at the 2027 Big Game halftime show?",
+        "Which brands will advertise during the Big Game?",
+        "First song at 2027 Big Game Halftime Show?",
+        "Who will sing the national anthem at the 2027 Big Game?"
+      ]
+    },
+    {
+      "slug": "spice-vs-snap",
+      "name": "Spice vs. Snap",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-16",
+      "grade": "Fix",
+      "note": "A fun idea, but the rows measure different things (box-office gross beside review scores), which could confuse.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        68365230,
+        114149,
+        63624401,
+        56867561,
+        68365233,
+        59172754
+      ],
+      "member_titles": [
+        "\"Avengers: Doomsday\" Opening Weekend Box Office",
+        "Will Dune 3 or Avengers: Doomsday gross more on their opening weekend?",
+        "\"Avengers: Doomsday\" Rotten Tomatoes Score?",
+        "Will Avengers: Secret Wars be delayed?",
+        "\"Dune: Part Three\" Opening Weekend Box Office",
+        "Dune vs Avengers: Highest Rotten Tomatoes Score"
+      ]
+    },
+    {
+      "slug": "machinery-space-race",
+      "name": "Space & Mars",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-17",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        108218,
+        63336261,
+        109473,
+        108247
+      ],
+      "member_titles": [
+        "Will Elon Musk visit Mars in his lifetime?",
+        "Will Jeff Bezos go to space before 2028?",
+        "NASA lands on the moon?",
+        "Which country will be the next to send humans to the Moon?"
+      ]
+    },
+    {
+      "slug": "machinery-long-awaited",
+      "name": "Long-Awaited Releases",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-18",
+      "grade": "Fix",
+      "note": "Likes it a lot. The last row looks like a ladder and may not sit cleanly with the others.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        113343,
+        109247,
+        114237,
+        108494,
+        109540,
+        112760
+      ],
+      "member_titles": [
+        "Will Half-Life 3 be announced before 2027?",
+        "The Winds of Winter: Release date announced this year?",
+        "New \"Stranger Things\" episode released by...?",
+        "When will Elder Scrolls VI be released?",
+        "PS6 announced this year?",
+        "When will Frank Ocean release a new album?"
+      ]
+    },
+    {
+      "slug": "gta-vi-countdown",
+      "name": "GTA VI Countdown",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-19",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        62878194,
+        66639375,
+        69851943,
+        63336233,
+        59699716,
+        62383632
+      ],
+      "member_titles": [
+        "Songs on GTA VI Radio at Launch?",
+        "Another GTA VI trailer released by...?",
+        "GTA VI Online released by...?",
+        "Rockstar releases PC version of GTA VI by...?",
+        "Grand Theft Auto VI: Metacritic score",
+        "Grand Theft Auto VI \u00b7 The Album: First Week Album Equivalent Units"
+      ]
+    },
+    {
+      "slug": "machinery-elon-musk-side-quests",
+      "name": "Elon Musk's wildest side quests",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-20",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        109633,
+        109412,
+        109316,
+        108218
+      ],
+      "member_titles": [
+        "Next Superman film: Will Elon Musk be cast?",
+        "Will Elon purchase Ryanair?",
+        "Will Elon Musk buy a major sports team before 2027?",
+        "Will Elon Musk visit Mars in his lifetime?"
+      ]
+    },
+    {
+      "slug": "machinery-2026-summed-up",
+      "name": "How 2026 gets summed up",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-21",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        27467306,
+        8431009,
+        109517,
+        70733200
+      ],
+      "member_titles": [
+        "TIME Person of the Year 2026",
+        "Merriam-Webster Word of the Year 2026?",
+        "Top artist on Spotify in 2026?",
+        "Top Spotify Song 2026"
+      ]
+    },
+    {
+      "slug": "put-a-ring-on-it-2026",
+      "name": "Put a Ring On It?",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-22",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        109392,
+        129225,
+        114493,
+        56799671
+      ],
+      "member_titles": [
+        "Jaxson Dart and Madison Beer: Engaged before 2027?",
+        "Megan Thee Stallion and Klay Thompson engaged in 2026?",
+        "Kylie Jenner and Timoth\u00e9e Chalamet engaged in 2026?",
+        "Kim Kardashian and Lewis Hamilton engaged in 2026?"
+      ]
+    },
+    {
+      "slug": "chart-toppers-2026",
+      "name": "Who Owns the Charts?",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-23",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        113335,
+        52755614,
+        115649,
+        61484886,
+        52756014,
+        67804457
+      ],
+      "member_titles": [
+        "Which artists will release a new song in 2026?",
+        "Top U.S. Selling Album (Physical and Digital Sales Combined): 2026",
+        "Which KPop groups will release songs in 2026?",
+        "Taylor Swift \u00b7 Weeks at #1 on the Billboard 200 in 2026",
+        "Taylor Swift: Total weeks at #1 on the Billboard Hot 100 in 2026",
+        "\"All I Want for Christmas Is You\" \u00b7 Billboard Hot 100 rank (Dec 19, 2026)"
+      ]
+    },
+    {
+      "slug": "will-it-ever-come-out",
+      "name": "Will It Ever Come Out?",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-24",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        109324,
+        27594646,
+        113343,
+        25924930,
+        112760,
+        113426
+      ],
+      "member_titles": [
+        "Stranger Things: New episode this year?",
+        "GTA VI released by...?",
+        "Will Half-Life 3 be announced before 2027?",
+        "When will Kendrick Lamar release a new album?",
+        "When will Frank Ocean release a new album?",
+        "Will George R. R. Martin announce \"The Winds of Winter\" in 2026?"
+      ]
+    },
+    {
+      "slug": "machinery-earth-quakes-and-storms-2026",
+      "name": "Earth, Quakes & Storms",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-25",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        113358,
+        114134,
+        114137,
+        58435808,
+        1234182
+      ],
+      "member_titles": [
+        "Where will 2026 rank among the hottest years on record?",
+        "How many 7.0 or above earthquakes in 2026?",
+        "How many large volcano eruptions (VEI \u22654) in 2026?",
+        "How many tropical cyclones will make landfall in China during 2026?",
+        "How many Tornadoes in the US in 2026?"
+      ]
+    },
+    {
+      "slug": "starship-season",
+      "name": "Starship Season",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-26",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        113766,
+        113322,
+        35418529,
+        70732719
+      ],
+      "member_titles": [
+        "How many SpaceX Starship launches reach space in 2026?",
+        "SpaceX Starship fully reusable before 2027?",
+        "Two SpaceX Starships dock together by\u2026?",
+        "SpaceX Starship Florida Launch by\u2026?"
+      ]
+    },
+    {
+      "slug": "machinery-google-year-in-search-2026",
+      "name": "Google's 2026 Year in Search",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-27",
+      "grade": "Keep",
+      "note": "The third and fifth rows look redundant.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        70733266,
+        57792616,
+        57792681,
+        57792626,
+        60634621
+      ],
+      "member_titles": [
+        "#1 Searched Actor on Google 2026?",
+        "#1 Searched Athlete on Google 2026?",
+        "#1 Searched Movie on Google 2026?",
+        "#1 Searched TV Show on Google 2026?",
+        "Top 5 Most Searched Movies on Google 2026"
+      ]
+    },
+    {
+      "slug": "machinery-ai-math-and-data-centers",
+      "name": "AI Math & Data Centers",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-28",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        60607593,
+        60626097,
+        60518652,
+        2415248,
+        20571305,
+        63267956
+      ],
+      "member_titles": [
+        "How many more Millennium Prize Problems will AI solve in 2026?",
+        "Which Millennium Prize Problem will AI solve next?",
+        "AI lab announces another Millennium Prize solution by...?",
+        "When will any company achieve AGI?",
+        "AI data center in space by...?",
+        "Louisiana enacts data center moratorium by...?"
+      ]
+    },
+    {
+      "slug": "machinery-ai-and-big-tech-race",
+      "name": "The AI & Big Tech Race",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-29",
+      "grade": "Fix",
+      "note": "Odd to have \"largest company\" beside \"2nd largest\" and then \"3rd largest\" three rows on. Better as a list of companies with the chance each is first, second or third.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        113318,
+        68806125,
+        23449601,
+        24586956,
+        68806126
+      ],
+      "member_titles": [
+        "Largest Company end of December 2026?",
+        "2nd Largest Company end of November 2026?",
+        "Anthropic vs OpenAI - higher valuation on December 31?",
+        "Lead Bank in OpenAI's IPO?",
+        "3rd Largest Company end of November 2026?"
+      ]
+    },
+    {
+      "slug": "elon-unfiltered-2026",
+      "name": "Elon, Unfiltered",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-30",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        109315,
+        67231221,
+        108218,
+        109633
+      ],
+      "member_titles": [
+        "How rich will Elon Musk get before 2027?",
+        "Elon Musk # tweets in November 2026?",
+        "Will Elon Musk visit Mars in his lifetime?",
+        "Next Superman film: Will Elon Musk be cast?"
+      ]
+    },
+    {
+      "slug": "machinery-2026-box-office-showdown",
+      "name": "2026 Box Office Showdown",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-31",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        114149,
+        113355,
+        113356,
+        56867563
+      ],
+      "member_titles": [
+        "Will Dune 3 or Avengers: Doomsday gross more on their opening weekend?",
+        "Highest grossing movie in 2026?",
+        "Which movie has biggest opening weekend in 2026?",
+        "Which movie has 2nd biggest opening weekend in 2026?"
+      ]
+    },
+    {
+      "slug": "fresh-or-rotten",
+      "name": "Fresh or Rotten?",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-32",
+      "grade": "Keep",
+      "note": "Great, with many fun ways to draw it.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        61484910,
+        61484909,
+        65536494,
+        67804442,
+        67804441,
+        67804589
+      ],
+      "member_titles": [
+        "The Hunger Games: Sunrise on the Reaping \u00b7 Rotten Tomatoes score",
+        "I Play Rocky \u00b7 Rotten Tomatoes score",
+        "Hexed \u00b7 Rotten Tomatoes score",
+        "The Angry Birds Movie 3 \u00b7 Rotten Tomatoes score",
+        "Jumanji: Open World \u00b7 Rotten Tomatoes score",
+        "Focker-In-Law \u00b7 Rotten Tomatoes score"
+      ]
+    },
+    {
+      "slug": "how-2026-gets-summed-up",
+      "name": "How 2026 Gets Summed Up",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-33",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        70733263,
+        27467306,
+        70081344,
+        67708476,
+        67708477
+      ],
+      "member_titles": [
+        "#1 Searched Person on Google 2026?",
+        "TIME Person of the Year 2026",
+        "Will a single person become TIME's 2026 Person of the Year?",
+        "Merriam-Webster Word of the Year 2026 contains...?",
+        "Oxford Word of the Year 2026 contains...?"
+      ]
+    },
+    {
+      "slug": "the-unthinkable-list",
+      "name": "The Unthinkable List",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-34",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        9997262,
+        113701,
+        112828,
+        34191685
+      ],
+      "member_titles": [
+        "Satoshi's identity be proven by...?",
+        "10.0 or above earthquake before 2027?",
+        "Will a major meteor strike hit Earth before 2030?",
+        "Is Earth flat?"
+      ]
+    },
+    {
+      "slug": "machinery-big-tech-deals-hardware",
+      "name": "Big Tech Deals & Hardware",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-35",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        115374,
+        109349,
+        113435,
+        69851942,
+        112875,
+        115369
+      ],
+      "member_titles": [
+        "Tesla and SpaceX merger officially announced by...?",
+        "When will Apple release the iPhone 18?",
+        "AI bubble burst by...?",
+        "Next CEO of NVIDIA?",
+        "Will OpenAI launch a consumer hardware product by...?",
+        "What kind of product will OpenAI announce in 2026?"
+      ]
+    },
+    {
+      "slug": "oscars-big-six",
+      "name": "Oscars: The Big Six",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-36",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        57313556,
+        57368169,
+        57366460,
+        58495125,
+        58519933,
+        58492240
+      ],
+      "member_titles": [
+        "Oscars 2027: Best Picture Winner",
+        "Oscars 2027: Best Actor Winner",
+        "Oscars 2027: Best Actress Winner",
+        "Oscars 2027: Best Supporting Actor Winner",
+        "Oscars 2027: Best Director Winner",
+        "Oscars 2027: Best Supporting Actress Winner"
+      ]
+    },
+    {
+      "slug": "machinery-game-awards-2026",
+      "name": "The Game Awards 2026",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-37",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        58399979,
+        58399941,
+        58399980,
+        58399978
+      ],
+      "member_titles": [
+        "The Game Awards: Best Game Direction",
+        "The Game Awards: Best Narrative",
+        "The Game Awards: Best Audio Design",
+        "The Game Awards: Best Multiplayer"
+      ]
+    },
+    {
+      "slug": "machinery-extreme-earth-2026",
+      "name": "Climate & Extreme Earth Benchmarks",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-38",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        109358,
+        108220,
+        61054994,
+        108294,
+        108222
+      ],
+      "member_titles": [
+        "Will 2026 be the hottest year ever?",
+        "Will the world pass 2 degrees Celsius over pre-industrial levels before 2050?",
+        "Will the 2026\u201327 El Ni\u00f1o be the strongest on record?",
+        "8.0 magnitude earthquake in Japan before 2030?",
+        "Will a supervolcano erupt before 2050?"
+      ]
+    },
+    {
+      "slug": "tv-finale-night",
+      "name": "Finale Night",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-39",
+      "grade": "Fix",
+      "note": "A list of contestants with the chance each finishes first, second or third would be fun.",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        70160350,
+        70160372,
+        60481085,
+        62383618
+      ],
+      "member_titles": [
+        "Who will win The Voice Season 30?",
+        "The Voice Season 30 \u00b7 2nd Place",
+        "Dancing with the Stars Season 35 \u00b7 3rd Place",
+        "Golden Globe Nominations: Best Television Series - Comedy or Musical"
+      ]
+    },
+    {
+      "slug": "game-awards-night",
+      "name": "Game Awards Night",
+      "deck_id": "discover-blind-40-2026-11-23",
+      "card_id": "blind-40",
+      "grade": "Keep",
+      "note": "",
+      "graded_at": "2026-11-23T22:28:00Z",
+      "member_ids": [
+        109614,
+        58399979,
+        58399980,
+        58399941,
+        58399939
+      ],
+      "member_titles": [
+        "The Game Awards: Game of the Year",
+        "The Game Awards: Best Game Direction",
+        "The Game Awards: Best Audio Design",
+        "The Game Awards: Best Narrative",
+        "The Game Awards: Best Mobile Game"
+      ]
+    }
+  ]
+}

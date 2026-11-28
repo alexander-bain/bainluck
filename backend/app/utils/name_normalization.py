@@ -172,6 +172,18 @@ _CLUB_NAME_ALIASES: dict[str, str] = {
     "asvel lyon-villeurbanne": "asvel lyon villeurbanne",
     # #13142: Women's college basketball spelling (pair 15347844 / 15351848).
     "little rock trojans": "arkansas-little rock trojans",
+    # #13594: UEFA Europa League / Conference League club spellings where Odds API,
+    # Polymarket, and Kalshi rows split (measured Nov 26, 2026). Note: Inter Milan
+    # / Internazionale stays OUT of _CLUB_NAME_ALIASES per #6215 / #7441 tests.
+    "ferencvarosi": "ferencvaros tc",
+    "qairat fk": "fc kairat",
+    "heart of midlothian": "hearts",
+    "heart of midlothian fc": "hearts",
+    "fc kobenhavn": "fc copenhagen",
+    "crvena zvezda": "red star belgrade",
+    "kuopion ps": "kups kuopio",
+    "k. sint-truidense vv": "sint truiden",
+    "omonia nicosia": "omonoia fc",
 }
 
 

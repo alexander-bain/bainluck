@@ -166,6 +166,16 @@ d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-groupin
 # Exact findings from gitleaks run 44461617146 on PR #13037; renamed to SLUG_FIELD in follow-up commit.
 67845ab2138ce91077ff5fb1351a9cd857aef194:backend/tests/test_wbb_auto_create_orientation.py:generic-api-key:37
 67845ab2138ce91077ff5fb1351a9cd857aef194:backend/tests/test_wbb_auto_create_orientation.py:generic-api-key:50
+
+# #13516 / #13595: placeholder PII/token strings in sign-in redaction test
+# (read and confirmed as non-secret stand-ins by Fable on #13595:
+# https://github.com/alexander-bain/bainluck/pull/13595#issuecomment-7149178317).
+e1d079143a23579401f015df6a24da6a0356d286:ios/Bain Luck/BainLuckTests/AuthSignInFailed13516TelemetryTests.swift:generic-api-key:130
+e1d079143a23579401f015df6a24da6a0356d286:ios/Bain Luck/BainLuckTests/AuthSignInFailed13516TelemetryTests.swift:generic-api-key:142
+# Squash commit 28a329d57f of #13595 on master (reached by merge commits on push gitleaks scans;
+# exact findings from gitleaks run 45721958560):
+28a329d57f901893014f56f412cc889ec440260d:ios/Bain Luck/BainLuckTests/AuthSignInFailed13516TelemetryTests.swift:generic-api-key:130
+28a329d57f901893014f56f412cc889ec440260d:ios/Bain Luck/BainLuckTests/AuthSignInFailed13516TelemetryTests.swift:generic-api-key:142
 998be6c45d912dc041d74d840f3e80eb8ba929de:ios/Bain Luck/Bain Luck/Utilities/FirstRunModels212A.swift:generic-api-key:28
 998be6c45d912dc041d74d840f3e80eb8ba929de:ios/Bain Luck/Bain Luck/Utilities/FirstRunModels212A.swift:generic-api-key:1112
 
@@ -175,3 +185,7 @@ d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-groupin
 # https://github.com/alexander-bain/bainluck/pull/13684#issuecomment-7148892716
 # Exact finding from gitleaks run 45546255168 on PR #13684.
 d23076ccf7f6d89ec2bcaeab539516176c29ec5c:ios/Bain Luck/BainLuckTests/SignOutDeviceDetach12569Tests.swift:generic-api-key:104
+
+# #13081: synthetic placeholder JWT string in test_game_alerts_13081.py, not a credential.
+# Exact finding from gitleaks run 44588260488 on PR #13088; replaced in follow-up commit.
+3eebfd71abfd3e437ecf79da8dd8b4a7e63c3cd9:backend/tests/test_game_alerts_13081.py:jwt:53

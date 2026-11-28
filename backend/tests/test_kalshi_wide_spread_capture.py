@@ -40,11 +40,8 @@ def test_boundary_spread_is_wide():
     assert _kalshi_yes_probability(0.20, 0.60, None) == (0.20 + 0.60) / 2
 
 
-def test_longshot_ask_only_cap_preserved():
-    # Zero (present) bid with a low ask (<= 0.50) keeps the pre-existing longshot
-    # cap behavior — a low ask is not a ~0.50 fabrication. Matches the original
-    # branch, which required yes_bid to be present (0 allowed).
-    assert _kalshi_yes_probability(0.0, 0.40, None) == 0.40
+def test_longshot_ask_only_cap_is_not_a_chance():
+    assert _kalshi_yes_probability(0.0, 0.40, None) is None
     # yes_bid=None disqualifies the ask-only cap (original semantics) -> skip.
     assert _kalshi_yes_probability(None, 0.10, None) is None
     # A high ask-only book (> 0.50) with a zero bid and no trade -> skip.
@@ -80,11 +77,9 @@ def test_threshold_constant_matches_polymarket_rule():
 def test_a_trade_above_the_live_ask_is_refuted_5121():
     # THE SPECIMEN, verbatim from production KXNBAWINS-27MIA-60 (2026-09-11):
     # venue bid 0.0000 / ask 0.0900 / last 0.5200. Rule 1 fails on the zero bid,
-    # so rule 2 used to publish the stale 0.52. It must now fall through to the
-    # ask-only cap and price the rung at the venue's own live offer.
-    assert _kalshi_yes_probability(0.0, 0.09, 0.52) == 0.09
-    # And the rung below it is untouched (tight book -> midpoint), so the ladder
-    # reads 55+ 0.145 > 60+ 0.09 and stops contradicting itself.
+    # so rule 2 used to publish the stale 0.52. The offer is a ceiling.
+    assert _kalshi_yes_probability(0.0, 0.09, 0.52) is None
+    # The rung below it is untouched (tight book -> midpoint).
     assert _kalshi_yes_probability(0.11, 0.18, None) == 0.145
 
 
@@ -106,8 +101,8 @@ def test_a_trade_inside_the_live_book_is_still_trusted_5121():
     # Exactly AT the ask is not refuted: the venue quotes on a one-cent grid, so
     # a trade at the offer is a trade at a live price.
     assert _kalshi_yes_probability(0.0, 0.09, 0.09) == 0.09
-    # One cent ABOVE the ask is refuted, and the ask-only cap answers instead.
-    assert _kalshi_yes_probability(0.0, 0.09, 0.10) == 0.09
+    # One cent above the ask is refuted. The ask never takes its place.
+    assert _kalshi_yes_probability(0.0, 0.09, 0.10) is None
 
 
 def test_a_refuted_trade_on_a_high_ask_book_is_skipped_not_fabricated_5121():
@@ -131,7 +126,7 @@ def test_every_measured_production_violation_is_repaired_5121():
     stored probability exceeded its own ask on 2026-09-11 ~17:00Z. For all
     twelve the stored value equalled the venue's `last_price` EXACTLY (12/12,
     zero mismatches), which is what identifies rule 2 as the writer rather than
-    a stale row. Each must now price at or below the venue's live ask.
+    a stale row. None supplies a current probability from that book.
     """
     # (ticker, venue yes_bid, venue yes_ask, venue last_price)
     measured = [
@@ -150,5 +145,4 @@ def test_every_measured_production_violation_is_repaired_5121():
     ]
     for ticker, bid, ask, last in measured:
         # Before the fix every one of these returned `last`, above its own ask.
-        assert _kalshi_yes_probability(bid, ask, last) is not None, ticker
-        assert _kalshi_yes_probability(bid, ask, last) <= ask, ticker
+        assert _kalshi_yes_probability(bid, ask, last) is None, ticker

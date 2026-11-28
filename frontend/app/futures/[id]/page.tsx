@@ -23,6 +23,7 @@ import {
 } from "@/lib/api";
 import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
 import type { FuturesOutcome } from "@/lib/types";
+import { NoRecentProbabilityOutcomes } from "@/components/futures/NoRecentProbabilityOutcomes";
 import {
   marketEventKey,
   eventPath,
@@ -615,11 +616,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // unless the server named a lead leg (#8892).
   const leader = useMemo(() => {
     if (leadOutcome) return leadOutcome;
-    if (!market?.outcomes || market.outcomes.length === 0) return null;
-    return [...market.outcomes].sort(
+    const outcomes = market?.outcomes ?? [];
+    const eligible = market?.status === "resolved" ? outcomes : outcomes.filter(hasCurrentPrice);
+    return [...eligible].sort(
       (a, b) => (b.probability ?? 0) - (a.probability ?? 0)
-    )[0];
-  }, [market?.outcomes, leadOutcome]);
+    )[0] ?? null;
+  }, [market?.outcomes, market?.status, leadOutcome]);
 
   useFuturesDetailStream({
     marketId, market, history: historyData, historyHours, historyRange,
@@ -701,6 +703,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         // #698: a settled row whose result is unknown is listed too — it keeps
         // its name and "Result unknown" in the table, never a closed fold.
         (outcome) =>
+          outcome.is_out === true ||
           outcomeRowVerdict(outcome, market?.status === "resolved") !== null ||
           isResultUnknown(outcome, market?.status === "resolved"),
       ),
@@ -721,6 +724,23 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         : null,
     [market, marketShape, thresholdEntries.length],
   );
+  const atlasOwnsOutcomes = atlasEnabled && (
+    atlasBodyKind === "one-leg" || atlasBodyKind === "duel" ||
+    atlasBodyKind === "field" || atlasBodyKind === "qualifier"
+  );
+
+  const foldedOutcomes = unpricedOutcomes.map((outcome) => ({
+    key: outcome.id,
+    name: outcome.name,
+    history: !atlasOwnsOutcomes && historyOutcomes.some((entry) => entry.outcome_id === outcome.id)
+      ? {
+          selected: selectedOutcomes.has(outcome.id),
+          toggle: () => toggleOutcomeSelection(outcome.id),
+        }
+      : undefined,
+  }));
+  const atlasSelectableOutcomes = market?.status === "resolved" ? sortedOutcomes : pricedOutcomes;
+  const atlasSelectedOutcome = atlasSelectableOutcomes.find((outcome) => outcome.id === atlasSelectedOutcomeId) ?? null;
 
   const atlasActiveSubjectOutcome = useMemo(() => {
     if (!market?.outcomes) return null;
@@ -742,20 +762,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     const hero =
       leadOutcome ??
       pickHeroOutcome(market.outcomes, leader, resolved, market.mutually_exclusive);
-    const selected =
-      atlasSelectedOutcomeId != null
-        ? market.outcomes.find((o) => o.id === atlasSelectedOutcomeId) ?? null
-        : null;
-    return selected ?? champ ?? singleLost ?? hero;
-  }, [market, leader, leadOutcome, atlasSelectedOutcomeId]);
+    return atlasSelectedOutcome ?? champ ?? singleLost ?? hero;
+  }, [market, leader, leadOutcome, atlasSelectedOutcome]);
 
   const atlasChartCohort = useMemo(() => {
     if (!atlasEnabled || (atlasBodyKind !== "field" && atlasBodyKind !== "qualifier")) {
       return [];
     }
-    const pool = pricedOutcomes.length > 0 ? pricedOutcomes : sortedOutcomes;
-    return buildAtlasFieldCohort(pool, atlasSelectedOutcomeId, 3);
-  }, [atlasEnabled, atlasBodyKind, pricedOutcomes, sortedOutcomes, atlasSelectedOutcomeId]);
+    return buildAtlasFieldCohort(pricedOutcomes, atlasSelectedOutcomeId, 3);
+  }, [atlasEnabled, atlasBodyKind, pricedOutcomes, atlasSelectedOutcomeId]);
 
   const atlasColorSlotsRef = useRef<Record<string, number>>({});
   const atlasOutcomeColors = useMemo(() => {
@@ -1003,7 +1018,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     && (heldRangeNote != null || (!historyLoading && !historyError));
   // #8135 / #10074: the Probability Trend card's ONE cadence sentence. Printed by the
   // range controls on a sparse board; the chart's empty state is told it is already
-  // on screen so "Final — prices no longer update" does not appear twice.
+  // on screen so "Final — probabilities no longer update" does not appear twice.
   const trendCadenceNote = historyData?.sparse
     ? priceCadenceNote(isResolved, {
         dormant: isCadenceDormant(boardLastObservationMs),
@@ -1165,10 +1180,6 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     outcomeRowVerdict(market.outcomes[0], true) === "lost"
       ? market.outcomes[0]
       : null;
-  const atlasSelectedOutcome =
-    atlasSelectedOutcomeId != null
-      ? market.outcomes.find((o) => o.id === atlasSelectedOutcomeId) ?? null
-      : null;
   const atlasSubjectOutcome =
     atlasSelectedOutcome ?? gradedChampion ?? settledSingleLostOutcome ?? heroOutcome;
   const atlasOpeningProbability = atlasSubjectOutcome
@@ -1215,8 +1226,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // furniture is making claims about numbers that are not on screen. ONE call
   // decides all three suppressions and the sentence, so a future edit cannot
   // teach the chips and the caption two different answers to the same question.
-  // The rows themselves stay, folded, in `More outcomes (N)`.
+  // The disclosure also serves as the empty state when it holds the whole field.
   const noPricesNote = noPricedOutcomesNote(pricedOutcomes.length);
+  const atlasListedOutcomes = atlasOwnsOutcomes && !isResolved ? pricedOutcomes : market.outcomes;
 
   // L2-65 Item 1b / B7 L2-91: link UP to the richer event-concept surface. Prefer
   // the server-derived key (covers UFC/boxing/F1/golf-majors/tennis/awards and never
@@ -1345,6 +1357,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         resolvedLost={settledSingleLostOutcome !== null}
         resultUnknown={resultCertainty === "all"}
         atlas={atlasEnabled}
+        showMissingProbability={pricedOutcomes.length > 0 || foldedOutcomes.length === 0}
         openingProbability={atlasOpeningProbability}
         renderedOpening={atlasRenderedOpening}
         scheduledResolutionLabel={atlasScheduledResolution}
@@ -1514,7 +1527,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             <svg className="w-5 h-5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
             </svg>
-            <span>Limited price history available</span>
+            <span>Limited probability history available</span>
             <span className="text-xs text-text-muted">
               {priceCadenceNote(isResolved, { long: true })}
             </span>
@@ -1607,7 +1620,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           ) : chartHistory.length === 0 ? (
             // #10453 — an open market with no current price and nothing checked.
             // The chart would fall back to five withheld lines; it draws none,
-            // and the reader can still check any row below to see its past.
+            // and the reader can open the disclosure to choose a historical line.
             <p
               data-testid="futures-trend-no-current-prices"
               className="py-6 text-center text-[13px] text-text-secondary"
@@ -1745,9 +1758,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           cards is the words their siblings do NOT share — see
           `thresholdLadderTitles`. Each card is still decided on its own first. */}
       {atlasEnabled && (
+        <>
         <FuturesShapeBody
-          outcomes={market.outcomes}
-          sortedOutcomes={sortedOutcomes}
+          outcomes={atlasListedOutcomes}
+          totalOutcomeCount={market.outcomes.length}
+          sortedOutcomes={atlasOwnsOutcomes && !isResolved ? pricedOutcomes : sortedOutcomes}
           pricedOutcomes={pricedOutcomes}
           renderedById={renderedById}
           marketName={market.name}
@@ -1768,27 +1783,40 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           }}
           onOpenDetails={() => setDetailsSheetOpen(true)}
         />
+        {atlasOwnsOutcomes && !isResolved && (
+          <NoRecentProbabilityOutcomes
+            outcomes={foldedOutcomes}
+            hasListedOutcomes={pricedOutcomes.length > 0}
+            testId="futures-more-outcomes"
+            className="px-6"
+          />
+        )}
+        </>
       )}
 
-      {thresholdEntries.map(([stem, outcomes], i) => (
-        <QuantityGroup
-          key={stem}
-          title={thresholdLadderHeadings[i]}
-          rungs={buildThresholdRungs(outcomes)}
-          atlas={atlasEnabled}
-          onRungSelect={
-            atlasEnabled
-              ? (rung) => {
-                  if (typeof rung.key === "number") {
-                    setAtlasSelectedOutcomeId(rung.key);
-                    didInitSelection.current = true;
-                    setSelectedOutcomes(new Set([rung.key]));
+      {thresholdEntries.map(([stem, outcomes], i) => {
+        const rungs = buildThresholdRungs(outcomes).filter(hasCurrentPrice);
+        if (rungs.length === 0) return null;
+        return (
+          <QuantityGroup
+            key={stem}
+            title={thresholdLadderHeadings[i]}
+            rungs={rungs}
+            atlas={atlasEnabled}
+            onRungSelect={
+              atlasEnabled
+                ? (rung) => {
+                    if (typeof rung.key === "number") {
+                      setAtlasSelectedOutcomeId(rung.key);
+                      didInitSelection.current = true;
+                      setSelectedOutcomes(new Set([rung.key]));
+                    }
                   }
-                }
-              : undefined
-          }
-        />
-      ))}
+                : undefined
+            }
+          />
+        );
+      })}
 
       {/* Q478 — the same ladder for a market whose OWN outcomes are the rungs.
           Rungs already carry their final position in `value`, so QuantityGroup's
@@ -1842,26 +1870,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               }
             />
           )}
-          {numberlessRungs.length > 0 && (
-            <details data-testid="futures-more-rungs" className="px-6">
-              <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
-                More outcomes ({numberlessRungs.length})
-              </summary>
-              {/* Titleless: the disclosure's own summary is the heading. */}
-              <QuantityGroup
-                rungs={numberlessRungs}
-                wideLabels={ladderNeedsWideLabels(numberlessRungs)}
-                missingPriceLabel={
-                  !isResolved
-                    ? atlasEnabled
-                      ? ATLAS_STATE_COPY.noRecentPrice
-                      : "No current price"
-                    : undefined
-                }
-                atlas={atlasEnabled}
-              />
-            </details>
-          )}
+          <NoRecentProbabilityOutcomes
+            outcomes={numberlessRungs.map((rung) => ({ key: rung.key, name: rung.label }))}
+            hasListedOutcomes={pricedRungs.length > 0}
+            testId="futures-more-rungs"
+            className="px-6"
+            resolved={isResolved}
+          />
         </>
       )}
 
@@ -1879,7 +1894,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               source: m.source,
               group_position: m.group_position,
               status: m.status,
-              outcomes: m.outcomes.map((o) => ({
+              outcomes: m.outcomes.filter(hasCurrentPrice).map((o) => ({
                 id: o.id,
                 name: o.name,
                 probability: o.probability,
@@ -1921,14 +1936,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           rendered these same outcomes, and under ?atlas=1 when FuturesShapeBody
           (two-sided dial or named-leaders block + "N more" sheet) owns the body
           slot (#883 Step F5, Decide 47: E). */}
-      {!hasOwnLadder &&
-        !(
-          atlasEnabled &&
-          (atlasBodyKind === "one-leg" ||
-            atlasBodyKind === "duel" ||
-            atlasBodyKind === "field" ||
-            atlasBodyKind === "qualifier")
-        ) && (
+      {!hasOwnLadder && !atlasOwnsOutcomes && (
       <div
         data-testid={
           atlasEnabled && marketShape === SHAPE_QUANTITY && market?.ladder_treatment_refused
@@ -1997,7 +2005,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             "No outcomes" is not what this says and not what is true: the rows
             exist and are one tap away below; it is their PRICES that are not
             here. */}
-        {noPricesNote && (
+        {noPricesNote && foldedOutcomes.length === 0 && (
           <p
             data-testid="futures-no-priced-outcomes"
             className="text-sm text-text-secondary"
@@ -2077,43 +2085,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </button>
         )}
 
-        {/* D102 / #4568 — the numberless rows, collapsed but never dropped
-            (gotcha #43). The markup is `ScriptFold`'s from the props twin
-            deliberately: notice 35 says a second problem of the same shape does
-            not get a second component, and this is the same disclosure with the
-            same neutral D111 label. Closed it costs one row of height and names
-            its own count; open it shows every folded outcome in the normal row
-            presentation, keeping its served `rank` so the numbering a reader saw
-            never restarts at 1. */}
-        {unpricedOutcomes.length > 0 && (
-          <details data-testid="futures-more-outcomes" className="mt-4">
-            <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
-              More outcomes ({unpricedOutcomes.length})
-            </summary>
-            <div className="mt-1 space-y-2">
-              {unpricedOutcomes.map((outcome, index) => (
-                <OutcomeRow
-                  key={outcome.id}
-                  outcome={outcome}
-                  rank={outcome.rank ?? pricedOutcomes.length + index + 1}
-                  isLeader={false}
-                  isSelected={selectedOutcomes.has(outcome.id)}
-                  onToggleSelect={() => toggleOutcomeSelection(outcome.id)}
-                  hasHistory={historyOutcomes.some(
-                    (h) => h.outcome_id === outcome.id
-                  )}
-                  marketCategory={market?.llm_sport_category}
-                  marketName={market?.name}
-                  isResolved={isResolved}
-                  rendered={renderedById.get(outcome.id)?.current ?? null}
-                  renderedOpening={renderedById.get(outcome.id)?.opening ?? null}
-                  showLastMove={showLastMove}
-                  showEntityImage={showEntityImage}
-                />
-              ))}
-            </div>
-          </details>
-        )}
+        <NoRecentProbabilityOutcomes
+          outcomes={foldedOutcomes}
+          hasListedOutcomes={pricedOutcomes.length > 0}
+          testId="futures-more-outcomes"
+          className="mt-4"
+          resolved={isResolved}
+        />
       </div>
       )}
 

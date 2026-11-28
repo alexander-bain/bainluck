@@ -3526,6 +3526,8 @@ async def manual_link_prediction_market(
                 source=market.source,
                 home_win_probability=round(home_prob, 4),
                 away_win_probability=round(away_prob, 4),
+                is_completed=(getattr(event, "status", None) in ("completed", "closed")),
+                commence_time=getattr(event, "commence_time", None),
                 game_state={
                     "market_name": market.name,
                     "market_id": market.id,
@@ -3536,6 +3538,8 @@ async def manual_link_prediction_market(
             )
             if is_new:
                 db.add(snapshot)
+            from app.services.finished_event_history import invalidate_finished_event_history
+            await invalidate_finished_event_history(db, [event_id])
             snapshot_result = {
                 "home_prob": round(home_prob, 4),
                 "away_prob": round(away_prob, 4),
@@ -5018,6 +5022,7 @@ async def sawtooth_fix(
     # is the shape that made "did a merge drop 261 links?" unanswerable.
     unlinked_rows: list[tuple[int, dict]] = []
     total_snapshots_deleted = 0
+    sawtooth_invalidated_ids: set[int] = set()
 
     for row in affected_rows:
         eid = row.event_id
@@ -5295,6 +5300,10 @@ async def sawtooth_fix(
                 )
                 total_snapshots_deleted += del_result.rowcount
 
+        # Also invalidate durable finished-chart cache whenever snapshots changed
+        if not dry_run and fix_detail["actions"]:
+            sawtooth_invalidated_ids.add(eid)
+
         # Also clear kalshi from win_probability_sources on the event
         if not dry_run and fix_detail["actions"]:
             wps_result = await db.execute(
@@ -5315,6 +5324,9 @@ async def sawtooth_fix(
         results.append(fix_detail)
 
     if not dry_run:
+        if sawtooth_invalidated_ids:
+            from app.services.finished_event_history import invalidate_finished_event_history
+            await invalidate_finished_event_history(db, sawtooth_invalidated_ids)
         await db.commit()
 
     # After the commit, on the receipts' own session — each claim is re-read

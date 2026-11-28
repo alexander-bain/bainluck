@@ -164,14 +164,16 @@ struct DiscoverView: View {
     }
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
+    @StateObject private var likedStore = DiscoverLikedStore420D()
     @State private var visibleCount: Int
     @State private var machineryPreviewItems: [MachineryPreviewEntry] = []
     @State private var machineryGateRevision: Int = 0
 
     /// Width available to the card area, in points. 0 until the first
-    /// geometry pass resolves, which `DiscoverMasonry.columnCount` reads as one
-    /// column (#3651).
+    /// geometry pass resolves, which `DiscoverMasonry.discoverColumnCount`
+    /// seeds from `measuredContainerWidth` and falls back to one column (#3651, #13914).
     @State private var gridWidth: CGFloat = 0
+    @State private var measuredContainerWidth: CGFloat = 0
 
     // First-render attribution (L2-206 Item 3 / L2-210 Item 2 / L2-212 Item 2):
     // `lastEmittedRenderGenerationId` guards a single `discover_feed_first_render`
@@ -669,6 +671,7 @@ struct DiscoverView: View {
         switch action {
         case .detailOpen: actionName = "open"
         case .like: actionName = "like"
+        case .likeUndo: actionName = "like_undo"
         case .unlike: actionName = "unlike"
         case .share: actionName = "share"
         case .contextExpand: actionName = "context_expand"
@@ -1109,6 +1112,20 @@ struct DiscoverView: View {
             // below keep reading the committed group.
             switch previewed(gi) {
             case .group(let title, let items, let kind, let theme, let sharedQuestion, let collectionRef):
+                let groupKey = Self.stableGroupLikeKey(
+                    title: title,
+                    items: items,
+                    kind: kind,
+                    theme: theme,
+                    collectionRef: collectionRef
+                )
+                let groupAction = groupLikeAction(
+                    title: title,
+                    items: items,
+                    kind: kind,
+                    theme: theme,
+                    collectionRef: collectionRef
+                )
                 // #1773: group cards were the largest of three
                 // archetypes rendered with NO swipe wrapper at all
                 // (group / tournament / concept — 10 of 30 cards on
@@ -1125,13 +1142,11 @@ struct DiscoverView: View {
                         hideForSession(ids: Self.dismissKeys(forGroupOf: items))
                     },
                     onSwipeRight: {
-                        if let primary = items.first {
-                            recordInteraction(for: primary, action: .like, source: "swipe")
-                        }
-                        hideForSession(ids: Self.dismissKeys(forGroupOf: items))
+                        likeCard(key: groupKey, item: items.first, source: "swipe")
                     },
                     onRequiresSignIn: inviteSignInForFeedback
                 ) { tapGuard in
+                    Group {
                     if let pairedBundle = (items.first?.bundle?.pairedMetricSet != nil ? items.first?.bundle : nil)
                         ?? vm.items.first(where: { $0.bundle?.pairedMetricSet != nil && $0.bundle?.title == title && $0.bundle?.kind == kind })?.bundle,
                        let pairedSet = pairedBundle.pairedMetricSet,
@@ -1263,6 +1278,8 @@ struct DiscoverView: View {
                                 )
                             )
                     }
+                    }
+                    .environment(\.discoverCardLikeAction420D, groupAction)
                 }
                 .contextMenu {
                     discoverGroupCardMenu(
@@ -1274,6 +1291,7 @@ struct DiscoverView: View {
                     )
                 }
             case .single(let item):
+                let singleAction = likeAction(for: item)
                 if let pairedSet = item.pairedMetricSet, !pairedSet.entries.isEmpty {
                     DiscoverGroupedSwipeContainer13668(
                         onSwipeLeft: {
@@ -1281,8 +1299,7 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) { tapGuard in
@@ -1301,6 +1318,7 @@ struct DiscoverView: View {
                                 navigationPath.append(Route.containerHub(slug: slug, name: name))
                             }
                         )
+                        .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                     .contextMenu { discoverCardMenu(item) }
                 } else if item.type == "collection", let entry = DiscoverCollectionFeed.entry(for: item.collection) {
@@ -1310,14 +1328,14 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         DiscoverCollectionCard(entry: entry, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
                         })
+                        .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                     .contextMenu { discoverCardMenu(item) }
                 } else if isGuessSlot, item.type == "futures", let f = item.futures,
@@ -1333,12 +1351,12 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                            .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                 } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil,
                           !EventState.isFinished(e.status) {
@@ -1348,12 +1366,12 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                            .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                 } else if item.type == "event", let e = item.event {
                     SwipeToDismiss(
@@ -1362,8 +1380,7 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) {
@@ -1376,6 +1393,7 @@ struct DiscoverView: View {
                         }, onShare: {
                             recordInteraction(for: item, action: .share, source: ShareSurface.discoverCard.rawValue)
                         })
+                        .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                     .contextMenu { discoverCardMenu(item) }
                 } else if item.type == "futures", let f = item.futures,
@@ -1387,14 +1405,14 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         HeatMapCardView(data: f, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
                         })
+                        .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                     .contextMenu { discoverCardMenu(item) }
                 } else if item.type == "futures", let f = item.futures,
@@ -1406,14 +1424,14 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         DistributionCardView(data: f, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
                         })
+                        .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                     .contextMenu { discoverCardMenu(item) }
                 } else if item.type == "futures", let f = item.futures,
@@ -1425,14 +1443,14 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         ComparisonCardView(data: f, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
                         })
+                        .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                     .contextMenu { discoverCardMenu(item) }
                 } else if item.type == "futures", let f = item.futures {
@@ -1442,8 +1460,7 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) {
@@ -1461,6 +1478,7 @@ struct DiscoverView: View {
                         }, onShare: {
                             recordInteraction(for: item, action: .share, source: ShareSurface.discoverCard.rawValue)
                         })
+                        .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                     .contextMenu { discoverCardMenu(item) }
                 } else if item.type == "tournament", let t = item.tournament {
@@ -1471,8 +1489,7 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) {
@@ -1481,6 +1498,7 @@ struct DiscoverView: View {
                             feedContext: item.contextSummary ?? item.reason ?? item.headline,
                             navigationPath: $navigationPath
                         )
+                        .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                     .contextMenu { discoverCardMenu(item) }
                 } else if item.type == "concept", let c = item.concept {
@@ -1494,8 +1512,7 @@ struct DiscoverView: View {
                             hideForSession(itemId(item))
                         },
                         onSwipeRight: {
-                            recordInteraction(for: item, action: .like, source: "swipe")
-                            hideForSession(itemId(item))
+                            likeCard(key: singleAction.itemKey, item: item, source: "swipe")
                         },
                         onRequiresSignIn: inviteSignInForFeedback
                     ) {
@@ -1508,6 +1525,7 @@ struct DiscoverView: View {
                                 recordInteraction(for: item, action: .detailOpen, source: "card")
                             }
                         )
+                        .environment(\.discoverCardLikeAction420D, singleAction)
                     }
                     .contextMenu { discoverCardMenu(item) }
                 }
@@ -2001,23 +2019,27 @@ struct DiscoverView: View {
                 spaceGrouped(personalizeGrouped(Array(floored[boundary...]), profile: profile)),
                 now: now
             )
-            if !firstRunPreferences.isEmpty {
-                let matchesFirstRun: (DiscoverGroupedItem) -> Bool = { grouped in
+            if firstRunPreferences.isBoostActive(now: now) {
+                let combined = openingItems + continuationItems
+                let boosted = FirstRunDiscoverBoost212A.promotePreferredItems(
+                    combined,
+                    preferences: firstRunPreferences,
+                    now: now,
+                    kindOf: { grouped in
+                        FirstRunDiscoverBoost212A.categoryGroup(groupedCategoryStatic(grouped).lowercased())
+                    }
+                ) { grouped, prefs in
                     guard let item = primaryFeedItem(grouped) else { return false }
                     return FirstRunDiscoverBoost212A.itemMatches(
                         item,
                         category: groupedCategoryStatic(grouped),
-                        preferences: firstRunPreferences
+                        preferences: prefs
                     )
                 }
-                let promotedFromOpening = openingItems.filter(matchesFirstRun)
-                let promotedFromCont = continuationItems.filter(matchesFirstRun)
-                let remainingOpening = openingItems.filter { !matchesFirstRun($0) }
-                let remainingCont = continuationItems.filter { !matchesFirstRun($0) }
-                let boostedOpening = promotedFromOpening + promotedFromCont + remainingOpening
+                let nextContinuationStart: Int? = openingItems.count < boosted.count ? openingItems.count : nil
                 return GroupedPresentation(
-                    items: boostedOpening + remainingCont,
-                    continuationStart: remainingCont.isEmpty ? nil : boostedOpening.count,
+                    items: boosted,
+                    continuationStart: nextContinuationStart,
                     admittedIds: admitted,
                     pullEpoch: pullEpoch,
                     dismissVersion: dismissVersion,
@@ -2048,10 +2070,17 @@ struct DiscoverView: View {
             now: now
         )
         let fullItems: [DiscoverGroupedItem]
-        if firstRunPreferences.isEmpty {
+        if !firstRunPreferences.isBoostActive(now: now) {
             fullItems = baseFullItems
         } else {
-            fullItems = FirstRunDiscoverBoost212A.promotePreferredItems(baseFullItems, preferences: firstRunPreferences) { grouped, prefs in
+            fullItems = FirstRunDiscoverBoost212A.promotePreferredItems(
+                baseFullItems,
+                preferences: firstRunPreferences,
+                now: now,
+                kindOf: { grouped in
+                    FirstRunDiscoverBoost212A.categoryGroup(groupedCategoryStatic(grouped).lowercased())
+                }
+            ) { grouped, prefs in
                 guard let item = primaryFeedItem(grouped) else { return false }
                 return FirstRunDiscoverBoost212A.itemMatches(
                     item,
@@ -2479,6 +2508,17 @@ struct DiscoverView: View {
     }
 
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverLayoutIsPhone13914) private var discoverLayoutIsPhoneOverride
+
+    private var isPhoneDiscoverLayout: Bool {
+        if let override = discoverLayoutIsPhoneOverride { return override }
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .phone && sizeClass == .compact
+        #else
+        return false
+        #endif
+    }
 
     /// Max content width — phone-style on compact, wider on iPad/Mac
     private var contentMaxWidth: CGFloat {
@@ -2639,6 +2679,23 @@ struct DiscoverView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
+                let effectiveGridWidth: CGFloat = gridWidth > 0
+                    ? gridWidth
+                    : DiscoverMasonry.cardAreaWidth(
+                        containerWidth: measuredContainerWidth,
+                        maxContentWidth: contentMaxWidth
+                    )
+                let columnCount = DiscoverMasonry.discoverColumnCount(
+                    availableWidth: effectiveGridWidth,
+                    dynamicTypeSize: dynamicTypeSize,
+                    isPhone: isPhoneDiscoverLayout
+                )
+                let isNarrowTwoColumn = DiscoverMasonry.usesNarrowMultiColumn(
+                    availableWidth: effectiveGridWidth,
+                    dynamicTypeSize: dynamicTypeSize,
+                    isPhone: isPhoneDiscoverLayout
+                )
+
                 // #12288 (`252: A`): Owner-only machinery groupings preview (Alex + Preferences switch ON),
                 // deduplicated against any `machinery-*` slugs already served in `vm.items` (`machinery=1`).
                 let servedMachinerySlugs = Set(
@@ -2648,26 +2705,54 @@ struct DiscoverView: View {
                     guard let slug = entry.machineryCard?.slug else { return false }
                     return !servedMachinerySlugs.contains(slug)
                 }
+                let previewEntries = unservedPreviewItems.filter { $0.machineryCard != nil }
                 if GroupingMachineryGate12288.canAccessMachinery(user: authManager.user),
-                   !unservedPreviewItems.isEmpty {
-                    VStack(spacing: DiscoverMasonry.spacing) {
-                        ForEach(unservedPreviewItems) { entry in
-                            if let card = entry.machineryCard {
-                                MachineryDiscoverEntryCardView(
-                                    card: card,
-                                    pairedMetricSet: entry.pairedMetricSet,
-                                    onOpenContainer: { slug, _ in
-                                        navigationPath.append(Route.containerHub(slug: slug, name: entry.displayName))
-                                    },
-                                    onOpenMarket: { marketId in
-                                        navigationPath.append(Route.futuresDetail(id: marketId))
+                   !previewEntries.isEmpty {
+                    Group {
+                        if columnCount <= 1 {
+                            VStack(spacing: DiscoverMasonry.spacing) {
+                                ForEach(previewEntries) { entry in
+                                    if let card = entry.machineryCard {
+                                        MachineryDiscoverEntryCardView(
+                                            card: card,
+                                            pairedMetricSet: entry.pairedMetricSet,
+                                            onOpenContainer: { slug, _ in
+                                                navigationPath.append(Route.containerHub(slug: slug, name: entry.displayName))
+                                            },
+                                            onOpenMarket: { marketId in
+                                                navigationPath.append(Route.futuresDetail(id: marketId))
+                                            }
+                                        )
                                     }
-                                )
+                                }
+                            }
+                        } else {
+                            LazyMasonryColumns(
+                                range: 0..<previewEntries.count,
+                                columnCount: columnCount,
+                                spacing: DiscoverMasonry.spacing,
+                                horizontalAlignment: .center,
+                                cardAlignment: .center
+                            ) { idx in
+                                let entry = previewEntries[idx]
+                                if let card = entry.machineryCard {
+                                    MachineryDiscoverEntryCardView(
+                                        card: card,
+                                        pairedMetricSet: entry.pairedMetricSet,
+                                        onOpenContainer: { slug, _ in
+                                            navigationPath.append(Route.containerHub(slug: slug, name: entry.displayName))
+                                        },
+                                        onOpenMarket: { marketId in
+                                            navigationPath.append(Route.futuresDetail(id: marketId))
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
                     .padding(.horizontal)
                     .padding(.bottom, DiscoverMasonry.spacing)
+                    .environment(\.discoverNarrowTwoColumn13914, isNarrowTwoColumn)
                     .accessibilityIdentifier("discover.ownerMachineryPreview")
                 }
 
@@ -2684,7 +2769,9 @@ struct DiscoverView: View {
                 // `LazyVStack`s, which pack at exactly their spacing. At one
                 // column that is one `LazyVStack` holding every card in feed
                 // order — the phone keeps the single file it always had.
-                let columnCount = DiscoverMasonry.columnCount(availableWidth: gridWidth)
+                // #13914: `columnCount` comes from `DiscoverMasonry.discoverColumnCount`
+                // so upright iPad portrait stays two columns even when split-view/
+                // sidebar width narrows the card area below 616 pt, while iPhone stays one.
                 // #5105: with an accepted seated edition the SAME visible window
                 // is split where the continuation begins: the heading takes no
                 // card slot, and every card keeps its index in the whole window,
@@ -2732,15 +2819,13 @@ struct DiscoverView: View {
                         }
                     }
                 }
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear { gridWidth = geo.size.width }
-                            .onChange(of: geo.size.width) { _, newValue in
-                                gridWidth = newValue
-                            }
+                .frame(maxWidth: .infinity)
+                .environment(\.discoverNarrowTwoColumn13914, isNarrowTwoColumn)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { newWidth in
+                    if newWidth > 0, abs(gridWidth - newWidth) > 0.5 {
+                        gridWidth = newWidth
                     }
-                )
+                }
                 // #6444: the standing refill. The per-card `onAppear` trigger
                 // above runs once per card identity, so a page that lands and is
                 // ALSO filtered short re-mounts nothing and asks for nothing.
@@ -2884,6 +2969,11 @@ struct DiscoverView: View {
             .frame(maxWidth: contentMaxWidth)
             .frame(maxWidth: .infinity)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { newWidth in
+            if newWidth > 0, abs(measuredContainerWidth - newWidth) > 0.5 {
+                measuredContainerWidth = newWidth
+            }
+        }
         .macReadingOffset(macPlace)
         // #7074. HOW A REFRESH ENDED, drawn where the reader is looking whichever
         // end of the feed they started it from.
@@ -2959,6 +3049,7 @@ struct DiscoverView: View {
             FixedDiscoverRestoredDeck.active?.record("discover_appeared")
             #endif
             AnalyticsService.trackScreen(name: "discover", type: "discover")
+            likedStore.syncAccount(userId: authManager.user.map { String($0.id) })
             priceViewVisible = true
             vm.setPriceDeliveryActive(shouldDeliverLivePrices)
         }
@@ -3049,6 +3140,7 @@ struct DiscoverView: View {
         // identity's cards are never presented (on disk OR in memory) under the new
         // one, and a late in-flight response cannot overwrite the new identity.
         .onChange(of: authManager.activeFeedUserId) { _, newId in
+            likedStore.syncAccount(userId: newId)
             Task {
                 await APIClient.shared.setFeedCacheIdentity(userId: newId)
                 await vm.rebindForIdentityChange()
@@ -3058,7 +3150,11 @@ struct DiscoverView: View {
             await refreshFeed()
         }
         .sheet(isPresented: $showOnboarding) {
-            FirstRunChecklistRootView364A(arrivedHeadline: FirstRunLinkHandoffBridge212A.currentHeadline()) {
+            let arrivedHeadline = FirstRunLinkHandoffBridge212A.currentHeadline()
+            FirstRunChecklistRootView364A(
+                arrivedHeadline: arrivedHeadline,
+                entryPoint: arrivedHeadline == nil ? "first_launch" : "shared_link"
+            ) {
                 firstRunPreferences = FirstRunPreferences212A.load()
                 firstRunPrefsVersion &+= 1
                 pullEpoch &+= 1
@@ -3074,6 +3170,7 @@ struct DiscoverView: View {
             MyStuffView()
         }
         .onChange(of: feedbackAuthState, initial: true) { _, newState in
+            likedStore.syncAccount(userId: authManager.user.map { String($0.id) })
             if case .signedIn = newState {
                 let loaded = DiscoverInteractionProfile.load()
                 interactionProfile = loaded
@@ -3369,6 +3466,159 @@ struct DiscoverView: View {
         }
     }
 
+    static func stableGroupLikeKey(
+        title: String,
+        items: [FeedItem],
+        kind: String?,
+        theme: String?,
+        collectionRef: FeedThemeCollectionRef?
+    ) -> String {
+        if let slug = collectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+            return "group:collection:\(slug)"
+        }
+        if let primary = items.first {
+            return "group:\(feedItemId(primary))"
+        }
+        return "group:\(kind ?? "group"):\(theme ?? ""):\(title)"
+    }
+
+    private func likeCard(key: String, item: FeedItem?, source: String) {
+        guard DiscoverGuestFeedbackGate.allowsFeedback(startedWith: feedbackAuthState, current: feedbackAuthState) else {
+            inviteSignInForFeedback()
+            return
+        }
+        let resolution = DiscoverLikeFeedbackRule420D.resolveRightSwipe(wasLiked: likedStore.isLiked(key))
+        if resolution.nextLikedState {
+            likedStore.markLiked(key)
+        }
+        if resolution.emittedAction == "like", let item {
+            recordInteraction(for: item, action: .like, source: source)
+        }
+        if showSwipeHint {
+            withAnimation { showSwipeHint = false }
+            UserDefaults.standard.set(true, forKey: "discover_swipe_hinted")
+        }
+    }
+
+    private func toggleLike(key: String, item: FeedItem?, source: String) {
+        guard DiscoverGuestFeedbackGate.allowsFeedback(startedWith: feedbackAuthState, current: feedbackAuthState) else {
+            inviteSignInForFeedback()
+            return
+        }
+        let resolution = DiscoverLikeFeedbackRule420D.resolveHeartTap(wasLiked: likedStore.isLiked(key))
+        if resolution.nextLikedState {
+            likedStore.markLiked(key)
+            if resolution.emittedAction == "like", let item {
+                recordInteraction(for: item, action: .like, source: source)
+            }
+        } else {
+            // Undo keeps the card on screen and records neutral `like_undo` (#13829), NEVER `.unlike`.
+            likedStore.unmarkLiked(key)
+            if resolution.emittedAction == "like_undo", let item {
+                recordInteraction(for: item, action: .likeUndo, source: source)
+            }
+        }
+    }
+
+    private func likeAction(for item: FeedItem) -> DiscoverCardLikeAction420D {
+        let key = itemId(item)
+        let pinInfo: (type: String, id: Int)? = {
+            if let e = item.event { return ("event", e.id) }
+            if let f = item.futures { return ("future", f.id) }
+            return nil
+        }()
+        let shareURL: URL = {
+            if let e = item.event {
+                return URL(string: eventShareURL(e.id, style: .nativeCard)) ?? bainLuckFallbackURL
+            }
+            if let f = item.futures {
+                return URL(string: futuresShareURL(f.id, style: .nativeCard)) ?? bainLuckFallbackURL
+            }
+            if let slug = CardContextMenu.collectionSlug(for: item) {
+                return URL(string: collectionShareURL(slug)) ?? bainLuckFallbackURL
+            }
+            return bainLuckFallbackURL
+        }()
+        let name = itemName(item)
+        return DiscoverCardLikeAction420D(
+            itemKey: key,
+            isLiked: likedStore.isLiked(key),
+            pinType: pinInfo?.type,
+            pinId: pinInfo?.id,
+            shareURL: shareURL,
+            shareTitle: name,
+            shareMessage: name,
+            onToggle: { toggleLike(key: key, item: item, source: "card") },
+            onShare: { recordInteraction(for: item, action: .share, source: ShareSurface.discoverCard.rawValue) }
+        )
+    }
+
+    private func groupLikeAction(
+        title: String,
+        items: [FeedItem],
+        kind: String?,
+        theme: String?,
+        collectionRef: FeedThemeCollectionRef?
+    ) -> DiscoverCardLikeAction420D {
+        let key = Self.stableGroupLikeKey(
+            title: title,
+            items: items,
+            kind: kind,
+            theme: theme,
+            collectionRef: collectionRef
+        )
+        let primary = items.first
+        let slug = Self.groupCollectionSlug(
+            title: title,
+            kind: kind,
+            theme: theme,
+            collectionRef: collectionRef,
+            groupItems: items,
+            feedItems: vm.items
+        )
+        let shareURL: URL = {
+            if let slug {
+                return URL(string: collectionShareURL(slug)) ?? bainLuckFallbackURL
+            }
+            if let f = primary?.futures {
+                return URL(string: futuresShareURL(f.id, style: .nativeCard)) ?? bainLuckFallbackURL
+            }
+            if let e = primary?.event {
+                return URL(string: eventShareURL(e.id, style: .nativeCard)) ?? bainLuckFallbackURL
+            }
+            return bainLuckFallbackURL
+        }()
+        let pinInfo: (type: String, id: Int)? = {
+            guard slug == nil else { return nil }
+            if let f = primary?.futures { return ("future", f.id) }
+            if let e = primary?.event { return ("event", e.id) }
+            return nil
+        }()
+        return DiscoverCardLikeAction420D(
+            itemKey: key,
+            isLiked: likedStore.isLiked(key),
+            pinType: pinInfo?.type,
+            pinId: pinInfo?.id,
+            shareURL: shareURL,
+            shareTitle: title,
+            shareMessage: title,
+            onToggle: { toggleLike(key: key, item: primary, source: "card") },
+            onShare: {
+                if let primary {
+                    recordInteraction(for: primary, action: .share, source: ShareSurface.discoverCard.rawValue)
+                } else if let slug {
+                    ShareInstrumentation.recordShareOpened(
+                        itemType: "collection",
+                        itemId: slug,
+                        itemName: title,
+                        category: nil,
+                        surface: .discoverCard
+                    )
+                }
+            }
+        )
+    }
+
     private func hideForSession(_ id: String) {
         hideForSession(ids: [id])
     }
@@ -3607,6 +3857,8 @@ struct ExpandableNativeContextText: View {
     var onExpand: (() -> Void)? = nil
     var onCollapse: (() -> Void)? = nil
     @State private var expanded = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var contextSizeAX: CGFloat = 15
 
     private var compactText: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3621,11 +3873,12 @@ struct ExpandableNativeContextText: View {
     }
 
     var body: some View {
+        let isAX = dynamicTypeSize.isAccessibilitySize
         VStack(alignment: .leading, spacing: 4) {
             Text(expanded || !canExpand ? fullText : compactText)
-                .font(font)
+                .font(isAX ? .system(size: min(contextSizeAX, 24)) : font)
                 .foregroundStyle(DS.textSecondaryReadable)
-                .lineLimit(expanded ? nil : 2)
+                .lineLimit((expanded || isAX) ? nil : 2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -3668,10 +3921,13 @@ struct NativeGroupCard: View {
     @Binding var navigationPath: NavigationPath
     @State private var expanded = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
     @Environment(\.colorScheme) private var colorScheme
+    @ScaledMetric(relativeTo: .caption2) private var eyebrowFontSize: CGFloat = 11
     @Environment(\.discoverGroupBundleArt12840) private var envBundleArt
     @Environment(\.discoverGroupOnOpenCollection13094) private var envOnOpenCollection
     @Environment(\.discoverSwipeTapGuard13668) private var tapGuard
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     private var category: String {
         items.first?.futures?.llmSportCategory?.lowercased() ?? ""
@@ -3834,6 +4090,10 @@ struct NativeGroupCard: View {
                 Divider()
                 collectionRow(collectionRef)
             }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, surfaceColor: cardSurfaceColor)
+            }
         }
         .background(cardSurfaceColor)
         .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -3850,18 +4110,19 @@ struct NativeGroupCard: View {
     }
 
     private var groupHeaderContent: some View {
-        HStack(alignment: .top, spacing: 12) {
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        return HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(DiscoverBundleVisual12840.eyebrowEmoji(title: title, category: category)).accessibilityHidden(true)
                     Text(title.uppercased())
-                        .font(.caption2.weight(.bold))
-                        .tracking(0.8)
+                        .font(isAX ? .system(size: min(eyebrowFontSize, 18), weight: .bold) : .caption2.weight(.bold))
+                        .tracking(isAX ? 0 : 0.8)
                         .foregroundStyle(secondaryReadableInk)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 0.72 : 1.0)
+                        .lineLimit((isAX || isNarrowTwoColumn) ? nil : 2)
+                        .minimumScaleFactor(isAX ? 0.85 : 1.0)
                         .fixedSize(horizontal: false, vertical: true)
-                    if sharedQuestion?.isEmpty != false {
+                    if !isAX && sharedQuestion?.isEmpty != false {
                         Text("\(items.count)")
                             .font(.caption2)
                             .foregroundStyle(secondaryReadableInk)
@@ -3875,7 +4136,19 @@ struct NativeGroupCard: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if canExpand {
+            if isAX && sharedQuestion?.isEmpty != false {
+                HStack(spacing: 6) {
+                    Text("\(items.count)")
+                        .font(.system(size: min(eyebrowFontSize, 18), weight: .semibold).monospacedDigit())
+                        .foregroundStyle(secondaryReadableInk)
+                    if canExpand {
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(mutedInk)
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                    }
+                }
+            } else if canExpand {
                 Image(systemName: "chevron.down")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(mutedInk)
@@ -3936,13 +4209,13 @@ struct NativeGroupCard: View {
                 Text(data.name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(primaryInk)
-                    .lineLimit(isAX ? nil : 3)
+                    .lineLimit((isAX || isNarrowTwoColumn) ? nil : 3)
                     .fixedSize(horizontal: false, vertical: true)
                 if let label = summary.label {
                     Text(label)
                         .font(.caption)
                         .foregroundStyle(secondaryInk)
-                        .lineLimit(isAX ? nil : 2)
+                        .lineLimit((isAX || isNarrowTwoColumn) ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -4156,7 +4429,7 @@ private struct NativeIPOComparisonRow: View {
                 .foregroundStyle(emphasized ? .primary : .secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.76)
-            Text("\(Int(((point?.probability ?? 0) * 100).rounded()))%")
+            Text(formatProbabilityOrDash(point?.probability))
                 .font(.subheadline.weight(.black).monospacedDigit())
         }
     }
@@ -4200,7 +4473,7 @@ private struct NativeThresholdComparisonRow: View {
                             .foregroundStyle(DS.textSecondaryReadable)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
-                        Text("\(Int(((point.probability ?? 0) * 100).rounded()))%")
+                        Text(formatProbabilityOrDash(point.probability))
                             .font(.caption.weight(.black).monospacedDigit())
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -4240,6 +4513,7 @@ private struct NativeCompactFuturesRow: View {
     let data: FeedFuturesData
     @Binding var navigationPath: NavigationPath
     @Environment(\.discoverSwipeTapGuard13668) private var tapGuard
+    @Environment(\.discoverNarrowTwoColumn13914) private var isNarrowTwoColumn
 
     /// What a UI test can find a group card's tappable row by (#7074).
     ///
@@ -4255,19 +4529,19 @@ private struct NativeCompactFuturesRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(data.name)
                         .font(.caption.weight(.semibold))
-                        .lineLimit(2)
+                        .lineLimit(isNarrowTwoColumn ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let leader = data.topOutcomes?.first {
                         Text(leader.name)
                             .font(.caption2)
                             .foregroundStyle(DS.textSecondaryReadable)
-                            .lineLimit(2)
+                            .lineLimit(isNarrowTwoColumn ? nil : 2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer()
                 if let leader = data.topOutcomes?.first {
-                    Text("\(Int(((leader.probability ?? 0) * 100).rounded()))%")
+                    Text(formatProbabilityOrDash(leader.probability))
                         .font(.subheadline.weight(.black).monospacedDigit())
                     MovementBadge(movement: leader.movement)
                 }
@@ -4567,6 +4841,7 @@ struct NativeGuessCard: View {
     @State private var streak: Int? = nil
     @State private var displayPct: Int = 0
     @State private var showShare = false
+    @Environment(\.discoverCardLikeAction420D) private var likeAction
 
     init(
         data: FeedFuturesData,
@@ -4651,6 +4926,10 @@ struct NativeGuessCard: View {
                     .sheet(isPresented: $showShare) {
                         ShareSheet(text: shareText)
                     }
+            }
+
+            if let likeAction {
+                DiscoverCardActionBar420D(actions: likeAction, topDivider: true, horizontalPadding: 0, verticalPadding: 6)
             }
         }
         .padding(16)
@@ -4970,66 +5249,93 @@ private struct SwipeToDismiss<Content: View>: View {
     static var tapTargetIdentifier: String { "discover-card" }
 
     var body: some View {
-        content()
-            .environment(\.discoverSwipeTapGuard13668, activeTapGuard)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier(Self.tapTargetIdentifier)
-            .offset(x: swipe.offset)
-            .opacity(swipe.opacity)
-            .overlay(alignment: swipe.overlayIsLeading ? .leading : .trailing) {
-                if swipe.showsOverlay {
-                    ZStack {
-                        Capsule()
-                            .fill(swipe.overlayIsLeading ? Color.green.opacity(0.15) : Color.red.opacity(0.15))
-                            .frame(width: swipe.overlayIsLeading ? 122 : 116, height: 44)
-                        Text(swipe.overlayIsLeading ? "More like this" : "Less like this")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(swipe.overlayIsLeading ? .green : .red)
+        let isDraggingOrExiting = abs(swipe.offset) > 0.5 || swipe.removing
+        ZStack(alignment: swipe.overlayIsLeading ? .leading : .trailing) {
+            if swipe.isHorizontal, abs(swipe.offset) > 2 {
+                let isRight = swipe.overlayIsLeading
+                Rectangle()
+                    .fill(isRight ? Color.green.opacity(0.15) : Color.red.opacity(0.15))
+                    .overlay(alignment: isRight ? .leading : .trailing) {
+                        VStack(spacing: 4) {
+                            Image(systemName: isRight ? "hand.thumbsup.fill" : "hand.thumbsdown.fill")
+                                .font(.subheadline.weight(.bold))
+                            Text(isRight ? "More like this" : "Less like this")
+                                .font(.caption2.weight(.bold))
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .foregroundStyle(isRight ? Color.green : Color.red)
+                        .padding(.horizontal, 8)
+                        .frame(width: min(max(abs(swipe.offset), 0), 124))
+                        .opacity(swipe.trayProgress)
                     }
-                    .opacity(swipe.overlayOpacity)
-                    .padding(.horizontal, 24)
+                    .accessibilityHidden(true)
+            }
+
+            content()
+                .environment(\.discoverSwipeTapGuard13668, activeTapGuard)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier(Self.tapTargetIdentifier)
+                .offset(x: swipe.offset)
+                .opacity(swipe.opacity)
+        }
+        .mask {
+            if isDraggingOrExiting {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+            } else {
+                Rectangle().padding(-24)
+            }
+        }
+        .onDisappear {
+            activeTapGuard.cancel()
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: DiscoverSwipeState.minimumDistance)
+                .onChanged { v in
+                    if !swipe.axisLatched { feedbackStartedWith = feedbackAuthState }
+                    swipe.change(width: v.translation.width, height: v.translation.height)
+                    if swipe.isHorizontal {
+                        activeTapGuard.beginHorizontalDrag()
+                    }
                 }
-            }
-            .onDisappear {
-                activeTapGuard.cancel()
-            }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: DiscoverSwipeState.minimumDistance)
-                    .onChanged { v in
-                        if !swipe.axisLatched { feedbackStartedWith = feedbackAuthState }
-                        swipe.change(width: v.translation.width, height: v.translation.height)
-                        if swipe.isHorizontal {
-                            activeTapGuard.beginHorizontalDrag()
-                        }
+                .onEnded { v in
+                    let wasHorizontalDrag = swipe.isHorizontal
+                    let commits = swipe.commits(width: v.translation.width)
+                    if wasHorizontalDrag {
+                        activeTapGuard.endHorizontalDrag(committed: commits)
                     }
-                    .onEnded { v in
-                        let wasHorizontalDrag = swipe.isHorizontal
-                        let commits = swipe.commits(width: v.translation.width)
-                        if wasHorizontalDrag {
-                            activeTapGuard.endHorizontalDrag(committed: commits)
+                    let startedWith = feedbackStartedWith ?? .resolving
+                    feedbackStartedWith = nil
+                    if commits,
+                       !DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) {
+                        withAnimation(.spring(response: 0.3)) {
+                            swipe.settleAfterCommit()
                         }
-                        let startedWith = feedbackStartedWith ?? .resolving
-                        feedbackStartedWith = nil
-                        if commits,
-                           !DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) {
-                            withAnimation(.spring(response: 0.3)) {
-                                swipe.settleAfterCommit()
-                            }
+                        onRequiresSignIn()
+                        return
+                    }
+                    let isRightCommit = commits && v.translation.width > 0
+                    // Same predicate `end` uses, so the curve can never drift
+                    // from the decision: right swipe springs back (#13769),
+                    // left swipe flies out, sub-threshold springs back.
+                    let curve: Animation = commits
+                        ? (isRightCommit ? .spring(response: 0.32, dampingFraction: 0.82) : .easeOut(duration: 0.2))
+                        : .spring(response: 0.3)
+                    let outcome = withAnimation(curve) {
+                        swipe.end(width: v.translation.width)
+                    }
+                    guard outcome != .none else { return }
+                    if outcome == .right {
+                        if DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) {
+                            onSwipeRight()
+                        } else {
                             onRequiresSignIn()
-                            return
                         }
-                        // Same predicate `end` uses, so the curve can never drift
-                        // from the decision: fly-out on commit, spring on release.
-                        let curve: Animation = commits
-                            ? .easeOut(duration: 0.2)
-                            : .spring(response: 0.3)
-                        let outcome = withAnimation(curve) {
-                            swipe.end(width: v.translation.width)
-                        }
-                        guard outcome != .none else { return }
+                        swipe.settleAfterCommit()
+                    } else {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                             if DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) {
-                                if outcome == .right { onSwipeRight() } else { onSwipeLeft() }
+                                onSwipeLeft()
                             } else {
                                 onRequiresSignIn()
                             }
@@ -5041,7 +5347,8 @@ private struct SwipeToDismiss<Content: View>: View {
                             swipe.settleAfterCommit()
                         }
                     }
-            )
+                }
+        )
     }
 }
 
@@ -5087,21 +5394,26 @@ private struct ShareSheet: View {
 
 struct MovementBadge: View {
     let movement: Double?
+    @ScaledMetric(relativeTo: .caption2) private var arrowSize: CGFloat = 7.5
+    @ScaledMetric(relativeTo: .caption2) private var textSize: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption2) private var hPad: CGFloat = 5
+    @ScaledMetric(relativeTo: .caption2) private var vPad: CGFloat = 2
 
     var body: some View {
         if let m = movement, abs(m) >= 0.01 {
             let up = m > 0
             HStack(spacing: 2) {
                 Image(systemName: up ? "arrow.up" : "arrow.down")
-                    .font(.system(size: 7, weight: .black))
+                    .font(.system(size: min(arrowSize, 14), weight: .black))
                 Text("\(abs(Int((m * 100).rounded())))%")
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .font(.system(size: min(textSize, 18), weight: .bold).monospacedDigit())
             }
             .foregroundStyle(up ? .green : .red)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+            .padding(.horizontal, min(hPad, 9))
+            .padding(.vertical, min(vPad, 4))
             .background((up ? Color.green : Color.red).opacity(0.15))
             .clipShape(Capsule())
+            .fixedSize()
         }
     }
 }

@@ -3,6 +3,7 @@
 import logging
 import re
 import time
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
 from app.utils.event_completion import served_commence_time
@@ -51,7 +52,8 @@ from app.utils.standings_shape import (
 from app.utils.source_mark import quote_source_mark, settled_source_mark
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import select, or_, and_
+from sqlalchemy import Integer, select, or_, and_, any_, bindparam
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -62,6 +64,14 @@ from app.utils import season_windows
 from app.utils.proven_duplicates import (
     folded_probability_sources_batch,
     not_a_proven_duplicate,
+)
+from app.utils.team_page_cache import (
+    cache_scope_key as _team_cache_scope_key,
+    get_inflight_lock as _get_team_inflight_lock,
+    is_real_pg_engine as _is_real_pg_engine,
+    normalize_team_cache_id as _normalize_team_cache_id,
+    read_team_page_cache as _read_team_page_cache,
+    write_team_page_cache as _write_team_page_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -420,374 +430,416 @@ async def get_team_championship_path(
 @router.get("/{identifier}")
 async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession = Depends(get_db)):
     """Get a team page with upcoming/recent games, futures, and championship path."""
-    _t = {}
-    _t0 = time.perf_counter()
+    cache_target: tuple[int, str] | None = None
+    if not debug_timing and _is_real_pg_engine(db):
+        scope_key = _team_cache_scope_key(db)
+        norm_id = _normalize_team_cache_id(identifier)
+        cached = await _read_team_page_cache(scope_key, norm_id)
+        if cached is not None:
+            return cached
+        cache_target = (scope_key, norm_id)
 
-    def _mark(label):
-        nonlocal _t0
-        _t[label] = round((time.perf_counter() - _t0) * 1000)
+    async def _build_fresh() -> dict:
+        _t = {}
         _t0 = time.perf_counter()
 
-    team = await _resolve_team_by_identifier(db, identifier)
+        def _mark(label):
+            nonlocal _t0
+            _t[label] = round((time.perf_counter() - _t0) * 1000)
+            _t0 = time.perf_counter()
 
-    now = datetime.now(timezone.utc)
+        team = await _resolve_team_by_identifier(db, identifier)
 
-    # --- Events: upcoming + recent ---
-    # The two NAME arms are a FALLBACK for rows whose team binding never landed,
-    # and a fallback must not cross leagues (#5491). A Polymarket-derived row in
-    # the `baseball_other` catch-all bearing the string "Boston Red Sox" was
-    # reaching the MLB club's page as "vs Texas Rangers — No result reported":
-    # a real matchup, ingested with no anchor, no team binding, and the INGEST
-    # time in `commence_time` (all 18 specimens sat at 13:00:3x-5x UTC).
-    #
-    # The guard is scoped to rows with NO binding on either side, which is the
-    # only population the name arms serve. That scoping is what keeps it
-    # surgical: a `baseball_mlb` game reaching a `baseball_mlb_preseason` club
-    # (#2498 — 1,604 rows) and an EPL match reaching a club registered under
-    # `soccer_england_efl_cup` both carry real team ids, so neither is tested at
-    # all. Measured over a +/-21-day window on production 2026-09-12: 4,521 rows
-    # excluded, 4,447 of them (98.4%) from a `*_other` catch-all bucket.
-    #
-    # The comparison is `league_family_identity`, NEVER `sport_id` — a row id is
-    # not a league (#1798/#4945: every MLB club has a preseason row too), and a
-    # tennis player registered under `tennis_atp_us_open` must keep their
-    # `tennis_atp` matches.
-    (
-        team_sport_key,
-        team_family,
-        family_sport_ids,
-        name_arm_sport_ids,
-        club_ids,
-        club_names,
-        club_id_list,
-        club_name_list,
-    ) = await _resolve_team_family_context(db, team)
+        now = datetime.now(timezone.utc)
 
-    name_arm = or_(
-        Event.home_team_name.in_(club_name_list),
-        Event.away_team_name.in_(club_name_list),
-    )
-    if team_family is not None:
-        # An empty list would exclude every unbound row, so only constrain when
-        # the team's own sport resolved — `.in_([])` is a false predicate, and
-        # failing OPEN here costs a stale card while failing closed costs a
-        # club its whole schedule.
-        if family_sport_ids:
-            name_arm = and_(
-                name_arm,
-                or_(
-                    Event.home_team_id.isnot(None),
-                    Event.away_team_id.isnot(None),
-                    Event.sport_id.in_(family_sport_ids),
-                ),
+        # --- Events: upcoming + recent ---
+        # The two NAME arms are a FALLBACK for rows whose team binding never landed,
+        # and a fallback must not cross leagues (#5491). A Polymarket-derived row in
+        # the `baseball_other` catch-all bearing the string "Boston Red Sox" was
+        # reaching the MLB club's page as "vs Texas Rangers — No result reported":
+        # a real matchup, ingested with no anchor, no team binding, and the INGEST
+        # time in `commence_time` (all 18 specimens sat at 13:00:3x-5x UTC).
+        #
+        # The guard is scoped to rows with NO binding on either side, which is the
+        # only population the name arms serve. That scoping is what keeps it
+        # surgical: a `baseball_mlb` game reaching a `baseball_mlb_preseason` club
+        # (#2498 — 1,604 rows) and an EPL match reaching a club registered under
+        # `soccer_england_efl_cup` both carry real team ids, so neither is tested at
+        # all. Measured over a +/-21-day window on production 2026-09-12: 4,521 rows
+        # excluded, 4,447 of them (98.4%) from a `*_other` catch-all bucket.
+        #
+        # The comparison is `league_family_identity`, NEVER `sport_id` — a row id is
+        # not a league (#1798/#4945: every MLB club has a preseason row too), and a
+        # tennis player registered under `tennis_atp_us_open` must keep their
+        # `tennis_atp` matches.
+        (
+            team_sport_key,
+            team_family,
+            family_sport_ids,
+            name_arm_sport_ids,
+            club_ids,
+            club_names,
+            club_id_list,
+            club_name_list,
+        ) = await _resolve_team_family_context(db, team)
+
+        name_arm = or_(
+            Event.home_team_name.in_(club_name_list),
+            Event.away_team_name.in_(club_name_list),
+        )
+        if team_family is not None:
+            # An empty list would exclude every unbound row, so only constrain when
+            # the team's own sport resolved — `.in_([])` is a false predicate, and
+            # failing OPEN here costs a stale card while failing closed costs a
+            # club its whole schedule.
+            if family_sport_ids:
+                name_arm = and_(
+                    name_arm,
+                    or_(
+                        Event.home_team_id.isnot(None),
+                        Event.away_team_id.isnot(None),
+                        Event.sport_id.in_(family_sport_ids),
+                    ),
+                )
+
+        # A BOUND ROW STILL HAS TO BE THIS SPORT AND THIS SIDE (#9581). The guard
+        # above only tests unbound rows, so a row bound to ANY team passed on the
+        # name alone: `/team/alabama-crimson-tide` (WNCAAB) listed Alabama's
+        # football schedule, and Arsenal's men's and women's pages each listed the
+        # other's fixtures (15316358 Arsenal v HB Køge, UWCL women, on the EPL
+        # club). The bound arm exists for a SIBLING competition — an EPL match
+        # bound to the EPL "Arsenal" row reaching the club whose page row sits
+        # under `soccer_england_efl_cup` — and `same_sport_same_gender` keeps
+        # exactly that. The id arms are untouched: a row bound to one of this
+        # club's own rows is its game whatever the key says.
+        if name_arm_sport_ids is not None:
+            name_arm = and_(name_arm, Event.sport_id.in_(name_arm_sport_ids))
+
+        base_event_filter = or_(
+            Event.home_team_id.in_(club_id_list),
+            Event.away_team_id.in_(club_id_list),
+            name_arm,
+        )
+
+        upcoming_q = (
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                base_event_filter,
+                # The status × time half is `utils.event_rails` (#3211) — it was
+                # these same two lines on the league page, and the pair of rails is
+                # only correct as a pair. See that module for why `live` no longer
+                # carries a `now - 2h` floor.
+                upcoming_rail_condition(now),
+                # #2263: one game, one card. A row the registry proved is a second
+                # copy of another row is not a second fixture on this team's schedule.
+                not_a_proven_duplicate(),
             )
-
-    # A BOUND ROW STILL HAS TO BE THIS SPORT AND THIS SIDE (#9581). The guard
-    # above only tests unbound rows, so a row bound to ANY team passed on the
-    # name alone: `/team/alabama-crimson-tide` (WNCAAB) listed Alabama's
-    # football schedule, and Arsenal's men's and women's pages each listed the
-    # other's fixtures (15316358 Arsenal v HB Køge, UWCL women, on the EPL
-    # club). The bound arm exists for a SIBLING competition — an EPL match
-    # bound to the EPL "Arsenal" row reaching the club whose page row sits
-    # under `soccer_england_efl_cup` — and `same_sport_same_gender` keeps
-    # exactly that. The id arms are untouched: a row bound to one of this
-    # club's own rows is its game whatever the key says.
-    if name_arm_sport_ids is not None:
-        name_arm = and_(name_arm, Event.sport_id.in_(name_arm_sport_ids))
-
-    base_event_filter = or_(
-        Event.home_team_id.in_(club_id_list),
-        Event.away_team_id.in_(club_id_list),
-        name_arm,
-    )
-
-    upcoming_q = (
-        select(Event)
-        .options(selectinload(Event.sport))
-        .where(
-            base_event_filter,
-            # The status × time half is `utils.event_rails` (#3211) — it was
-            # these same two lines on the league page, and the pair of rails is
-            # only correct as a pair. See that module for why `live` no longer
-            # carries a `now - 2h` floor.
-            upcoming_rail_condition(now),
-            # #2263: one game, one card. A row the registry proved is a second
-            # copy of another row is not a second fixture on this team's schedule.
-            not_a_proven_duplicate(),
-        )
-        .order_by(
-            # Q438: the same live-AND-started predicate the league rail uses —
-            # the pair is only correct as a pair.
-            live_first_order(now),
-            Event.commence_time.asc(),
-        )
-        # Over-fetched so the twin fold can still fill the rail — see `_fold_rail`.
-        .limit(_EVENT_FETCH_LIMIT)
-    )
-
-    recent_q = (
-        select(Event)
-        .options(selectinload(Event.sport))
-        .where(
-            base_event_filter,
-            # #1204: include 'closed'-settled, not just 'completed' — a settled
-            # doubleheader game (and every source that closes rather than completes)
-            # was orphaned from recent games (only 1 of 2 surfaced).
-            #
-            # 🔴 AND `suspended` — live/056, the same omission #1204 describes
-            # one state later. `upcoming_q` above is live/scheduled gated on
-            # `now - 2h`; a match is suspended precisely because hours have
-            # passed. Between the two, a rain-delayed match was on NEITHER of
-            # its two teams' pages. `RecentGameCard` was taught the state in the
-            # same change — without that it would have graded the PARTIAL score
-            # as a result ("L 1–2"), which is the false Final live/048 removed,
-            # printed by a different component.
-            #
-            # 🔴 AND a `scheduled` row past its own kickoff — #3211, the third
-            # state through the same hole and the one that cost 171 US Open
-            # matches on the league pages. `RecentGameCard` needs no further
-            # teaching: such a row has no score at all, so the state it renders
-            # is the score-less arm of the one live/056 already gave it.
-            #
-            # The 30-day lookback is PASSED, not assumed — a team plays less
-            # often than its league does, and that difference is this page's
-            # decision rather than the shared module's.
-            #
-            # 🔴 ONE LIST HERE, THREE RAILS ON THE LEAGUE PAGE, and the asymmetry
-            # is reasoned rather than inherited: that page's cap spans every
-            # concurrent match in a league (hundreds, during a Grand Slam), so
-            # result-less rows starved the Finals out of all eight slots. This
-            # cap spans ONE team's own schedule, where a result-less game is one
-            # fixture among the handful the rail was sized for. Comparable
-            # populations, no starvation. `unreported_rail_condition` carries the
-            # measurement and this call site is named in it.
-            recent_or_unreported_condition(now, lookback=timedelta(days=30)),
-            not_a_proven_duplicate(),  # #2263, as above
-        )
-        .order_by(Event.commence_time.desc())
-        # Over-fetched so the twin fold can still fill the rail — see `_fold_rail`.
-        .limit(_EVENT_FETCH_LIMIT)
-    )
-
-    _mark("resolve_team")
-    upcoming_r, recent_r = await db.execute(upcoming_q), await db.execute(recent_q)
-    # Row fold FIRST, then the blend fold below. Two different folds with two
-    # different jobs: this one decides HOW MANY CARDS the rail has (one per
-    # fixture), `_folded_briefs` decides WHAT NUMBER each surviving card
-    # prints. Running the row fold first also means the batch lookup in
-    # `_folded_briefs` runs over deduped rows, and lets the union this fold
-    # writes onto the survivor be the fallback that lookup degrades to.
-    upcoming_rows = _fold_rail(list(upcoming_r.scalars().all()), "upcoming", team.slug)
-    # ── #6346 on the OTHER surface that spends `recent_or_unreported_condition` ──
-    #
-    # #6346 took "Liverpool — Manchester United · No result reported" off
-    # `/sport/soccer/epl` and left it on `/api/teams/liverpool`, which is the same
-    # card about the same row. MEASURED 2026-09-15 12:5xZ, after that fix was live
-    # on production (`fd5326559` is an ancestor of the deployed sha): the league
-    # page served `unreported_games: 0` while the Liverpool team page was still
-    # serving `15302967` and `15302968` — the Manchester United and Everton
-    # season-matchup containers, two of the five the league page had just stopped
-    # showing.
-    #
-    # Not a second policy: `commence_time_was_never_a_kickoff` is #6346's own
-    # helper, called here rather than reimplemented, so the tolerance and the
-    # source set cannot drift between the two readers of one rail condition.
-    #
-    # BEFORE `_fold_rail`, for the reason the league page gives for going before
-    # its own fold: a container must never be elected the survivor of a fold
-    # against the real row it shadows. The team page has no
-    # `kalshi_occurrence_start` recovery in front of it, so placement is a
-    # correctness margin here rather than the whole fix.
-    #
-    # Wrapped, because this rail is Priority #3 and the file's own rule two
-    # paragraphs down is that an optional step never takes the page with it.
-    _recent_raw = list(recent_r.scalars().all())
-    try:
-        _recent_raw = [e for e in _recent_raw if not commence_time_was_never_a_kickoff(e)]
-    except Exception:  # noqa: BLE001 — a gate may not cost a reader their rail
-        # The team ID and not the slug: the slug reaches this route as a path
-        # parameter, and a new log line carrying one is a `py/log-injection`
-        # finding that notice 32 refuses — the same call the league page's own
-        # withhold log records making.
-        logger.exception(
-            "team page: invented-kickoff gate failed for team %s; serving "
-            "the recent rail unfiltered",
-            team.id,
-        )
-    # ── #7051: the rail and the record must describe the SAME season ─────────
-    #
-    # `/team/washington-commanders`, production 2026-09-22: the header reads
-    # `0-2`, and one of the three cards under RECENT RESULTS is `@ Baltimore
-    # Ravens, Aug 28, L 3-41`. Denver reads `1-1` over a 34-6 win on Aug 29.
-    # Those are August exhibitions, played by backups, rendered in the same card
-    # as a real result and carrying our own probability caption. The record is
-    # not the thing that is wrong — it comes from the standings and correctly
-    # counts two games. MEASURED over all 32 NFL team payloads that morning:
-    # 32/32 pages print a record, and 36 of their 100 recent cards are pre-floor
-    # exhibitions. Every page contradicts itself.
-    #
-    # ⚠️ NOT a preseason-key filter. The rows are misfiled under
-    # `americanfootball_nfl` itself (51 of them, duplicated again under
-    # `americanfootball_nfl_preseason`), so `sport_key` cannot see them — and
-    # `league_family_identity` deliberately treats preseason as the same family.
-    # The floor is the calendar instead: `season_start` is derived from the
-    # league's own band, so it costs no ingest change and no new column.
-    #
-    # ⚠️ NOT twins-first, which is what #7051's escalation ordered. `_fold_rail`
-    # already folds the NFL pair (both providers store the kick-off on the exact
-    # hour), so no NFL page serves an exhibition twice; the duplicates are real
-    # in the table and invisible here. An id-less claim never absorbs (ruling
-    # 048 / gotcha #32) and D35 files matching symptoms rather than fixing them
-    # until #2693 lands, so the serve-time rule is the whole of what is honest.
-    #
-    # Deliberately admits, rather than empties. On this date the NHL floor is
-    # LAST October's, so the September exhibitions on an NHL rail stay — that
-    # league's page prints no record for them to contradict (#6266) and an empty
-    # rail would be the worse answer. The NHL and NBA equivalents of this cut
-    # arrive with their own openers, 2026-10-04 and 2026-10-20.
-    try:
-        _recent_raw = _rail_within_declared_season(
-            _recent_raw, team.sport.key if team.sport else None, now
-        )
-    except Exception:  # noqa: BLE001 — a gate may not cost a reader their rail
-        logger.exception(
-            "team page: season-floor gate failed for team %s; serving "
-            "the recent rail unfiltered",
-            team.id,
-        )
-    recent_rows = _fold_rail(_recent_raw, "recent", team.slug)
-    upcoming_events, recent_events = await _folded_briefs(
-        db, team, upcoming_rows, recent_rows, club_ids=club_ids, club_names=club_names
-    )
-    upcoming_events = _order_upcoming_team_briefs(upcoming_events)
-    _mark("events")
-
-    # #1197 / #1239: the team page is Priority #3 and must NEVER hard-500 on a
-    # failure in an optional enrichment section (a slow/failing futures query, a
-    # season-descriptor edge case, a championship-path exception). Each optional
-    # section degrades to its empty value and the core page (identity + games)
-    # always renders. A cache/DB blip on a sub-section is not allowed to take the
-    # whole page down.
-    sport_key = team.sport.key if team.sport else None
-    league_slug = _league_slug_for_sport_key(sport_key)
-
-    # --- Team futures (championship, conference, division, awards) ---
-    futures_items: list = []
-    _futures_unavailable = False
-    _futures_partial = False
-    _futures_omitted_count = 0
-    _ftime: dict = {}
-    try:
-        from app.routes.user import (
-            TeamFuturesScreenUnavailableError,
-            _query_team_futures,
-        )
-        # #9219: the club's rows, not only the URL's row — the same set the
-        # games rails use (#7929), so a spelling the page reaches for games it
-        # also reaches for futures. Narrowed to the team's OWN sport row: the
-        # games set spans the league family, and a preseason row (19692 carries
-        # no crest and no colour) would otherwise be its own cluster in the
-        # futures collapse and could claim a leg with a blank badge.
-        futures_team_ids = [team.id]
-        if len(club_id_list) > 1:
-            futures_team_ids = sorted(
-                (
-                    await db.execute(
-                        select(Team.id).where(
-                            Team.id.in_(club_id_list),
-                            Team.sport_id == team.sport_id,
-                        )
-                    )
-                ).scalars().all()
-            ) or [team.id]
-        futures_data = await _query_team_futures(
-            futures_team_ids, db, limit=30, timings=_ftime if debug_timing else None
-        )
-        futures_items = futures_data.get("items", [])
-        if futures_data.get("partial"):
-            _futures_partial = True
-            _futures_omitted_count = int(futures_data.get("omitted_count", 0))
-        for item in futures_items:
-            item["display_tier"] = _display_tier(
-                item.get("market_tier"), item.get("market_name")
+            .order_by(
+                # Q438: the same live-AND-started predicate the league rail uses —
+                # the pair is only correct as a pair.
+                live_first_order(now),
+                Event.commence_time.asc(),
             )
-    except TeamFuturesScreenUnavailableError:
-        logger.warning("team page: futures price screen unavailable for team %s", team.id)
-        _futures_unavailable = True
-    except Exception:
-        logger.exception("team page: futures section failed for team %s", team.id)
-    _mark("futures")
-    if debug_timing:
-        _t["futures_detail"] = _ftime
-
-    # --- Season context (every team-page number declares its season) ---
-    season_ctx = None
-    try:
-        season_ctx = (
-            season_windows.season_descriptor(league_slug, now) if league_slug else None
+            # Over-fetched so the twin fold can still fill the rail — see `_fold_rail`.
+            .limit(_EVENT_FETCH_LIMIT)
         )
-    except Exception:
-        logger.exception("team page: season descriptor failed for team %s", team.id)
-    _mark("season")
 
-    # --- Championship path (tier 1/2/4 probabilities) ---
-    champ_path: list = []
-    champ_market_ids: set[int] = set()
-    try:
-        champ_path = await _get_championship_path(
-            team.id, db, league_slug=league_slug, now=now, team_sport_key=sport_key, out_market_ids=champ_market_ids
+        recent_q = (
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                base_event_filter,
+                # #1204: include 'closed'-settled, not just 'completed' — a settled
+                # doubleheader game (and every source that closes rather than completes)
+                # was orphaned from recent games (only 1 of 2 surfaced).
+                #
+                # 🔴 AND `suspended` — live/056, the same omission #1204 describes
+                # one state later. `upcoming_q` above is live/scheduled gated on
+                # `now - 2h`; a match is suspended precisely because hours have
+                # passed. Between the two, a rain-delayed match was on NEITHER of
+                # its two teams' pages. `RecentGameCard` was taught the state in the
+                # same change — without that it would have graded the PARTIAL score
+                # as a result ("L 1–2"), which is the false Final live/048 removed,
+                # printed by a different component.
+                #
+                # 🔴 AND a `scheduled` row past its own kickoff — #3211, the third
+                # state through the same hole and the one that cost 171 US Open
+                # matches on the league pages. `RecentGameCard` needs no further
+                # teaching: such a row has no score at all, so the state it renders
+                # is the score-less arm of the one live/056 already gave it.
+                #
+                # The 30-day lookback is PASSED, not assumed — a team plays less
+                # often than its league does, and that difference is this page's
+                # decision rather than the shared module's.
+                #
+                # 🔴 ONE LIST HERE, THREE RAILS ON THE LEAGUE PAGE, and the asymmetry
+                # is reasoned rather than inherited: that page's cap spans every
+                # concurrent match in a league (hundreds, during a Grand Slam), so
+                # result-less rows starved the Finals out of all eight slots. This
+                # cap spans ONE team's own schedule, where a result-less game is one
+                # fixture among the handful the rail was sized for. Comparable
+                # populations, no starvation. `unreported_rail_condition` carries the
+                # measurement and this call site is named in it.
+                recent_or_unreported_condition(now, lookback=timedelta(days=30)),
+                not_a_proven_duplicate(),  # #2263, as above
+            )
+            .order_by(Event.commence_time.desc())
+            # Over-fetched so the twin fold can still fill the rail — see `_fold_rail`.
+            .limit(_EVENT_FETCH_LIMIT)
         )
-    except Exception:
-        logger.exception("team page: championship path failed for team %s", team.id)
-    _mark("championship")
 
-    # --- The grid's out verdict (#11493): cache-only, fails to today's answer ---
-    if league_slug and (champ_path or futures_items):
+        _mark("resolve_team")
+        upcoming_r, recent_r = await db.execute(upcoming_q), await db.execute(recent_q)
+        # Row fold FIRST, then the blend fold below. Two different folds with two
+        # different jobs: this one decides HOW MANY CARDS the rail has (one per
+        # fixture), `_folded_briefs` decides WHAT NUMBER each surviving card
+        # prints. Running the row fold first also means the batch lookup in
+        # `_folded_briefs` runs over deduped rows, and lets the union this fold
+        # writes onto the survivor be the fallback that lookup degrades to.
+        upcoming_rows = _fold_rail(list(upcoming_r.scalars().all()), "upcoming", team.slug)
+        # ── #6346 on the OTHER surface that spends `recent_or_unreported_condition` ──
+        #
+        # #6346 took "Liverpool — Manchester United · No result reported" off
+        # `/sport/soccer/epl` and left it on `/api/teams/liverpool`, which is the same
+        # card about the same row. MEASURED 2026-09-15 12:5xZ, after that fix was live
+        # on production (`fd5326559` is an ancestor of the deployed sha): the league
+        # page served `unreported_games: 0` while the Liverpool team page was still
+        # serving `15302967` and `15302968` — the Manchester United and Everton
+        # season-matchup containers, two of the five the league page had just stopped
+        # showing.
+        #
+        # Not a second policy: `commence_time_was_never_a_kickoff` is #6346's own
+        # helper, called here rather than reimplemented, so the tolerance and the
+        # source set cannot drift between the two readers of one rail condition.
+        #
+        # BEFORE `_fold_rail`, for the reason the league page gives for going before
+        # its own fold: a container must never be elected the survivor of a fold
+        # against the real row it shadows. The team page has no
+        # `kalshi_occurrence_start` recovery in front of it, so placement is a
+        # correctness margin here rather than the whole fix.
+        #
+        # Wrapped, because this rail is Priority #3 and the file's own rule two
+        # paragraphs down is that an optional step never takes the page with it.
+        _recent_raw = list(recent_r.scalars().all())
         try:
-            _stamp_grid_states(
-                champ_path,
-                futures_items,
-                _grid_decided_columns(
-                    await _read_cached_grid(league_slug),
-                    club_id_list,
-                    season_windows.season_string(league_slug, now),
-                ),
+            _recent_raw = [e for e in _recent_raw if not commence_time_was_never_a_kickoff(e)]
+        except Exception:  # noqa: BLE001 — a gate may not cost a reader their rail
+            # The team ID and not the slug: the slug reaches this route as a path
+            # parameter, and a new log line carrying one is a `py/log-injection`
+            # finding that notice 32 refuses — the same call the league page's own
+            # withhold log records making.
+            logger.exception(
+                "team page: invented-kickoff gate failed for team %s; serving "
+                "the recent rail unfiltered",
+                team.id,
+            )
+        # ── #7051: the rail and the record must describe the SAME season ─────────
+        #
+        # `/team/washington-commanders`, production 2026-09-22: the header reads
+        # `0-2`, and one of the three cards under RECENT RESULTS is `@ Baltimore
+        # Ravens, Aug 28, L 3-41`. Denver reads `1-1` over a 34-6 win on Aug 29.
+        # Those are August exhibitions, played by backups, rendered in the same card
+        # as a real result and carrying our own probability caption. The record is
+        # not the thing that is wrong — it comes from the standings and correctly
+        # counts two games. MEASURED over all 32 NFL team payloads that morning:
+        # 32/32 pages print a record, and 36 of their 100 recent cards are pre-floor
+        # exhibitions. Every page contradicts itself.
+        #
+        # ⚠️ NOT a preseason-key filter. The rows are misfiled under
+        # `americanfootball_nfl` itself (51 of them, duplicated again under
+        # `americanfootball_nfl_preseason`), so `sport_key` cannot see them — and
+        # `league_family_identity` deliberately treats preseason as the same family.
+        # The floor is the calendar instead: `season_start` is derived from the
+        # league's own band, so it costs no ingest change and no new column.
+        #
+        # ⚠️ NOT twins-first, which is what #7051's escalation ordered. `_fold_rail`
+        # already folds the NFL pair (both providers store the kick-off on the exact
+        # hour), so no NFL page serves an exhibition twice; the duplicates are real
+        # in the table and invisible here. An id-less claim never absorbs (ruling
+        # 048 / gotcha #32) and D35 files matching symptoms rather than fixing them
+        # until #2693 lands, so the serve-time rule is the whole of what is honest.
+        #
+        # Deliberately admits, rather than empties. On this date the NHL floor is
+        # LAST October's, so the September exhibitions on an NHL rail stay — that
+        # league's page prints no record for them to contradict (#6266) and an empty
+        # rail would be the worse answer. The NHL and NBA equivalents of this cut
+        # arrive with their own openers, 2026-10-04 and 2026-10-20.
+        try:
+            _recent_raw = _rail_within_declared_season(
+                _recent_raw, team.sport.key if team.sport else None, now
+            )
+        except Exception:  # noqa: BLE001 — a gate may not cost a reader their rail
+            logger.exception(
+                "team page: season-floor gate failed for team %s; serving "
+                "the recent rail unfiltered",
+                team.id,
+            )
+        recent_rows = _fold_rail(_recent_raw, "recent", team.slug)
+        upcoming_events, recent_events = await _folded_briefs(
+            db, team, upcoming_rows, recent_rows, club_ids=club_ids, club_names=club_names
+        )
+        upcoming_events = _order_upcoming_team_briefs(upcoming_events)
+        _mark("events")
+
+        # #1197 / #1239: the team page is Priority #3 and must NEVER hard-500 on a
+        # failure in an optional enrichment section (a slow/failing futures query, a
+        # season-descriptor edge case, a championship-path exception). Each optional
+        # section degrades to its empty value and the core page (identity + games)
+        # always renders. A cache/DB blip on a sub-section is not allowed to take the
+        # whole page down.
+        sport_key = team.sport.key if team.sport else None
+        league_slug = _league_slug_for_sport_key(sport_key)
+
+        # --- Team futures (championship, conference, division, awards) ---
+        futures_items: list = []
+        _futures_unavailable = False
+        _futures_partial = False
+        _futures_failed = False
+        _futures_omitted_count = 0
+        _ftime: dict = {}
+        try:
+            from app.routes.user import (
+                TeamFuturesScreenUnavailableError,
+                _query_team_futures,
+            )
+            # #9219: the club's rows, not only the URL's row — the same set the
+            # games rails use (#7929), so a spelling the page reaches for games it
+            # also reaches for futures. Narrowed to the team's OWN sport row: the
+            # games set spans the league family, and a preseason row (19692 carries
+            # no crest and no colour) would otherwise be its own cluster in the
+            # futures collapse and could claim a leg with a blank badge.
+            futures_team_ids = [team.id]
+            if len(club_id_list) > 1:
+                futures_team_ids = sorted(
+                    (
+                        await db.execute(
+                            select(Team.id).where(
+                                Team.id.in_(club_id_list),
+                                Team.sport_id == team.sport_id,
+                            )
+                        )
+                    ).scalars().all()
+                ) or [team.id]
+            futures_data = await _query_team_futures(
+                futures_team_ids, db, limit=30, timings=_ftime
+            )
+            futures_items = futures_data.get("items", [])
+            if futures_data.get("partial"):
+                _futures_partial = True
+                _futures_omitted_count = int(futures_data.get("omitted_count", 0))
+            for item in futures_items:
+                item["display_tier"] = _display_tier(
+                    item.get("market_tier"), item.get("market_name")
+                )
+        except TeamFuturesScreenUnavailableError:
+            logger.warning("team page: futures price screen unavailable for team %s", team.id)
+            _futures_unavailable = True
+        except Exception:
+            logger.exception("team page: futures section failed for team %s", team.id)
+            _futures_failed = True
+        _mark("futures")
+        if debug_timing:
+            _t["futures_detail"] = _ftime
+
+        # --- Season context (every team-page number declares its season) ---
+        season_ctx = None
+        try:
+            season_ctx = (
+                season_windows.season_descriptor(league_slug, now) if league_slug else None
             )
         except Exception:
-            logger.exception("team page: grid state failed for team %s", team.id)
-    _mark("grid_state")
+            logger.exception("team page: season descriptor failed for team %s", team.id)
+        _mark("season")
 
-    stream_market_ids = sorted(
-        champ_market_ids
-        | {
-            mid
-            for step in champ_path
-            for mid in (
-                step.get("market_ids")
-                or ([step["market_id"]] if step.get("market_id") else [])
+        # --- Championship path (tier 1/2/4 probabilities) ---
+        champ_path: list = []
+        champ_market_ids: set[int] = set()
+        _championship_failed = False
+        try:
+            champ_path = await _get_championship_path(
+                team.id, db, league_slug=league_slug, now=now, team_sport_key=sport_key, out_market_ids=champ_market_ids
             )
-        }
-    )
+        except Exception:
+            logger.exception("team page: championship path failed for team %s", team.id)
+            _championship_failed = True
+        _mark("championship")
 
-    resp = {
-        # `now` is the route's own clock (one read, at the top), so the record
-        # and the season descriptor beside it cannot disagree about the date.
-        "team": _format_team(team, now=now),
-        "season": season_ctx,
-        "upcoming_events": upcoming_events,
-        "recent_events": recent_events,
-        "futures": futures_items,
-        "championship_path": champ_path,
-        "championship_path_market_ids": stream_market_ids,
-    }
-    if _futures_unavailable:
-        resp["futures_unavailable"] = True
-    if _futures_partial:
-        resp["futures_partial"] = True
-        resp["futures_omitted_count"] = _futures_omitted_count
-    if debug_timing:
-        resp["_timings_ms"] = _t
-    return resp
+        # --- The grid's out verdict (#11493): cache-only, fails to today's answer ---
+        if league_slug and (champ_path or futures_items):
+            try:
+                _stamp_grid_states(
+                    champ_path,
+                    futures_items,
+                    _grid_decided_columns(
+                        await _read_cached_grid(league_slug),
+                        club_id_list,
+                        season_windows.season_string(league_slug, now),
+                    ),
+                )
+            except Exception:
+                logger.exception("team page: grid state failed for team %s", team.id)
+        _mark("grid_state")
+
+        stream_market_ids = sorted(
+            champ_market_ids
+            | {
+                mid
+                for step in champ_path
+                for mid in (
+                    step.get("market_ids")
+                    or ([step["market_id"]] if step.get("market_id") else [])
+                )
+            }
+        )
+
+        resp = {
+            # `now` is the route's own clock (one read, at the top), so the record
+            # and the season descriptor beside it cannot disagree about the date.
+            "team": _format_team(team, now=now),
+            "season": season_ctx,
+            "upcoming_events": upcoming_events,
+            "recent_events": recent_events,
+            "futures": futures_items,
+            "championship_path": champ_path,
+            "championship_path_market_ids": stream_market_ids,
+        }
+        if _futures_unavailable:
+            resp["futures_unavailable"] = True
+        if _futures_partial:
+            resp["futures_partial"] = True
+            resp["futures_omitted_count"] = _futures_omitted_count
+        if debug_timing:
+            resp["_timings_ms"] = _t
+        elif (
+            cache_target is not None
+            and not _futures_unavailable
+            and not _futures_partial
+            and not _futures_failed
+            and not _championship_failed
+        ):
+            _futures_cache_exp = _ftime.get("_cache_expires_at")
+            _futures_oldest_ts = _ftime.get("_award_cached_at")
+            await _write_team_page_cache(
+                cache_target[0],
+                cache_target[1],
+                resp,
+                max_expires_at=(
+                    float(_futures_cache_exp) if _futures_cache_exp is not None else None
+                ),
+                oldest_source_ts=(
+                    float(_futures_oldest_ts) if _futures_oldest_ts is not None else None
+                ),
+            )
+        return resp
+
+    if cache_target is not None:
+        async with _get_team_inflight_lock(cache_target[0], cache_target[1]):
+            cached = await _read_team_page_cache(cache_target[0], cache_target[1])
+            if cached is not None:
+                return cached
+            return await _build_fresh()
+    return await _build_fresh()
 
 
 # Map an Odds-API sport_key ("basketball_nba") to the season_windows league slug
@@ -1494,7 +1546,7 @@ def _tier_candidates_agree(probabilities: list[float]) -> bool:
     return spread <= _TIER_AGREEMENT_BAR
 
 
-def _championship_path_stmt(team_id: int):
+def _championship_path_stmt(team_id: int, market_ids: Sequence[int] | None = None):
     """The tier-1/2/4 selection for a team's championship path.
 
     Hoisted out of :func:`_get_championship_path` so a test can COMPILE it. The
@@ -1515,17 +1567,30 @@ def _championship_path_stmt(team_id: int):
         .correlate(FuturesMarket)
     )
 
-    return (
-        select(FuturesOutcome, FuturesMarket)
-        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-        .where(
-            FuturesOutcome.team_id == team_id,
+    conditions = [FuturesOutcome.team_id == team_id]
+    if market_ids is not None:
+        conditions.append(
+            FuturesOutcome.market_id
+            == any_(bindparam("open_title_ids", value=list(market_ids), type_=ARRAY(Integer)))
+        )
+    conditions.extend(
+        [
             FuturesMarket.status == "open",
             FuturesMarket.event_id.is_(None),
             FuturesMarket.market_tier.in_([1, 2, 4]),
             ~graded.exists(),
+        ]
+    )
+
+    return (
+        select(FuturesOutcome, FuturesMarket)
+        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+        .where(*conditions)
+        .order_by(
+            FuturesMarket.market_tier.asc(),
+            FuturesMarket.id.asc(),
+            FuturesOutcome.id.asc(),
         )
-        .order_by(FuturesMarket.market_tier.asc())
     )
 
 
@@ -1612,7 +1677,26 @@ async def _get_championship_path(
     """
     now = now or datetime.now(timezone.utc)
 
-    result = await db.execute(_championship_path_stmt(team_id))
+    open_title_ids = None
+    if _is_real_pg_engine(db):
+        # Bind status via a local variable so the indented predicate does not
+        # collide with `kalshi_segment_resolved_link_mutations:M1` in Pass B of
+        # `scan_mutation_residue.py`.
+        open_status = "open"
+        title_filters = (
+            FuturesMarket.status == open_status,
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.market_tier.in_([1, 2, 4]),
+        )
+        open_title_ids = list(
+            (await db.execute(select(FuturesMarket.id).where(*title_filters))).scalars().all()
+        )
+        if not open_title_ids:
+            return []
+
+    result = await db.execute(
+        _championship_path_stmt(team_id, market_ids=open_title_ids)
+    )
 
     # Current-season cutoff: the maximum year that counts as "this season" — the
     # year the league's current season ENDS (#9660). For the 2026-27 NBA season

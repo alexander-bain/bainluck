@@ -160,6 +160,10 @@ nonisolated enum EventHistoryFreshness {
     /// `nil` is "nothing held".
     static func shouldAdopt(_ fresh: EventHistoryEdges, over current: EventHistoryEdges?) -> Bool {
         guard let current else { return true }
+        if current.preWindowOmitted, !fresh.preWindowOmitted,
+           fresh.eventId == current.eventId, fresh.latest != nil {
+            return true
+        }
         return shouldAdopt(freshEdge: fresh.latest, over: .some(current.latest))
             || adoptsSourceRemoval(fresh, over: current)
     }
@@ -222,6 +226,7 @@ nonisolated struct EventHistoryEdges: Sendable, Equatable {
     /// `nil` is no claim.
     let completeRead: FoldRevision?
     let pinned: Bool
+    let preWindowOmitted: Bool
 
     /// `EventHistoryFreshness.lastReading(in:)`.
     var latest: Date? { series.values.max() }
@@ -247,6 +252,7 @@ nonisolated struct EventHistoryEdges: Sendable, Equatable {
         self.series = series
         self.completeRead = history.historyFoldRevision?.revision
         self.pinned = history.blendEdgePinned == true
+        self.preWindowOmitted = history.preWindowOmitted == true
     }
 }
 
