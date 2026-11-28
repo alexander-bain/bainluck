@@ -113,32 +113,6 @@ struct WatchGlancesView: View {
     }
 }
 
-struct WatchMarket: Identifiable {
-    let id: Int
-    let name: String
-    let leader: String
-    let probability: Int
-    let movement: Double?
-    let category: String?
-    var rawProbability: Double? = nil
-
-    var probabilityText: String {
-        ExternalSurfaceProbabilityFormat.openWholePercent(probability, probability: rawProbability)
-            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
-    }
-
-    var dotColor: Color {
-        switch category?.lowercased() {
-        case "basketball", "football", "baseball", "hockey": return .green
-        case "politics", "geopolitics": return .purple
-        case "economics": return .blue
-        case "weather": return .cyan
-        case "entertainment": return .orange
-        default: return .gray
-        }
-    }
-}
-
 @MainActor
 final class WatchGlancesViewModel: ObservableObject {
     @Published var markets: [WatchMarket] = []

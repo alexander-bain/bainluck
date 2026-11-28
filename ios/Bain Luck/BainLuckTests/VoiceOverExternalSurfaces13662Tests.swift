@@ -251,6 +251,62 @@ final class VoiceOverExternalSurfaces13662Tests: XCTestCase {
             )
         }
     }
+
+    func testSubOnePercentOpenMarketIsSpokenLessThanOnePercentOnWatchGlanceGuessAndHome() throws {
+        let glanceMarket = WatchMarket(
+            id: 7001,
+            name: "Longshot Open Market",
+            leader: "Longshot",
+            probability: 0,
+            movement: nil,
+            category: "politics",
+            rawProbability: 0.004
+        )
+        XCTAssertEqual(glanceMarket.probabilityText, "<1%")
+        XCTAssertEqual(spokenProbabilityText(glanceMarket.probabilityText), "less than 1 percent")
+
+        let guessResult = GuessQuestion(
+            id: 7002,
+            title: "Will Longshot win?",
+            subject: "Longshot Open Market",
+            actualProb: 0.004,
+            threshold: 5,
+            category: "politics"
+        )
+        XCTAssertEqual(guessResult.actualProbabilityText, "<1%")
+        XCTAssertEqual(spokenProbabilityText(guessResult.actualProbabilityText), "less than 1 percent")
+        XCTAssertEqual(guessResult.thresholdText, "5%")
+        XCTAssertEqual(spokenProbabilityText(guessResult.thresholdText), "5 percent")
+
+        let homeStory = WatchTopStory(
+            id: "story-7003",
+            badge: .live,
+            clock: nil,
+            categoryLabel: "Politics",
+            title: "Longshot Open Market",
+            bigLabel: "Longshot",
+            bigNumber: 0,
+            headline: nil,
+            split: nil,
+            rawProbability: 0.004
+        )
+        XCTAssertEqual(homeStory.bigNumberText, "<1%")
+        XCTAssertEqual(spokenProbabilityText(homeStory.bigNumberText), "less than 1 percent")
+
+        let glancesSrc = try String(contentsOf: Self.repoFile("BainLuckWatch Watch App/WatchGlancesView.swift"), encoding: .utf8)
+        XCTAssertTrue(glancesSrc.contains(".accessibilityLabel(spokenProbabilityText(market.probabilityText))"))
+        XCTAssertFalse(glancesSrc.contains(#"\(market.probability)%"#))
+
+        let guessSrc = try String(contentsOf: Self.repoFile("BainLuckWatch Watch App/WatchGuessView.swift"), encoding: .utf8)
+        XCTAssertTrue(guessSrc.contains(".accessibilityLabel(spokenProbabilityText(q.actualProbabilityText))"))
+        XCTAssertTrue(guessSrc.contains(".accessibilityLabel(spokenProbabilityText(q.thresholdText))"))
+        XCTAssertFalse(guessSrc.contains(#"\(q.actualPct)%"#))
+        XCTAssertFalse(guessSrc.contains(#"\(q.threshold)%"#))
+
+        let homeSrc = try String(contentsOf: Self.repoFile("BainLuckWatch Watch App/WatchHomeView.swift"), encoding: .utf8)
+        XCTAssertTrue(homeSrc.contains(".accessibilityLabel(spokenProbabilityText(story.bigNumberText))"))
+        XCTAssertFalse(homeSrc.contains(#"\(story.bigNumber)%"#))
+    }
 }
 
 private extension JSONDecoder {
