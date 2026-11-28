@@ -487,7 +487,7 @@ struct WatchSelectedGameView: View {
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("watch.home-probability")
-                .accessibilityLabel("\(game.homeTeam) win probability, \(probabilityText)")
+                .accessibilityLabel("\(game.homeTeam) win probability, \(spokenProbabilityText(probabilityText))")
             } else {
                 Text("\(game.homeTeam) win chance unavailable")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -560,7 +560,7 @@ struct WatchSelectedGameView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("watch.home-probability")
-        .accessibilityLabel("\(team) win probability, \(probability)")
+        .accessibilityLabel("\(team) win probability, \(spokenProbabilityText(probability))")
         #if DEBUG
         .accessibilityValue(WatchUIFixture.current == nil ? "" : qualifierFit.receipt)
         #endif

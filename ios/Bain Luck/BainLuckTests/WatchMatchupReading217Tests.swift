@@ -78,7 +78,7 @@ final class WatchMatchupReading217Tests: XCTestCase {
         XCTAssertEqual(away.bigOwnerLabel, "NE")
         XCTAssertFalse(away.bigIsHome)
         XCTAssertEqual(away.smallLine, "Sun 5:20 PM")
-        XCTAssertTrue(away.accessibilityText.contains("New England Patriots 60% to win"))
+        XCTAssertTrue(away.accessibilityText.contains("New England Patriots 60 percent to win"))
     }
 
     func testAKickoffThatHasPassedWithoutANewReadingKeepsTodaysCard() {

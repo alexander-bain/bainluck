@@ -493,7 +493,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                     .font(HeadlineStyleTable199.quietText(.wristTile, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.wristTile)))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel(model.supportingLine)
+                    .accessibilityLabel(spokenTextExpandingProbabilitySymbols(model.supportingLine))
                     .modifier(OptionalIdentifier12616(id: identifierPrefix.map { "\($0).clock" }))
             }
         }
@@ -536,6 +536,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                     Circle()
                         .fill(Color.white)
                         .frame(width: 4, height: 4)
+                        .accessibilityHidden(true)
                     Text(liveBadge)
                         .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: 9).monospacedDigit())
                         .foregroundStyle(Color.white)
@@ -563,6 +564,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                     Image(systemName: "checkmark")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Self.rgbColor("#34D399"))
+                        .accessibilityHidden(true)
                 }
                 Text(model.topMetaText)
                     .font(HeadlineStyleTable199.headers(.wristTile, scaledSize: HeadlineStyleTable199.headerBaseSize(.wristTile)))
@@ -593,6 +595,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                 Text(model.heroFigureText)
                     .font(.system(.title2, design: .rounded, weight: model.stage == .after ? .bold : .heavy).monospacedDigit())
                     .foregroundStyle(Self.rgbColor(model.heroInkHex))
+                    .accessibilityLabel(spokenProbabilityText(model.heroFigureText))
                     .modifier(OptionalIdentifier12616(id: heroID))
             }
         } else {
@@ -608,6 +611,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                         .foregroundStyle(Self.rgbColor(model.heroInkHex))
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityLabel(spokenProbabilityText(model.heroFigureText))
                         .modifier(OptionalIdentifier12616(id: heroID))
                 }
                 HStack(alignment: .lastTextBaseline, spacing: 4) {
@@ -621,6 +625,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                         .foregroundStyle(Self.rgbColor(model.heroInkHex))
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityLabel(spokenProbabilityText(model.heroFigureText))
                         .modifier(OptionalIdentifier12616(id: heroID))
                 }
                 HStack(alignment: .lastTextBaseline, spacing: 4) {
@@ -634,6 +639,7 @@ struct WatchWristTileView12616<LeadingAccessory: View>: View {
                         .foregroundStyle(Self.rgbColor(model.heroInkHex))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
+                        .accessibilityLabel(spokenProbabilityText(model.heroFigureText))
                         .modifier(OptionalIdentifier12616(id: heroID))
                 }
             }

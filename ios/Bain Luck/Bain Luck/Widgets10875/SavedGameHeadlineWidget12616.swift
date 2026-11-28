@@ -991,7 +991,7 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
         .allowsTightening(true)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, model.clearsRefreshTrailing ? 24 : 0)
-        .accessibilityLabel(text)
+        .accessibilityLabel(spokenTextExpandingProbabilitySymbols(text))
     }
 
     private func composedSegmentsText(_ segments: [SavedGameHeadlineWidgetModel12616.TextSegment]) -> Text {

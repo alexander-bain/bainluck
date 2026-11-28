@@ -243,7 +243,7 @@ struct WatchDiscoverStoriesView: View {
                 } else if let outcome = display.outcome, let probability = display.probability {
                     Text("\(outcome) · \(probability)").font(.title3.bold())
                         .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityLabel("\(outcome), reported probability \(probability)")
+                        .accessibilityLabel("\(outcome), reported probability \(spokenProbabilityText(probability))")
                         .accessibilityIdentifier("watch.discovery.probability.\(reading.id)")
                 } else {
                     Text("Probability unavailable").font(.footnote).foregroundStyle(.secondary)

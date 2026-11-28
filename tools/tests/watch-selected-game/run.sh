@@ -4,6 +4,8 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 TEST_BINARY=$(mktemp -d /tmp/watch-selected-game.XXXXXX)
 trap 'rm -rf "$TEST_BINARY"' EXIT
 swiftc -parse-as-library -swift-version 5 -D DEBUG \
+  "$ROOT/ios/Bain Luck/Bain Luck/Utilities/ComplementProbabilityDisplay.swift" \
+  "$ROOT/ios/Bain Luck/Bain Luck/Utilities/FormattingUtilities.swift" \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/GameContinuation.swift" \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/PeriodLabel.swift" \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/RenderedPercent.swift" \

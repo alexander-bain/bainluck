@@ -7,6 +7,11 @@ struct SmallLiveGameView: View {
     let entry: BainLuckWidgetEntry
     @Environment(\.colorScheme) private var colorScheme
 
+    private var smallSpokenSummary: String {
+        guard let game = entry.liveGames.first else { return "No live games right now" }
+        return LiveGamesWidgetVoiceOver13662.gameSummary(game)
+    }
+
     var body: some View {
         if let game = entry.liveGames.first {
             let awayHex = game.resolvedAwayColor(for: colorScheme)
@@ -56,6 +61,8 @@ struct SmallLiveGameView: View {
                 )
             }
             .padding(12)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(smallSpokenSummary)
             .widgetURL(WidgetLinkTagging13261.tagged(URL(string: "bainluck://events/\(game.id)"), kind: "live_games_small"))
         } else {
             noGamesView
@@ -253,6 +260,8 @@ struct MediumLiveGamesView: View {
                     Spacer(minLength: 0)
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(LiveGamesWidgetVoiceOver13662.gameSummary(game))
         }
     }
 
@@ -336,6 +345,8 @@ struct MediumLiveGamesView: View {
                     }
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(LiveGamesWidgetVoiceOver13662.discoverSummary(item))
         }
     }
 
@@ -495,6 +506,8 @@ struct LargeDashboardView: View {
                     }
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(LiveGamesWidgetVoiceOver13662.gameSummary(game))
         }
     }
 
@@ -580,6 +593,8 @@ struct LargeDashboardView: View {
                     }
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(LiveGamesWidgetVoiceOver13662.discoverSummary(item))
         }
     }
 
@@ -598,6 +613,32 @@ struct LargeDashboardView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(14)
         .widgetURL(WidgetLinkTagging13261.tagged(URL(string: "bainluck://events"), kind: "live_games_large"))
+    }
+}
+
+enum LiveGamesWidgetVoiceOver13662 {
+    static func gameSummary(_ game: WidgetGame) -> String {
+        let periodPart = game.period.isEmpty ? "Live" : PeriodLabel.spoken(game.period)
+        return liveGamesWidgetGameVoiceOverSummary(
+            sport: game.sport,
+            periodSpoken: periodPart,
+            awayTeam: game.awayTeam,
+            awayScore: game.awayScore,
+            awayProb: game.awayProb,
+            homeTeam: game.homeTeam,
+            homeScore: game.homeScore,
+            homeProb: game.homeProb
+        )
+    }
+
+    static func discoverSummary(_ item: WidgetDiscoverItem) -> String {
+        liveGamesWidgetDiscoverVoiceOverSummary(
+            category: item.category,
+            name: item.name,
+            leader: item.leader,
+            probability: item.probability,
+            movement: item.movement
+        )
     }
 }
 

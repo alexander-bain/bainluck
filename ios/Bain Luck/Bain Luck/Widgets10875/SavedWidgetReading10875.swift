@@ -283,9 +283,10 @@ enum SavedWidgetReadingRules10875 {
             return "\(event.homeTeam) \(homeFigure)"
         }()
         let when = observedAt == nil && phase == .lastRecorded ? " No time was recorded for it." : ""
+        let spokenSentence = spokenTextExpandingProbabilitySymbols("\(subject). \(caption): \(said).\(when) \(status).")
         return reading(phase, status: status, rows: rows, headline: headline, caption: caption,
                        observedAt: shown.isOpeningLine ? nil : observedAt, flipsAt: flipsAt,
-                       spoken: "\(subject). \(caption): \(said).\(when) \(status).", shares: shares)
+                       spoken: spokenSentence, shares: shares)
     }
 
     /// The pair the hero prints. Older detail bodies can still declare an
@@ -390,7 +391,7 @@ enum SavedWidgetReadingRules10875 {
             let row = SavedWidgetReading10875.Row(label: outcome.name, shortLabel: outcome.name, figure: nil,
                                                   verdict: "Result unknown", emphasized: false)
             let observedAt = last == nil ? nil : SavedWidgetDetailDecoding10875.date(outcome.observedAt ?? outcome.lastUpdated)
-            let lastSaid = last.map { " Its last recorded chance was \($0)." } ?? ""
+            let lastSaid = last.map { " Its last recorded chance was \(spokenProbabilityText($0))." } ?? ""
             return reading(.noResult, status: "Settled", rows: [row], headline: row, observedAt: observedAt,
                            spoken: "\(market.name) has settled. The result for \(outcome.name) is unknown.\(lastSaid)",
                            lastRecorded: last)
@@ -428,14 +429,14 @@ enum SavedWidgetReadingRules10875 {
             return reading(.current, status: standing, rows: [row], headline: row, caption: nil,
                            observedAt: observedAt,
                            flipsAt: observedAt.addingTimeInterval(SavedWidgetStaleness10875.futuresStaleAfter),
-                           spoken: "\(market.name): \(outcome.name) \(figure).", shares: shares)
+                           spoken: "\(market.name): \(outcome.name) \(spokenProbabilityText(figure)).", shares: shares)
         }
         let when = observedAt == nil ? " No time was recorded for it." : ""
         let closedSaid = resolved ? " has closed"
             : (isOpen || market.status == nil ? "" : " is \(standing.lowercased())")
         return reading(.lastRecorded, status: standing, rows: [row], headline: row,
                        caption: "Last recorded chance", observedAt: observedAt,
-                       spoken: "\(market.name)\(closedSaid): \(outcome.name) \(figure), last recorded chance.\(when)",
+                       spoken: "\(market.name)\(closedSaid): \(outcome.name) \(spokenProbabilityText(figure)), last recorded chance.\(when)",
                        shares: shares)
     }
 

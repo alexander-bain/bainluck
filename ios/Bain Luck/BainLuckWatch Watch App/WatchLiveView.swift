@@ -90,9 +90,11 @@ struct WatchLiveView: View {
                             .font(.system(size: 24, weight: .heavy, design: .rounded))
                     }
                     if let chance = game.awayProb {
-                        Text("\(chance)%")
+                        let printed = "\(chance)%"
+                        Text(printed)
                             .font(.system(size: 18, weight: .bold, design: .rounded))
                             .foregroundStyle(Color(hex: game.awayColor ?? "#888"))
+                            .accessibilityLabel(spokenProbabilityText(printed))
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -111,9 +113,11 @@ struct WatchLiveView: View {
                             .font(.system(size: 24, weight: .heavy, design: .rounded))
                     }
                     if let chance = game.homeProb {
-                        Text("\(chance)%")
+                        let printed = "\(chance)%"
+                        Text(printed)
                             .font(.system(size: 18, weight: .bold, design: .rounded))
                             .foregroundStyle(Color(hex: game.homeColor ?? "#888"))
+                            .accessibilityLabel(spokenProbabilityText(printed))
                     }
                 }
                 .frame(maxWidth: .infinity)

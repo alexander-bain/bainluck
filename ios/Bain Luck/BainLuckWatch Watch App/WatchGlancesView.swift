@@ -91,6 +91,7 @@ struct WatchGlancesView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text("\(market.probability)%")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .accessibilityLabel(spokenProbabilityText("\(market.probability)%"))
 
                 if let movement = market.movement, movement != 0 {
                     HStack(spacing: 1) {
