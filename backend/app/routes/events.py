@@ -21795,7 +21795,7 @@ _PLAYER_PROP_RE = re.compile(
     r"PRA|PA|PR|RA|double.?doubles?|triple.?doubles?|first.?basket)\b",
     re.IGNORECASE,
 )
-_THRESHOLD_RE = re.compile(r"(\d+(?:\.\d+)?)")
+_THRESHOLD_RE = re.compile(r"(?<![A-Za-z0-9.])(\d+(?:\.\d+)?)(?![A-Za-z0-9]|\.\d)")
 
 # THE LINE IS THE NUMBER BESIDE THE O/U TOKEN, NOT THE FIRST NUMBER IN THE NAME.
 # `_THRESHOLD_RE.search` takes whatever number comes first, and a tennis market
