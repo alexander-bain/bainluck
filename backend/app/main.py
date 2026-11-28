@@ -90,6 +90,18 @@ async def lifespan(app: FastAPI):
         await get_shared_async_redis()
     except Exception:  # pragma: no cover - never block startup on Redis
         logger.debug("shared async redis warm-up skipped", exc_info=True)
+    # #12290: pre-warm process-local search/list lookup caches, sync Redis, and
+    # background search-suggestions refresh before accepting requests on a new worker.
+    try:
+        from app.routes.events import (
+            startup_cache_warm_enabled,
+            warm_search_process_caches,
+        )
+
+        if startup_cache_warm_enabled():
+            await warm_search_process_caches()
+    except Exception:  # pragma: no cover - never block startup on cache warm-up
+        logger.debug("startup search cache warm-up skipped", exc_info=True)
     from app.services.database import engine
     from app.services.onboarding_team_aliases import refresh_onboarding_venue_aliases
 
