@@ -286,6 +286,121 @@ final class ExternalSurfaceProbabilityRuleTests: XCTestCase {
         XCTAssertEqual(missingReading.chanceSpoken, "No recent probability")
     }
 
+    func testLiveActivityDecodesServerPushedExtremesWithAndWithoutMarkKeys() throws {
+        let obsSec = fixedNow.addingTimeInterval(-15).timeIntervalSinceReferenceDate
+
+        // 1. Option (b) backward compatibility + Fable's server-shaped test:
+        // No mark keys in content-state JSON, home side at 0.6% (`homeHeadlineTenths: 6`).
+        let legacyPushJSON = """
+        {
+          "snapshot": {
+            "eventID": 910,
+            "homeTeam": "Washington Wizards",
+            "awayTeam": "Boston Celtics",
+            "lifecycle": "live",
+            "homeScore": 74,
+            "awayScore": 112,
+            "homeRenderedPercent": 1,
+            "awayRenderedPercent": 99,
+            "homeHeadlineTenths": 6,
+            "sport": "basketball_nba",
+            "homeAbbreviation": "WAS",
+            "awayAbbreviation": "BOS",
+            "homeColorHex": "#002B5C",
+            "awayColorHex": "#007A33",
+            "periodLabel": "Q4",
+            "scoreObservedAt": \(obsSec),
+            "probabilityObservedAt": \(obsSec)
+          }
+        }
+        """
+        let legacyState = try JSONDecoder().decode(
+            GameActivityAttributes.ContentState.self,
+            from: Data(legacyPushJSON.utf8)
+        )
+        XCTAssertEqual(legacyState.snapshot.homeSubOne, true)
+        XCTAssertNil(legacyState.snapshot.homeAboveNinetyNine)
+        XCTAssertNil(legacyState.snapshot.awaySubOne)
+        XCTAssertEqual(legacyState.snapshot.awayAboveNinetyNine, true)
+        XCTAssertEqual(legacyState.snapshot.probabilityText, "<1%")
+        let legacyReading = GameActivityReading(snapshot: legacyState.snapshot, eventID: 910)
+        XCTAssertEqual(legacyReading.nowText(.home), "<1%")
+        XCTAssertEqual(legacyReading.nowText(.away), ">99%")
+        XCTAssertEqual(legacyReading.minimalNowText(.home), "<1%")
+
+        // 2. Exact 1.0% / 99.0% boundary (`homeHeadlineTenths: 10`, no mark keys) stays `1%` / `99%`.
+        let onePercentPushJSON = legacyPushJSON.replacingOccurrences(
+            of: "\"homeHeadlineTenths\": 6",
+            with: "\"homeHeadlineTenths\": 10"
+        )
+        let onePercentState = try JSONDecoder().decode(
+            GameActivityAttributes.ContentState.self,
+            from: Data(onePercentPushJSON.utf8)
+        )
+        XCTAssertNil(onePercentState.snapshot.homeSubOne)
+        XCTAssertNil(onePercentState.snapshot.awayAboveNinetyNine)
+        let onePercentReading = GameActivityReading(snapshot: onePercentState.snapshot, eventID: 910)
+        XCTAssertEqual(onePercentReading.nowText(.home), "1%")
+        XCTAssertEqual(onePercentReading.nowText(.away), "99%")
+
+        // 3. Option (a) server mark keys cover both exact two-way (`homeSubOne` + `awayAboveNinetyNine`)
+        // and 3-way soccer single-chance (`awayRenderedPercent` and `homeHeadlineTenths` absent).
+        let soccerMarkJSON = """
+        {
+          "snapshot": {
+            "eventID": 911,
+            "homeTeam": "Southampton",
+            "awayTeam": "Arsenal",
+            "lifecycle": "live",
+            "homeScore": 0,
+            "awayScore": 4,
+            "homeRenderedPercent": 1,
+            "homeSubOne": true,
+            "sport": "soccer_epl",
+            "homeAbbreviation": "SOU",
+            "awayAbbreviation": "ARS",
+            "scoreObservedAt": \(obsSec),
+            "probabilityObservedAt": \(obsSec)
+          }
+        }
+        """
+        let soccerState = try JSONDecoder().decode(
+            GameActivityAttributes.ContentState.self,
+            from: Data(soccerMarkJSON.utf8)
+        )
+        XCTAssertEqual(soccerState.snapshot.homeSubOne, true)
+        XCTAssertEqual(soccerState.snapshot.probabilityText, "<1%")
+        let soccerReading = GameActivityReading(snapshot: soccerState.snapshot, eventID: 911)
+        XCTAssertNil(soccerReading.nowText(.away))
+
+        let finalPregameJSON = """
+        {
+          "snapshot": {
+            "eventID": 912,
+            "homeTeam": "Detroit Pistons",
+            "awayTeam": "Boston Celtics",
+            "lifecycle": "final",
+            "homeScore": 105,
+            "awayScore": 104,
+            "result": "home",
+            "sport": "basketball_nba",
+            "pregameHomePercent": 1,
+            "pregameAwayPercent": 99,
+            "pregameHomeSubOne": true,
+            "pregameAwayAboveNinetyNine": true,
+            "scoreObservedAt": \(obsSec)
+          }
+        }
+        """
+        let finalState = try JSONDecoder().decode(
+            GameActivityAttributes.ContentState.self,
+            from: Data(finalPregameJSON.utf8)
+        )
+        let finalReading = GameActivityReading(snapshot: finalState.snapshot, eventID: 912)
+        XCTAssertEqual(finalReading.pregameText(.home), "<1%")
+        XCTAssertEqual(finalReading.pregameText(.away), ">99%")
+    }
+
     func testWatchAppAndComplicationsUnifyExtremesAndNoRecentProbability() throws {
         let extremeGameJSON = #"""
         {

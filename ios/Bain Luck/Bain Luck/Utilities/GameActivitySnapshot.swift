@@ -131,14 +131,57 @@ nonisolated struct GameActivitySnapshot: Codable, Hashable, Sendable {
         pregameHomePercent = pregame?.home
         let decodedUnavailable = (try? c.decodeIfPresent(Bool.self, forKey: .scoreSourceUnavailable)) ?? nil
         scoreSourceUnavailable = (lifecycle == .live && homeScore == nil && awayScore == nil && decodedUnavailable == true) ? true : nil
-        homeSubOne = hasForecast ? ((try? c.decodeIfPresent(Bool.self, forKey: .homeSubOne)) ?? nil) : nil
-        homeAboveNinetyNine = hasForecast ? ((try? c.decodeIfPresent(Bool.self, forKey: .homeAboveNinetyNine)) ?? nil) : nil
-        awaySubOne = (hasForecast && awayRenderedPercent != nil) ? ((try? c.decodeIfPresent(Bool.self, forKey: .awaySubOne)) ?? nil) : nil
-        awayAboveNinetyNine = (hasForecast && awayRenderedPercent != nil) ? ((try? c.decodeIfPresent(Bool.self, forKey: .awayAboveNinetyNine)) ?? nil) : nil
-        pregameHomeSubOne = pregame == nil ? nil : ((try? c.decodeIfPresent(Bool.self, forKey: .pregameHomeSubOne)) ?? nil)
-        pregameHomeAboveNinetyNine = pregame == nil ? nil : ((try? c.decodeIfPresent(Bool.self, forKey: .pregameHomeAboveNinetyNine)) ?? nil)
-        pregameAwaySubOne = pregame == nil ? nil : ((try? c.decodeIfPresent(Bool.self, forKey: .pregameAwaySubOne)) ?? nil)
-        pregameAwayAboveNinetyNine = pregame == nil ? nil : ((try? c.decodeIfPresent(Bool.self, forKey: .pregameAwayAboveNinetyNine)) ?? nil)
+        let decodedHomeSubOne = hasForecast && hasHome
+            ? ((try? c.decodeIfPresent(Bool.self, forKey: .homeSubOne)) ?? nil) : nil
+        let decodedHomeAbove99 = hasForecast && hasHome
+            ? ((try? c.decodeIfPresent(Bool.self, forKey: .homeAboveNinetyNine)) ?? nil) : nil
+        let validHomeMarks = !(decodedHomeSubOne == true && decodedHomeAbove99 == true)
+        if validHomeMarks, decodedHomeSubOne == true || decodedHomeAbove99 == true {
+            homeSubOne = decodedHomeSubOne == true ? true : nil
+            homeAboveNinetyNine = decodedHomeAbove99 == true ? true : nil
+        } else if validHomeMarks, decodedHomeSubOne == nil, decodedHomeAbove99 == nil,
+                  hasForecast, hasHome, let t = homeHeadlineTenths {
+            homeSubOne = t < 10 ? true : nil
+            homeAboveNinetyNine = t > 990 ? true : nil
+        } else {
+            homeSubOne = nil
+            homeAboveNinetyNine = nil
+        }
+
+        let hasAway = hasForecast && awayRenderedPercent != nil
+        let decodedAwaySubOne = hasAway
+            ? ((try? c.decodeIfPresent(Bool.self, forKey: .awaySubOne)) ?? nil) : nil
+        let decodedAwayAbove99 = hasAway
+            ? ((try? c.decodeIfPresent(Bool.self, forKey: .awayAboveNinetyNine)) ?? nil) : nil
+        let validAwayMarks = !(decodedAwaySubOne == true && decodedAwayAbove99 == true)
+        if validAwayMarks, decodedAwaySubOne == true || decodedAwayAbove99 == true {
+            awaySubOne = decodedAwaySubOne == true ? true : nil
+            awayAboveNinetyNine = decodedAwayAbove99 == true ? true : nil
+        } else if validAwayMarks, decodedAwaySubOne == nil, decodedAwayAbove99 == nil,
+                  hasAway, let t = homeHeadlineTenths {
+            let awayTenths = 1000 - t
+            awaySubOne = awayTenths < 10 ? true : nil
+            awayAboveNinetyNine = awayTenths > 990 ? true : nil
+        } else {
+            awaySubOne = nil
+            awayAboveNinetyNine = nil
+        }
+
+        let decodedPreHomeSub = pregame != nil
+            ? ((try? c.decodeIfPresent(Bool.self, forKey: .pregameHomeSubOne)) ?? nil) : nil
+        let decodedPreHomeAbove = pregame != nil
+            ? ((try? c.decodeIfPresent(Bool.self, forKey: .pregameHomeAboveNinetyNine)) ?? nil) : nil
+        let validPreHomeMarks = !(decodedPreHomeSub == true && decodedPreHomeAbove == true)
+        pregameHomeSubOne = (validPreHomeMarks && decodedPreHomeSub == true) ? true : nil
+        pregameHomeAboveNinetyNine = (validPreHomeMarks && decodedPreHomeAbove == true) ? true : nil
+
+        let decodedPreAwaySub = pregame != nil
+            ? ((try? c.decodeIfPresent(Bool.self, forKey: .pregameAwaySubOne)) ?? nil) : nil
+        let decodedPreAwayAbove = pregame != nil
+            ? ((try? c.decodeIfPresent(Bool.self, forKey: .pregameAwayAboveNinetyNine)) ?? nil) : nil
+        let validPreAwayMarks = !(decodedPreAwaySub == true && decodedPreAwayAbove == true)
+        pregameAwaySubOne = (validPreAwayMarks && decodedPreAwaySub == true) ? true : nil
+        pregameAwayAboveNinetyNine = (validPreAwayMarks && decodedPreAwayAbove == true) ? true : nil
         guard eventID > 0,
               !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

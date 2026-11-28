@@ -342,3 +342,73 @@ def test_full_headline_payload_is_compact_validated_and_backwards_compatible():
     ):
         with pytest.raises(ActivityKitPayloadError):
             snapshot(**bad)
+
+
+def test_extreme_threshold_marks_serialize_only_when_true_and_fail_closed():
+    from app.services.activitykit_observation import decode_snapshot, encode_snapshot
+
+    normal_wire = aps(build_activitykit_update(snapshot(), sent_at=SENT))["content-state"][
+        "snapshot"
+    ]
+    for key in (
+        "homeSubOne",
+        "homeAboveNinetyNine",
+        "awaySubOne",
+        "awayAboveNinetyNine",
+        "pregameHomeSubOne",
+        "pregameHomeAboveNinetyNine",
+        "pregameAwaySubOne",
+        "pregameAwayAboveNinetyNine",
+    ):
+        assert key not in normal_wire
+
+    two_way = snapshot(
+        home_rendered_percent=1,
+        away_rendered_percent=99,
+        home_headline_tenths=6,
+        home_sub_one=True,
+        away_above_ninety_nine=True,
+    )
+    two_way_wire = two_way.content_state()["snapshot"]
+    assert two_way_wire["homeSubOne"] is True
+    assert two_way_wire["awayAboveNinetyNine"] is True
+    assert "awaySubOne" not in two_way_wire
+    assert "homeAboveNinetyNine" not in two_way_wire
+    assert len(build_activitykit_update(two_way, sent_at=SENT).body) < 1024
+    assert decode_snapshot(encode_snapshot(two_way)) == two_way
+
+    soccer = snapshot(
+        sport="soccer_epl",
+        home_rendered_percent=1,
+        away_rendered_percent=None,
+        home_sub_one=True,
+    )
+    assert soccer.content_state()["snapshot"]["homeSubOne"] is True
+
+    final = GameActivitySnapshot(
+        event_id=101,
+        home_team="Giants",
+        away_team="Dodgers",
+        lifecycle="final",
+        home_score=3,
+        away_score=2,
+        score_observed_at=SENT - timedelta(seconds=30),
+        result="home",
+        pregame_home_percent=1,
+        pregame_away_percent=99,
+        pregame_home_sub_one=True,
+        pregame_away_above_ninety_nine=True,
+    )
+    final_wire = final.content_state()["snapshot"]
+    assert final_wire["pregameHomeSubOne"] is True
+    assert final_wire["pregameAwayAboveNinetyNine"] is True
+
+    for bad in (
+        {"home_sub_one": False},
+        {"home_sub_one": True, "home_above_ninety_nine": True},
+        {"home_rendered_percent": None, "probability_observed_at": None, "home_sub_one": True},
+        {"away_above_ninety_nine": True},
+        {"pregame_away_sub_one": True},
+    ):
+        with pytest.raises(ActivityKitPayloadError):
+            snapshot(**bad)
