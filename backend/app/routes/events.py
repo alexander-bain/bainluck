@@ -39350,6 +39350,138 @@ async def _rebuild_team_lookup() -> None:
         )
 
 
+def startup_cache_warm_enabled() -> bool:
+    """Whether worker startup should pre-warm search/list process caches (#12290).
+
+    Explicit ``STARTUP_CACHE_WARM`` env overrides win; otherwise defaults to ON
+    on Heroku dynos (``DYNO`` set) and OFF in local/CI tests so app fixtures
+    never block on an unconfigured DB or Redis at startup.
+    """
+    raw = os.environ.get("STARTUP_CACHE_WARM")
+    if raw is not None and raw.strip():
+        val = raw.strip().lower()
+        if val in {"1", "true", "yes", "on"}:
+            return True
+        if val in {"0", "false", "no", "off"}:
+            return False
+    return bool(os.getenv("DYNO"))
+
+
+async def _warm_team_lookup_on_startup() -> str:
+    """Populate `_team_cache` from shared Redis L2 if fresh, else DB + L2 write."""
+    import asyncio
+    import time
+
+    global _team_cache, _team_cache_time
+
+    l2_client = _team_lookup_l2_client()
+    if l2_client is not None:
+        l2_hit = await asyncio.to_thread(_read_team_lookup_l2, l2_client)
+        if l2_hit is not None:
+            full_lookup, computed_at = l2_hit
+            age_s = max(0.0, time.time() - computed_at)
+            _team_cache = full_lookup
+            _team_cache_time = time.monotonic() - age_s
+            return "l2"
+    await _rebuild_team_lookup()
+    return "db"
+
+
+def _ping_sync_redis_for_startup() -> str:
+    """Warm the process-local sync Redis client pool off the event loop."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        client = get_redis_client()
+        return "ok" if client.ping() else "error"
+    except Exception:  # noqa: BLE001 — fail open at boot
+        return "error"
+
+
+def _read_search_suggestions_state_for_startup() -> str:
+    """Inspect current ``bainluck:search_suggestions:v1`` freshness off-loop."""
+    try:
+        from app.utils import search_suggestions_cache as ssc
+
+        _body, state = ssc.read()
+        return str(state)
+    except Exception:  # noqa: BLE001 — fail open at boot
+        return "error"
+
+
+async def warm_search_process_caches(
+    timeout_seconds: float = 5.0,
+) -> dict[str, str]:
+    """Pre-warm cold search/list worker caches on startup before traffic arrives (#12290).
+
+    Bounded and fail-open: concurrently warms ``_ei_cache``, ``_team_cache``
+    (via Redis L2 or Postgres), the sync Redis connection pool, and schedules a
+    non-blocking refresh of stale/missing ``search_suggestions``. Never raises.
+    """
+    import asyncio
+    from contextlib import suppress
+
+    started = time.perf_counter()
+
+    async def _run_ei() -> str:
+        await _rebuild_ei_percentiles()
+        return "ok"
+
+    async def _run_team() -> str:
+        return await _warm_team_lookup_on_startup()
+
+    async def _run_redis() -> str:
+        return await asyncio.to_thread(_ping_sync_redis_for_startup)
+
+    async def _run_suggestions() -> str:
+        return await asyncio.to_thread(_read_search_suggestions_state_for_startup)
+
+    tasks: dict[str, asyncio.Task[str]] = {
+        "ei": asyncio.create_task(_run_ei(), name="startup-warm-ei"),
+        "team": asyncio.create_task(_run_team(), name="startup-warm-team"),
+        "redis": asyncio.create_task(_run_redis(), name="startup-warm-redis"),
+        "suggestions": asyncio.create_task(
+            _run_suggestions(), name="startup-warm-suggestions-check"
+        ),
+    }
+    _done, pending = await asyncio.wait(tasks.values(), timeout=max(0.05, float(timeout_seconds)))
+    for task in pending:
+        task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
+
+    outcomes: dict[str, str] = {}
+    for name, task in tasks.items():
+        if task in pending or task.cancelled():
+            outcomes[name] = "timeout"
+        else:
+            try:
+                outcomes[name] = task.result()
+            except Exception:  # noqa: BLE001 — never block startup
+                outcomes[name] = "error"
+
+    sug_state = outcomes.get("suggestions", "error")
+    if sug_state in ("miss", "stale_ok"):
+        try:
+            if _serve_stale_and_refresh(
+                "search_suggestions", _rebuild_search_suggestions
+            ):
+                outcomes["suggestions"] = f"refresh:{sug_state}"
+        except Exception:  # noqa: BLE001 — never block startup
+            outcomes["suggestions"] = "error"
+
+    elapsed_ms = round((time.perf_counter() - started) * 1000)
+    logger.info(
+        "startup search cache warm-up: ei=%s team=%s redis=%s suggestions=%s elapsed_ms=%d",
+        outcomes.get("ei"),
+        outcomes.get("team"),
+        outcomes.get("redis"),
+        outcomes.get("suggestions"),
+        elapsed_ms,
+    )
+    return outcomes
+
+
 def _compute_standings_context(
     home_team,
     away_team,
