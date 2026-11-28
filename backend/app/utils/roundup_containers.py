@@ -1939,7 +1939,13 @@ async def _cache_roundup_timeout_refusal(
     *,
     ts: Optional[float] = None,
 ) -> None:
-    """Cache a timed-out producer as a refusal ``(None, None)`` for ``ROUNDUP_CACHE_TTL_S``."""
+    """Cache a timed-out producer cooldown locally for ``ROUNDUP_CACHE_TTL_S``.
+
+    Never writes ``(None, None)`` to shared Redis: a web dyno that times out
+    within 0.5 s when a copy just expired (or races a pre-warmer writing a
+    fresh copy) must not overwrite shared Redis or poison sibling dynos' last
+    good copies (#11259, #13146).
+    """
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.utils.container_read_cache import container_read_cache_enabled
@@ -1956,18 +1962,50 @@ async def _cache_roundup_timeout_refusal(
         producer.slug,
         "live" if isinstance(db, AsyncSession) else id(db),
     )
-    effective_ts = time.time() if ts is None else float(ts)
     prev = _roundup_local_cache.get(cache_key)
-    preserve_tombstone = prev is not None and prev[1] is None and prev[2] is None
-    await _store_roundup_cache_entry(
-        cache_key,
-        producer.slug,
-        effective_ts,
-        None,
-        None,
+    if prev is not None and prev[1] is not None and prev[2] is not None:
+        return
+    effective_ts = time.time() if ts is None else float(ts)
+    _roundup_local_cache[cache_key] = (effective_ts, None, None)
+    _roundup_nothing_to_show_local.pop(cache_key, None)
+    _roundup_settled_retired_local.pop(cache_key, None)
+
+
+async def _load_last_good_after_failure(
+    producer: RoundupProducer,
+    db: Any,
+    *,
+    now: Optional[float | datetime],
+    pref_val: Any,
+    public_shared_ok: bool,
+    quiet_out: dict[str, Any],
+) -> Optional[tuple[dict[str, Any], dict[str, Any], float, float]]:
+    """Load the last good copy after a timeout/error, re-checking live Redis if needed."""
+    last_good = await _load_last_good_roundup_copy(
+        producer,
         db,
-        keep_tombstone=preserve_tombstone,
+        now=now,
+        prefetched_shared=pref_val if public_shared_ok else _PREFETCH_UNSET,
+        shared_read_ok=public_shared_ok,
+        quiet_out=quiet_out,
     )
+    if (
+        last_good is None
+        and public_shared_ok
+        and not quiet_out.get("clean_empty")
+        and not quiet_out.get("nothing_to_show")
+    ):
+        # A pre-warmer or sibling dyno may have published a fresh copy while
+        # this request spent its timeout waiting on Postgres (#11259).
+        last_good = await _load_last_good_roundup_copy(
+            producer,
+            db,
+            now=now,
+            prefetched_shared=_PREFETCH_UNSET,
+            shared_read_ok=True,
+            quiet_out=quiet_out,
+        )
+    return last_good
 
 
 def _normalize_roundup_now(
@@ -2555,6 +2593,7 @@ async def evaluate_roundup_producer(
         local_stale_fallback: Optional[tuple[float, dict[str, Any], dict[str, Any]]] = None
         local_swr_fallback: Optional[tuple[float, dict[str, Any], dict[str, Any]]] = None
         chosen_swr: Optional[tuple[float, dict[str, Any], dict[str, Any]]] = None
+        local_timeout_cooldown: Optional[tuple[float, Any, Any]] = None
         cached = _roundup_local_cache.get(cache_key)
         if cached is not None:
             local_ttl = _roundup_cache_ttl_seconds(producer.slug, cached[2])
@@ -2567,19 +2606,30 @@ async def evaluate_roundup_producer(
             )
             if is_local_sr:
                 local_ttl = max(local_ttl, ROUNDUP_SETTLED_RETIRED_TTL_S)
-            if (ts - cached[0]) < local_ttl:
-                _record_roundup_live_origin(cached[0], producer.slug, cached[2])
-                return copy.deepcopy(cached[1]), copy.deepcopy(cached[2])
             local_nts = _roundup_nothing_to_show_local.get(cache_key)
-            is_local_nts_cached = bool(
+            is_local_nts = bool(
                 is_local_sr
                 or (
                     cached[1] is None
-                    and cached[2] is not None
                     and local_nts is not None
                     and float(local_nts[0]) == float(cached[0])
                 )
             )
+            if (ts - cached[0]) < local_ttl:
+                if (
+                    cached[1] is None
+                    and cached[2] is None
+                    and not is_local_sr
+                    and not is_local_nts
+                    and isinstance(db, AsyncSession)
+                ):
+                    # Local timeout cooldown only skips Postgres on this dyno; allow
+                    # a newer valid copy published in shared Redis to supersede it.
+                    local_timeout_cooldown = cached
+                else:
+                    _record_roundup_live_origin(cached[0], producer.slug, cached[2])
+                    return copy.deepcopy(cached[1]), copy.deepcopy(cached[2])
+            is_local_nts_cached = bool(is_local_nts and cached[2] is not None)
             if (
                 allow_stale
                 and cached[2] is not None
@@ -2644,7 +2694,15 @@ async def evaluate_roundup_producer(
                             else ("all_members_settled" if is_sr else None)
                         )
                         age_s = max(0.0, ts - built_at)
-                        if age_s < raw_ttl:
+                        cooldown_superseded = (
+                            local_timeout_cooldown is None
+                            or (
+                                fi is not None
+                                and cp is not None
+                                and built_at > float(local_timeout_cooldown[0])
+                            )
+                        )
+                        if age_s < raw_ttl and cooldown_superseded:
                             _roundup_local_cache[cache_key] = (built_at, fi, cp)
                             if is_sr and fi is None:
                                 _roundup_nothing_to_show_local[cache_key] = (built_at, sr_reason)
@@ -2665,7 +2723,7 @@ async def evaluate_roundup_producer(
                                 _roundup_settled_retired_local.pop(cache_key, None)
                             _record_roundup_live_origin(built_at, producer.slug, cp)
                             return copy.deepcopy(fi), copy.deepcopy(cp)
-                        if allow_stale:
+                        if allow_stale and cooldown_superseded:
                             if (fi is None and not (is_sr and cp is not None)) or cp is None:
                                 if (
                                     local_stale_fallback is not None
@@ -2696,7 +2754,7 @@ async def evaluate_roundup_producer(
                                         built_at, producer.slug, cp
                                     )
                                     return copy.deepcopy(fi), copy.deepcopy(cp)
-                        elif swr_limit is not None:
+                        elif swr_limit is not None and cooldown_superseded:
                             if (fi is None and not (is_sr and cp is not None)) or cp is None:
                                 if (
                                     local_swr_fallback is not None
@@ -2743,6 +2801,8 @@ async def evaluate_roundup_producer(
                     licences_path=licences_path,
                 )
             return copy.deepcopy(swr_entry[1]), copy.deepcopy(swr_entry[2])
+        if local_timeout_cooldown is not None:
+            return None, None
 
     async def _produce_and_store() -> tuple[
         Optional[dict[str, Any]],
@@ -5178,12 +5238,12 @@ async def add_roundup_feed_items(
                         producer.slug,
                     )
             timeout_quiet: dict[str, Any] = {}
-            last_good = await _load_last_good_roundup_copy(
+            last_good = await _load_last_good_after_failure(
                 producer,
                 db,
                 now=now,
-                prefetched_shared=pref_val if public_shared_ok else _PREFETCH_UNSET,
-                shared_read_ok=public_shared_ok,
+                pref_val=pref_val,
+                public_shared_ok=public_shared_ok,
                 quiet_out=timeout_quiet,
             )
             if last_good is not None:
@@ -5258,8 +5318,13 @@ async def add_roundup_feed_items(
                         producer.slug,
                     )
             error_quiet: dict[str, Any] = {}
-            last_good = await _load_last_good_roundup_copy(
-                producer, db, now=now, quiet_out=error_quiet
+            last_good = await _load_last_good_after_failure(
+                producer,
+                db,
+                now=now,
+                pref_val=pref_val,
+                public_shared_ok=public_shared_ok,
+                quiet_out=error_quiet,
             )
             if last_good is not None:
                 fi_lg, _cp_lg, age_lg, keep_lg = last_good
