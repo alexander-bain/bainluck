@@ -41,6 +41,7 @@ struct WatchPinnedHomeView12640: View {
                             pinsPickerContent(inSheet: false)
                             footerActions
                         }
+                        Color.clear.frame(height: 0).id("watch.pins.bottom").accessibilityHidden(true)
                     }
                 }
                 .padding(.horizontal, 6)
@@ -66,6 +67,14 @@ struct WatchPinnedHomeView12640: View {
                 } else if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_PINS_FIXTURE_12640"] == "partial-error" {
                     DispatchQueue.main.async {
                         scroll.scrollTo("watch.pins.partial-error", anchor: .bottom)
+                    }
+                } else if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_PINS_SCROLL_TO"] == "bottom" {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        scroll.scrollTo("watch.pins.bottom", anchor: .bottom)
+                    }
+                } else if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_PINS_SCROLL_TO"] == "market" {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        scroll.scrollTo("watch.pins.future.9303", anchor: .top)
                     }
                 }
                 #endif
@@ -102,6 +111,7 @@ struct WatchPinnedHomeView12640: View {
                         }
                     }
                 }
+                .environment(\.dynamicTypeSize, dynamicTypeSize)
             }
             .sheet(isPresented: $choosingOutcome) {
                 if case .future(let marketID, _) = store.selectedTarget,
@@ -121,6 +131,7 @@ struct WatchPinnedHomeView12640: View {
                                 }
                             }
                     }
+                    .environment(\.dynamicTypeSize, dynamicTypeSize)
                 }
             }
             .userActivity(GameContinuation.activityType, element: activeEventContinuationID) { id, activity in
@@ -234,11 +245,18 @@ struct WatchPinnedHomeView12640: View {
                 WatchTelemetry.shared.pullWatchPinsIfReachable()
                 store.triggerRefresh(userInitiated: true)
             } label: {
-                Label(store.isRefreshing ? "Refreshing…" : "Refresh pins", systemImage: "arrow.clockwise")
-                    .font(.footnote.weight(.semibold))
-                    .padding(.horizontal, 8)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                Label {
+                    Text(store.isRefreshing ? "Refreshing…" : "Refresh pins")
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
             .disabled(store.isRefreshing)
@@ -433,6 +451,7 @@ struct WatchPinnedHomeView12640: View {
                         }()
                         Text(ageLine)
                             .font(.footnote).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("watch.pins.selected.future.clock")
                     }
                 }
@@ -471,11 +490,18 @@ struct WatchPinnedHomeView12640: View {
                 Button {
                     choosingOutcome = true
                 } label: {
-                    Label("Choose outcome (\(outcomeCount))", systemImage: "list.bullet")
-                        .font(.footnote.weight(.semibold))
-                        .padding(.horizontal, 8)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                    Label {
+                        Text("Choose outcome (\(outcomeCount))")
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "list.bullet")
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("watch.pins.choose-outcome")
@@ -485,11 +511,18 @@ struct WatchPinnedHomeView12640: View {
                 WatchTelemetry.shared.action(.refreshPins, surface: currentTelemetrySurface)
                 store.triggerRefresh(userInitiated: true)
             } label: {
-                Label(store.isRefreshing ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
-                    .font(.footnote.weight(.semibold))
-                    .padding(.horizontal, 8)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                Label {
+                    Text(store.isRefreshing ? "Refreshing…" : "Refresh")
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
             .disabled(store.isRefreshing)
@@ -500,7 +533,10 @@ struct WatchPinnedHomeView12640: View {
             } label: {
                 Text("Choose another pin")
                     .font(.footnote.weight(.semibold))
-                    .padding(.horizontal, 8)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             }
@@ -565,11 +601,18 @@ struct WatchPinnedHomeView12640: View {
             Button {
                 showingMoreActions.toggle()
             } label: {
-                Label("More actions", systemImage: showingMoreActions ? "chevron.up" : "chevron.down")
-                    .font(.footnote.weight(.semibold))
-                    .padding(.horizontal, 8)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                Label {
+                    Text("More actions")
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: showingMoreActions ? "chevron.up" : "chevron.down")
+                }
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("watch.pins.more-actions")
@@ -581,7 +624,10 @@ struct WatchPinnedHomeView12640: View {
                     } label: {
                         Text("Continue on iPhone")
                             .font(.footnote.weight(.semibold))
-                            .padding(.horizontal, 8)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                     }
@@ -590,9 +636,19 @@ struct WatchPinnedHomeView12640: View {
                 }
             }
 
-            NavigationLink("Diagnostics") {
+            NavigationLink {
                 WatchDiagnosticsView().dynamicTypeSize(dynamicTypeSize)
+            } label: {
+                Text("Diagnostics")
+                    .font(.footnote.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             }
+            .buttonStyle(.plain)
             .accessibilityIdentifier("watch.diagnostics")
 
             if store.selectedTarget != nil {
@@ -606,7 +662,10 @@ struct WatchPinnedHomeView12640: View {
                 } label: {
                     Text("Clear selection")
                         .font(.footnote).foregroundStyle(.primary)
-                        .padding(.horizontal, 8)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .contentShape(RoundedRectangle(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary, lineWidth: 1))
