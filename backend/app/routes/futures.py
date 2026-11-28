@@ -4111,9 +4111,14 @@ async def get_multi_market_history(
     capped_n = min(top_n, 50)
     top_entries = sorted_merged[:capped_n]
 
+    # Only outcomes in `top_entries` are ever emitted in `outcomes` (`multi-history`
+    # has no synthetic "Field" series), so snapshot and archive reads never need
+    # non-top outcomes (#13573). `_multi_outcomes` / `_multi_field_ids` below still
+    # span all markets so #5898 exclusive-field support filtering stays intact.
     all_outcome_ids = []
-    for _, entry in sorted_merged:
+    for _, entry in top_entries:
         all_outcome_ids.extend(entry["outcome_ids"])
+    _top_outcome_id_set = set(all_outcome_ids)
 
     if not all_outcome_ids:
         return {
@@ -4203,9 +4208,9 @@ async def get_multi_market_history(
                 hours = extended_hours
                 _live_window_start = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-    # Build outcome_id -> merge_key lookup
+    # Build outcome_id -> merge_key lookup (scoped to served `top_entries`)
     oid_to_merge_key: dict[int, str] = {}
-    for mk, entry in merged_outcomes.items():
+    for mk, entry in top_entries:
         for oid in entry["outcome_ids"]:
             oid_to_merge_key[oid] = mk
 
@@ -4216,7 +4221,13 @@ async def get_multi_market_history(
     # the SAME outcome is withheld (live wins actual overlap only), and a merged
     # instant that already holds any live value keeps it: the archive fills the
     # instants live data never reached and is never averaged into a capture.
-    _kalshi_ids = [o.id for m in markets if m.source == "kalshi" for o in m.outcomes]
+    _kalshi_ids = [
+        o.id
+        for m in markets
+        if m.source == "kalshi"
+        for o in m.outcomes
+        if o.id in _top_outcome_id_set
+    ]
     archive = await load_archive_history(
         db,
         SimpleNamespace(source="kalshi" if _kalshi_ids else None, id=primary_market.id),
