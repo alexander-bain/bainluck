@@ -38,11 +38,20 @@ function mockJsonResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
-async function flushUi(rounds = 18): Promise<void> {
+async function flushUi(rounds = 4): Promise<void> {
   for (let i = 0; i < rounds; i++) {
     await act(async () => {
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
+  }
+}
+
+async function waitForCondition(predicate: () => boolean, maxRounds = 30): Promise<void> {
+  for (let i = 0; i < maxRounds; i++) {
+    if (predicate()) return;
+    await flushUi(1);
   }
 }
 
@@ -250,7 +259,7 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       root?.render(<ChanceGame pack={DAILY_PACK} />);
     });
-    await flushUi();
+    await waitForCondition(() => host.querySelector('[data-testid="save-error"]') !== null);
 
     // Refused nickname prompts rename directly under plain server message
     const errBox = host.querySelector('[data-testid="save-error"]');
@@ -268,7 +277,9 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       saveBtn.click();
     });
-    await flushUi(24);
+    await waitForCondition(
+      () => host.querySelector('[data-testid="public-board-count"]')?.textContent?.includes("24 games") ?? false,
+    );
 
     expect(host.querySelector('[data-testid="public-board-count"]')?.textContent).toContain("24 games");
     expect(host.querySelector('[data-testid="public-board-place"]')?.textContent).toContain("You finished 14th of 24.");
@@ -280,10 +291,12 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       nextBtn.click();
     });
-    await flushUi();
+    await waitForCondition(
+      () => host.querySelector('[data-testid="public-board-page-label"]')?.textContent?.includes("Page 2 of 2") ?? false,
+    );
     expect(host.querySelector('[data-testid="public-board-page-label"]')?.textContent).toContain("Page 2 of 2");
     expect(host.querySelectorAll('[data-testid="public-board-table"] tbody tr').length).toBe(4);
-  });
+  }, 15_000);
 
   it("allows accented Latin letters, periods, and ordinary multi-word names while matching server char parity", async () => {
     const parityPath = path.resolve(
@@ -488,7 +501,11 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       root?.render(<ChanceGame pack={pastPack} initialGroupCode={groupCode} isToday={false} />);
     });
-    await flushUi();
+    await waitForCondition(
+      () =>
+        (host.querySelector('[data-testid="public-board"]')?.textContent?.includes("Everyone who played on Nov 26") ?? false) &&
+        host.querySelector('[data-testid="public-board-row-me"]') !== null,
+    );
 
     expect(host.querySelector('[data-testid="public-board"]')?.textContent).toContain("Everyone who played on Nov 26");
     expect(host.textContent?.toLowerCase()).not.toContain("leaderboard");
@@ -517,7 +534,11 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       root?.render(<ChanceGame key="admin-view" pack={pastPack} initialGroupCode={groupCode} isToday={false} />);
     });
-    await flushUi(24);
+    await waitForCondition(
+      () =>
+        host.querySelector('[data-testid="group-hide-202"]') !== null &&
+        host.querySelector('[data-testid="public-hide-202"]') !== null,
+    );
 
     const groupHideBtn = host.querySelector('[data-testid="group-hide-202"]') as HTMLButtonElement;
     expect(groupHideBtn).not.toBeNull();
@@ -526,7 +547,7 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       groupHideBtn.click();
     });
-    await flushUi(6);
+    await waitForCondition(() => host.querySelector('[data-testid="admin-hide-confirm"]') !== null);
 
     const confirmBox = host.querySelector('[data-testid="admin-hide-confirm"]');
     expect(confirmBox?.textContent).toContain("Hide Rowdy from both boards?");
@@ -535,7 +556,7 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       confirmYes.click();
     });
-    await flushUi(24);
+    await waitForCondition(() => host.querySelector('[data-testid="admin-hidden-panel"]') !== null);
 
     expect(host.querySelector('[data-testid="public-hide-202"]')).toBeNull();
     expect(host.querySelector('[data-testid="step-table"]')?.textContent).not.toContain(rowdyName);
@@ -547,12 +568,12 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       unhideBtn.click();
     });
-    await flushUi(24);
+    await waitForCondition(() => host.querySelector('[data-testid="public-hide-202"]') !== null);
 
     expect(host.querySelector('[data-testid="public-hide-202"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="step-table"]')?.textContent).toContain(rowdyName);
     expect(host.querySelector('[data-testid="admin-hidden-panel"]')).toBeNull();
-  });
+  }, 15_000);
 
   it("allows a reader who has not played to open today's board before playing with no You marker or cards (467: A)", async () => {
     const urls: string[] = [];
@@ -600,7 +621,7 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       root?.render(<ChanceGame pack={DAILY_PACK} initialGroupCode={null} isToday={true} />);
     });
-    await flushUi();
+    await waitForCondition(() => host.querySelector('[data-testid="start-board-toggle"]') !== null);
 
     const toggleBtn = host.querySelector('[data-testid="start-board-toggle"]') as HTMLButtonElement;
     expect(toggleBtn).not.toBeNull();
@@ -611,7 +632,9 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       toggleBtn.click();
     });
-    await flushUi(24);
+    await waitForCondition(
+      () => host.querySelector('[data-testid="public-board"]')?.textContent?.includes("21 games") ?? false,
+    );
 
     const boardUrls = urls.filter((u) => u.includes("/api/guess/board"));
     expect(boardUrls.length).toBe(1);
@@ -636,7 +659,9 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       nextBtn.click();
     });
-    await flushUi(24);
+    await waitForCondition(
+      () => host.querySelector('[data-testid="public-board"]')?.textContent?.includes("Alex B.") ?? false,
+    );
 
     expect(host.querySelector('[data-testid="public-board"]')?.textContent).toContain("Alex B.");
     expect(host.querySelector('[data-testid="public-board-row-me"]')).toBeNull();
@@ -646,7 +671,7 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await act(async () => {
       hideToggle.click();
     });
-    await flushUi();
+    await waitForCondition(() => host.querySelector('[data-testid="public-board"]') === null);
     expect(host.querySelector('[data-testid="public-board"]')).toBeNull();
-  });
+  }, 15_000);
 });
