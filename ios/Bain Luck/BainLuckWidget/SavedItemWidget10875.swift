@@ -344,7 +344,7 @@ struct SavedSmall10875: View {
                     .lineLimit(1)
                 SavedValue10875(row: headline, size: 30)
             } else {
-                Text(reading.phase == .noResult ? "No result recorded" : ExternalSurfaceProbabilityFormat.missingProbabilityText)
+                Text(reading.phase == .noResult ? "No result recorded" : reading.unavailableProbabilityText)
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -367,9 +367,13 @@ struct SavedMedium10875: View {
 
     var body: some View {
         let caption = SavedClock10875.caption(reading, entry: entry)
-        // #12305: with no caption line (a result, or no chance to show) the
-        // last row is the bottom line, so the rows keep clear of the ↻ there.
-        let clearsRefresh = caption == nil && entry.isRefreshable12305
+        let showsUnavailableLine = caption == nil
+            && !reading.rows.isEmpty
+            && reading.rows.allSatisfy { $0.figure == nil && $0.verdict == nil }
+            && (reading.phase == .unavailable || reading.phase == .noResult)
+        // #12305: with no bottom caption line, the last row is the bottom line,
+        // so the rows keep clear of the ↻ button there.
+        let clearsRefresh = caption == nil && !showsUnavailableLine && entry.isRefreshable12305
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(reading.subject)
@@ -405,6 +409,13 @@ struct SavedMedium10875: View {
             if let caption {
                 let prefix = reading.phase == .openingLine ? nil : reading.priceCaption
                 Text(prefix.map { "\($0) · \(caption)" } ?? caption)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .padding(.trailing, entry.isRefreshable12305 ? 24 : 0)
+            } else if showsUnavailableLine {
+                Text(reading.phase == .noResult ? "No result recorded" : reading.unavailableProbabilityText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -492,7 +503,7 @@ struct SavedRectangular10875: View {
                         .font(.body.weight(.semibold).monospacedDigit())
                 }
             } else {
-                Text(reading.phase == .noResult ? "No result recorded" : ExternalSurfaceProbabilityFormat.missingProbabilityText)
+                Text(reading.phase == .noResult ? "No result recorded" : reading.unavailableProbabilityText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
             }

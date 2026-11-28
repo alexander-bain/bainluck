@@ -186,9 +186,19 @@ struct GameActivityReading {
     /// A priced draw's one honest number: the home side's chance, always named.
     var singleChance: Int? { pair == nil && showsForecast ? snapshot.homeRenderedPercent : nil }
     var singleChanceLabel: String? { singleChance == nil ? nil : snapshot.probabilityLabel }
+    var missingProbabilityText: String {
+        let hasStarted = snapshot.lifecycle != .scheduled
+        let hadPriorNumber = snapshot.probabilityObservedAt != nil
+            || snapshot.pregameHomePercent != nil
+            || snapshot.pregameAwayPercent != nil
+        return ExternalSurfaceProbabilityFormat.missingProbabilityText(
+            hasStarted: hasStarted,
+            hadPriorNumber: hadPriorNumber
+        )
+    }
     func percentText(_ value: Int) -> String {
         ExternalSurfaceProbabilityFormat.openWholePercent(value)
-            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+            ?? missingProbabilityText
     }
     /// #395 — whole percents across every Live Activity form (Lock Screen,
     /// Dynamic Island Compact/Expanded/Minimal, and Watch Smart Stack):
@@ -349,7 +359,7 @@ struct GameActivityReading {
         return parts.joined(separator: ", ")
     }
     var chanceSpoken: String {
-        guard let pair else { return singleChanceLabel ?? ExternalSurfaceProbabilityFormat.missingProbabilityText }
+        guard let pair else { return singleChanceLabel ?? missingProbabilityText }
         return "\(name(.away)) \(nowText(.away) ?? percentText(pair.away)), \(name(.home)) \(nowText(.home) ?? percentText(pair.home)) chance to win"
     }
     /// The Dynamic Island's compact and minimal views speak the whole reading.
@@ -486,7 +496,7 @@ struct GameActivityLockScreenView: View {
                     )
                     GameActivitySplitBar(away: colors.away, home: colors.home, awayShare: awayShare)
                 } else if !reading.snapshot.isTerminal && reading.singleChanceLabel == nil {
-                    Text(ExternalSurfaceProbabilityFormat.missingProbabilityText)
+                    Text(reading.missingProbabilityText)
                         .font(HeadlineStyleTable199.quietText(.lockScreen, scaledSize: m.footerSize))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -829,7 +839,7 @@ struct GameActivityChanceLine: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Before the game: \(reading.name(.away)) \(awayPregame), \(reading.name(.home)) \(homePregame)")
         } else if !reading.snapshot.isTerminal && reading.singleChanceLabel == nil {
-            Text(ExternalSurfaceProbabilityFormat.missingProbabilityText)
+            Text(reading.missingProbabilityText)
                 .font(HeadlineStyleTable199.quietText(.island))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

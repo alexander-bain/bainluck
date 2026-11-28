@@ -703,5 +703,58 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     precondition(WatchComplicationPublisher.writeUnavailableStatus(nil, to: directory))
     precondition(WatchFaceStatusPayload13339.read(from: directory) == nil,
                  "Tombstone clears selected-face-status.json cleanly")
+
+    // 7. Pre-start game with no number yet reads "No probability yet"; started or prior-number reads "No recent probability".
+    let preStartNoOdds = try decodeGame(
+        "\"status\":\"scheduled\",\"commence_time\":\"2026-10-04T23:00:00Z\",\(home),\(away)"
+    )
+    let preStartFace = WatchComplicationProjection.evaluateEventFaceState(
+        game: preStartNoOdds,
+        eventID: 101,
+        isAdmitted: true,
+        savedAt: now,
+        clockSkewTolerance: 15,
+        containerAvailable: true
+    )
+    guard case .unavailable(let preStartStatus, _) = preStartFace else {
+        preconditionFailure("Pre-start scheduled game with no odds must report unavailable status")
+    }
+    precondition(preStartStatus.reason == .noProbabilityYet)
+    precondition(preStartStatus.reason.complicationHeadline == "No probability yet")
+    precondition(preStartStatus.reason.complicationHeadline == ExternalSurfaceProbabilityFormat.noProbabilityYetText)
+
+    let startedNoOdds = try decodeGame(
+        "\"status\":\"scheduled\",\"commence_time\":\"2026-10-04T17:00:00Z\",\(home),\(away)"
+    )
+    let startedFace = WatchComplicationProjection.evaluateEventFaceState(
+        game: startedNoOdds,
+        eventID: 101,
+        isAdmitted: true,
+        savedAt: now,
+        clockSkewTolerance: 15,
+        containerAvailable: true
+    )
+    guard case .unavailable(let startedStatus, _) = startedFace else {
+        preconditionFailure("Started scheduled game with no odds must report unavailable status")
+    }
+    precondition(startedStatus.reason == .noLiveOdds)
+    precondition(startedStatus.reason.complicationHeadline == "No recent probability")
+
+    let priorObsNoOdds = try decodeGame(
+        "\"status\":\"scheduled\",\"commence_time\":\"2026-10-04T23:00:00Z\",\"hero_probability_observed_at\":\"2026-10-04T16:00:00Z\",\(home),\(away)"
+    )
+    let priorObsFace = WatchComplicationProjection.evaluateEventFaceState(
+        game: priorObsNoOdds,
+        eventID: 101,
+        isAdmitted: true,
+        savedAt: now,
+        clockSkewTolerance: 15,
+        containerAvailable: true
+    )
+    guard case .unavailable(let priorObsStatus, _) = priorObsFace else {
+        preconditionFailure("Prior-observed scheduled game with missing odds must report noLiveOdds")
+    }
+    precondition(priorObsStatus.reason == .noLiveOdds)
+    precondition(priorObsStatus.reason.complicationHeadline == "No recent probability")
     print("PASS: #13339 bounded clock-skew tolerance and explicit unavailable status publication/tombstone")
 }

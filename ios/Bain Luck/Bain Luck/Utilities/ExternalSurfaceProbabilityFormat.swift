@@ -8,9 +8,15 @@ import Foundation
 /// - Any open-market probability below 1% (`0 <= p < 0.01`) reads `"<1%"`.
 /// - Any open-market probability above 99% (`0.99 < p <= 1`) reads `">99%"`.
 /// - An open market never renders `"0%"` or `"100%"` (even from a whole-percent integer).
-/// - Missing probability copy reads `"No recent probability"`.
+/// - Missing probability copy reads `"No probability yet"` before game start (with no prior
+///   number) and `"No recent probability"` once started or after a prior number.
 nonisolated enum ExternalSurfaceProbabilityFormat {
     static let missingProbabilityText = "No recent probability"
+    static let noProbabilityYetText = "No probability yet"
+
+    static func missingProbabilityText(hasStarted: Bool, hadPriorNumber: Bool = false) -> String {
+        (!hasStarted && !hadPriorNumber) ? noProbabilityYetText : missingProbabilityText
+    }
 
     static func isSubOne(_ probability: Double?) -> Bool {
         guard let probability, probability.isFinite, probability >= 0 else { return false }

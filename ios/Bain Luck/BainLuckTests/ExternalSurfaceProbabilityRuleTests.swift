@@ -471,6 +471,304 @@ final class ExternalSurfaceProbabilityRuleTests: XCTestCase {
         XCTAssertEqual(unpricedHero.probabilityUnavailableText, "No recent probability")
     }
 
+    func testPreStartMissingProbabilityUsesNoProbabilityYetAcrossAllExternalSurfaces() throws {
+        XCTAssertEqual(ExternalSurfaceProbabilityFormat.noProbabilityYetText, "No probability yet")
+        XCTAssertEqual(
+            ExternalSurfaceProbabilityFormat.missingProbabilityText(hasStarted: false, hadPriorNumber: false),
+            "No probability yet"
+        )
+        XCTAssertEqual(
+            ExternalSurfaceProbabilityFormat.missingProbabilityText(hasStarted: true, hadPriorNumber: false),
+            "No recent probability"
+        )
+        XCTAssertEqual(
+            ExternalSurfaceProbabilityFormat.missingProbabilityText(hasStarted: false, hadPriorNumber: true),
+            "No recent probability"
+        )
+
+        let iso = ISO8601DateFormatter()
+        let futureKickoff = iso.string(from: fixedNow.addingTimeInterval(7200))
+        let pastKickoff = iso.string(from: fixedNow.addingTimeInterval(-1800))
+        let obsStr = iso.string(from: fixedNow.addingTimeInterval(-3600))
+
+        // 1. Saved Home/Lock Widget readings (`SavedWidgetReadingRules10875` + source wiring in `BainLuckWidget`).
+        func decodeSavedEvent(_ json: String) throws -> SavedWidgetEventDetail10875 {
+            try SavedWidgetDetailDecoding10875.decoder().decode(SavedWidgetEventDetail10875.self, from: Data(json.utf8))
+        }
+        let preStartSavedEvent = try decodeSavedEvent("""
+        {
+          "id": 920,
+          "sport": "basketball_nba",
+          "home_team": "Miami Heat",
+          "away_team": "Orlando Magic",
+          "status": "scheduled",
+          "commence_time": "\(futureKickoff)",
+          "home_team_data": {"abbreviation": "MIA", "primary_color": "#98002E"},
+          "away_team_data": {"abbreviation": "ORL", "primary_color": "#0077C0"}
+        }
+        """)
+        let preStartSavedReading = SavedWidgetReadingRules10875.game(preStartSavedEvent, side: nil, now: fixedNow)
+        XCTAssertEqual(preStartSavedReading.phase, .unavailable)
+        XCTAssertTrue(preStartSavedReading.hasNotStartedWithoutNumber)
+        XCTAssertEqual(preStartSavedReading.unavailableProbabilityText, "No probability yet")
+        XCTAssertTrue(preStartSavedReading.spoken.contains("No probability yet"))
+
+        let startedSavedEvent = try decodeSavedEvent("""
+        {
+          "id": 921,
+          "sport": "basketball_nba",
+          "home_team": "Miami Heat",
+          "away_team": "Orlando Magic",
+          "status": "scheduled",
+          "commence_time": "\(pastKickoff)"
+        }
+        """)
+        let startedSavedReading = SavedWidgetReadingRules10875.game(startedSavedEvent, side: nil, now: fixedNow)
+        XCTAssertFalse(startedSavedReading.hasNotStartedWithoutNumber)
+        XCTAssertEqual(startedSavedReading.unavailableProbabilityText, "No recent probability")
+        XCTAssertTrue(startedSavedReading.spoken.contains("No recent probability"))
+
+        let priorObsSavedEvent = try decodeSavedEvent("""
+        {
+          "id": 922,
+          "sport": "basketball_nba",
+          "home_team": "Miami Heat",
+          "away_team": "Orlando Magic",
+          "status": "scheduled",
+          "commence_time": "\(futureKickoff)",
+          "hero_probability_observed_at": "\(obsStr)"
+        }
+        """)
+        XCTAssertEqual(
+            SavedWidgetReadingRules10875.game(priorObsSavedEvent, side: nil, now: fixedNow).unavailableProbabilityText,
+            "No recent probability"
+        )
+
+        let unknownStartSavedEvent = try decodeSavedEvent("""
+        {
+          "id": 923,
+          "sport": "basketball_nba",
+          "home_team": "Miami Heat",
+          "away_team": "Orlando Magic",
+          "status": "scheduled"
+        }
+        """)
+        XCTAssertEqual(
+            SavedWidgetReadingRules10875.game(unknownStartSavedEvent, side: nil, now: fixedNow).unavailableProbabilityText,
+            "No recent probability"
+        )
+
+        let widgetRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("BainLuckWidget")
+        let savedWidgetSource = try String(contentsOf: widgetRoot.appendingPathComponent("SavedItemWidget10875.swift"), encoding: .utf8)
+        let savedLooksSource = try String(contentsOf: widgetRoot.appendingPathComponent("SavedWidgetLooks12466.swift"), encoding: .utf8)
+        XCTAssertTrue(savedWidgetSource.contains("reading.unavailableProbabilityText"))
+        XCTAssertTrue(savedLooksSource.contains("model.reading.unavailableProbabilityText"))
+
+        // 2. Lock Screen Matchup helper (`WatchMatchupReading217.resolveOutcomePresentation`).
+        let preStartMatchup = WatchMatchupReading217.resolveOutcomePresentation(
+            homePercent: -1,
+            homeName: "Miami Heat",
+            awayName: "Orlando Magic",
+            homeAbbreviation: "MIA",
+            awayAbbreviation: "ORL",
+            isThreeWay: false,
+            drawPercent: nil,
+            awayPercent: nil,
+            missingProbabilityText: ExternalSurfaceProbabilityFormat.missingProbabilityText(hasStarted: false)
+        )
+        XCTAssertEqual(preStartMatchup.bigText, "No probability yet")
+        let startedMatchup = WatchMatchupReading217.resolveOutcomePresentation(
+            homePercent: -1,
+            homeName: "Miami Heat",
+            awayName: "Orlando Magic",
+            homeAbbreviation: "MIA",
+            awayAbbreviation: "ORL",
+            isThreeWay: false,
+            drawPercent: nil,
+            awayPercent: nil
+        )
+        XCTAssertEqual(startedMatchup.bigText, "No recent probability")
+
+        // 3. Live Activities (`GameActivityReading`).
+        let preStartActivitySnap = try XCTUnwrap(GameActivitySnapshot(
+            eventID: 924,
+            homeTeam: "Miami Heat",
+            awayTeam: "Orlando Magic",
+            lifecycle: .scheduled,
+            homeScore: nil,
+            awayScore: nil,
+            homeProbability: nil,
+            awayProbability: nil,
+            sport: "basketball_nba",
+            scoreObservedAt: nil,
+            probabilityObservedAt: nil,
+            homeAbbreviation: "MIA",
+            awayAbbreviation: "ORL",
+            homeColorHex: "#98002E",
+            awayColorHex: "#0077C0",
+            periodLabel: "7:00 PM"
+        ))
+        let preStartActivity = GameActivityReading(snapshot: preStartActivitySnap, eventID: 924)
+        XCTAssertEqual(preStartActivity.missingProbabilityText, "No probability yet")
+        XCTAssertEqual(preStartActivity.chanceSpoken, "No probability yet")
+        XCTAssertEqual(preStartActivity.percentText(105), "No probability yet")
+
+        let priorActivityJSON = """
+        {
+          "snapshot": {
+            "eventID": 925,
+            "homeTeam": "Miami Heat",
+            "awayTeam": "Orlando Magic",
+            "lifecycle": "scheduled",
+            "sport": "basketball_nba",
+            "pregameHomePercent": 54,
+            "pregameAwayPercent": 46
+          }
+        }
+        """
+        let priorActivityState = try JSONDecoder().decode(
+            GameActivityAttributes.ContentState.self,
+            from: Data(priorActivityJSON.utf8)
+        )
+        let priorActivity = GameActivityReading(snapshot: priorActivityState.snapshot, eventID: 925)
+        XCTAssertEqual(priorActivity.missingProbabilityText, "No recent probability")
+
+        let liveMissingSnap = try XCTUnwrap(GameActivitySnapshot(
+            eventID: 926,
+            homeTeam: "Miami Heat",
+            awayTeam: "Orlando Magic",
+            lifecycle: .live,
+            homeScore: 46,
+            awayScore: 44,
+            homeProbability: nil,
+            awayProbability: nil,
+            sport: "basketball_nba",
+            scoreObservedAt: fixedNow,
+            probabilityObservedAt: nil,
+            homeAbbreviation: "MIA",
+            awayAbbreviation: "ORL",
+            homeColorHex: "#98002E",
+            awayColorHex: "#0077C0",
+            periodLabel: "Q2 5:12"
+        ))
+        XCTAssertEqual(GameActivityReading(snapshot: liveMissingSnap, eventID: 926).missingProbabilityText, "No recent probability")
+
+        // 4. Apple Watch app & complications (`WatchSelectedGame`, `WatchMatchupGameHeroModel297A`, `WatchComplicationProjection`, `WatchRectangularReading`).
+        let preStartWatchJSON = """
+        {
+          "id": 927,
+          "away_team": "Orlando Magic",
+          "home_team": "Miami Heat",
+          "away_team_data": {"team_id": 5320, "abbreviation": "ORL"},
+          "home_team_data": {"team_id": 5321, "abbreviation": "MIA"},
+          "status": "scheduled",
+          "commence_time": "\(futureKickoff)",
+          "sport": "basketball_nba"
+        }
+        """
+        let preStartWatchGame = try JSONDecoder().decode(WatchSelectedGame.self, from: Data(preStartWatchJSON.utf8))
+        XCTAssertFalse(preStartWatchGame.hasStarted(at: fixedNow))
+        XCTAssertFalse(preStartWatchGame.hadPriorProbability)
+        XCTAssertEqual(preStartWatchGame.missingProbabilityText(at: fixedNow), "No probability yet")
+        XCTAssertEqual(
+            WatchMatchupGameHeroModel297A.build(from: preStartWatchGame, now: fixedNow, crestForTeamID: { _ in nil }).probabilityUnavailableText,
+            "No probability yet"
+        )
+        if case .unavailable(let preFaceStatus, _) = WatchComplicationProjection.evaluateEventFaceState(
+            game: preStartWatchGame,
+            eventID: 927,
+            isAdmitted: true,
+            savedAt: fixedNow,
+            clockSkewTolerance: 15,
+            containerAvailable: true
+        ) {
+            XCTAssertEqual(preFaceStatus.reason, .noProbabilityYet)
+            XCTAssertEqual(preFaceStatus.reason.complicationHeadline, "No probability yet")
+        } else {
+            XCTFail("Expected .noProbabilityYet unavailable status")
+        }
+
+        let startedWatchJSON = """
+        {
+          "id": 928,
+          "away_team": "Orlando Magic",
+          "home_team": "Miami Heat",
+          "away_team_data": {"team_id": 5320, "abbreviation": "ORL"},
+          "home_team_data": {"team_id": 5321, "abbreviation": "MIA"},
+          "status": "scheduled",
+          "commence_time": "\(pastKickoff)",
+          "sport": "basketball_nba"
+        }
+        """
+        let startedWatchGame = try JSONDecoder().decode(WatchSelectedGame.self, from: Data(startedWatchJSON.utf8))
+        XCTAssertTrue(startedWatchGame.hasStarted(at: fixedNow))
+        XCTAssertEqual(startedWatchGame.missingProbabilityText(at: fixedNow), "No recent probability")
+        XCTAssertEqual(
+            WatchMatchupGameHeroModel297A.build(from: startedWatchGame, now: fixedNow, crestForTeamID: { _ in nil }).probabilityUnavailableText,
+            "No recent probability"
+        )
+        if case .unavailable(let startedFaceStatus, _) = WatchComplicationProjection.evaluateEventFaceState(
+            game: startedWatchGame,
+            eventID: 928,
+            isAdmitted: true,
+            savedAt: fixedNow,
+            clockSkewTolerance: 15,
+            containerAvailable: true
+        ) {
+            XCTAssertEqual(startedFaceStatus.reason, .noLiveOdds)
+            XCTAssertEqual(startedFaceStatus.reason.complicationHeadline, "No recent probability")
+        } else {
+            XCTFail("Expected .noLiveOdds unavailable status")
+        }
+
+        let priorPrematchWatchJSON = """
+        {
+          "id": 929,
+          "away_team": "Orlando Magic",
+          "home_team": "Miami Heat",
+          "away_team_data": {"team_id": 5320, "abbreviation": "ORL"},
+          "home_team_data": {"team_id": 5321, "abbreviation": "MIA"},
+          "status": "scheduled",
+          "commence_time": "\(futureKickoff)",
+          "prematch_odds": {"home_probability": 0.55, "away_probability": 0.45},
+          "sport": "basketball_nba"
+        }
+        """
+        let priorPrematchGame = try JSONDecoder().decode(WatchSelectedGame.self, from: Data(priorPrematchWatchJSON.utf8))
+        XCTAssertTrue(priorPrematchGame.hadPriorProbability)
+        XCTAssertEqual(priorPrematchGame.missingProbabilityText(at: fixedNow), "No recent probability")
+
+        let mia = WatchCompactTeamIdentity(teamID: 14, abbreviation: "MIA")
+        let orl = WatchCompactTeamIdentity(teamID: 19, abbreviation: "ORL")
+        let preRect = WatchRectangularReading(
+            version: 1, eventID: 927, kind: .scheduledForecast,
+            homeName: "Miami Heat", awayName: "Orlando Magic",
+            home: mia, away: orl, homePercent: nil, homeScore: nil, awayScore: nil,
+            commenceTime: fixedNow.addingTimeInterval(7200), stateLabel: "Scheduled",
+            observedAt: fixedNow, scoreObservedAt: nil
+        )
+        XCTAssertEqual(preRect.primaryLine(at: fixedNow), "No probability yet")
+        let startedRect = WatchRectangularReading(
+            version: 1, eventID: 928, kind: .scheduledForecast,
+            homeName: "Miami Heat", awayName: "Orlando Magic",
+            home: mia, away: orl, homePercent: nil, homeScore: nil, awayScore: nil,
+            commenceTime: fixedNow.addingTimeInterval(-60), stateLabel: "Scheduled",
+            observedAt: fixedNow, scoreObservedAt: nil
+        )
+        XCTAssertEqual(startedRect.primaryLine(at: fixedNow), "No recent probability")
+        let marketRect = WatchRectangularReading(
+            version: 1, eventID: 930, kind: .futureForecast,
+            homeName: "NBA Champion", awayName: "Boston Celtics",
+            home: nil, away: nil, homePercent: nil, homeScore: nil, awayScore: nil,
+            commenceTime: fixedNow.addingTimeInterval(7200), stateLabel: "Open",
+            observedAt: fixedNow, scoreObservedAt: nil
+        )
+        XCTAssertEqual(marketRect.primaryLine(at: fixedNow), "No recent probability")
+    }
+
     #if canImport(UIKit)
     func testExportItem7ExternalSurfacesSheet() throws {
         guard ProcessInfo.processInfo.environment["BAINLUCK_EXPORT_ITEM7_SHEET"] == "1" else {
@@ -772,6 +1070,256 @@ final class ExternalSurfaceProbabilityRuleTests: XCTestCase {
         }
         .padding(10)
         .background(Color(white: 0.98), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    func testExportItem3MissingProbabilitySheet() throws {
+        guard ProcessInfo.processInfo.environment["BAINLUCK_EXPORT_ITEM3_SHEET"] == "1" else {
+            throw XCTSkip("Set BAINLUCK_EXPORT_ITEM3_SHEET=1 to export Item 3 Light/Dark contact sheet PNG")
+        }
+
+        let obs = fixedNow.addingTimeInterval(-30)
+        let preStartActivitySnap = try XCTUnwrap(GameActivitySnapshot(
+            eventID: 940,
+            homeTeam: "Miami Heat",
+            awayTeam: "Orlando Magic",
+            lifecycle: .scheduled,
+            homeScore: nil,
+            awayScore: nil,
+            homeProbability: nil,
+            awayProbability: nil,
+            sport: "basketball_nba",
+            scoreObservedAt: nil,
+            probabilityObservedAt: nil,
+            homeAbbreviation: "MIA",
+            awayAbbreviation: "ORL",
+            homeColorHex: "#98002E",
+            awayColorHex: "#0077C0",
+            periodLabel: "7:00 PM"
+        ))
+        let startedActivitySnap = try XCTUnwrap(GameActivitySnapshot(
+            eventID: 941,
+            homeTeam: "Miami Heat",
+            awayTeam: "Orlando Magic",
+            lifecycle: .live,
+            homeScore: 46,
+            awayScore: 44,
+            homeProbability: nil,
+            awayProbability: nil,
+            sport: "basketball_nba",
+            scoreObservedAt: obs,
+            probabilityObservedAt: nil,
+            homeAbbreviation: "MIA",
+            awayAbbreviation: "ORL",
+            homeColorHex: "#98002E",
+            awayColorHex: "#0077C0",
+            periodLabel: "Q2 5:12"
+        ))
+
+        let iso = ISO8601DateFormatter()
+        let futureKickoff = iso.string(from: fixedNow.addingTimeInterval(7200))
+        let pastKickoff = iso.string(from: fixedNow.addingTimeInterval(-1800))
+
+        let preStartSavedEvent = try SavedWidgetDetailDecoding10875.decoder().decode(
+            SavedWidgetEventDetail10875.self,
+            from: Data("""
+            {"id": 940, "sport": "basketball_nba", "home_team": "Miami Heat", "away_team": "Orlando Magic",
+             "status": "scheduled", "commence_time": "\(futureKickoff)"}
+            """.utf8)
+        )
+        let startedSavedEvent = try SavedWidgetDetailDecoding10875.decoder().decode(
+            SavedWidgetEventDetail10875.self,
+            from: Data("""
+            {"id": 941, "sport": "basketball_nba", "home_team": "Miami Heat", "away_team": "Orlando Magic",
+             "status": "live", "commence_time": "\(pastKickoff)", "home_score": 46, "away_score": 44}
+            """.utf8)
+        )
+        let preStartSavedReading = SavedWidgetReadingRules10875.game(preStartSavedEvent, side: nil, now: fixedNow)
+        let startedSavedReading = SavedWidgetReadingRules10875.game(startedSavedEvent, side: nil, now: fixedNow)
+
+        let preStartWatchGame = try JSONDecoder().decode(WatchSelectedGame.self, from: Data("""
+        {"id": 940, "away_team": "Orlando Magic", "home_team": "Miami Heat",
+         "away_team_data": {"team_id": 5320, "abbreviation": "ORL"},
+         "home_team_data": {"team_id": 5321, "abbreviation": "MIA"},
+         "status": "scheduled", "commence_time": "\(futureKickoff)", "sport": "basketball_nba"}
+        """.utf8))
+        let startedWatchGame = try JSONDecoder().decode(WatchSelectedGame.self, from: Data("""
+        {"id": 941, "away_team": "Orlando Magic", "home_team": "Miami Heat",
+         "away_team_data": {"team_id": 5320, "abbreviation": "ORL"},
+         "home_team_data": {"team_id": 5321, "abbreviation": "MIA"},
+         "status": "live", "commence_time": "\(pastKickoff)", "home_score": 46, "away_score": 44, "sport": "basketball_nba"}
+        """.utf8))
+
+        let preWatchHero = WatchMatchupGameHeroModel297A.build(from: preStartWatchGame, now: fixedNow, crestForTeamID: { _ in nil })
+        let startedWatchHero = WatchMatchupGameHeroModel297A.build(from: startedWatchGame, now: fixedNow, crestForTeamID: { _ in nil })
+
+        @ViewBuilder
+        func widgetSummaryTile(reading: SavedWidgetReading10875, scheme: ColorScheme) -> some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(reading.shortSubject)
+                    .font(.caption.weight(.bold))
+                Text(reading.status)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Text(reading.unavailableProbabilityText)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(width: 156, height: 92, alignment: .leading)
+            .padding(12)
+            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 16))
+            .environment(\.colorScheme, scheme)
+        }
+
+        let sheet = VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Item 3 · Pre-Start vs Post-Start Missing Probability Copy (Light & Dark)")
+                    .font(.system(size: 16, weight: .bold))
+                Text("SIMULATOR RENDER SHEET — NOT PHYSICAL HARDWARE · Before Start (No Prior #): \"No probability yet\" · After Start / Prior #: \"No recent probability\"")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                tile("Saved Widget & Lock Screen Model (Light)") {
+                    HStack(spacing: 10) {
+                        widgetSummaryTile(reading: preStartSavedReading, scheme: .light)
+                        widgetSummaryTile(reading: startedSavedReading, scheme: .light)
+                    }
+                }
+                tile("Saved Widget & Lock Screen Model (Dark)") {
+                    HStack(spacing: 10) {
+                        widgetSummaryTile(reading: preStartSavedReading, scheme: .dark)
+                        widgetSummaryTile(reading: startedSavedReading, scheme: .dark)
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                tile("Live Activity · Pre-Start vs Started (Light)") {
+                    VStack(spacing: 8) {
+                        GameActivityLockScreenView(reading: GameActivityReading(snapshot: preStartActivitySnap, eventID: 940))
+                            .frame(width: 348)
+                            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 18))
+                            .environment(\.colorScheme, .light)
+                        GameActivityLockScreenView(reading: GameActivityReading(snapshot: startedActivitySnap, eventID: 941))
+                            .frame(width: 348)
+                            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 18))
+                            .environment(\.colorScheme, .light)
+                    }
+                }
+                tile("Live Activity · Pre-Start vs Started (Dark)") {
+                    VStack(spacing: 8) {
+                        GameActivityLockScreenView(reading: GameActivityReading(snapshot: preStartActivitySnap, eventID: 940))
+                            .frame(width: 348)
+                            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 18))
+                            .environment(\.colorScheme, .dark)
+                        GameActivityLockScreenView(reading: GameActivityReading(snapshot: startedActivitySnap, eventID: 941))
+                            .frame(width: 348)
+                            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 18))
+                            .environment(\.colorScheme, .dark)
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                tile("Watch App Hero · Light & Dark") {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 10) {
+                            WatchMatchupGamePageHeroView297A(model: preWatchHero, caseWidth: 186)
+                                .frame(width: 186)
+                                .padding(6)
+                                .background(Color.black, in: RoundedRectangle(cornerRadius: 16))
+                                .environment(\.colorScheme, .dark)
+                            WatchMatchupGamePageHeroView297A(model: startedWatchHero, caseWidth: 186)
+                                .frame(width: 186)
+                                .padding(6)
+                                .background(Color.black, in: RoundedRectangle(cornerRadius: 16))
+                                .environment(\.colorScheme, .dark)
+                        }
+                        HStack(spacing: 10) {
+                            WatchMatchupGamePageHeroView297A(model: preWatchHero, caseWidth: 186)
+                                .frame(width: 186)
+                                .padding(6)
+                                .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 16))
+                                .environment(\.colorScheme, .light)
+                            WatchMatchupGamePageHeroView297A(model: startedWatchHero, caseWidth: 186)
+                                .frame(width: 186)
+                                .padding(6)
+                                .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 16))
+                                .environment(\.colorScheme, .light)
+                        }
+                    }
+                }
+                tile("Watch Complications · Light & Dark") {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 10) {
+                            WatchUnavailableComplicationContent13339(
+                                status: WatchFaceStatusPayload13339(
+                                    targetID: 940,
+                                    title: "ORL at MIA",
+                                    reason: .noProbabilityYet,
+                                    updatedAt: fixedNow
+                                )
+                            )
+                            .frame(width: 158, height: 70)
+                            .padding(8)
+                            .background(Color.black, in: RoundedRectangle(cornerRadius: 14))
+                            .environment(\.colorScheme, .dark)
+                            WatchUnavailableComplicationContent13339(
+                                status: WatchFaceStatusPayload13339(
+                                    targetID: 941,
+                                    title: "ORL at MIA",
+                                    reason: .noLiveOdds,
+                                    updatedAt: fixedNow
+                                )
+                            )
+                            .frame(width: 158, height: 70)
+                            .padding(8)
+                            .background(Color.black, in: RoundedRectangle(cornerRadius: 14))
+                            .environment(\.colorScheme, .dark)
+                        }
+                        HStack(spacing: 10) {
+                            WatchUnavailableComplicationContent13339(
+                                status: WatchFaceStatusPayload13339(
+                                    targetID: 940,
+                                    title: "ORL at MIA",
+                                    reason: .noProbabilityYet,
+                                    updatedAt: fixedNow
+                                )
+                            )
+                            .frame(width: 158, height: 70)
+                            .padding(8)
+                            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 14))
+                            .environment(\.colorScheme, .light)
+                            WatchUnavailableComplicationContent13339(
+                                status: WatchFaceStatusPayload13339(
+                                    targetID: 941,
+                                    title: "ORL at MIA",
+                                    reason: .noLiveOdds,
+                                    updatedAt: fixedNow
+                                )
+                            )
+                            .frame(width: 158, height: 70)
+                            .padding(8)
+                            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 14))
+                            .environment(\.colorScheme, .light)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .background(Color(white: 0.94))
+
+        let renderer = rendererForMeasurement(sheet)
+        renderer.scale = 2.0
+        let image = try XCTUnwrap(renderer.uiImage)
+        let png = try XCTUnwrap(image.pngData())
+        let outURL = URL(fileURLWithPath: "/tmp/item3-no-prob-yet-sheet.png")
+        try png.write(to: outURL)
+        print("EXPORTED_ITEM3_SHEET=\(outURL.path) bytes=\(png.count)")
     }
     #endif
 }

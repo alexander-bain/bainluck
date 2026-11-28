@@ -271,7 +271,7 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
             centerScoreText: centerScoreText,
             liveScoreExplanation: liveScoreExplanation,
             finalScoreUnavailable: false,
-            probabilityUnavailableText: chances.homeText == nil ? ExternalSurfaceProbabilityFormat.missingProbabilityText : nil,
+            probabilityUnavailableText: chances.homeText == nil ? game.missingProbabilityText(at: now) : nil,
             bottomSummaryText: bottomText,
             scoreAsOfText: (isLive || validAwayScore != nil || validHomeScore != nil) ? scoreAsOf : nil,
             probabilityAsOfText: (stage == .during && chances.homeText != nil) ? probAsOf : nil

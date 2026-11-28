@@ -74,9 +74,15 @@ nonisolated struct SavedWidgetReading10875: Equatable, Sendable {
     let becomesLastRecordedAt: Date?
     /// The whole reading as one sentence, for VoiceOver.
     let spoken: String
+    /// True when the game has not started and has had no probability number yet.
+    var hasNotStartedWithoutNumber: Bool = false
     /// #698: a settled row whose result is unknown keeps its last price
     /// ("50%"), printed only as "Last recorded", never as a value or a result.
     var lastRecordedFigure: String? = nil
+
+    var unavailableProbabilityText: String {
+        ExternalSurfaceProbabilityFormat.missingProbabilityText(hasStarted: !hasNotStartedWithoutNumber)
+    }
     /// #12466 — what the chance bar draws: the same pair the figures above
     /// were printed from, as shares. Nil wherever no figure is printed (a
     /// result, an unknown result, a choice with no price), so a bar can never
@@ -131,10 +137,12 @@ enum SavedWidgetReadingRules10875 {
         func reading(_ phase: SavedWidgetReading10875.Phase, status: String, rows: [SavedWidgetReading10875.Row],
                      headline: SavedWidgetReading10875.Row?, caption: String? = nil, observedAt: Date? = nil,
                      flipsAt: Date? = nil, spoken: String,
-                     shares: SavedWidgetReading10875.Shares? = nil) -> SavedWidgetReading10875 {
+                     shares: SavedWidgetReading10875.Shares? = nil,
+                     hasNotStartedWithoutNumber: Bool = false) -> SavedWidgetReading10875 {
             .init(phase: phase, subject: subject, shortSubject: shortSubject, status: status, rows: rows,
                   headline: headline, priceCaption: caption, observedAt: observedAt,
-                  becomesLastRecordedAt: flipsAt, spoken: spoken, shares: shares)
+                  becomesLastRecordedAt: flipsAt, spoken: spoken,
+                  hasNotStartedWithoutNumber: hasNotStartedWithoutNumber, shares: shares)
         }
         // A score is printed only when both sides are held (`EventState`'s
         // partial-line rule): half a score is not a score.
@@ -212,9 +220,21 @@ enum SavedWidgetReadingRules10875 {
         guard let shown,
               let pair = DrawPricedWinner.printablePair(away: shown.away, home: shown.home, sport: event.sport)
         else {
+            let hasStarted = (event.status == "live" || event.status == "in_progress")
+                || EventState.hasStarted(commenceTime: commence, now: now)
+                || stopped
+            let hadPriorNumber = event.heroProbabilityObservedAt != nil
+                || event.heroProbability != nil
+                || event.currentOdds?.homeProbability != nil
+                || event.currentOdds?.awayProbability != nil
+            let missingText = ExternalSurfaceProbabilityFormat.missingProbabilityText(
+                hasStarted: hasStarted,
+                hadPriorNumber: hadPriorNumber
+            )
             return reading(.unavailable, status: status,
                            rows: [row(false, figure: nil), row(true, figure: nil)], headline: nil,
-                           spoken: "\(subject). \(ExternalSurfaceProbabilityFormat.missingProbabilityText). \(status).")
+                           spoken: "\(subject). \(missingText). \(status).",
+                           hasNotStartedWithoutNumber: !hasStarted && !hadPriorNumber)
         }
 
         var awayFigure: String?

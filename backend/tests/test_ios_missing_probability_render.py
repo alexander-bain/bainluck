@@ -656,6 +656,7 @@ class TestExternalAppleSurfacesUseUnifiedProbabilityRule:
             '// Text("\\(game.homeProb)%") (Double(x)/100).formatted(.percent) "Waiting for odds" "0%"',
             'Text(ExternalSurfaceProbabilityFormat.missingProbabilityText)',
             'let label = "No recent probability"',
+            'let preStart = "No probability yet"',
             'let pct = ExternalSurfaceProbabilityFormat.openWholePercent(p)',
         ]
         for safe in safe_snippets:
@@ -664,6 +665,22 @@ class TestExternalAppleSurfacesUseUnifiedProbabilityRule:
             assert _find_raw_formatted_percent_calls(safe) == []
             assert _find_legacy_missing_probability_strings(safe) == []
             assert _find_extreme_percent_literals(safe) == []
+
+        # Planted Item 3 regression mutants: dropping the pre-start check on an external
+        # surface or swapping `"No probability yet"` back to `"No recent probability"`.
+        unwired_small_widget = (
+            'Text(reading.phase == .noResult ? "No result recorded" : '
+            'ExternalSurfaceProbabilityFormat.missingProbabilityText)'
+        )
+        assert "reading.unavailableProbabilityText" not in unwired_small_widget
+
+        unwired_live_activity = (
+            'var missingProbabilityText: String { ExternalSurfaceProbabilityFormat.missingProbabilityText }'
+        )
+        assert "snapshot.lifecycle != .scheduled" not in unwired_live_activity
+
+        unwired_watch_reason = 'case .noLiveOdds: return ExternalSurfaceProbabilityFormat.missingProbabilityText'
+        assert "noProbabilityYet" not in unwired_watch_reason
 
     def test_external_targets_use_unified_probability_format_and_no_legacy_strings(self):
         swift_files: list[pathlib.Path] = list(EXTERNAL_EXTRA_FILES)
@@ -709,6 +726,8 @@ class TestExternalAppleSurfacesUseUnifiedProbabilityRule:
         assert EXT_PROB_FORMAT.exists(), f"missing {EXT_PROB_FORMAT}"
         fmt_src = EXT_PROB_FORMAT.read_text()
         assert 'static let missingProbabilityText = "No recent probability"' in fmt_src
+        assert 'static let noProbabilityYetText = "No probability yet"' in fmt_src
+        assert "static func missingProbabilityText(hasStarted: Bool" in fmt_src
         assert "probability < 0.01" in fmt_src
         assert 'return "<1%"' in fmt_src
         assert "probability > 0.99" in fmt_src
@@ -725,4 +744,42 @@ class TestExternalAppleSurfacesUseUnifiedProbabilityRule:
             assert "Utilities/ExternalSurfaceProbabilityFormat.swift" in segment, (
                 f"{block_id} missing Utilities/ExternalSurfaceProbabilityFormat.swift"
             )
+
+    def test_prestart_missing_probability_wiring_on_all_external_surfaces(self):
+        saved_reading = (SHARED_WIDGET_ROOT / "SavedWidgetReading10875.swift").read_text()
+        assert "var unavailableProbabilityText: String" in saved_reading
+        assert "hasNotStartedWithoutNumber: !hasStarted && !hadPriorNumber" in saved_reading
+
+        saved_widget = (WIDGET_ROOT / "SavedItemWidget10875.swift").read_text()
+        assert saved_widget.count("reading.unavailableProbabilityText") == 3
+        saved_looks = (WIDGET_ROOT / "SavedWidgetLooks12466.swift").read_text()
+        assert "model.reading.unavailableProbabilityText" in saved_looks
+
+        lock_matchup = (WIDGET_ROOT / "SavedLockScreenMatchup13432.swift").read_text()
+        assert "ExternalSurfaceProbabilityFormat.missingProbabilityText(\n            hasStarted: hasStarted,\n            hadPriorNumber: hadPriorNumber" in lock_matchup
+        assert lock_matchup.count("missingProbabilityText: missingText") == 2
+
+        live_activity = (WIDGET_ROOT / "GameLiveActivity.swift").read_text()
+        assert "var missingProbabilityText: String {" in live_activity
+        assert "let hasStarted = snapshot.lifecycle != .scheduled" in live_activity
+        assert "Text(reading.missingProbabilityText)" in live_activity
+
+        watch_models = (WATCH_ROOT / "WatchSelectedGameModels.swift").read_text()
+        assert "func hasStarted(at now: Date = Date()) -> Bool" in watch_models
+        assert "var hadPriorProbability: Bool" in watch_models
+        assert "func missingProbabilityText(at now: Date = Date()) -> String" in watch_models
+
+        watch_hero = (WATCH_ROOT / "WatchMatchupGamePageHero297A.swift").read_text()
+        assert "game.missingProbabilityText(at: now)" in watch_hero
+        watch_selected = (WATCH_ROOT / "WatchSelectedGameView.swift").read_text()
+        assert "game.missingProbabilityText()" in watch_selected
+        assert "game.missingProbabilityText(at: now)" in watch_selected
+
+        watch_comp_snap = (WATCH_ROOT / "WatchComplicationSnapshot.swift").read_text()
+        assert 'case noProbabilityYet = "no_probability_yet"' in watch_comp_snap
+        assert "case .noProbabilityYet: return ExternalSurfaceProbabilityFormat.noProbabilityYetText" in watch_comp_snap
+        assert "ExternalSurfaceProbabilityFormat.missingProbabilityText(hasStarted: started)" in watch_comp_snap
+        watch_comp_pub = (WATCH_ROOT / "WatchComplicationPublisher.swift").read_text()
+        assert ".noProbabilityYet : .noLiveOdds" in watch_comp_pub
+
 

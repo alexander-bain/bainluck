@@ -529,8 +529,15 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
     /// Primary reading line (Line 2): compact side probability ("SF 64%"), market outcome ("Newsom 23%"), or final result ("Final · SF 4, LA 2").
     func primaryLine(preferCompact: Bool = false, at now: Date) -> String {
         switch kind {
-        case .liveForecast, .scheduledForecast:
+        case .liveForecast:
             guard let pct = formattedHomePercent else { return ExternalSurfaceProbabilityFormat.missingProbabilityText }
+            let team = home?.abbreviation ?? homeName
+            return "\(team) \(pct)"
+        case .scheduledForecast:
+            guard let pct = formattedHomePercent else {
+                let started = commenceTime.map { $0 <= now } ?? true
+                return ExternalSurfaceProbabilityFormat.missingProbabilityText(hasStarted: started)
+            }
             let team = home?.abbreviation ?? homeName
             return "\(team) \(pct)"
         case .futureForecast:
@@ -616,7 +623,9 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
             let age = Self.spokenAge(observedAt: observedAt, now: now) ?? "time unavailable"
             return "\(awayName) at \(homeName).\(scorePart) \(homeName) \(pct). Live, \(age). Open your game in Bain Luck."
         case .scheduledForecast:
-            let pct = formattedHomePercent ?? "unavailable"
+            let started = commenceTime.map { $0 <= now } ?? true
+            let pct = formattedHomePercent
+                ?? ExternalSurfaceProbabilityFormat.missingProbabilityText(hasStarted: started)
             if let start = commenceTime {
                 if now >= start {
                     return "\(awayName) at \(homeName). \(homeName) \(pct). Open to update. Open your game in Bain Luck."
@@ -710,6 +719,7 @@ nonisolated struct WatchRectangularReading: Codable, Sendable, Equatable {
 /// "cannot show your game" never look identical.
 nonisolated enum WatchFaceUnavailableReason13339: String, Codable, Sendable, Equatable, CaseIterable {
     case finalEnded = "final_ended"
+    case noProbabilityYet = "no_probability_yet"
     case noLiveOdds = "no_live_odds"
     case statusUnsupported = "status_unsupported"
     case waitingForUpdate = "waiting_for_update"
@@ -718,6 +728,7 @@ nonisolated enum WatchFaceUnavailableReason13339: String, Codable, Sendable, Equ
     var complicationHeadline: String {
         switch self {
         case .finalEnded: return "Game ended"
+        case .noProbabilityYet: return ExternalSurfaceProbabilityFormat.noProbabilityYetText
         case .noLiveOdds: return ExternalSurfaceProbabilityFormat.missingProbabilityText
         case .statusUnsupported: return "Cannot show game"
         case .waitingForUpdate: return "Needs refresh"
@@ -733,6 +744,8 @@ nonisolated enum WatchFaceUnavailableReason13339: String, Codable, Sendable, Equ
         switch self {
         case .finalEnded:
             return "Final games stay on your watch face for 3 hours."
+        case .noProbabilityYet:
+            return "Cannot show on watch face: no probability yet before game start."
         case .noLiveOdds:
             return "Cannot show on watch face: live win odds are unavailable."
         case .statusUnsupported:

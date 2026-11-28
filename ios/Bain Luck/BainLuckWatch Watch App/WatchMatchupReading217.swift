@@ -392,13 +392,14 @@ extension WatchMatchupReading217 {
         drawSubOne: Bool = false,
         drawAboveNinetyNine: Bool = false,
         awaySubOne: Bool = false,
-        awayAboveNinetyNine: Bool = false
+        awayAboveNinetyNine: Bool = false,
+        missingProbabilityText: String = ExternalSurfaceProbabilityFormat.missingProbabilityText
     ) -> (bigText: String, bigIsHome: Bool, ownerAbbr: String, ownerName: String, threeWay: ThreeWay?) {
         let homeText = ExternalSurfaceProbabilityFormat.openWholePercent(
             homePercent,
             subOne: homeSubOne,
             aboveNinetyNine: homeAboveNinetyNine
-        ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+        ) ?? missingProbabilityText
         if isThreeWay {
             if let drawPct = drawPercent, (0...100).contains(drawPct),
                let awayPct = awayPercent, (0...100).contains(awayPct) {
@@ -406,12 +407,12 @@ extension WatchMatchupReading217 {
                     drawPct,
                     subOne: drawSubOne,
                     aboveNinetyNine: drawAboveNinetyNine
-                ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+                ) ?? missingProbabilityText
                 let awayText = ExternalSurfaceProbabilityFormat.openWholePercent(
                     awayPct,
                     subOne: awaySubOne,
                     aboveNinetyNine: awayAboveNinetyNine
-                ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+                ) ?? missingProbabilityText
                 let threeWay = ThreeWay(
                     homeLabel: homeAbbreviation,
                     homeText: homeText,
@@ -436,7 +437,7 @@ extension WatchMatchupReading217 {
             pct,
             subOne: homeLeads ? homeSubOne : awaySubOne,
             aboveNinetyNine: homeLeads ? homeAboveNinetyNine : awayAboveNinetyNine
-        ) ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
+        ) ?? missingProbabilityText
         return (
             leadText,
             homeLeads,
@@ -485,7 +486,10 @@ extension WatchMatchupReading217 {
                 drawSubOne: facts.drawSubOne == true,
                 drawAboveNinetyNine: facts.drawAboveNinetyNine == true,
                 awaySubOne: facts.awaySubOne == true,
-                awayAboveNinetyNine: facts.awayAboveNinetyNine == true
+                awayAboveNinetyNine: facts.awayAboveNinetyNine == true,
+                missingProbabilityText: ExternalSurfaceProbabilityFormat.missingProbabilityText(
+                    hasStarted: r.commenceTime.map { $0 <= now } ?? true
+                )
             )
             let smallLine = when
             let speech: String = {
@@ -524,7 +528,8 @@ extension WatchMatchupReading217 {
                 drawSubOne: facts.drawSubOne == true,
                 drawAboveNinetyNine: facts.drawAboveNinetyNine == true,
                 awaySubOne: facts.awaySubOne == true,
-                awayAboveNinetyNine: facts.awayAboveNinetyNine == true
+                awayAboveNinetyNine: facts.awayAboveNinetyNine == true,
+                missingProbabilityText: ExternalSurfaceProbabilityFormat.missingProbabilityText
             )
             let smallLine = when
             let score: String = {
