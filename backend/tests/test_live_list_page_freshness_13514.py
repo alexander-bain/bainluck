@@ -11,9 +11,11 @@ Pins both sides of the asymmetry measured in standing scores run 46134571629:
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from datetime import datetime, timedelta, timezone
 import json
+import time
 from unittest.mock import AsyncMock
 
 from fastapi import Response
@@ -220,6 +222,7 @@ def clean_env(monkeypatch):
     monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: rc)
     events_route._event_detail_cache.clear()
     events_route._event_detail_live_signatures.clear()
+    events_route._event_detail_live_check_backoff_until.clear()
     events_route._DETAIL_FRESH_BUILDS.clear()
 
     async def _no_percentiles(_db):
@@ -250,6 +253,7 @@ def clean_env(monkeypatch):
     yield rc
     events_route._event_detail_cache.clear()
     events_route._event_detail_live_signatures.clear()
+    events_route._event_detail_live_check_backoff_until.clear()
     events_route._DETAIL_FRESH_BUILDS.clear()
 
 
@@ -534,3 +538,153 @@ class TestLiveDetailCacheRevisionInvalidation:
         assert hit_session.pk_rev_checks == 0
         assert hit_session.full_event_loads == 0
         assert served["status"] == "completed"
+
+
+class _HeldOpenReadSession:
+    """Async session simulating a stalled DB connection acquire / slow statement."""
+
+    def __init__(self, sleep_s: float = 5.0):
+        self.sleep_s = sleep_s
+        self.calls = 0
+        self.rollbacks = 0
+
+    async def execute(self, *_a, **_kw):
+        self.calls += 1
+        await asyncio.sleep(self.sleep_s)
+        return _Result([])
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+class TestSlowDatabaseTimeoutAndHeaders:
+    @pytest.mark.asyncio
+    async def test_cached_live_detail_answers_within_limit_when_read_held_open_and_backs_off(
+        self, clean_env, monkeypatch
+    ):
+        now = datetime.now(timezone.utc)
+        ev_v4 = _make_live_event(now=now, polymarket_prob=0.48, rev=4)
+        seed_resp = await events_route.get_event(LIVE_EVENT_ID, db=_ParitySession(ev_v4))
+        assert extract_headline_percent(seed_resp) == 48
+
+        monkeypatch.setattr(events_route, "_EVENT_DETAIL_LIVE_CHECK_TIMEOUT_S", 0.08)
+        monkeypatch.setattr(events_route, "_EVENT_DETAIL_LIVE_CHECK_BACKOFF_S", 10.0)
+        slow_db = _HeldOpenReadSession(sleep_s=5.0)
+
+        resp1 = Response()
+        t0 = time.monotonic()
+        served1 = await events_route.get_event(LIVE_EVENT_ID, db=slow_db, response=resp1)
+        elapsed1 = time.monotonic() - t0
+
+        assert elapsed1 < 0.30
+        assert extract_headline_percent(served1) == 48
+        assert resp1.headers.get(events_route.LIVE_FRESHNESS_CHECK_HEADER) == "timeout"
+        assert slow_db.calls == 1
+
+        # Second hit during backoff window serves cached page with 0 DB calls.
+        resp2 = Response()
+        t1 = time.monotonic()
+        served2 = await events_route.get_event(LIVE_EVENT_ID, db=slow_db, response=resp2)
+        elapsed2 = time.monotonic() - t1
+
+        assert elapsed2 < 0.05
+        assert extract_headline_percent(served2) == 48
+        assert resp2.headers.get(events_route.LIVE_FRESHNESS_CHECK_HEADER) == "skipped-backoff"
+        assert slow_db.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_cached_search_live_refresh_serves_cached_within_limit_when_read_held_open(
+        self, clean_env, monkeypatch
+    ):
+        rc = clean_env
+        now = datetime.now(timezone.utc)
+        _seed_search_cache(
+            rc,
+            "finishers",
+            [
+                {
+                    "id": LIVE_EVENT_ID,
+                    "sport": "esports",
+                    "home_team": "Finishers",
+                    "away_team": "MeatZn",
+                    "status": "live",
+                    "commence_time": (now - timedelta(minutes=25)).isoformat(),
+                    "hero_probability": 0.46,
+                    "hero_probability_away": 0.54,
+                }
+            ],
+        )
+
+        monkeypatch.setattr(events_route, "_SEARCH_LIVE_REFRESH_TIMEOUT_S", 0.08)
+        slow_db = _HeldOpenReadSession(sleep_s=5.0)
+
+        resp = Response()
+        t0 = time.monotonic()
+        out = await _call_search("finishers", slow_db, response=resp)
+        elapsed = time.monotonic() - t0
+
+        assert elapsed < 0.30
+        assert resp.headers.get(SEARCH_CACHE_HEADER) == "hit"
+        assert resp.headers.get(events_route.LIVE_SEARCH_REFRESH_HEADER) == "timeout"
+        assert extract_headline_percent(out["results"][0]) == 46
+        assert slow_db.calls == 1
+        assert slow_db.rollbacks == 1
+
+    @pytest.mark.asyncio
+    async def test_live_refresh_and_detail_headers_on_normal_requests(self, clean_env):
+        rc = clean_env
+        now = datetime.now(timezone.utc)
+
+        _seed_search_cache(
+            rc,
+            "finishers",
+            [
+                {
+                    "id": LIVE_EVENT_ID,
+                    "status": "live",
+                    "commence_time": (now - timedelta(minutes=15)).isoformat(),
+                    "hero_probability": 0.45,
+                }
+            ],
+        )
+        live_resp = Response()
+        await _call_search("finishers", _ParitySession(_make_live_event(now=now, polymarket_prob=0.55, rev=3)), response=live_resp)
+        assert live_resp.headers.get(events_route.LIVE_SEARCH_REFRESH_HEADER) == "ran"
+
+        _seed_search_cache(
+            rc,
+            "future",
+            [
+                {
+                    "id": 2001,
+                    "status": "scheduled",
+                    "commence_time": (now + timedelta(hours=3)).isoformat(),
+                    "hero_probability": 0.60,
+                }
+            ],
+        )
+        idle_resp = Response()
+        await _call_search("future", db=None, response=idle_resp)
+        assert idle_resp.headers.get(events_route.LIVE_SEARCH_REFRESH_HEADER) == "skipped-no-live"
+
+        ev_v4 = _make_live_event(now=now, polymarket_prob=0.48, rev=4)
+        await events_route.get_event(LIVE_EVENT_ID, db=_ParitySession(ev_v4))
+
+        hit_resp = Response()
+        await events_route.get_event(LIVE_EVENT_ID, db=_ParitySession(ev_v4), response=hit_resp)
+        assert hit_resp.headers.get(events_route.LIVE_FRESHNESS_CHECK_HEADER) == "ran"
+
+        moved_resp = Response()
+        await events_route.get_event(
+            LIVE_EVENT_ID,
+            db=_ParitySession(_make_live_event(now=now, polymarket_prob=0.61, rev=5)),
+            response=moved_resp,
+        )
+        assert moved_resp.headers.get(events_route.LIVE_FRESHNESS_CHECK_HEADER) == "rebuilt"
+
+        done_ev = _make_live_event(now=now, polymarket_prob=1.0, rev=6, status="completed", home_score=2, away_score=0)
+        events_route._event_detail_cache.clear()
+        await events_route.get_event(LIVE_EVENT_ID, db=_ParitySession(done_ev))
+        done_resp = Response()
+        await events_route.get_event(LIVE_EVENT_ID, db=_ParitySession(done_ev), response=done_resp)
+        assert done_resp.headers.get(events_route.LIVE_FRESHNESS_CHECK_HEADER) == "skipped-non-live"
