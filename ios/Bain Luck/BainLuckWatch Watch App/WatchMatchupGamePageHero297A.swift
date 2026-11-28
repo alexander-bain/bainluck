@@ -426,7 +426,10 @@ struct WatchMatchupGamePageHeroView297A: View {
     }
 
     private var heroCard: some View {
-        VStack(spacing: isCompactFinal ? (isCompact41mm ? 3 : 4) : (isCompactScheduled ? (isCompact41mm ? 4 : 6) : (isCompact41mm ? 7 : 9))) {
+        let cardSpacing: CGFloat = dynamicTypeSize.isAccessibilitySize
+            ? 4
+            : (isCompactFinal ? (isCompact41mm ? 3 : 4) : (isCompactScheduled ? (isCompact41mm ? 4 : 6) : (isCompact41mm ? 7 : 9)))
+        return VStack(spacing: cardSpacing) {
             topBadgeRow
 
             if dynamicTypeSize.isAccessibilitySize {
@@ -477,8 +480,8 @@ struct WatchMatchupGamePageHeroView297A: View {
                     .accessibilityIdentifier("watch.game.hero.bottom")
             }
         }
-        .padding(.horizontal, isCompactFinal && isCompact41mm ? 7 : (isCompact41mm ? 8 : 10))
-        .padding(.vertical, isCompactFinal ? (isCompact41mm ? 5 : 7) : (isCompactScheduled ? (isCompact41mm ? 6 : 8) : (isCompact41mm ? 9 : 11)))
+        .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 8 : (isCompactFinal && isCompact41mm ? 7 : (isCompact41mm ? 8 : 10)))
+        .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 6 : (isCompactFinal ? (isCompact41mm ? 5 : 7) : (isCompactScheduled ? (isCompact41mm ? 6 : 8) : (isCompact41mm ? 9 : 11))))
         .frame(maxWidth: .infinity)
         .background(diagonalSplitBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -775,32 +778,42 @@ struct WatchMatchupGamePageHeroView297A: View {
     // MARK: - AX5 Stacked Layout (Zero "...")
 
     private var accessibilityMatchupStack: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
             if let centerScore = model.centerScoreText {
                 Text(centerScore)
-                    .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
+                    .font(.system(size: 16, weight: .bold, design: .rounded).monospacedDigit())
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
                     .background(Capsule().fill(Color.black.opacity(0.55)))
                     .fixedSize(horizontal: false, vertical: true)
             }
             accessibilitySideRow(model.away)
             accessibilitySideRow(model.home)
             if model.isThreeWaySoccer, let drawPct = model.drawPercentText {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Draw")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                    Text(drawPct)
-                        .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(.white)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("Draw")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+                        Text(drawPct)
+                            .font(.system(size: 19, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(.white)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Draw")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+                        Text(drawPct)
+                            .font(.system(size: 19, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(.white)
+                    }
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
             if let drawPre = model.drawPregameText, model.stage == .after, !model.away.isWinner && !model.home.isWinner {
                 Text(drawPre)
-                    .font(.system(size: 16, weight: .semibold).monospacedDigit())
+                    .font(.system(size: 14, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.white.opacity(0.88))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -808,58 +821,96 @@ struct WatchMatchupGamePageHeroView297A: View {
     }
 
     private func accessibilitySideRow(_ side: WatchMatchupGameHeroModel297A.Side) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                crestDisc(side, size: 24)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 5) {
+                crestDisc(side, size: 20)
                 Text(side.shortName)
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if model.stage == .after {
-                HStack(spacing: 6) {
-                    if let score = side.score {
-                        Text("\(score)")
-                            .font(.system(size: 22, weight: .black, design: .rounded).monospacedDigit())
-                            .foregroundStyle(side.isLoser ? .white.opacity(0.75) : .white)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if let score = side.score {
+                            Text("\(score)")
+                                .font(.system(size: 19, weight: .black, design: .rounded).monospacedDigit())
+                                .foregroundStyle(side.isLoser ? .white.opacity(0.75) : .white)
+                                .fixedSize()
+                        }
+                        accessibilityFinalOutcomeLabel(side)
+                            .fixedSize()
                     }
-                    if side.isWinner {
-                        Text("\u{2713} Won")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(Self.rgbColor("#34D399"))
-                    } else if side.isLoser {
-                        Text("Lost")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.72))
-                    } else if model.isTiedFinal {
-                        Text("Draw")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.82))
+                    VStack(alignment: .leading, spacing: 1) {
+                        if let score = side.score {
+                            Text("\(score)")
+                                .font(.system(size: 19, weight: .black, design: .rounded).monospacedDigit())
+                                .foregroundStyle(side.isLoser ? .white.opacity(0.75) : .white)
+                                .fixedSize()
+                        }
+                        accessibilityFinalOutcomeLabel(side)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .fixedSize(horizontal: false, vertical: true)
                 if let pre = side.pregameText {
                     Text(pre)
-                        .font(.system(size: 15, weight: .semibold).monospacedDigit())
+                        .font(.system(size: 14, weight: .semibold).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.88))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
-                if let pct = side.currentPercentText {
-                    Text(pct)
-                        .font(.system(size: 22, weight: .black, design: .rounded).monospacedDigit())
-                        .foregroundStyle(Self.rgbColor(side.inkHex))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if let score = side.score {
-                    Text("Score \(score)")
-                        .font(.system(size: 15, weight: .medium).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.84))
-                        .fixedSize(horizontal: false, vertical: true)
+                if side.currentPercentText != nil || side.score != nil {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            if let pct = side.currentPercentText {
+                                Text(pct)
+                                    .font(.system(size: 19, weight: .black, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(Self.rgbColor(side.inkHex))
+                                    .fixedSize()
+                            }
+                            if let score = side.score {
+                                Text("Score \(score)")
+                                    .font(.system(size: 14, weight: .medium).monospacedDigit())
+                                    .foregroundStyle(.white.opacity(0.84))
+                                    .fixedSize()
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 1) {
+                            if let pct = side.currentPercentText {
+                                Text(pct)
+                                    .font(.system(size: 19, weight: .black, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(Self.rgbColor(side.inkHex))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if let score = side.score {
+                                Text("Score \(score)")
+                                    .font(.system(size: 14, weight: .medium).monospacedDigit())
+                                    .foregroundStyle(.white.opacity(0.84))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func accessibilityFinalOutcomeLabel(_ side: WatchMatchupGameHeroModel297A.Side) -> some View {
+        if side.isWinner {
+            Text("\u{2713} Won")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Self.rgbColor("#34D399"))
+        } else if side.isLoser {
+            Text("Lost")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.72))
+        } else if model.isTiedFinal {
+            Text("Draw")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.82))
+        }
     }
 
     // MARK: - Split Probability Bar (Looks 1A / 1B only; hidden on 1C Final)
