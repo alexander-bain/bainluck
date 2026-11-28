@@ -235,7 +235,7 @@ struct PoliticsView: View {
             }
 
             // Probability
-            Text("\(Int(c.merged.rounded()))%")
+            Text(formatProbability(c.merged / 100.0))
                 .font(.system(size: 13, weight: .bold, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(isLeader ? DS.textPrimary : DS.textMuted)
@@ -376,7 +376,7 @@ struct PoliticsView: View {
                         Text("GOP")
                             .font(.system(size: 11))
                             .foregroundStyle(DS.textSecondary)
-                        Text("\(Int(probs.gop))%")
+                        Text(formatProbability(probs.gop / 100.0))
                             .font(.system(size: 20, weight: .bold, design: .monospaced))
                             .monospacedDigit()
                             .foregroundStyle(gopLeads ? DS.textPrimary : DS.textMuted)
@@ -385,7 +385,7 @@ struct PoliticsView: View {
                     Spacer()
 
                     HStack(spacing: 4) {
-                        Text("\(Int(probs.dem))%")
+                        Text(formatProbability(probs.dem / 100.0))
                             .font(.system(size: 20, weight: .bold, design: .monospaced))
                             .monospacedDigit()
                             .foregroundStyle(!gopLeads ? DS.textPrimary : DS.textMuted)
@@ -530,7 +530,7 @@ struct PoliticsView: View {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
                         SourceChip(source: "kalshi")
-                        Text("\(Int(m.kalshi.rounded()))%")
+                        Text(formatProbability(m.kalshi / 100.0))
                             .font(.system(size: 20, weight: .bold, design: .monospaced))
                             .monospacedDigit()
                             .foregroundStyle(
@@ -541,7 +541,7 @@ struct PoliticsView: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         SourceChip(source: "polymarket")
-                        Text("\(Int(m.poly.rounded()))%")
+                        Text(formatProbability(m.poly / 100.0))
                             .font(.system(size: 20, weight: .bold, design: .monospaced))
                             .monospacedDigit()
                             .foregroundStyle(
@@ -633,7 +633,7 @@ struct PoliticsView: View {
                             .lineLimit(1)
                             .foregroundStyle(DS.textSecondary)
                         Spacer()
-                        Text("\(Int(o.prob))%")
+                        Text(formatProbability(o.prob / 100.0))
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
                             .monospacedDigit()
                             .foregroundStyle(

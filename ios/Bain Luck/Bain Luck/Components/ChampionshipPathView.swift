@@ -513,8 +513,6 @@ struct ChampionshipStageBadges: View {
     }
 
     static func formatProb(_ p: Double) -> String {
-        if p >= 0.995 { return ">99%" }
-        if p < 0.01 { return "<1%" }
-        return DiscoverRoundupCardModel.probabilityText(probability: p, renderedPercent: nil)
+        formatProbability(p)
     }
 }

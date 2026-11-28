@@ -163,8 +163,8 @@ nonisolated enum WatchComplicationProjection {
               validObservation(observedAt, savedAt: savedAt) else {
             return nil
         }
-        let subOne = probability < 0.005
-        let aboveNinetyNine = probability > 0.995
+        let subOne = probability < 0.01
+        let aboveNinetyNine = probability > 0.99
         let clampedPercent: Int = {
             if subOne { return 1 }
             if aboveNinetyNine { return 99 }
