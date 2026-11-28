@@ -372,6 +372,24 @@ function startedWindowStart(pairs: ProjectedPairObservation[], floor: number): n
   return start;
 }
 
+/**
+ * Before kickoff, draw every admitted projection reading the page already holds
+ * (not truncated to the last six hours), leaving overnight gaps unjoined via
+ * `PREGAME_MAX_CAPTURE_GAP_MS`. Falls back to `null` when no projection pair exists.
+ */
+function pregameWindowStart(pairs: ProjectedPairObservation[], end: number): number | null {
+  let earliest: number | null = null;
+  for (const pair of pairs) {
+    if (!isAdmittedKind(pair)) continue;
+    if (pair.home == null && pair.away == null) continue;
+    const at = parseTime(pair.timestamp);
+    if (at !== null && at <= end && (earliest === null || at < earliest)) {
+      earliest = at;
+    }
+  }
+  return earliest;
+}
+
 function isAdmittedKind(pair: ProjectedPairObservation): boolean {
   return pair.kind === undefined || pair.kind === "recorded";
 }
@@ -400,7 +418,9 @@ export function buildProjectedFinalPointsSeries(
   const started = scoreFloor !== null && scoreFloor <= end;
   const start =
     parseTime(input.windowStartAt) ??
-    (started ? startedWindowStart(input.pairs, scoreFloor) : end - DEFAULT_WINDOW_MS);
+    (started
+      ? startedWindowStart(input.pairs, scoreFloor)
+      : (pregameWindowStart(input.pairs, end) ?? end - DEFAULT_WINDOW_MS));
 
   const actualSteps = phase === "before" ? [] : admitActuals(input, scoreFloor, end);
 

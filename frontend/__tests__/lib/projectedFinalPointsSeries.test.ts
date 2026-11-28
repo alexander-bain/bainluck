@@ -405,9 +405,26 @@ describe("the default window", () => {
     expect(supported(nflInput({ pairs })).start).toBe(ms(KICKOFF));
   });
 
-  it("looks back six hours from now before kickoff", () => {
-    const s = supported(nflInput({ kickoffAt: null, finalAt: null, asOf: "2026-09-29T00:00:00Z" }));
-    expect(s.start).toBe(ms("2026-09-29T00:00:00Z") - 6 * 60 * 60 * 1000);
+  it("before kickoff, draws every admitted reading the page already holds (two days) and leaves overnight gaps unjoined", () => {
+    const s = supported(
+      nflInput({
+        kickoffAt: null,
+        finalAt: null,
+        asOf: "2026-09-29T15:18:00Z",
+        pairs: [
+          { timestamp: "2026-09-27T18:00:00Z", home: null, away: null, kind: "recorded" },
+          { timestamp: "2026-09-27T20:00:00Z", home: 23.0, away: 20.5, homeProbability: 0.58, kind: "recorded" },
+          { timestamp: "2026-09-27T21:00:00Z", home: 23.5, away: 20.0, homeProbability: 0.6, kind: "recorded" },
+          { timestamp: "2026-09-28T15:00:00Z", home: 24.5, away: 20.0, homeProbability: 0.62, kind: "recorded" },
+          { timestamp: "2026-09-29T15:15:00Z", home: 25.0, away: 19.5, homeProbability: 0.65, kind: "recorded" },
+        ],
+      }),
+    );
+    expect(s.start).toBe(ms("2026-09-27T20:00:00Z"));
+    expect(s.segments).toHaveLength(3);
+    expect(s.segments[0].map((p) => p.at)).toEqual([ms("2026-09-27T20:00:00Z"), ms("2026-09-27T21:00:00Z")]);
+    expect(s.segments[1].map((p) => p.at)).toEqual([ms("2026-09-28T15:00:00Z")]);
+    expect(s.segments[2].map((p) => p.at)).toEqual([ms("2026-09-29T15:15:00Z")]);
   });
 });
 
