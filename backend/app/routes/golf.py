@@ -6,6 +6,7 @@ Groups by tournament, merges cross-source golfer odds, and computes biggest move
 Enriches with PGA tour schedule from DataGolf for accurate current-event detection.
 """
 
+import asyncio
 import logging
 import re
 import sys
@@ -26,6 +27,18 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db
 from app.utils import golf_tournament_cache
+from app.utils.golf_blended_timeline import (
+    GOLF_TIMELINE_FULL_MAX_HOURS,
+    SnapshotReading,
+    _ensure_utc,
+    build_golf_blended_timeline,
+    closed_bucket_cache_key,
+    detach_winner_market,
+    get_closed_bucket_cache,
+    get_or_build_cached_timeline,
+    history_fetch_floor,
+    put_closed_bucket_cache,
+)
 from app.utils.golf_evolution_market import (
     NON_CONTENDER_WINNER_RE,
     SETTLED_RESOLVE_MIN,
@@ -5660,6 +5673,231 @@ async def get_golf_tournament(
         "h2h_matchups": tournament.get("h2h_matchups", []),
         "round_top_groups": round_top_groups,
     }
+
+
+def _parse_golf_dt(raw) -> datetime | None:
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = datetime.fromisoformat(raw.strip())
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+@router.get("/tournaments/{slug}/probability-timeline")
+async def get_golf_tournament_probability_timeline(
+    slug: str,
+    response: Response,
+    top: int = Query(10, ge=1, le=50),
+    hours: int = Query(168, ge=1, le=GOLF_TIMELINE_FULL_MAX_HOURS),
+    history_range: str | None = Query(None, alias="range"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Blended, field-normalized probability timeline for a golf tournament (#13426).
+
+    Matches ``/api/futures/{id}/probability-timeline`` timestamping (bucket start
+    UTC, carrying latest in-force readings before bucket close). Keeps 15-minute
+    steps once play starts while coarsening only pre-tee history, anchors
+    window bounds on finished tournaments to their own final reading, enforces
+    one 90-day ceiling across ``hours`` and ``range=full``, and reuses closed
+    historical buckets in-process across live refreshes.
+    """
+
+    async def _build_uncached() -> tuple[dict, bool]:
+        golf_data = await get_golf(db=db)
+        tournaments = golf_data.get("tournaments", [])
+
+        tournament = None
+        for t in tournaments:
+            t_slug = t.get("slug") or _clean_slug(t["name"])
+            if t_slug == slug:
+                tournament = t
+                break
+
+        from_completed_builder = False
+        if not tournament:
+            tournament = await _build_completed_tournament(slug, db, golf_data=golf_data)
+            from_completed_builder = tournament is not None
+            if not tournament:
+                raise HTTPException(status_code=404, detail=f"Tournament '{slug}' not found")
+
+        tourn_key = tournament.get("key") or slug
+        market_ids = list(tournament.get("market_ids") or [])
+
+        # Q1 parity: load the exact market set held by the tournament entry
+        # (the same list `_build_one_tournament` consumes) instead of pruning
+        # via evolution-chart heuristics. Non-winner/withheld/Yes-No markets
+        # stay in `tourn_markets` so `_build_one_tournament`'s `market_sources`
+        # and invitee gate behave identically, while only winner-field outcome
+        # IDs enter the snapshot SQL query.
+        tourn_markets = []
+        outcome_ids: list[int] = []
+        if market_ids:
+            loaded_rows = (
+                await db.execute(
+                    select(FuturesMarket)
+                    .options(selectinload(FuturesMarket.outcomes))
+                    .where(FuturesMarket.id.in_(market_ids))
+                )
+            ).scalars().unique().all()
+            loaded_by_id = {m.id: m for m in loaded_rows}
+            for mid in market_ids:
+                market = loaded_by_id.get(mid)
+                if market is None:
+                    continue
+                detached = detach_winner_market(market)
+                tourn_markets.append(detached)
+
+                src = detached.source or "unknown"
+                if withhold_individual_market(tourn_key, src, detached.external_id):
+                    continue
+                if _NON_WINNER_MARKET_RE.search(detached.name):
+                    continue
+                if len(detached.outcomes) <= 2:
+                    names = {o.name.strip().lower() for o in detached.outcomes if o.name}
+                    if names & {"yes", "no"}:
+                        continue
+                outcome_ids.extend(o.id for o in detached.outcomes)
+
+        full_range = (history_range or "").strip().lower() in ("full", "all")
+        now = datetime.now(timezone.utc)
+        schedule_status_l = (tournament.get("schedule_status") or "").lower()
+        is_live = schedule_status_l in ("in_progress", "in-progress", "live")
+        is_completed = (
+            from_completed_builder
+            or schedule_status_l in ("completed", "final", "finished")
+            or bool(tournament.get("winner_market_id"))
+            or (
+                bool(tourn_markets)
+                and all((m.status or "open") != "open" for m in tourn_markets)
+            )
+        )
+
+        readings: list[SnapshotReading] = []
+        if outcome_ids:
+            read_anchor: datetime | None = now
+            if is_completed:
+                max_ts = (
+                    await db.execute(
+                        select(sqlfunc.max(FuturesOddsSnapshot.captured_at)).where(
+                            FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+                            FuturesOddsSnapshot.probability.isnot(None),
+                        )
+                    )
+                ).scalar_one_or_none()
+                read_anchor = _ensure_utc(max_ts) if max_ts is not None else None
+
+            if read_anchor is not None:
+                fetch_floor = history_fetch_floor(
+                    read_anchor,
+                    hours=hours,
+                    full_range=full_range,
+                    max_reading_age=PREGAME_READING_MAX_AGE,
+                )
+                predicates = [
+                    FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+                    FuturesOddsSnapshot.probability.isnot(None),
+                    sqlfunc.coalesce(
+                        FuturesOddsSnapshot.valid_until,
+                        FuturesOddsSnapshot.captured_at,
+                    ) >= fetch_floor,
+                ]
+                if is_completed:
+                    predicates.append(FuturesOddsSnapshot.captured_at <= read_anchor)
+                snap_stmt = (
+                    select(
+                        FuturesOddsSnapshot.outcome_id,
+                        FuturesOddsSnapshot.captured_at,
+                        FuturesOddsSnapshot.valid_until,
+                        FuturesOddsSnapshot.probability,
+                        FuturesOddsSnapshot.yes_bid,
+                        FuturesOddsSnapshot.yes_ask,
+                    )
+                    .where(*predicates)
+                    .order_by(FuturesOddsSnapshot.captured_at)
+                )
+                for row in (await db.execute(snap_stmt)).all():
+                    readings.append(
+                        SnapshotReading(
+                            outcome_id=row.outcome_id,
+                            captured_at=row.captured_at,
+                            valid_until=row.valid_until,
+                            probability=row.probability,
+                            yes_bid=row.yes_bid,
+                            yes_ask=row.yes_ask,
+                        )
+                    )
+
+        commence_dt = _parse_golf_dt(tournament.get("pregame_as_of")) or _parse_golf_dt(
+            tournament.get("commence_time") or tournament.get("start_date")
+        )
+        plain_entry = {
+            "key": tourn_key,
+            "name": tournament.get("name") or slug,
+            "market_ids": market_ids,
+            "market_sources": list(tournament.get("market_sources") or []),
+            "golfers": [dict(g) for g in (tournament.get("golfers") or [])],
+            "_all_golfers": [dict(g) for g in (tournament.get("_all_golfers") or [])],
+        }
+        golfers_list = plain_entry["_all_golfers"] or plain_entry["golfers"]
+        current_normalized = bool(golfers_list) and all(
+            "rendered_percent" in g for g in golfers_list
+        )
+        cb_key = closed_bucket_cache_key(
+            slug, [m.id for m in tourn_markets], current_normalized
+        )
+        cb_copy = get_closed_bucket_cache(cb_key)
+        build_stats: dict[str, int] = {}
+
+        t0 = time.perf_counter()
+        payload = await asyncio.to_thread(
+            build_golf_blended_timeline,
+            tourn_key,
+            tourn_markets,
+            plain_entry,
+            readings,
+            build_entry=lambda k, mkts, snaps: _build_one_tournament(
+                k, [_AsOfMarket(m, snaps) for m in mkts], {}
+            ),
+            match_key_fn=_match_key,
+            top=top,
+            hours=hours,
+            full_range=full_range,
+            commence_time=commence_dt,
+            is_live=is_live,
+            max_reading_age=PREGAME_READING_MAX_AGE,
+            closed_bucket_cache=cb_copy,
+            build_stats=build_stats,
+            now=now,
+        )
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        put_closed_bucket_cache(cb_key, cb_copy)
+        logger.info(
+            "Golf blended timeline built slug=%s range=%s hours=%d points=%d "
+            "bucket_s=%s evaluated=%d reused=%d elapsed_ms=%.1f",
+            slug,
+            history_range or "hours",
+            hours,
+            len(payload.get("timeline") or []),
+            payload.get("bucket_seconds"),
+            build_stats.get("evaluated", 0),
+            build_stats.get("reused", 0),
+            elapsed_ms,
+        )
+        return payload, is_live
+
+    payload, cache_state = await get_or_build_cached_timeline(
+        slug,
+        top=top,
+        hours=hours,
+        history_range=history_range,
+        builder=_build_uncached,
+    )
+    response.headers["X-Timeline-Cache"] = cache_state
+    return payload
 
 
 # ============================================================================
