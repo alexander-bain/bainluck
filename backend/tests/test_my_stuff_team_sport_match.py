@@ -1,4 +1,4 @@
-"""Guard tests for Item 1: My Stuff team-name matching requires the followed team's own sport."""
+"""Guard tests for Item 1: My Stuff team-name matching requires same sport family & gender."""
 
 from __future__ import annotations
 
@@ -9,15 +9,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+import sqlalchemy as sa
 from fastapi import FastAPI
 from sqlalchemy.dialects import postgresql
 
 from app.dependencies.auth import get_optional_user
-from app.models.models import Event
-from app.routes.feed import _score_events, router as feed_router
+from app.models.models import Event, Sport
+from app.routes import feed as feed_mod
+from app.routes.feed import (
+    _score_events,
+    _sport_key_compatible_sql,
+    router as feed_router,
+)
 from app.services import get_db
 from app.utils import principal_independent_cache as pic
 from app.utils.personalization import PersonalizationContext
+from app.utils.sport_keys import same_sport_same_gender
 
 
 def _now() -> datetime:
@@ -205,8 +212,311 @@ async def test_query_and_per_game_filter_admit_football_and_exclude_basketball()
     )
     sql = str(compiled)
     assert "%notre dame fighting irish%" in sql.lower()
-    assert sql.count("sports.key IN ('americanfootball_ncaaf')") >= 2
-    assert ") AND sports.key IN ('americanfootball_ncaaf')" in sql
+    assert "lower(sports.key) = 'americanfootball'" in sql.lower()
+    assert "americanfootball/_%" in sql.lower()
+    assert "not (" in sql.lower()
+
+
+@pytest.mark.asyncio
+async def test_nd_football_excludes_womens_hoops_even_when_allowlisted(monkeypatch):
+    """Non-vacuous: even if basketball_wncaab enters MY_STUFF_ALLOWED_SPORT_KEYS,
+    Notre Dame women's basketball still cannot match a Notre Dame football follow.
+    """
+    monkeypatch.setattr(
+        feed_mod,
+        "MY_STUFF_ALLOWED_SPORT_KEYS",
+        feed_mod.MY_STUFF_ALLOWED_SPORT_KEYS | {"basketball_wncaab"},
+    )
+    now = _now()
+    nd_football = _make_event(
+        111,
+        "americanfootball_ncaaf",
+        "Notre Dame Fighting Irish",
+        "USC Trojans",
+        now=now,
+    )
+    nd_mens_hoops = _make_event(
+        112,
+        "basketball_ncaab",
+        "Notre Dame Fighting Irish",
+        "Duke Blue Devils",
+        now=now,
+    )
+    nd_womens_hoops = _make_event(
+        113,
+        "basketball_wncaab",
+        "UConn Huskies",
+        "Notre Dame Fighting Irish",
+        now=now,
+    )
+    db = _RecordingDb([nd_football, nd_mens_hoops, nd_womens_hoops])
+
+    items = await _run_score_events(
+        db,
+        [nd_football, nd_mens_hoops, nd_womens_hoops],
+        ctx=_make_ctx({42: {"follow"}}),
+        my_team_names=["Notre Dame Fighting Irish"],
+        my_team_sport_keys={"Notre Dame Fighting Irish": {"americanfootball_ncaaf"}},
+    )
+    assert [item["data"]["id"] for item in items] == [111]
+
+
+@pytest.mark.asyncio
+async def test_arsenal_premier_league_follow_keeps_champions_league_and_excludes_womens(
+    monkeypatch,
+):
+    """Club follow in one league keeps other competitions of the same sport & gender.
+
+    Production specimen: Arsenal (id=133, soccer_epl) vs Champions League Arsenal
+    (event 15354424, soccer_uefa_champs_league, team id=6314) vs Women's Champions
+    League Arsenal (event 15349510, soccer_uefa_champs_league_women).
+    """
+    # Test both unpatched MY_STUFF_ALLOWED_SPORT_KEYS (Champions League is already in it)
+    # and with women's UCL allowlisted so the gender gate itself is proven non-vacuous.
+    now = _now()
+    arsenal_epl = _make_event(
+        15350001,
+        "soccer_epl",
+        "Arsenal",
+        "Chelsea",
+        now=now,
+        home_team_id=133,
+    )
+    arsenal_mens_ucl = _make_event(
+        15354424,
+        "soccer_uefa_champs_league",
+        "Arsenal",
+        "Real Madrid",
+        now=now,
+        home_team_id=None,
+    )
+    arsenal_womens_ucl = _make_event(
+        15349510,
+        "soccer_uefa_champs_league_women",
+        "Arsenal",
+        "Lyon",
+        now=now,
+        home_team_id=None,
+    )
+    arsenal_unrelated_hoops = _make_event(
+        15359999,
+        "basketball_nba",
+        "Arsenal",
+        "Boston Celtics",
+        now=now,
+    )
+    all_events = [
+        arsenal_epl,
+        arsenal_mens_ucl,
+        arsenal_womens_ucl,
+        arsenal_unrelated_hoops,
+    ]
+
+    db_default = _RecordingDb([arsenal_epl, arsenal_mens_ucl, arsenal_unrelated_hoops])
+    items_default = await _run_score_events(
+        db_default,
+        [arsenal_epl, arsenal_mens_ucl, arsenal_unrelated_hoops],
+        ctx=_make_ctx({133: {"follow"}}),
+        my_team_names=["Arsenal"],
+        my_team_sport_keys={"Arsenal": {"soccer_epl"}},
+    )
+    assert sorted(item["data"]["id"] for item in items_default) == [
+        15350001,
+        15354424,
+    ]
+
+    monkeypatch.setattr(
+        feed_mod,
+        "MY_STUFF_ALLOWED_SPORT_KEYS",
+        feed_mod.MY_STUFF_ALLOWED_SPORT_KEYS | {"soccer_uefa_champs_league_women"},
+    )
+    db_women_allowed = _RecordingDb(all_events)
+    items_women_allowed = await _run_score_events(
+        db_women_allowed,
+        all_events,
+        ctx=_make_ctx({133: {"follow"}}),
+        my_team_names=["Arsenal"],
+        my_team_sport_keys={"Arsenal": {"soccer_epl"}},
+    )
+    assert sorted(item["data"]["id"] for item in items_women_allowed) == [
+        15350001,
+        15354424,
+    ]
+
+    sql = str(
+        db_women_allowed.event_stmts[0].compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert "lower(sports.key) = 'soccer'" in sql.lower()
+    assert "soccer/_%" in sql.lower()
+    assert "/_women%" in sql.lower()
+    assert "sports.key in ('soccer_epl')" not in sql.lower()
+
+
+@pytest.mark.asyncio
+async def test_womens_club_follow_keeps_womens_competitions_and_excludes_mens(
+    monkeypatch,
+):
+    """Reverse direction: a women's follow keeps women's soccer and excludes men's."""
+    monkeypatch.setattr(
+        feed_mod,
+        "MY_STUFF_ALLOWED_SPORT_KEYS",
+        feed_mod.MY_STUFF_ALLOWED_SPORT_KEYS
+        | {"soccer_uefa_champs_league_women", "soccer_england_wsl_women"},
+    )
+    now = _now()
+    arsenal_wsl = _make_event(
+        501,
+        "soccer_england_wsl_women",
+        "Arsenal",
+        "Chelsea",
+        now=now,
+    )
+    arsenal_womens_ucl = _make_event(
+        502,
+        "soccer_uefa_champs_league_women",
+        "Arsenal",
+        "Lyon",
+        now=now,
+    )
+    arsenal_mens_epl = _make_event(
+        503,
+        "soccer_epl",
+        "Arsenal",
+        "Tottenham Hotspur",
+        now=now,
+    )
+    arsenal_mens_ucl = _make_event(
+        504,
+        "soccer_uefa_champs_league",
+        "Arsenal",
+        "Real Madrid",
+        now=now,
+    )
+    db = _RecordingDb(
+        [arsenal_wsl, arsenal_womens_ucl, arsenal_mens_epl, arsenal_mens_ucl]
+    )
+    items = await _run_score_events(
+        db,
+        [arsenal_wsl, arsenal_womens_ucl, arsenal_mens_epl, arsenal_mens_ucl],
+        ctx=_make_ctx({700: {"follow"}}),
+        my_team_names=["Arsenal"],
+        my_team_sport_keys={"Arsenal": {"soccer_england_wsl_women"}},
+    )
+    assert sorted(item["data"]["id"] for item in items) == [501, 502]
+
+
+@pytest.mark.asyncio
+async def test_basketball_mens_and_womens_gender_keys_stay_separate(monkeypatch):
+    """WNCAAB / WNBA keys are female-coded even without ``_women`` in the key string."""
+    monkeypatch.setattr(
+        feed_mod,
+        "MY_STUFF_ALLOWED_SPORT_KEYS",
+        feed_mod.MY_STUFF_ALLOWED_SPORT_KEYS | {"basketball_wncaab"},
+    )
+    now = _now()
+    nd_mens = _make_event(
+        601,
+        "basketball_ncaab",
+        "Notre Dame Fighting Irish",
+        "Duke Blue Devils",
+        now=now,
+    )
+    nd_womens = _make_event(
+        602,
+        "basketball_wncaab",
+        "Notre Dame Fighting Irish",
+        "UConn Huskies",
+        now=now,
+    )
+    nd_football = _make_event(
+        603,
+        "americanfootball_ncaaf",
+        "Notre Dame Fighting Irish",
+        "USC Trojans",
+        now=now,
+    )
+
+    db_men = _RecordingDb([nd_mens, nd_womens, nd_football])
+    items_men = await _run_score_events(
+        db_men,
+        [nd_mens, nd_womens, nd_football],
+        ctx=_make_ctx({801: {"follow"}}),
+        my_team_names=["Notre Dame Fighting Irish"],
+        my_team_sport_keys={"Notre Dame Fighting Irish": {"basketball_ncaab"}},
+    )
+    assert [item["data"]["id"] for item in items_men] == [601]
+
+    db_women = _RecordingDb([nd_mens, nd_womens, nd_football])
+    items_women = await _run_score_events(
+        db_women,
+        [nd_mens, nd_womens, nd_football],
+        ctx=_make_ctx({802: {"follow"}}),
+        my_team_names=["Notre Dame Fighting Irish"],
+        my_team_sport_keys={"Notre Dame Fighting Irish": {"basketball_wncaab"}},
+    )
+    assert [item["data"]["id"] for item in items_women] == [602]
+
+    assert same_sport_same_gender("basketball_nba", "basketball_ncaab") is True
+    assert same_sport_same_gender("basketball_nba", "basketball_wnba") is False
+    assert same_sport_same_gender("basketball_wnba", "basketball_wncaab") is True
+    assert same_sport_same_gender("basketball_wnba", "basketball_ncaab") is False
+
+
+def test_sql_and_python_gender_sport_filters_match_exactly():
+    """``_sport_key_compatible_sql`` executes 1:1 with ``same_sport_same_gender``."""
+    sport_keys = (
+        "americanfootball_ncaaf",
+        "americanfootball_nfl",
+        "basketball_ncaab",
+        "basketball_nba",
+        "basketball_wncaab",
+        "basketball_wnba",
+        "soccer_epl",
+        "soccer_usa_mls",
+        "soccer_uefa_champs_league",
+        "soccer_uefa_champs_league_women",
+        "soccer_england_wsl_women",
+        "soccer_spain_la_liga",
+        "soccer_other",
+        "tennis_atp",
+        "tennis_wta",
+        "golf_pga",
+        "rugbyleague_nrl",
+        "rugbyleague_nrlw",
+        "rugbyunion_six_nations",
+        "rugby_other",
+        "aussierules_afl",
+        "aussierules_aflw",
+        "icehockey_nhl",
+        "baseball_mlb",
+        "mma_mixed_martial_arts",
+    )
+    engine = sa.create_engine("sqlite://")
+    Sport.__table__.create(engine)
+    try:
+        with engine.begin() as conn:
+            for idx, key in enumerate(sport_keys, start=1):
+                conn.execute(
+                    sa.insert(Sport.__table__).values(id=idx, key=key, name=key)
+                )
+        with engine.connect() as conn:
+            for fk in sport_keys:
+                cond = _sport_key_compatible_sql({fk})
+                sql_matches = {
+                    row[0]
+                    for row in conn.execute(sa.select(Sport.key).where(cond))
+                }
+                py_matches = {
+                    ek for ek in sport_keys if same_sport_same_gender(fk, ek)
+                }
+                assert sql_matches == py_matches, (
+                    f"Mismatch for {fk!r}: sql={sorted(sql_matches)} py={sorted(py_matches)}"
+                )
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.asyncio

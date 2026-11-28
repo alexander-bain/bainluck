@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import (
     select,
     and_,
+    not_,
     or_,
     func,
     case,
@@ -352,7 +353,14 @@ from app.utils.futures_field_coverage import (
 from app.utils.futures_unsupported_price import row_carries_a_verdict
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.name_normalization import names_match as _team_name_matches
-from app.utils.sport_keys import SPORT_LEAGUE_MAP, sport_display_name
+from app.utils.sport_keys import (
+    SPORT_LEAGUE_MAP,
+    _WOMENS_COMPETITION_KEYS,
+    competition_gender,
+    same_sport_same_gender,
+    sport_display_name,
+    sport_family_key,
+)
 from app.utils.outcome_display import (
     display_rank_order,
     drop_dominant_field_outcomes,
@@ -12688,6 +12696,61 @@ def _personalization_category_from_sport_key(sport_key: str | None) -> str | Non
     return root
 
 
+def _sport_key_compatible_sql(followed_keys: Collection[str] | None):
+    """SQL twin of ``same_sport_same_gender(fk, Sport.key)`` for My Stuff filtering.
+
+    Matches across competitions within the same sport family (e.g., an Arsenal
+    Premier League follow in ``soccer_epl`` keeps ``soccer_uefa_champs_league``)
+    while rejecting cross-sport matches (e.g., football vs basketball) and
+    men's/women's crossovers when the key identifies competition gender.
+    """
+    if not followed_keys:
+        return None
+
+    low_key = func.lower(Sport.key)
+    womens_sql = or_(
+        low_key.in_(sorted(_WOMENS_COMPETITION_KEYS)),
+        low_key.like("%/_women%", escape="/"),
+        low_key == "tennis_wta",
+        low_key.like("tennis/_wta/_%", escape="/"),
+    )
+    catch_all_sql = low_key.like("%/_other", escape="/")
+
+    clauses = []
+    for fk in sorted(followed_keys):
+        fam = sport_family_key(fk)
+        if fam is None:
+            return true()
+        fam_lower = fam.lower()
+        escaped_fam = (
+            fam_lower.replace("/", "//").replace("%", "/%").replace("_", "/_")
+        )
+        if fam_lower == "rugby":
+            fam_cond = low_key.like("rugby%")
+        elif fam_lower in ("rugbyleague", "rugbyunion"):
+            fam_cond = or_(
+                low_key == fam_lower,
+                low_key.like(f"{escaped_fam}/_%", escape="/"),
+                low_key == "rugby",
+                low_key == "rugby_other",
+            )
+        else:
+            fam_cond = or_(
+                low_key == fam_lower,
+                low_key.like(f"{escaped_fam}/_%", escape="/"),
+            )
+
+        gender = competition_gender(fk)
+        if gender is None:
+            clauses.append(fam_cond)
+        elif gender == "women":
+            clauses.append(and_(fam_cond, or_(catch_all_sql, womens_sql)))
+        else:
+            clauses.append(and_(fam_cond, or_(catch_all_sql, not_(womens_sql))))
+
+    return or_(*clauses) if clauses else None
+
+
 def _build_personalization_trace(
     *,
     ctx: PersonalizationContext,
@@ -13020,11 +13083,10 @@ async def _score_events(
                     )
                     if my_team_sport_keys is not None:
                         allowed_keys = my_team_sport_keys.get(tn)
-                        if not allowed_keys:
+                        sport_cond = _sport_key_compatible_sql(allowed_keys)
+                        if sport_cond is None:
                             continue
-                        team_conditions.append(
-                            and_(name_cond, Sport.key.in_(sorted(allowed_keys)))
-                        )
+                        team_conditions.append(and_(name_cond, sport_cond))
                     else:
                         team_conditions.append(name_cond)
             if team_conditions:
@@ -13384,7 +13446,10 @@ async def _score_events(
                     for team_name in my_team_names or []:
                         if my_team_sport_keys is not None:
                             allowed_keys = my_team_sport_keys.get(team_name)
-                            if not allowed_keys or event_sport_key not in allowed_keys:
+                            if not allowed_keys or not any(
+                                same_sport_same_gender(fk, event_sport_key)
+                                for fk in allowed_keys
+                            ):
                                 continue
                         if _team_name_matches(team_name, home_name):
                             matched_by_name = True
