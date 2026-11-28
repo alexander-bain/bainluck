@@ -221,4 +221,17 @@ final class AppClip12307Tests: XCTestCase {
             eventJSON(status: "completed", homeScore: 27, awayScore: 24, extra: #", "hero_settled_result": "home""#), as: .game)
         XCTAssertNil(ClipLoader12307.gameScoreClock(finalPayload))
     }
+
+    func testSubOneAndAboveNinetyNineProbabilitiesUseThresholdMarkers() throws {
+        let extremeJSON = Data("""
+        {"id": 14780576, "sport": "americanfootball_nfl", "home_team": "Minnesota Vikings", "away_team": "Buffalo Bills",
+         "status": "live", "commence_time": "\(iso(t0.addingTimeInterval(-3600)))", "home_score": 21, "away_score": 0,
+         "current_odds": {"home_probability": 0.994, "away_probability": 0.006},
+         "hero_probability_source": "blend", "hero_probability_observed_at": "\(iso(t0))"}
+        """.utf8)
+        let payload = try SavedWidgetDetailPayload10875.decode(extremeJSON, as: .game)
+        let reading = ClipLoader12307.reading(payload, at: t0)
+        XCTAssertEqual(reading.rows.map(\.figure), ["<1%", ">99%"])
+        XCTAssertEqual(reading.headline?.figure, ">99%")
+    }
 }

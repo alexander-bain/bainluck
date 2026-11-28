@@ -14,9 +14,11 @@
   path most needs to be able to state.
 
   signingStyle is automatic to match the project (CODE_SIGN_STYLE = Automatic),
-  and the two "iOS Team Store Provisioning Profile" profiles this needs — for
-  com.bainluck.Bain-Luck and com.bainluck.Bain-Luck.BainLuckWidget — are already
-  installed on the build machine. The script's preflight asserts both, because
+  and the App Store distribution profiles this needs — for
+  com.bainluck.Bain-Luck, com.bainluck.Bain-Luck.BainLuckWidget,
+  com.bainluck.Bain-Luck.Clip, com.bainluck.Bain-Luck.watchkitapp, and
+  com.bainluck.Bain-Luck.watchkitapp.SavedGlance — are already installed on the
+  build machine. The script's preflight asserts each present target, because
   their absence is an export failure five minutes into an archive, not at the
   start.
 -->

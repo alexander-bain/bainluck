@@ -102,6 +102,9 @@ DELIVER_LOG="$LOG_DIR/native-upload-deliver.txt"
 SCHEME="${NATIVE_UPLOAD_SCHEME:-Bain Luck}"
 APP_BUNDLE_ID="com.bainluck.Bain-Luck"
 WIDGET_BUNDLE_ID="com.bainluck.Bain-Luck.BainLuckWidget"
+CLIP_BUNDLE_ID="com.bainluck.Bain-Luck.Clip"
+# Physical invocation (QR/NFC) uncompressed size ceiling for iOS App Clips.
+CLIP_MAX_UNCOMPRESSED_BYTES=15728640
 PROFILE_DIR="${NATIVE_PROFILE_DIR:-$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles}"
 
 MODE=""
@@ -276,9 +279,17 @@ store_profile_for() {
 # a bundle id under the app's own id is a bundle the app carries. Build 37's
 # tree named its Watch app com.bainluck.BainLuckWatch.watchkitapp, outside the
 # app's id, and it was not embedded; that tree still asks for two profiles.
+HAS_APP_CLIP=0
+if /usr/bin/grep -q "com\.apple\.product-type\.application\.on-demand-install-capable" "$PBXPROJ" 2>/dev/null; then
+  HAS_APP_CLIP=1
+fi
 EMBEDDED_BUNDLE_IDS=$(/usr/bin/grep -o "PRODUCT_BUNDLE_IDENTIFIER = \"\{0,1\}$APP_BUNDLE_ID\.[A-Za-z0-9.-]*" "$PBXPROJ" 2>/dev/null \
   | /usr/bin/sed 's/.*= "\{0,1\}//' | sort -u)
-PROFILE_BUNDLE_IDS=$(printf '%s\n' "$APP_BUNDLE_ID" "$WIDGET_BUNDLE_ID" $EMBEDDED_BUNDLE_IDS | awk 'NF && !seen[$0]++')
+if [ "$HAS_APP_CLIP" = "1" ]; then
+  PROFILE_BUNDLE_IDS=$(printf '%s\n' "$APP_BUNDLE_ID" "$WIDGET_BUNDLE_ID" "$CLIP_BUNDLE_ID" $EMBEDDED_BUNDLE_IDS | awk 'NF && !seen[$0]++')
+else
+  PROFILE_BUNDLE_IDS=$(printf '%s\n' "$APP_BUNDLE_ID" "$WIDGET_BUNDLE_ID" $EMBEDDED_BUNDLE_IDS | awk 'NF && !seen[$0]++')
+fi
 
 for bid in $PROFILE_BUNDLE_IDS; do
   if found=$(store_profile_for "$bid"); then
@@ -413,6 +424,45 @@ if [ "$MODE" = "dry-run" ]; then
   exit 0
 fi
 
+# Verifies an embedded App Clip bundle in either the archive or exported .ipa:
+# exists under AppClips/*.app, matches CLIP_BUNDLE_ID / host version / build,
+# and stays below Apple's 15 MB uncompressed physical-invocation ceiling.
+verify_embedded_clip() {
+  local parent_dir="$1" expected_ver="$2" tag="$3"
+  local clip_app c_bid c_ver c_build c_bytes c_mb
+  clip_app=$(find "$parent_dir" -maxdepth 3 -path '*/AppClips/*.app' -type d 2>/dev/null | head -1)
+  if [ -z "$clip_app" ] || [ ! -f "$clip_app/Info.plist" ]; then
+    fail=1
+    echo "FAIL: $tag contains no AppClips/*.app ($CLIP_BUNDLE_ID)."
+    return 1
+  fi
+  c_bid=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$clip_app/Info.plist" 2>/dev/null || echo "?")
+  c_ver=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$clip_app/Info.plist" 2>/dev/null || echo "?")
+  c_build=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$clip_app/Info.plist" 2>/dev/null || echo "?")
+  c_bytes=$(/usr/bin/python3 -c 'import os,sys
+total=0
+for root, dirs, files in os.walk(sys.argv[1]):
+    for n in files + dirs:
+        p=os.path.join(root, n)
+        if os.path.islink(p): total += os.lstat(p).st_size
+        elif os.path.isfile(p): total += os.path.getsize(p)
+print(total)' "$clip_app" 2>/dev/null || echo 0)
+  c_mb=$(/usr/bin/python3 -c 'import sys; print(f"{int(sys.argv[1])/1048576:.2f}")' "$c_bytes" 2>/dev/null || echo "?")
+  note "$tag clip: $(basename "$clip_app")  $c_bid  $c_ver ($c_build)  $c_bytes B (${c_mb} MB uncompressed)"
+  if [ "$c_bid" != "$CLIP_BUNDLE_ID" ]; then
+    fail=1
+    echo "FAIL: $tag App Clip bundle id is '$c_bid', expected '$CLIP_BUNDLE_ID'."
+  fi
+  if [ "$c_ver" != "$expected_ver" ] || [ "$c_build" != "$EFFECTIVE_BUILD" ]; then
+    fail=1
+    echo "FAIL: $tag App Clip version $c_ver ($c_build) disagrees with host $expected_ver ($EFFECTIVE_BUILD)."
+  fi
+  if [ "$c_bytes" -ge "$CLIP_MAX_UNCOMPRESSED_BYTES" ] 2>/dev/null; then
+    fail=1
+    echo "FAIL: $tag App Clip is $c_bytes B uncompressed (>= $CLIP_MAX_UNCOMPRESSED_BYTES B 15 MB limit)."
+  fi
+}
+
 # ─── ARCHIVE ──────────────────────────────────────────────────────────────────
 APP=""
 if [ "$REUSE_ARCHIVE" = "1" ]; then
@@ -478,6 +528,9 @@ else
       fail=1
       echo "FAIL: archive carries build $a_build, not the $EFFECTIVE_BUILD asked for."
     fi
+    if [ "$HAS_APP_CLIP" = "1" ]; then
+      verify_embedded_clip "$APP" "$a_ver" "archive"
+    fi
   fi
 fi
 
@@ -537,6 +590,10 @@ else
     if [ "$i_build" != "$EFFECTIVE_BUILD" ]; then
       fail=1
       echo "FAIL: the .ipa carries build $i_build, not $EFFECTIVE_BUILD — export renumbered it."
+    fi
+    if [ "$HAS_APP_CLIP" = "1" ]; then
+      /usr/bin/unzip -qq -o "$IPA" 'Payload/*/AppClips/*' -d "$tmp_ipa_dir" 2>/dev/null || true
+      verify_embedded_clip "$tmp_ipa_dir/Payload" "$i_ver" "ipa"
     fi
   fi
   rm -rf "$tmp_ipa_dir"

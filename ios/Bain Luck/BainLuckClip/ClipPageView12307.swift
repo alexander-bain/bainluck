@@ -146,7 +146,7 @@ struct ClipReadingView12307: View {
 
             VStack(spacing: 12) {
                 if reading.rows.isEmpty {
-                    Text(reading.phase == .noResult ? "No result recorded" : "No chance to show")
+                    Text(reading.phase == .noResult ? "No result recorded" : "No recent probability")
                         .font(.body.weight(.medium))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
