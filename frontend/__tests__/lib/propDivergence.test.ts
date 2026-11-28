@@ -81,7 +81,7 @@ describe("the measured surprise threshold", () => {
         polyRow("Big Mover", "Hits", 1.5, 0.1, 0.1 + PROP_SURPRISE_TRAVEL),
         polyRow("Small Mover", "Hits", 1.5, 0.1, 0.1 + PROP_SURPRISE_TRAVEL - 0.01),
       ],
-      status: "scheduled",
+      status: "live",
     });
     const big = res.rows.find((r) => r.player === "Big Mover")!;
     const small = res.rows.find((r) => r.player === "Small Mover")!;
@@ -346,7 +346,7 @@ describe("the label and the sentence", () => {
 
     const live = selectDivergenceRows({
       playerProps: [graded],
-      status: "scheduled",
+      status: "live",
     }).rows[0];
     const done = selectDivergenceRows({
       playerProps: [graded],

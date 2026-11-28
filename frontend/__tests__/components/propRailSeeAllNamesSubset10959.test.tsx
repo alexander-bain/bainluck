@@ -40,7 +40,8 @@ describe("#10959 — the rail's 'See all' never claims a different 'all' from th
     expect(r.eligible).toBe(14);
     expect(SUBSET.length).toBe(88);
     const out = text(<PropDivergenceRail playerProps={SUBSET} status="completed" />);
-    expect(out).toContain("See all 14 props priced at the open");
+    expect(out).toContain("See all 14 props in this view");
+    expect(out.toLowerCase()).not.toContain("open");
   });
 
   it("whole set: 1 eligible of 1 prop → plain 'See all 1 prop', no qualifier", () => {
@@ -49,7 +50,7 @@ describe("#10959 — the rail's 'See all' never claims a different 'all' from th
     expect(r.notSelected).toBeGreaterThan(0); // the expand renders at all
     const out = text(<PropDivergenceRail playerProps={WHOLE} status="completed" />);
     expect(out).toContain("See all 1 prop");
-    expect(out).not.toContain("priced at the open");
+    expect(out.toLowerCase()).not.toContain("open");
   });
 
   it("expanded: the toggle reads 'Show fewer' with no count either way", () => {
@@ -57,6 +58,6 @@ describe("#10959 — the rail's 'See all' never claims a different 'all' from th
       <PropDivergenceRail playerProps={SUBSET} status="completed" defaultExpanded />,
     );
     expect(out).toContain("Show fewer");
-    expect(out).not.toContain("priced at the open");
+    expect(out.toLowerCase()).not.toContain("open");
   });
 });

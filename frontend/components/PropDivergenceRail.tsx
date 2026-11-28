@@ -150,10 +150,9 @@ export default function PropDivergenceRail({ playerProps, status, defaultExpande
                 ? "Show fewer"
                 : `See all ${countOf(result.eligible, "prop", "props")}${
                     // #10959: the "All N props" card directly below counts every
-                    // prop; this counts only those with an opening mark and a
-                    // price. Two bare "all"s with different numbers contradict
-                    // each other, so the smaller one names its subset.
-                    result.eligible < (playerProps?.length ?? 0) ? " priced at the open" : ""
+                    // prop; this counts only those in this view. Reworded to avoid
+                    // quoting opening values before kickoff.
+                    result.eligible < (playerProps?.length ?? 0) ? " in this view" : ""
                   }`}
             </button>
             {expanded && (

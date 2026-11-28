@@ -346,72 +346,47 @@ describe("the state machine is a triple, not a boolean", () => {
     expect(isSettledStatus("who_knows")).toBe(false);
   });
 
-  it("pregame escalates on TRAVEL ONLY — conviction ranks, it does not narrate", () => {
-    // `pregame_mark` is the OPENING capture, not the price at first pitch, so
-    // pregame travel is the line move since the market opened — real, and up to
-    // 27.7 points on this population. Replacing travel with conviction outright
-    // deleted V1/V2's ruled escalation; three slice-1 tests caught it.
-    //
-    // The other direction took a rendered capture: escalating on conviction TOO
-    // put five sentences on a five-row rail, four of them restating their own
-    // bars. A pregame script sentence has nothing to escalate to — the bar
-    // already says "market says NO, 95%".
-    const moved = kalshiRow("Line Moved", 2, 0.5, 0.5 + PROP_SURPRISE_TRAVEL);
+  it("pregame suppresses opening-value sentences until opening values are audited", () => {
+    const moved = kalshiRow("Line Moved", 2, 0.5, 0.2);
     const convicted = kalshiRow("Heavy Favourite", 1, 0.5 + PROP_SCRIPT_CONVICTION);
-    const neither = kalshiRow("Quiet", 3, 0.6, 0.62);
+    const quiet = kalshiRow("Quiet", 3, 0.6, 0.62);
     const rows = selectDivergenceRows({
-      playerProps: [moved, convicted, neither],
+      playerProps: [moved, convicted, quiet],
       status: "scheduled",
     }).rows;
     const by = (n: string) => rows.find((r) => r.player === n)!;
-    expect(by("Line Moved").surprising).toBe(true);
-    expect(by("Line Moved").sentence).toBeTruthy();
-
-    // ── UX-P108 FLIPPED THE ORDER, AND ONLY THE ORDER ────────────────────────
-    //
-    // UX-P106 asserted `rows[0].player === "Heavy Favourite"` — conviction
-    // decided the order. Alex's movement-first ruling reverses it: a question
-    // the market CHANGED ITS MIND about outranks one it has merely been
-    // confident about since the board opened.
-    //
-    // ** AND THE FULL ORDER IS PINNED, BECAUSE ITS THIRD PLACE IS THE RULING'S
-    // SHARPEST EDGE. ** "Quiet" moved two points (60% -> 62%) and outranks a 93%
-    // favourite that has not moved at all. That is not an accident of this
-    // fixture, it is what a strict movement TIER means, and it is asserted here
-    // so the trade is visible in the suite rather than discovered on a card.
-    // See `PROP_TRAVEL_FLOOR` for why the tier's floor is the same half-point
-    // line that types `direction`: any higher and a row whose bar visibly draws
-    // a journey would rank below a flat one, which is the complaint this ruling
-    // came from, re-created one tier down.
-    expect(rows.map((r) => r.player)).toEqual(["Line Moved", "Quiet", "Heavy Favourite"]);
-    // … and the favourite STILL says nothing beyond its own bar. Demoting a row
-    // is not the same as narrating it, and this is the half UX-P106 established.
-    expect(by("Heavy Favourite").surprising).toBe(false);
+    expect(by("Line Moved").sentence).toBeNull();
     expect(by("Heavy Favourite").sentence).toBeNull();
-
-    expect(by("Quiet").surprising).toBe(false);
     expect(by("Quiet").sentence).toBeNull();
+    expect(rows.map((r) => r.player)).toEqual(["Line Moved", "Quiet", "Heavy Favourite"]);
   });
 
-  it("a five-row pregame rail is not five sentences", () => {
-    // The capture's finding, pinned. On the real Phillies payload the rail
-    // carried 5 of 5 before this was corrected.
+  it("a five-row pregame rail emits zero 'opened at' sentences before kickoff", () => {
     const rows = selectDivergenceRows({ playerProps: PHILLIES, status: "scheduled" }).rows;
     expect(rows).toHaveLength(5);
-    const withProse = rows.filter((r) => r.sentence != null).length;
-    expect(withProse).toBeLessThanOrEqual(2);
-    // Non-vacuity, both directions (gotcha #43): the escalation still HAPPENS.
-    expect(withProse).toBeGreaterThan(0);
+    expect(rows.every((r) => r.sentence === null)).toBe(true);
+    const htmlRail = renderToStaticMarkup(
+      <PropDivergenceRail playerProps={PHILLIES} status="scheduled" defaultExpanded />,
+    );
+    expect(htmlRail).toContain("The script");
+    expect(htmlRail.toLowerCase()).not.toContain("opened at");
+    expect(htmlRail.toLowerCase()).not.toContain("priced at the open");
+    const detail = selectDivergenceDetail({ playerProps: PHILLIES, status: "scheduled" });
+    expect([...detail.offScript, ...detail.onScript].every((r) => r.sentence === null)).toBe(true);
   });
 
-  it("a pregame row that MOVED gets the movement sentence, not the script one", () => {
-    const rows = selectDivergenceRows({
-      playerProps: [kalshiRow("Line Moved", 2, 0.3, 0.7)],
+  it("in-game still narrates moved rows while pregame suppresses the opening-value line", () => {
+    const preRows = selectDivergenceRows({
+      playerProps: [kalshiRow("Line Moved", 2, 0.5, 0.2)],
       status: "scheduled",
     }).rows;
-    expect(rows[0].sentence).toContain("opened at 30%");
-    expect(rows[0].sentence).toContain("70% now");
-    expect(rows[0].sentence).not.toContain("The market says");
+    expect(preRows[0].sentence).toBeNull();
+    const liveRows = selectDivergenceRows({
+      playerProps: [kalshiRow("Line Moved", 2, 0.5, 0.2)],
+      status: "live",
+    }).rows;
+    expect(liveRows[0].sentence).toContain("opened at 50%");
+    expect(liveRows[0].sentence).toContain("20% now");
   });
 });
 

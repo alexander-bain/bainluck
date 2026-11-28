@@ -1273,9 +1273,9 @@ function findLadderPivotContests(
   return contests;
 }
 
-/** V2's escalation, applied identically by all three views. */
+/** V2's escalation, applied identically by all three views. Suppressed before kickoff until opening-mark reliability is audited. */
 function withSentence(row: DivergenceRow, settled: boolean): DivergenceRow {
-  if (!row.surprising) return row;
+  if (!row.surprising || row.pregame) return row;
   return {
     ...row,
     // #9003: the sentence sits on top of the bar and quotes the bar's own
