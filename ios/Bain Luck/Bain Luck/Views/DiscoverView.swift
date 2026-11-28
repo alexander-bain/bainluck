@@ -671,6 +671,7 @@ struct DiscoverView: View {
         switch action {
         case .detailOpen: actionName = "open"
         case .like: actionName = "like"
+        case .likeUndo: actionName = "like_undo"
         case .unlike: actionName = "unlike"
         case .share: actionName = "share"
         case .contextExpand: actionName = "context_expand"
@@ -3511,8 +3512,11 @@ struct DiscoverView: View {
                 recordInteraction(for: item, action: .like, source: source)
             }
         } else {
-            // Undo removes the heart locally only and NEVER sends .unlike (#13769, 420: D).
+            // Undo keeps the card on screen and records neutral `like_undo` (#13829), NEVER `.unlike`.
             likedStore.unmarkLiked(key)
+            if resolution.emittedAction == "like_undo", let item {
+                recordInteraction(for: item, action: .likeUndo, source: source)
+            }
         }
     }
 
