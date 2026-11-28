@@ -496,20 +496,17 @@ def test_claim_frame_cleaning_preserves_raw_and_six_cases():
     assert fact_disagreements(label_rows[0], label_rows[1], market_title=cases[0][0]) == []
     assert fact_disagreements(label_rows[3], label_rows[4], market_title=cases[3][0]) == []
 
-    # Also exercise both modules end-to-end when cu_eval_scorecard (#13901) is present.
-    try:
-        from app.utils.cu_eval_scorecard import score_cu_eval_run
-    except ImportError:
-        score_cu_eval_run = None
-    if score_cu_eval_run is not None:
-        scorecard = score_cu_eval_run(
-            bundle["rows"],
-            predictions,
-            as_of="2026-06-15",
-            dataset="sealed",
-        )
-        frame_row = next(f for f in scorecard["fields"] if f["field"] == "frame")
-        assert frame_row["total"] == {"right": 5, "wrong": 0, "blank": 0, "said_not_known": 0, "total": 5}
+    # Exercise both modules end-to-end against cu_eval_scorecard (#13901) on master.
+    from app.utils.cu_eval_scorecard import score_cu_eval_run
+
+    scorecard = score_cu_eval_run(
+        bundle["rows"],
+        predictions,
+        as_of="2026-06-15",
+        dataset="sealed",
+    )
+    frame_row = next(f for f in scorecard["fields"] if f["field"] == "frame")
+    assert frame_row["total"] == {"right": 5, "wrong": 0, "blank": 0, "said_not_known": 0, "total": 5}
 
 
 def test_geography_country_picker_and_subject_chip_vs_custom_agreement():
@@ -597,29 +594,38 @@ def test_blind_subject_candidates_exclude_llm_metadata():
     assert "Micron Technology" in micron_chips
     assert "Inc" not in micron_chips
 
-    # Check all frozen market titles when datasets are loaded on this branch.
+    # Unconditionally check all 500 frozen market titles on master (no silent skip).
     question_starters = {
         "will", "who", "what", "when", "where", "which", "how",
         "is", "are", "was", "were", "does", "do", "did",
         "can", "could", "would", "should", "has", "have", "had",
     }
-    for split_name, path in DEFAULT_DATASET_PATHS.items():
-        if path.exists():
-            markets = json.loads(path.read_text(encoding="utf-8"))["markets"]
-            for market in markets:
-                for chip in extract_subject_candidates(market):
-                    assert chip.split()[0].lower() not in question_starters, (split_name, market["title"], chip)
+    corporate_suffixes = {"inc", "corp", "ltd", "llc", "plc"}
+    expected_counts = {"sealed": 300, "dev": 200}
+    checked_total = 0
+    for split_name, expected_n in expected_counts.items():
+        path = DEFAULT_DATASET_PATHS[split_name]
+        assert path.exists(), f"Missing frozen {split_name} dataset at {path}"
+        markets = json.loads(path.read_text(encoding="utf-8"))["markets"]
+        assert len(markets) == expected_n
+        checked_total += len(markets)
+        for market in markets:
+            for chip in extract_subject_candidates(market):
+                assert chip.split()[0].lower() not in question_starters, (split_name, market["title"], chip)
+                assert chip.rstrip(".").lower() not in corporate_suffixes, (split_name, market["title"], chip)
+    assert checked_total == 500
 
 
 def test_dev_shared_100_ids_checked_in_and_valid():
     assert DEFAULT_REPEATABILITY_PATH.exists()
+    assert DEFAULT_DATASET_PATHS["sealed"].exists()
+    assert DEFAULT_DATASET_PATHS["dev"].exists()
     ids = load_repeatability_priority_ids()
     assert len(ids) == 100
     assert len(set(ids)) == 100
     dev_path = DEFAULT_DATASET_PATHS["dev"]
-    if dev_path.exists():
-        dev_ids = {int(m["market_id"]) for m in json.loads(dev_path.read_text(encoding="utf-8"))["markets"]}
-        assert set(ids).issubset(dev_ids)
+    dev_ids = {int(m["market_id"]) for m in json.loads(dev_path.read_text(encoding="utf-8"))["markets"]}
+    assert set(ids).issubset(dev_ids)
 
 
 def test_answer_key_export_respects_tiebreak_override():
@@ -781,5 +787,86 @@ def test_migration_router_and_sealed_protection(monkeypatch, caplog):
             "unlisted_measure_count",
         }
         assert "cu_sealed_scorecard_call run_id=run-full writer_rev=10 market_count=1" in caplog.text
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def test_live_datasets_and_real_score_sealed_route(monkeypatch):
+    async def _fake_db():
+        yield AsyncMock()
+
+    monkeypatch.setattr(admin_cu_labeling, "_check_admin_secret", lambda *args, **kwargs: None)
+    monkeypatch.setattr(admin_cu_labeling, "_db_rows_for_split", AsyncMock(return_value=[]))
+    app.dependency_overrides[get_db] = _fake_db
+    try:
+        client = TestClient(app)
+
+        # Dev queue loads real cu_dev_200_v1.json and surfaces shared-100 markets first.
+        dev_shared = client.get("/api/admin/cu-labeling/queue", params={"split": "dev", "scope": "shared_100", "rater": "tester"})
+        assert dev_shared.status_code == 200
+        shared_body = dev_shared.json()
+        assert shared_body["total_in_scope"] == 100
+        shared_ids = set(load_repeatability_priority_ids())
+        assert {item["market_id"] for item in shared_body["items"]} == shared_ids
+
+        dev_q = client.get("/api/admin/cu-labeling/queue", params={"split": "dev", "scope": "all", "rater": "tester"})
+        assert dev_q.status_code == 200
+        dev_body = dev_q.json()
+        assert dev_body["dataset_file_present"] is True
+        assert dev_body["dataset_file_missing_message"] is None
+        assert dev_body["total_in_scope"] == 200
+        assert dev_body["items"][0]["market_id"] in shared_ids
+
+        # Sealed queue loads real cu_sealed_300_v1.json.
+        sealed_q = client.get("/api/admin/cu-labeling/queue", params={"split": "sealed", "scope": "all", "rater": "tester"})
+        assert sealed_q.status_code == 200
+        sealed_body = sealed_q.json()
+        assert sealed_body["dataset_file_present"] is True
+        assert sealed_body["total_in_scope"] == 300
+        first_sealed_id = int(sealed_body["items"][0]["market_id"])
+
+        # Real cu_eval_scorecard + zero sealed labels returns HTTP 200 no_labels_yet (not 503).
+        no_labels = client.post(
+            "/api/admin/cu-labeling/score-sealed",
+            json={"predictions": [], "as_of": "2026-06-15", "run_id": "run-empty", "writer_rev": 10},
+        )
+        assert no_labels.status_code == 200
+        assert no_labels.json()["status"] == "no_labels_yet"
+        assert no_labels.json()["scorecard"] is None
+
+        # Real cu_eval_scorecard + one sealed label runs end-to-end without mocks on _run_sealed_scorecard.
+        monkeypatch.setattr(
+            admin_cu_labeling,
+            "_db_rows_for_split",
+            AsyncMock(return_value=[_sample_label(market_id=first_sealed_id, rater="a", role="primary")]),
+        )
+        pred = {
+            "market_id": first_sealed_id,
+            "profile": {
+                "entities": ["Donald Trump"],
+                "event_date": "2026-06-15",
+                "geography": "us",
+                "junk_flags": [],
+                "frame": None,
+                "stakes": 4,
+                "breadth": 5,
+            },
+        }
+        measured = client.post(
+            "/api/admin/cu-labeling/score-sealed",
+            json={
+                "predictions": [pred],
+                "as_of": "2026-06-15",
+                "run_id": "run-real-1",
+                "writer_rev": 10,
+                "model": "gpt-4o-mini",
+            },
+        )
+        assert measured.status_code == 200
+        m_body = measured.json()
+        assert m_body["status"] == "measured"
+        assert m_body["scorecard"]["status"] == "measured"
+        assert m_body["scorecard"]["dataset"] == "sealed"
+        assert m_body["scorecard"]["market_count"] == 1
     finally:
         app.dependency_overrides.pop(get_db, None)
