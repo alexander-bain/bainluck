@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import (
     select,
     and_,
+    not_,
     or_,
     func,
     case,
@@ -352,7 +353,14 @@ from app.utils.futures_field_coverage import (
 from app.utils.futures_unsupported_price import row_carries_a_verdict
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.name_normalization import names_match as _team_name_matches
-from app.utils.sport_keys import SPORT_LEAGUE_MAP, sport_display_name
+from app.utils.sport_keys import (
+    SPORT_LEAGUE_MAP,
+    _WOMENS_COMPETITION_KEYS,
+    competition_gender,
+    same_sport_same_gender,
+    sport_display_name,
+    sport_family_key,
+)
 from app.utils.outcome_display import (
     display_rank_order,
     drop_dominant_field_outcomes,
@@ -5784,6 +5792,10 @@ async def get_feed(
         # Used by futures matching (BR53) to prevent cross-sport false positives
         # like "Aliya Boston" (WNBA) matching "Boston Bruins" (NHL).
         my_team_sport_categories: dict[str, set[str]] = {}
+        # Map team name -> set of exact Sport.key values the user follows that
+        # team in, so name matching for events never leaks e.g. Notre Dame
+        # basketball games to a user following only Notre Dame football.
+        my_team_sport_keys: dict[str, set[str]] = {}
         if my_teams_only and feed_user and ctx.team_relations:
             team_ids = list(ctx.team_relations.keys())
             team_name_result = await db.execute(
@@ -5794,6 +5806,8 @@ async def get_feed(
             for name, sport_key in team_name_result.all():
                 if name:
                     my_team_names.append(name)
+                    if sport_key:
+                        my_team_sport_keys.setdefault(name, set()).add(sport_key)
                     cat = _personalization_category_from_sport_key(sport_key)
                     if cat:
                         my_team_sport_categories.setdefault(name, set()).add(cat)
@@ -5952,6 +5966,7 @@ async def get_feed(
                             ctx,
                             my_teams_only=my_teams_only,
                             my_team_names=my_team_names,
+                            my_team_sport_keys=my_team_sport_keys,
                             tag_filter=dynamic_tag_filter or None,
                             static_tag_filter=static_tag_filter or None,
                             sports_mode=(mode or "").lower() == "sports",
@@ -12681,6 +12696,61 @@ def _personalization_category_from_sport_key(sport_key: str | None) -> str | Non
     return root
 
 
+def _sport_key_compatible_sql(followed_keys: Collection[str] | None):
+    """SQL twin of ``same_sport_same_gender(fk, Sport.key)`` for My Stuff filtering.
+
+    Matches across competitions within the same sport family (e.g., an Arsenal
+    Premier League follow in ``soccer_epl`` keeps ``soccer_uefa_champs_league``)
+    while rejecting cross-sport matches (e.g., football vs basketball) and
+    men's/women's crossovers when the key identifies competition gender.
+    """
+    if not followed_keys:
+        return None
+
+    low_key = func.lower(Sport.key)
+    womens_sql = or_(
+        low_key.in_(sorted(_WOMENS_COMPETITION_KEYS)),
+        low_key.like("%/_women%", escape="/"),
+        low_key == "tennis_wta",
+        low_key.like("tennis/_wta/_%", escape="/"),
+    )
+    catch_all_sql = low_key.like("%/_other", escape="/")
+
+    clauses = []
+    for fk in sorted(followed_keys):
+        fam = sport_family_key(fk)
+        if fam is None:
+            return true()
+        fam_lower = fam.lower()
+        escaped_fam = (
+            fam_lower.replace("/", "//").replace("%", "/%").replace("_", "/_")
+        )
+        if fam_lower == "rugby":
+            fam_cond = low_key.like("rugby%")
+        elif fam_lower in ("rugbyleague", "rugbyunion"):
+            fam_cond = or_(
+                low_key == fam_lower,
+                low_key.like(f"{escaped_fam}/_%", escape="/"),
+                low_key == "rugby",
+                low_key == "rugby_other",
+            )
+        else:
+            fam_cond = or_(
+                low_key == fam_lower,
+                low_key.like(f"{escaped_fam}/_%", escape="/"),
+            )
+
+        gender = competition_gender(fk)
+        if gender is None:
+            clauses.append(fam_cond)
+        elif gender == "women":
+            clauses.append(and_(fam_cond, or_(catch_all_sql, womens_sql)))
+        else:
+            clauses.append(and_(fam_cond, or_(catch_all_sql, not_(womens_sql))))
+
+    return or_(*clauses) if clauses else None
+
+
 def _build_personalization_trace(
     *,
     ctx: PersonalizationContext,
@@ -12778,6 +12848,7 @@ async def _score_events(
     ctx: PersonalizationContext,
     my_teams_only: bool = False,
     my_team_names: Optional[list] = None,
+    my_team_sport_keys: Optional[dict[str, set[str]]] = None,
     tag_filter: Optional[list[str]] = None,
     static_tag_filter: Optional[list[str]] = None,
     price_refresh_events: list | None = None,
@@ -13002,12 +13073,22 @@ async def _score_events(
                 team_conditions.append(Event.home_team_id.in_(user_team_ids_list))
                 team_conditions.append(Event.away_team_id.in_(user_team_ids_list))
             if my_team_names:
-                for tn in my_team_names:
+                for tn in dict.fromkeys(my_team_names):
                     escaped = (
                         tn.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                     )
-                    team_conditions.append(Event.home_team_name.ilike(f"%{escaped}%"))
-                    team_conditions.append(Event.away_team_name.ilike(f"%{escaped}%"))
+                    name_cond = or_(
+                        Event.home_team_name.ilike(f"%{escaped}%"),
+                        Event.away_team_name.ilike(f"%{escaped}%"),
+                    )
+                    if my_team_sport_keys is not None:
+                        allowed_keys = my_team_sport_keys.get(tn)
+                        sport_cond = _sport_key_compatible_sql(allowed_keys)
+                        if sport_cond is None:
+                            continue
+                        team_conditions.append(and_(name_cond, sport_cond))
+                    else:
+                        team_conditions.append(name_cond)
             if team_conditions:
                 query = query.where(or_(*team_conditions))
             else:
@@ -13359,7 +13440,17 @@ async def _score_events(
                 if not matched_by_id and my_team_names:
                     home_name = event.home_team_name or ""
                     away_name = event.away_team_name or ""
+                    event_sport_key = (
+                        event.sport.key if getattr(event, "sport", None) else None
+                    )
                     for team_name in my_team_names or []:
+                        if my_team_sport_keys is not None:
+                            allowed_keys = my_team_sport_keys.get(team_name)
+                            if not allowed_keys or not any(
+                                same_sport_same_gender(fk, event_sport_key)
+                                for fk in allowed_keys
+                            ):
+                                continue
                         if _team_name_matches(team_name, home_name):
                             matched_by_name = True
                             break
