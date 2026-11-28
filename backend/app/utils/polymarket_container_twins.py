@@ -359,6 +359,36 @@ def family_key(market: ContainerMarket) -> tuple[str, str]:
     return (fixture_label(market.name), market.venue_game_start)
 
 
+def judged_key(market: ContainerMarket) -> tuple[str, str] | None:
+    """The family key :func:`plan_container_tags` judges this market under, or None.
+
+    None when the market has no ``venue_game_start`` (one venue signal missing,
+    so no key) or no fixture label. ONE predicate for the plan and for
+    :func:`split_family_event_ids`, so the sweep's narrowed load can never
+    disagree with the judgement about which rows form a family.
+    """
+    if not market.venue_game_start or not str(market.venue_game_start).strip():
+        return None
+    key = family_key(market)
+    return key if key[0] else None
+
+
+def split_family_event_ids(markets: Iterable[ContainerMarket]) -> set[int]:
+    """#12042: every event in a family of two or more rows, the only rows judged.
+
+    :func:`plan_container_tags` reads a row (``rows.get(eid)``) only for the
+    members of a key holding two or more events. Every other key is skipped
+    before any row is read. So a caller may load ``ContainerRow`` evidence for
+    exactly these events and the plan is unchanged.
+    """
+    by_key: dict[tuple[str, str], set[int]] = {}
+    for market in markets:
+        key = judged_key(market)
+        if key is not None:
+            by_key.setdefault(key, set()).add(market.event_id)
+    return {eid for ids in by_key.values() if len(ids) >= 2 for eid in ids}
+
+
 def holds_base_title(market: ContainerMarket) -> bool:
     """Is this market the fixture's OWN market rather than a derivative of it?
 
@@ -524,10 +554,8 @@ def plan_container_tags(
     seen_events: set[int] = set()
 
     for market in markets:
-        if not market.venue_game_start or not str(market.venue_game_start).strip():
-            continue
-        key = family_key(market)
-        if not key[0]:
+        key = judged_key(market)
+        if key is None:
             continue
         by_key.setdefault(key, set()).add(market.event_id)
         seen_events.add(market.event_id)
