@@ -33,7 +33,13 @@ struct WatchTabView: View {
                 WatchSelectedGameView()
             } else if let preview = ProcessInfo.processInfo.environment["BAINLUCK_WATCH_PINS_FACE_PREVIEW_12640"],
                       !preview.isEmpty {
-                WatchPinsFacePreviewFixture12640(scenario: preview)
+                if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
+                    WatchPinsFacePreviewFixture12640(scenario: preview).dynamicTypeSize(.accessibility5)
+                } else {
+                    WatchPinsFacePreviewFixture12640(scenario: preview)
+                }
+            } else if ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
+                WatchPinnedHomeView12640().dynamicTypeSize(.accessibility5)
             } else {
                 WatchPinnedHomeView12640()
             }
