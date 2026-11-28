@@ -234,4 +234,26 @@ final class AppClip12307Tests: XCTestCase {
         XCTAssertEqual(reading.rows.map(\.figure), ["<1%", ">99%"])
         XCTAssertEqual(reading.headline?.figure, ">99%")
     }
+
+    func testUnavailableGameExplainsMissingRowsAndNamesDashForVoiceOver() throws {
+        let missingJSON = Data("""
+        {"id": 15349291, "sport": "americanfootball_nfl", "home_team": "Minnesota Vikings", "away_team": "Buffalo Bills",
+         "status": "live", "commence_time": "\(iso(t0.addingTimeInterval(-3600)))",
+         "home_score": null, "away_score": null,
+         "current_odds": null, "hero_probability_source": null, "hero_probability_observed_at": null}
+        """.utf8)
+        let payload = try SavedWidgetDetailPayload10875.decode(missingJSON, as: .game)
+        let reading = ClipLoader12307.reading(payload, at: t0)
+        XCTAssertEqual(reading.phase, .unavailable)
+        XCTAssertEqual(reading.rows.count, 2)
+        XCTAssertTrue(reading.rows.allSatisfy { $0.figure == nil && $0.verdict == nil })
+        XCTAssertNil(ClipLoader12307.caption(reading, now: t0))
+        XCTAssertEqual(ClipLoader12307.displayCaption(reading, now: t0), "No recent probability")
+        XCTAssertEqual(ClipLoader12307.missingValueAccessibilityLabel, "No recent probability")
+
+        let pageSource = try String(contentsOf: Self.repoFile("BainLuckClip/ClipPageView12307.swift"), encoding: .utf8)
+        XCTAssertFalse(pageSource.contains(#".accessibilityLabel("No number")"#))
+        XCTAssertTrue(pageSource.contains("ClipLoader12307.displayCaption(reading, now: now)"))
+        XCTAssertTrue(pageSource.contains("ClipLoader12307.missingValueAccessibilityLabel"))
+    }
 }

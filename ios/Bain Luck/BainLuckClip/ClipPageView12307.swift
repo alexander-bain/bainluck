@@ -117,9 +117,7 @@ struct ClipReadingView12307: View {
     }
 
     private var caption: String? {
-        ClipLoader12307.caption(reading, now: now).map { clock in
-            reading.priceCaption.map { "\($0) · \(clock)" } ?? clock
-        }
+        ClipLoader12307.displayCaption(reading, now: now)
     }
 
     private var accessibilitySummary: String {
@@ -127,7 +125,7 @@ struct ClipReadingView12307: View {
         if let clock = scoreClock?.clockLine, !reading.spoken.contains(clock) {
             parts.append(clock)
         }
-        if let caption { parts.append(caption) }
+        if let caption, !reading.spoken.contains(caption) { parts.append(caption) }
         return parts.joined(separator: " ")
     }
 
@@ -249,6 +247,12 @@ private struct ClipRowView12307: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
         }
+        if liveScore == nil && row.figure == nil && row.verdict == nil {
+            Text("—")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(ClipLoader12307.missingValueAccessibilityLabel)
+        }
     }
 
     @ViewBuilder private var numbers: some View {
@@ -279,7 +283,7 @@ private struct ClipRowView12307: View {
                 Text("—")
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                    .accessibilityLabel("No number")
+                    .accessibilityLabel(ClipLoader12307.missingValueAccessibilityLabel)
             }
         }
     }

@@ -144,6 +144,8 @@ enum ClipLoader12307 {
         return scoreClock.hasLiveScores ? "Live" : reading.status
     }
 
+    static let missingValueAccessibilityLabel = "No recent probability"
+
     /// The line under the rows, in the saved widget's words (`SavedClock10875`):
     /// a current price says when it was observed, an old one says it's the last
     /// recorded, and a result or a missing number says nothing here.
@@ -160,6 +162,27 @@ enum ClipLoader12307 {
                 "Last recorded \(figure)" + (clock(reading.observedAt, relativeTo: now).map { " · \($0)" } ?? "")
             }
         case .result, .unavailable:
+            return nil
+        }
+    }
+
+    /// Display caption under the rows in `ClipReadingView12307`: keeps the
+    /// saved widget's timestamp/phase caption, and explains `"—"` when every
+    /// row has no number or result so the card never leaves dashes unexplained.
+    static func displayCaption(_ reading: SavedWidgetReading10875, now: Date) -> String? {
+        if let clock = caption(reading, now: now) {
+            return reading.priceCaption.map { "\($0) · \(clock)" } ?? clock
+        }
+        guard !reading.rows.isEmpty,
+              reading.rows.allSatisfy({ $0.figure == nil && $0.verdict == nil }) else {
+            return nil
+        }
+        switch reading.phase {
+        case .unavailable:
+            return missingValueAccessibilityLabel
+        case .noResult:
+            return "No result recorded"
+        case .current, .lastRecorded, .openingLine, .result:
             return nil
         }
     }
