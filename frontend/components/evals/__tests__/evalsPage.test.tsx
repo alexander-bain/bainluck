@@ -203,7 +203,7 @@ describe("/evals S1 renders the shell", () => {
       const targetEl = row.querySelector("[data-gap-target]");
       if (entry.target) {
         expect(targetEl?.getAttribute("data-gap-target")).toBe(entry.target);
-        expect(targetEl?.textContent).toMatch(/Expected ((November|December) 2026|January 2027)/);
+        expect(targetEl?.textContent).toMatch(/Expected ((November|December) 2026|(January|February) 2027)/);
         expect(targetEl?.querySelector("time")?.getAttribute("dateTime")).toBe(entry.target.slice(0, 7));
       } else {
         expect(targetEl?.getAttribute("data-gap-target")).toBe("unscheduled");

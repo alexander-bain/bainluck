@@ -36,15 +36,15 @@
     },
     "cu-fact-labels": {
       "issue": 13900,
-      "target": null
+      "target": "2026-12-11"
     },
     "cu-scorecard-numbers": {
       "issue": 13901,
-      "target": null
+      "target": "2026-12-11"
     },
     "cu-entity-linking": {
       "issue": 13897,
-      "target": null
+      "target": "2027-02-26"
     }
   }
 }
