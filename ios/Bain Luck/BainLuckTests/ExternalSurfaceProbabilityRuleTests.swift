@@ -263,8 +263,9 @@ final class ExternalSurfaceProbabilityRuleTests: XCTestCase {
         XCTAssertEqual(liveReading.minimalNowText(.home), ">99%")
         XCTAssertFalse(liveReading.chanceSpoken.contains("100%"))
         XCTAssertFalse(liveReading.chanceSpoken.contains("0%"))
-        XCTAssertTrue(liveReading.chanceSpoken.contains("<1%"))
-        XCTAssertTrue(liveReading.chanceSpoken.contains(">99%"))
+        XCTAssertFalse(liveReading.chanceSpoken.contains("%"))
+        XCTAssertTrue(liveReading.chanceSpoken.contains("less than 1 percent"))
+        XCTAssertTrue(liveReading.chanceSpoken.contains("more than 99 percent"))
 
         let missingOdds = try XCTUnwrap(GameActivitySnapshot(
             eventID: 905,

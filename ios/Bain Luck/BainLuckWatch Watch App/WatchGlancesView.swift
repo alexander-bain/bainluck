@@ -91,6 +91,7 @@ struct WatchGlancesView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(market.probabilityText)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .accessibilityLabel(spokenProbabilityText(market.probabilityText))
 
                 if let movement = market.movement, movement != 0 {
                     let delta = movement * 100.0
@@ -109,32 +110,6 @@ struct WatchGlancesView: View {
         .padding(.horizontal, 8)
         .background(Color.white.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-struct WatchMarket: Identifiable {
-    let id: Int
-    let name: String
-    let leader: String
-    let probability: Int
-    let movement: Double?
-    let category: String?
-    var rawProbability: Double? = nil
-
-    var probabilityText: String {
-        ExternalSurfaceProbabilityFormat.openWholePercent(probability, probability: rawProbability)
-            ?? ExternalSurfaceProbabilityFormat.missingProbabilityText
-    }
-
-    var dotColor: Color {
-        switch category?.lowercased() {
-        case "basketball", "football", "baseball", "hockey": return .green
-        case "politics", "geopolitics": return .purple
-        case "economics": return .blue
-        case "weather": return .cyan
-        case "entertainment": return .orange
-        default: return .gray
-        }
     }
 }
 

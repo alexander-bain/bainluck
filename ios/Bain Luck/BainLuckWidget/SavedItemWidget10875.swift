@@ -254,16 +254,21 @@ struct SavedItemWidgetView10875: View {
         if let matchupState = lockScreenMatchupState {
             switch matchupState {
             case .matchup(let matchup):
-                return matchup.accessibilityText + (entry.isOffline ? " Not updated: Bain Luck couldn't be reached." : "")
+                return spokenTextExpandingProbabilitySymbols(matchup.accessibilityText)
+                    + (entry.isOffline ? " Not updated: Bain Luck couldn't be reached." : "")
             case .postFinalEnded(let title):
                 return "\(title). Game ended. Open Bain Luck."
             case .fallbackText:
                 break
             }
         }
-        guard let reading = entry.reading else { return SavedWidgetMessage10875(entry.content).spoken }
+        guard let reading = entry.reading else {
+            return spokenTextExpandingProbabilitySymbols(SavedWidgetMessage10875(entry.content).spoken)
+        }
         let clock = SavedClock10875.text(reading.observedAt, relativeTo: entry.date).map { " Recorded \($0)." } ?? ""
-        return reading.spoken + clock + (entry.isOffline ? " Not updated: Bain Luck couldn't be reached." : "")
+        return spokenTextExpandingProbabilitySymbols(reading.spoken)
+            + clock
+            + (entry.isOffline ? " Not updated: Bain Luck couldn't be reached." : "")
     }
 }
 
@@ -324,7 +329,7 @@ private struct SavedValue10875: View {
             Text("—")
                 .font(.system(size: size * 0.75, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .accessibilityLabel("No number")
+                .accessibilityLabel("No recent probability")
         }
     }
 }

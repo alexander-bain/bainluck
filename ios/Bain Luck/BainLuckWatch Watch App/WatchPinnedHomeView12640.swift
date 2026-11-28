@@ -281,6 +281,8 @@ struct WatchPinnedHomeView12640: View {
                     eventPinCard(game: game, isSelected: isSelected, now: now)
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .accessibilityValue(isSelected ? "Shown on Watch face" : "")
                 .accessibilityIdentifier("watch.pins.event.\(game.id)")
             }
         case .future:
@@ -307,6 +309,8 @@ struct WatchPinnedHomeView12640: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .accessibilityValue(isSelected ? "Shown on Watch face" : "")
                 .accessibilityIdentifier("watch.pins.future.\(market.id)")
             }
         }
@@ -322,6 +326,7 @@ struct WatchPinnedHomeView12640: View {
                 Image(systemName: "bookmark.fill")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
             }
         }
     }
@@ -342,6 +347,7 @@ struct WatchPinnedHomeView12640: View {
                     Image(systemName: "bookmark.fill")
                         .font(.caption2)
                         .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
                 }
             }
             Text(market.name)
@@ -352,6 +358,7 @@ struct WatchPinnedHomeView12640: View {
                 .monospacedDigit()
                 .foregroundStyle(.cyan)
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("\(outcome.name), \(spokenProbabilityText(probabilityText))")
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -439,6 +446,7 @@ struct WatchPinnedHomeView12640: View {
                               : .system(size: 34, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.cyan)
+                        .accessibilityLabel(spokenProbabilityText(formatted.display))
                         .accessibilityIdentifier("watch.pins.selected.future.probability")
 
                     let obs = outcome.effectiveObservedAt ?? market.updatedAt
@@ -449,9 +457,16 @@ struct WatchPinnedHomeView12640: View {
                             }
                             return WatchRectangularReading.compactAge(observedAt: obs, now: now) ?? "As of \(WatchRectangularReading.asOfClock(obs))"
                         }()
+                        let spokenClock: String = {
+                            if now.timeIntervalSince(obs) > WatchRectangularReading.liveAgeThresholdSeconds {
+                                return "As of \(WatchRectangularReading.asOfClock(obs))"
+                            }
+                            return WatchRectangularReading.spokenAge(observedAt: obs, now: now).map { "Observed \($0)" } ?? ageLine
+                        }()
                         Text(ageLine)
                             .font(.footnote).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel(spokenClock)
                             .accessibilityIdentifier("watch.pins.selected.future.clock")
                     }
                 }
@@ -582,11 +597,13 @@ struct WatchPinnedHomeView12640: View {
                                         .font(.body.bold())
                                         .monospacedDigit()
                                         .foregroundStyle(.cyan)
+                                        .accessibilityLabel(spokenProbabilityText(formatted.display))
                                 }
                                 Spacer(minLength: 4)
                                 if outcome.id == currentOutcomeID {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundStyle(.cyan)
+                                        .accessibilityHidden(true)
                                 }
                             }
                             .padding(8)
@@ -594,6 +611,8 @@ struct WatchPinnedHomeView12640: View {
                             .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(outcome.id == currentOutcomeID ? .isSelected : [])
+                        .accessibilityValue(outcome.id == currentOutcomeID ? "Selected" : "")
                         .accessibilityIdentifier("watch.pins.outcome.\(outcome.id)")
                     }
                 }

@@ -635,6 +635,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                         .foregroundStyle(Self.rgbColor(model.away.inkHex))
                         .minimumScaleFactor(0.75)
                         .lineLimit(1)
+                        .accessibilityLabel("\(model.away.shortName), \(spokenProbabilityText(awayPct))")
                 }
                 Spacer(minLength: 4)
                 if let homePct = model.home.currentPercentText {
@@ -643,6 +644,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                         .foregroundStyle(Self.rgbColor(model.home.inkHex))
                         .minimumScaleFactor(0.75)
                         .lineLimit(1)
+                        .accessibilityLabel("\(model.home.shortName), \(spokenProbabilityText(homePct))")
                 }
             }
             .accessibilityIdentifier("watch.game.hero.chances")
@@ -678,6 +680,8 @@ struct WatchMatchupGamePageHeroView297A: View {
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label), \(spokenProbabilityText(value))")
     }
 
     // MARK: - Final Scores & Pregame (Look 1C)
@@ -723,6 +727,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                                 .foregroundStyle(Color.white.opacity(0.86))
                                 .multilineTextAlignment(.leading)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityLabel(spokenTextExpandingProbabilitySymbols(awayPre))
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -733,6 +738,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                                 .foregroundStyle(Color.white.opacity(0.86))
                                 .multilineTextAlignment(.trailing)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityLabel(spokenTextExpandingProbabilitySymbols(homePre))
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -744,6 +750,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                     .foregroundStyle(Color.white.opacity(0.88))
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 1)
+                    .accessibilityLabel(spokenTextExpandingProbabilitySymbols(drawPre))
             }
         }
         .accessibilityIdentifier("watch.game.hero.final-row")
@@ -755,6 +762,7 @@ struct WatchMatchupGamePageHeroView297A: View {
             HStack(spacing: 3) {
                 Image(systemName: "checkmark")
                     .font(.system(size: 8, weight: .black))
+                    .accessibilityHidden(true)
                 Text("WON")
                     .font(.system(size: 9, weight: .black))
             }
@@ -799,6 +807,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                         Text(drawPct)
                             .font(.system(size: 19, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(.white)
+                            .accessibilityLabel(spokenProbabilityText(drawPct))
                     }
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Draw")
@@ -807,6 +816,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                         Text(drawPct)
                             .font(.system(size: 19, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(.white)
+                            .accessibilityLabel(spokenProbabilityText(drawPct))
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -816,6 +826,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                     .font(.system(size: 14, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.white.opacity(0.88))
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(spokenTextExpandingProbabilitySymbols(drawPre))
             }
         }
     }
@@ -857,6 +868,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                         .font(.system(size: 14, weight: .semibold).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.88))
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(spokenTextExpandingProbabilitySymbols(pre))
                 }
             } else {
                 if side.currentPercentText != nil || side.score != nil {
@@ -867,6 +879,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                                     .font(.system(size: 19, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(Self.rgbColor(side.inkHex))
                                     .fixedSize()
+                                    .accessibilityLabel(spokenProbabilityText(pct))
                             }
                             if let score = side.score {
                                 Text("Score \(score)")
@@ -881,6 +894,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                                     .font(.system(size: 19, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(Self.rgbColor(side.inkHex))
                                     .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityLabel(spokenProbabilityText(pct))
                             }
                             if let score = side.score {
                                 Text("Score \(score)")
@@ -1005,6 +1019,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                         .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 13.5 : 11, weight: .regular))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(scoreLine.replacingOccurrences(of: "<1m", with: "less than 1 minute"))
                         .accessibilityIdentifier("watch.pins.selected.event.score-as-of")
                 }
                 if let probLine = model.probabilityAsOfText {
@@ -1012,6 +1027,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                         .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 13.5 : 11, weight: .regular))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(probLine.replacingOccurrences(of: "<1m", with: "less than 1 minute"))
                         .accessibilityIdentifier("watch.pins.selected.event.prob-as-of")
                 }
             }

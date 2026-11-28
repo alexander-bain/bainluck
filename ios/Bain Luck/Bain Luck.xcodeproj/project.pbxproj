@@ -133,7 +133,9 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Models/PredictionModels.swift,
+				Utilities/ComplementProbabilityDisplay.swift,
 				Utilities/DrawPricedWinner.swift,
+				Utilities/FormattingUtilities.swift,
 				Utilities/GameContinuation.swift,
 				Utilities/LockScreenSmallSlotFit13430.swift,
 				Utilities/StoryContinuation.swift,
@@ -220,8 +222,13 @@
 		A7C0000000000000000000DF /* Exceptions for "Bain Luck" folder in "BainLuckComplication" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Utilities/ComplementProbabilityDisplay.swift,
+				Utilities/DrawPricedWinner.swift,
+				Utilities/FormattingUtilities.swift,
 				Utilities/HeadlineStyleTable199.swift,
 				Utilities/ExternalSurfaceProbabilityFormat.swift,
+				Utilities/RenderedPercent.swift,
+				Utilities/SportVocab.swift,
 				Utilities/WidgetRelevanceRule254A.swift,
 				Utilities/LockScreenSmallSlotFit13430.swift,
 			);
