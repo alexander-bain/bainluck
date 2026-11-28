@@ -141,6 +141,7 @@ from app.utils.sport_keys import (
     NO_SPORT_CATEGORY,
     sport_display_name,
 )
+from app.utils.opening_quote_validity import load_unsupported_opening_ids
 from app.utils.tournament_stages import (
     get_stages_for_sport,
     classify_market_stage,
@@ -4894,6 +4895,9 @@ async def get_futures_market(
         market,
         bookmakers,
         unsupported_price_ids,
+        unsupported_opening_ids=await load_unsupported_opening_ids(
+            db, market.outcomes, {market.id: market}
+        ),
         fleet_newest_observation=await _fleet_newest_observation(db, market),
         leg_sides=leg_sides,
         # #8892: and the one leg that answers "who wins" is named.
@@ -7705,7 +7709,12 @@ async def get_probability_timeline(
     canonical_board = {
         row["id"]: row
         for row in _format_market_detail(
-            market, None, await _withheld_price_outcome_ids(db, market)
+            market,
+            None,
+            await _withheld_price_outcome_ids(db, market),
+            unsupported_opening_ids=await load_unsupported_opening_ids(
+                db, market.outcomes, {market.id: market}
+            ),
         )["outcomes"]
     }
     charted_outcomes = [o for o in charted_outcomes if o.id in canonical_board]
@@ -10118,6 +10127,7 @@ def _format_market_detail(
     bookmakers: list[str] = None,
     unsupported_price_outcome_ids: "set[int] | None" = None,
     *,
+    unsupported_opening_ids: "set[int] | None" = None,
     fleet_newest_observation: "datetime | None" = None,
     leg_sides: "dict[str, str] | None" = None,
     lead_leg: "str | None" = None,
@@ -10877,12 +10887,22 @@ def _format_market_detail(
     # Machine-readable so a cert or probe can prove a withhold rule fired and tell
     # it apart from a market that simply never had an opening. Not a reader
     # string: notice 34 keeps diagnostics off the page, in a key like this.
-    openings_withheld = not field_openings_publishable(
+    had_any_opening = any(o["opening_probability"] is not None for o in outcomes)
+    if unsupported_opening_ids:
+        for o in outcomes:
+            if o["id"] in unsupported_opening_ids:
+                o["opening_probability"] = None
+                o["opening_american_odds"] = None
+
+    field_openings_refused = not field_openings_publishable(
         [o["opening_probability"] for o in outcomes],
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
     )
-    if openings_withheld:
+    if field_openings_refused:
         _withhold_openings()
+    openings_withheld = field_openings_refused or (
+        had_any_opening and all(o["opening_probability"] is None for o in outcomes)
+    )
 
     # #993: #23-normalize the displayed distribution + demote a generic
     # "Other/Field" from the headline (same rules as search).

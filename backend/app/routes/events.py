@@ -94,6 +94,7 @@ from app.utils.tennis_live_score import attach_tennis_score, tennis_point_cache_
 from app.utils.futures_market_snapshot import (
     outcome_prints_a_price as _outcome_prints_a_price,
 )
+from app.utils.opening_quote_validity import load_unsupported_opening_ids
 from app.utils.card_projected_pair import (
     LIVE_PROJECTION_KEY,
     attach_card_projected_pair,
@@ -27268,6 +27269,15 @@ async def _build_game_markets(
 
     # Build market_id → market lookup
     market_map = {m.id: m for m in markets}
+    _unsupported_opening_ids = await load_unsupported_opening_ids(
+        db, outcomes, market_map
+    )
+
+    def _trusted_opening_prob(outcome) -> Optional[float]:
+        """Return opening_probability iff quote/trade-supported (#13511 Item 3)."""
+        if outcome.id in _unsupported_opening_ids:
+            return None
+        return _stored_number(outcome.opening_probability)
 
     # 5. Classify and group
     #
@@ -27648,10 +27658,12 @@ async def _build_game_markets(
                     # price) — its grade path is `_grade_settled_prop`, not this.
                     if prob is None:
                         continue
-                    tt_opening_over = None
-                    if o.opening_probability is not None:
-                        tt_op = float(o.opening_probability)
-                        tt_opening_over = round(tt_op if is_over or not is_under else 1.0 - tt_op, 4)
+                    _tt_op = _trusted_opening_prob(o)
+                    tt_opening_over = (
+                        round(_tt_op if is_over or not is_under else 1.0 - _tt_op, 4)
+                        if _tt_op is not None
+                        else None
+                    )
                     tt_pregame_mark, tt_pregame_mark_source = _resolve_pregame_mark_with_source(
                         market, o, is_over, is_under, tt_opening_over,
                         event.commence_time,
@@ -27674,8 +27686,8 @@ async def _build_game_markets(
                         # this leg's own name and needs to know that.
                         "_inverted": bool(is_under and not is_over),
                         "source": market.source,
-                        "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
-                            if o.opening_probability is not None and o.current_probability is not None else None,
+                        "movement": round(float(o.current_probability) - _tt_op, 4)
+                            if _tt_op is not None and o.current_probability is not None else None,
                         "_market_id": market.id,
                     }
                     pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
@@ -27735,9 +27747,10 @@ async def _build_game_markets(
                         market_type, threshold, _gm_sport_prefix
                     )
                 ):
+                    _rescue_op = _trusted_opening_prob(o)
                     _rescue_opening = (
-                        round(float(o.opening_probability), 4)
-                        if o.opening_probability is not None
+                        round(_rescue_op, 4)
+                        if _rescue_op is not None
                         else None
                     )
                     _rescue_pm, _rescue_pm_src = _resolve_pregame_mark_with_source(
@@ -27761,10 +27774,12 @@ async def _build_game_markets(
 
                 _inverted = bool(is_under and not is_over)
                 _market_settled = market.id in markets_with_a_winner
-                _t_opening_over = None
-                if o.opening_probability is not None:
-                    _t_op = float(o.opening_probability)
-                    _t_opening_over = round(_t_op if is_over or not is_under else 1.0 - _t_op, 4)
+                _t_op = _trusted_opening_prob(o)
+                _t_opening_over = (
+                    round(_t_op if is_over or not is_under else 1.0 - _t_op, 4)
+                    if _t_op is not None
+                    else None
+                )
                 _t_pm, _t_pm_src = _resolve_pregame_mark_with_source(
                     market, o, is_over, is_under, _t_opening_over, event.commence_time,
                 )
@@ -27785,8 +27800,8 @@ async def _build_game_markets(
                     "observed_at": _observed(o),
                     "contributor_outcome_ids": [o.id],
                     **_settled_over_verdict(_grade, _inverted, _market_settled),
-                    "movement": round(float(_price) - float(o.opening_probability), 4)
-                        if o.opening_probability is not None and _price is not None else None,
+                    "movement": round(float(_price) - _t_op, 4)
+                        if _t_op is not None and _price is not None else None,
                     "period": market_period,
                     "_market_id": market.id,
                     "_external_id": market.external_id,
@@ -27819,10 +27834,12 @@ async def _build_game_markets(
 
                 # Try to extract player name and stat type from market name
                 # Market names look like "Boston at Atlanta: Trae Young Points"
-                opening_over = None
-                if o.opening_probability is not None:
-                    op = float(o.opening_probability)
-                    opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
+                _pp_op = _trusted_opening_prob(o)
+                opening_over = (
+                    round(_pp_op if is_over or not is_under else 1.0 - _pp_op, 4)
+                    if _pp_op is not None
+                    else None
+                )
 
                 _pp_pm, _pp_pm_src = _resolve_pregame_mark_with_source(
                     market, o, is_over, is_under, opening_over,
@@ -27845,8 +27862,8 @@ async def _build_game_markets(
                     # name beside them.
                     "_inverted": bool(is_under and not is_over),
                     "source": market.source,
-                    "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
-                        if o.opening_probability is not None and o.current_probability is not None else None,
+                    "movement": round(float(o.current_probability) - _pp_op, 4)
+                        if _pp_op is not None and o.current_probability is not None else None,
                     "_market_id": market.id,
                 }
                 pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
@@ -27857,9 +27874,10 @@ async def _build_game_markets(
                 threshold = _extract_threshold(o.name)
                 prob = float(o.current_probability) if o.current_probability is not None else None
                 _score_proved = o.id in _score_proved_ids
+                _sp_op = _trusted_opening_prob(o)
                 _sp_opening = (
-                    round(float(o.opening_probability), 4)
-                    if o.opening_probability is not None
+                    round(_sp_op, 4)
+                    if _sp_op is not None
                     else None
                 )
                 _sp_pm, _sp_pm_src = _resolve_pregame_mark_with_source(
@@ -27927,9 +27945,10 @@ async def _build_game_markets(
             for o in market_outcomes:
                 prob = float(o.current_probability) if o.current_probability is not None else None
                 threshold = _extract_period_threshold(o.name, market_type)
+                _pm_op = _trusted_opening_prob(o)
                 _pm_opening = (
-                    round(float(o.opening_probability), 4)
-                    if o.opening_probability is not None
+                    round(_pm_op, 4)
+                    if _pm_op is not None
                     else None
                 )
                 _pm_val, _pm_src = _resolve_pregame_mark_with_source(
@@ -28045,10 +28064,12 @@ async def _build_game_markets(
                         )
                         is_under = name_lower.startswith("under") or name_lower == "no"
                         over_prob = prob if is_over or not is_under else 1.0 - prob
-                        opening_over = None
-                        if o.opening_probability is not None:
-                            op = float(o.opening_probability)
-                            opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
+                        _r1_op = _trusted_opening_prob(o)
+                        opening_over = (
+                            round(_r1_op if is_over or not is_under else 1.0 - _r1_op, 4)
+                            if _r1_op is not None
+                            else None
+                        )
                         _r1_pm, _r1_pm_src = _resolve_pregame_mark_with_source(
                             market, o, is_over, is_under, opening_over,
                             event.commence_time,
@@ -28064,8 +28085,8 @@ async def _build_game_markets(
                             "pregame_mark": _r1_pm,
                             "pregame_mark_source": _r1_pm_src,
                             "source": market.source,
-                            "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
-                                if o.opening_probability is not None and o.current_probability is not None else None,
+                            "movement": round(float(o.current_probability) - _r1_op, 4)
+                                if _r1_op is not None and o.current_probability is not None else None,
                             "_market_id": market.id,
                         }
                         pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
@@ -28103,10 +28124,12 @@ async def _build_game_markets(
                     )
                     is_under = name_lower.startswith("under") or name_lower == "no"
                     over_prob = prob if is_over or not is_under else 1.0 - prob
-                    opening_over = None
-                    if o.opening_probability is not None:
-                        op = float(o.opening_probability)
-                        opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
+                    _r2_op = _trusted_opening_prob(o)
+                    opening_over = (
+                        round(_r2_op if is_over or not is_under else 1.0 - _r2_op, 4)
+                        if _r2_op is not None
+                        else None
+                    )
                     _r2_pm, _r2_pm_src = _resolve_pregame_mark_with_source(
                         market, o, is_over, is_under, opening_over,
                         event.commence_time,
@@ -28122,8 +28145,8 @@ async def _build_game_markets(
                         "pregame_mark": _r2_pm,
                         "pregame_mark_source": _r2_pm_src,
                         "source": market.source,
-                        "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
-                            if o.opening_probability is not None and o.current_probability is not None else None,
+                        "movement": round(float(o.current_probability) - _r2_op, 4)
+                            if _r2_op is not None and o.current_probability is not None else None,
                         "_market_id": market.id,
                     }
                     pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
@@ -28133,9 +28156,10 @@ async def _build_game_markets(
                     continue
                 if _leg_is_a_line_with_no_subject(o.name):
                     continue
+                _om_op = _trusted_opening_prob(o)
                 _om_opening = (
-                    round(float(o.opening_probability), 4)
-                    if o.opening_probability is not None
+                    round(_om_op, 4)
+                    if _om_op is not None
                     else None
                 )
                 _om_pm, _om_pm_src = _resolve_pregame_mark_with_source(
