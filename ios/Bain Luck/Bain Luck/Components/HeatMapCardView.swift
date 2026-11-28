@@ -245,10 +245,13 @@ struct HeatMapCardView: View {
 
     @ViewBuilder
     private func cellView(_ cell: HeatMapCell) -> some View {
-        let pct = Int((cell.probability * 100).rounded())
+        let parts = DiscoverRoundupCardModel.probabilityParts(
+            probability: cell.probability,
+            renderedPercent: nil
+        )
         let color = cellTextColor(cell.probability)
         (
-            Text("\(pct)")
+            Text("\(parts.marker ?? "")\(parts.digits)")
                 .font(.system(size: 14, weight: .bold, design: .monospaced))
                 .foregroundColor(color)
             +
@@ -263,7 +266,10 @@ struct HeatMapCardView: View {
 
     @ViewBuilder
     private func accessibilityCellRow(_ cell: HeatMapCell) -> some View {
-        let pct = Int((cell.probability * 100).rounded())
+        let parts = DiscoverRoundupCardModel.probabilityParts(
+            probability: cell.probability,
+            renderedPercent: nil
+        )
         let color: Color = cell.probability >= 0.50 ? .white : (cell.probability >= 0.30 ? .primary : .secondary)
         HStack(spacing: 8) {
             Text(cell.label)
@@ -272,7 +278,7 @@ struct HeatMapCardView: View {
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            Text("\(pct)%")
+            Text("\(parts.marker ?? "")\(parts.digits)%")
                 .font(.caption.weight(.bold).monospacedDigit())
                 .foregroundColor(color)
                 .lineLimit(1)

@@ -2176,11 +2176,11 @@ enum EventSportHeadlines12472 {
                 String(format: "%.1f%%", Double(units[2]) / 10.0)
             )
         } else {
-            if shares.contains(where: { $0 < 0.005 || $0 > 0.995 }) {
+            if shares.contains(where: { $0 < 0.01 || $0 > 0.995 }) {
                 let formatted = shares.map { p -> String in
-                    if p < 0.005 { return "<1%" }
+                    if p < 0.01 { return "<1%" }
                     if p > 0.995 { return ">99%" }
-                    return "\(Int((p * 100.0).rounded()))%"
+                    return DiscoverRoundupCardModel.probabilityText(probability: p, renderedPercent: nil)
                 }
                 return (formatted[0], formatted[1], formatted[2])
             }

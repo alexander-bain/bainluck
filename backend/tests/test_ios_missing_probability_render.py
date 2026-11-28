@@ -20,12 +20,14 @@ correct (geometry and booleans).  A guard that scanned raw bytes would fail on
 the prose describing it — and, worse, could be silenced by deleting a comment.
 """
 
+from collections import Counter
 import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-VIEW = REPO / "ios/Bain Luck/Bain Luck/Components/RelatedFuturesView.swift"
-FORMATTING = REPO / "ios/Bain Luck/Bain Luck/Utilities/FormattingUtilities.swift"
+APP_ROOT = REPO / "ios/Bain Luck/Bain Luck"
+VIEW = APP_ROOT / "Components/RelatedFuturesView.swift"
+FORMATTING = APP_ROOT / "Utilities/FormattingUtilities.swift"
 
 # The seven text sites converted by UX-P217, each pinned INDIVIDUALLY.
 #
@@ -78,40 +80,276 @@ CONVERTED_SITES = [
 EXPECTED_ORDASH_SITES = 7
 
 # The two percent renders that are correctly guarded by `if let` and must STAY
-# hand-rolled — converting them would change their layout, since they render
-# nothing at all when the price is absent.
+# inside `if let` (never converted to `formatProbabilityOrDash`, never given a
+# `?? 0` default) because they render nothing when the price is absent. They
+# were updated from hand-rolled `Int(prob * 100)` / `Int((prob * 100).rounded())`
+# (which floored 0.6% to "0%" or rounded it to "1%") to `formatProbability(prob)`
+# so sub-1% probabilities print "<1%" inside those same `if let` blocks.
 GUARDED_PERCENT_RENDERS = [
-    'Text("\\(Int(prob * 100))%")',
-    'Text("\\(Int((prob * 100).rounded()))%")',
+    (
+        "if let prob = future.probability {\n"
+        "                                Text(formatProbability(prob))\n"
+        "                                    .font(.system(size: 10, weight: .semibold))"
+    ),
+    (
+        "if let prob = outcome.probability {\n"
+        "                                Text(formatProbability(prob))\n"
+        "                                    .font(.caption)\n"
+        "                                    .fontWeight(.bold)"
+    ),
 ]
 
 
 def _strip_comments(src: str) -> str:
-    """Drop `//` comments without touching `//` inside a string literal.
+    """Drop `//` and `/* ... */` comments without touching string literals.
 
-    The file contains an ESPN headshot URL, so a naive split on `//` would
-    truncate a real line of code.
+    Handles ESPN/asset `https://` URLs inside string literals and string
+    interpolations containing nested quotes so comment stripping never truncates
+    real Swift code or lets a prose comment hide/satisfy a scanner assertion.
     """
-    out = []
-    for line in src.splitlines():
-        in_string = False
-        escaped = False
-        cut = len(line)
-        for i, ch in enumerate(line):
-            if escaped:
-                escaped = False
+    out: list[str] = []
+    i = 0
+    n = len(src)
+    block_depth = 0
+    in_line_comment = False
+    # Track string mode alongside paren nesting so `"...\("inner")..."` exits
+    # the outer string only at matching interpolation depth.
+    string_paren_depths: list[int] = []
+    triple_string = False
+    paren_depth = 0
+
+    while i < n:
+        ch = src[i]
+        nxt = src[i + 1 : i + 2]
+
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+                out.append(ch)
+            i += 1
+            continue
+
+        if block_depth > 0:
+            if ch == "/" and nxt == "*":
+                block_depth += 1
+                i += 2
+            elif ch == "*" and nxt == "/":
+                block_depth -= 1
+                i += 2
+            else:
+                if ch == "\n":
+                    out.append(ch)
+                i += 1
+            continue
+
+        if string_paren_depths and paren_depth == string_paren_depths[-1]:
+            if ch == "\\" and nxt == "(":
+                out.append("\\(")
+                paren_depth += 1
+                i += 2
                 continue
-            if ch == "\\":
-                escaped = True
+            if ch == "\\" and i + 1 < n:
+                out.append(src[i : i + 2])
+                i += 2
                 continue
-            if ch == '"':
-                in_string = not in_string
+            if triple_string and src[i : i + 3] == '"""':
+                out.append('"""')
+                string_paren_depths.pop()
+                triple_string = False
+                i += 3
                 continue
-            if not in_string and ch == "/" and line[i + 1 : i + 2] == "/":
-                cut = i
-                break
-        out.append(line[:cut])
-    return "\n".join(out)
+            if not triple_string and ch == '"':
+                out.append('"')
+                string_paren_depths.pop()
+                i += 1
+                continue
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            in_line_comment = True
+            i += 2
+            continue
+        if ch == "/" and nxt == "*":
+            block_depth = 1
+            i += 2
+            continue
+        if src[i : i + 3] == '"""':
+            out.append('"""')
+            string_paren_depths.append(paren_depth)
+            triple_string = True
+            i += 3
+            continue
+        if ch == '"':
+            out.append('"')
+            string_paren_depths.append(paren_depth)
+            i += 1
+            continue
+        if ch == "(":
+            paren_depth += 1
+        elif ch == ")" and paren_depth > 0:
+            paren_depth -= 1
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
+def _extract_string_literals(code: str) -> list[tuple[int, str]]:
+    """Extract every Swift string literal `(line_number, raw_literal)` from comment-free code.
+
+    Handles `\"\"\"...\"\"\"` multi-line strings, `\"...\"` single-line strings,
+    and nested quotes inside `\\(...)` interpolations.
+    """
+    literals: list[tuple[int, str]] = []
+    n = len(code)
+    i = 0
+
+    while i < n:
+        ch = code[i]
+        if code[i : i + 3] == '"""' or ch == '"':
+            triple = code[i : i + 3] == '"""'
+            start = i
+            i += 3 if triple else 1
+            paren_depth = 0
+            string_paren_depths = [0]
+
+            while i < n:
+                c = code[i]
+                if string_paren_depths and paren_depth == string_paren_depths[-1]:
+                    if c == "\\" and code[i + 1 : i + 2] == "(":
+                        paren_depth += 1
+                        i += 2
+                        continue
+                    if c == "\\" and i + 1 < n:
+                        i += 2
+                        continue
+                    if triple and len(string_paren_depths) == 1 and code[i : i + 3] == '"""':
+                        i += 3
+                        string_paren_depths.pop()
+                        break
+                    if (not triple or len(string_paren_depths) > 1) and c == '"':
+                        i += 1
+                        string_paren_depths.pop()
+                        if not string_paren_depths:
+                            break
+                        continue
+                    i += 1
+                    continue
+
+                if code[i : i + 3] == '"""':
+                    string_paren_depths.append(paren_depth)
+                    i += 3
+                    continue
+                if ch == '"' and c == '"':
+                    string_paren_depths.append(paren_depth)
+                    i += 1
+                    continue
+                if c == '"':
+                    string_paren_depths.append(paren_depth)
+                    i += 1
+                    continue
+                if c == "(":
+                    paren_depth += 1
+                elif c == ")" and paren_depth > 0:
+                    paren_depth -= 1
+                i += 1
+
+            line_no = code[:start].count("\n") + 1
+            literals.append((line_no, code[start:i]))
+            continue
+        i += 1
+
+    return literals
+
+
+HAND_ROLLED_PERCENT_IN_STRING_RE = re.compile(
+    r"(?:\bInt\b|\bround)\s*\([^;]*?\*\s*100(?:\.0)?\b"
+)
+
+
+def _find_hand_rolled_percent_strings(src: str) -> list[tuple[int, str]]:
+    """Return `(line, normalized_literal)` for ANY Swift string computing a percent via `* 100`."""
+    code = _strip_comments(src)
+    hits: list[tuple[int, str]] = []
+    for line_no, literal in _extract_string_literals(code):
+        if "%" in literal and HAND_ROLLED_PERCENT_IN_STRING_RE.search(literal):
+            hits.append((line_no, " ".join(literal.split())))
+    return hits
+
+
+# Exact non-probability exceptions under `ios/Bain Luck/Bain Luck/`.
+# Keyed by `(rel_path, normalized_string_literal) -> expected_count` so no whole
+# file is exempted and zero market-probability formatters/strings are allow-listed.
+NON_PROBABILITY_HAND_ROLLED_STRING_ALLOWLIST: dict[tuple[str, str], int] = {
+    # 10 chart Y-axis scale ticks (`0%`..`100%` scale marks, never outcome probabilities;
+    # verified `OddsChartView.axisLabel(for:)` only renders Y-axis ticks via `RacingWinPodiumAdapter10868`).
+    (
+        "Components/EventAtlasGolfTournament11666.swift",
+        '"\\(Int((d * 100).rounded()))%"',
+    ): 2,
+    (
+        "Components/MLBFinalCards11284.swift",
+        '"\\(Int((v * 100).rounded()))%"',
+    ): 1,
+    (
+        "Components/MLBFinalCards11284.swift",
+        '"\\(Int((chance * 100).rounded()))%"',
+    ): 1,
+    (
+        "Components/NBAEventCards9483.swift",
+        '"\\(Int((chance * 100).rounded()))%"',
+    ): 1,
+    (
+        "Components/NFLEventCards9483.swift",
+        '"\\(Int((chance * 100).rounded()))%"',
+    ): 1,
+    (
+        "Components/OddsChartView.swift",
+        '"\\(Int((value * 100).rounded()))%"',
+    ): 1,
+    (
+        "Components/PlayerMilestoneProfileView.swift",
+        '"\\(Int((chance * 100).rounded()))%"',
+    ): 1,
+    (
+        "Components/RaceChartView.swift",
+        '"\\(Int((value * 100).rounded()))%"',
+    ): 1,
+    (
+        "Utilities/RaceChart.swift",
+        '"\\(Int(($0 * 100).rounded()))%"',
+    ): 1,
+    # Signed 24h delta badge (`MovementBadge`, gated by `abs(m) >= 0.01`, point move not chance).
+    (
+        "Views/DiscoverView.swift",
+        '"\\(abs(Int((m * 100).rounded())))%"',
+    ): 1,
+    # User prediction hit-rate accuracy ratios (`correct / total` legitimately spans 0%..100%).
+    (
+        "Views/MyStuffView.swift",
+        '"\\(Int(stats.accuracy * 100))%"',
+    ): 1,
+    (
+        "Views/PredictionStatsView.swift",
+        '"\\(Int(stats.accuracy * 100))%"',
+    ): 1,
+    (
+        "Views/PredictionStatsView.swift",
+        '"\\(Int(data.accuracy * 100))%"',
+    ): 1,
+    # Dev-only source blend weight diagnostic string (`mark.dev?.weights`, gated by dev overlay).
+    (
+        "Components/SourceMarkView12581.swift",
+        '"\\(src.name) \\(Int((w * 100).rounded()))%"',
+    ): 1,
+    # Raw 3-way bookmaker overround sum diagnostic (sum of 3 legs, e.g. 104%, not a single chance).
+    (
+        "Components/EventAtlasSoccerCards11666.swift",
+        '"Raw 3-way sum \\(Int(($0 * 100.0).rounded()))%"',
+    ): 1,
+}
 
 
 def _view_code() -> str:
@@ -166,9 +404,9 @@ class TestNoTextRenderInventsAProbability:
 
     def test_the_two_guarded_renders_stay_hand_rolled(self):
         """The other half of CERT-550's compensating move: it satisfied the
-        count by converting an `if let` site. Those must NOT be converted —
-        they render nothing when the price is absent, which is a different and
-        equally correct answer, and converting them changes their layout."""
+        count by converting an `if let` site. Those must stay inside `if let`
+        with `formatProbability(prob)` (no `formatProbabilityOrDash`, no `?? 0`
+        default) — they render nothing when absent while printing `<1%` under 1%."""
         code = _view_code()
         for snippet in GUARDED_PERCENT_RENDERS:
             assert snippet in code, (
@@ -209,6 +447,65 @@ class TestTheGuardCanActuallyFail:
         assert "prose" not in stripped, "a comment must not satisfy the guard"
         assert '"https://x/y"' in stripped, "a URL is not a comment"
         assert "tail" not in stripped
+
+    def test_planted_hand_rolled_percent_in_text_is_detected(self):
+        """Scanning `ios/Bain Luck/Bain Luck/` must catch floor, rounded, helper, and string mutants."""
+        mutants = [
+            'if let prob = future.probability {\n    Text("\\(Int(prob * 100))%")\n}',
+            'Text("\\(Int((prob * 100).rounded()))%")',
+            'Text(\n    "\\(Int((prob * 100.0).rounded()))%"\n)',
+            'Text("Based on \\(Int(round(prob * 100)))% chance")',
+            'Text("\\(label ?? "fallback"): \\(Int(prob * 100))%")',
+            'private func formatPct(_ p: Double) -> String {\n    "\\(Int(round(p * 100)))%"\n}',
+            'let text = "\\(leader.name): \\(Int(prob * 100))%"',
+            'return "\\(Int((p * 100.0).rounded()))%"',
+        ]
+        for mutant in mutants:
+            assert _find_hand_rolled_percent_strings(mutant), f"missed mutant: {mutant!r}"
+
+        safe = [
+            '// "\\(Int(prob * 100))%"\nText(formatProbability(prob))',
+            '/* Text("\\(Int((prob * 100).rounded()))%") */\nlet s = formatProbabilityOrDash(prob)',
+        ]
+        for snippet in safe:
+            assert _find_hand_rolled_percent_strings(snippet) == [], (
+                f"false positive on {snippet!r}"
+            )
+
+
+class TestNoViewHandRollsProbabilityPercent:
+    """Class-level guard (#13892 follow-up): no string anywhere in `ios/Bain Luck/Bain Luck/`
+    (inside or outside `Text(...)`) may build a probability percent via `* 100` with `Int(` or `round(`."""
+
+    def test_no_view_hand_rolls_a_probability_percent(self):
+        found_counts: Counter[tuple[str, str]] = Counter()
+        unexpected: list[str] = []
+
+        for path in sorted(APP_ROOT.rglob("*.swift")):
+            rel = path.relative_to(APP_ROOT).as_posix()
+            for line_no, norm_literal in _find_hand_rolled_percent_strings(path.read_text()):
+                key = (rel, norm_literal)
+                found_counts[key] += 1
+                expected = NON_PROBABILITY_HAND_ROLLED_STRING_ALLOWLIST.get(key, 0)
+                if found_counts[key] > expected:
+                    unexpected.append(f"{rel}:{line_no}: {norm_literal}")
+
+        assert unexpected == [], (
+            "App string hand-rolls a percent using `* 100`; route probability "
+            "formatting through `formatProbability(...)`, `formatProbabilityOrDash(...)`, "
+            "or `DiscoverRoundupCardModel.probabilityText(...)` so 0.1%..0.99% reads `<1%`: "
+            f"{unexpected}"
+        )
+
+        drift = {
+            key: (expected, found_counts[key])
+            for key, expected in NON_PROBABILITY_HAND_ROLLED_STRING_ALLOWLIST.items()
+            if found_counts[key] != expected
+        }
+        assert drift == {}, (
+            "Non-probability allow-list entries drifted from source counts: "
+            f"{drift}"
+        )
 
 
 class TestTheFormatterItself:

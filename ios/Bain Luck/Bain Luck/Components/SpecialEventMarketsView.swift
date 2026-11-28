@@ -578,9 +578,11 @@ struct SpecialEventMarketsView: View {
                         .frame(width: geo.size.width * o.prob)
                 }
                 .frame(width: 60, height: 6)
-                Text("\(percent)%")
+                Text(formatProbability(o.prob))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .frame(width: 32, alignment: .trailing)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: 32, alignment: .trailing)
             }
         }
     }

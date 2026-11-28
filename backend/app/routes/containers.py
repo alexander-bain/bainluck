@@ -737,6 +737,142 @@ async def get_kit_v1_preview(
     return build_kit_v1_worked_examples()
 
 
+@router.get("/preview/kit-pages")
+async def get_kit_container_pages_preview(
+    request: Request,
+    deck_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only preview of Decision 386: A dynamic Kit container pages (read-only from Redis)."""
+    from app.routes.admin_utils import _check_admin_auth
+    from app.tasks.container_proposer import (
+        CONTAINER_PREVIEWS_DECK_KEY_PREFIX,
+        CONTAINER_PREVIEWS_REDIS_KEY,
+    )
+    from app.tasks.redis_state import get_redis_client
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+
+    requested_deck_id = (deck_id or "").strip() or None
+    redis_key = (
+        f"{CONTAINER_PREVIEWS_DECK_KEY_PREFIX}{requested_deck_id}"
+        if requested_deck_id
+        else CONTAINER_PREVIEWS_REDIS_KEY
+    )
+
+    try:
+        rc = get_redis_client()
+    except Exception as exc:
+        logger.warning("kit-pages preview Redis client lookup failed: %s", exc, exc_info=True)
+        return {
+            "kit_page_version": 1,
+            "status": "error",
+            "error": "Could not connect to preview cache.",
+            "deck_id": requested_deck_id,
+            "snapshot_captured_at": None,
+            "covered_ids_count": 0,
+            "coverage_partial": False,
+            "coverage_failed_reads": [],
+            "timings_ms": None,
+            "count": 0,
+            "pages": [],
+        }
+
+    if rc is None:
+        logger.warning("kit-pages preview Redis client unavailable")
+        return {
+            "kit_page_version": 1,
+            "status": "error",
+            "error": "Preview cache client is unavailable.",
+            "deck_id": requested_deck_id,
+            "snapshot_captured_at": None,
+            "covered_ids_count": 0,
+            "coverage_partial": False,
+            "coverage_failed_reads": [],
+            "timings_ms": None,
+            "count": 0,
+            "pages": [],
+        }
+
+    try:
+        cached_raw = rc.get(redis_key)
+    except Exception:
+        logger.warning("kit-pages preview Redis read failed", exc_info=True)
+        return {
+            "kit_page_version": 1,
+            "status": "error",
+            "error": "Could not read preview container deck from Redis.",
+            "deck_id": requested_deck_id,
+            "snapshot_captured_at": None,
+            "covered_ids_count": 0,
+            "coverage_partial": False,
+            "coverage_failed_reads": [],
+            "timings_ms": None,
+            "count": 0,
+            "pages": [],
+        }
+
+    if cached_raw:
+        try:
+            cached = json.loads(cached_raw)
+        except (TypeError, ValueError):
+            logger.warning("kit-pages preview Redis payload invalid JSON", exc_info=True)
+            return {
+                "kit_page_version": 1,
+                "status": "error",
+                "error": "Stored preview container deck payload could not be parsed.",
+                "deck_id": requested_deck_id,
+                "snapshot_captured_at": None,
+                "covered_ids_count": 0,
+                "coverage_partial": False,
+                "coverage_failed_reads": [],
+                "timings_ms": None,
+                "count": 0,
+                "pages": [],
+            }
+        if isinstance(cached, dict):
+            pages = cached.get("pages") or []
+            if pages:
+                return {
+                    "kit_page_version": 1,
+                    "status": "ready",
+                    "deck_id": cached.get("deck_id"),
+                    "snapshot_captured_at": cached.get("updated_at"),
+                    "covered_ids_count": int(cached.get("covered_ids_count") or 0),
+                    "coverage_partial": bool(cached.get("coverage_partial")),
+                    "coverage_failed_reads": list(cached.get("coverage_failed_reads") or []),
+                    "timings_ms": cached.get("timings_ms"),
+                    "count": len(pages),
+                    "pages": pages,
+                }
+            return {
+                "kit_page_version": 1,
+                "status": "not_built_yet",
+                "deck_id": cached.get("deck_id") or requested_deck_id,
+                "snapshot_captured_at": cached.get("updated_at"),
+                "covered_ids_count": int(cached.get("covered_ids_count") or 0),
+                "coverage_partial": bool(cached.get("coverage_partial")),
+                "coverage_failed_reads": list(cached.get("coverage_failed_reads") or []),
+                "timings_ms": cached.get("timings_ms"),
+                "count": 0,
+                "pages": [],
+            }
+
+    return {
+        "kit_page_version": 1,
+        "status": "not_built_yet",
+        "deck_id": requested_deck_id,
+        "snapshot_captured_at": None,
+        "covered_ids_count": 0,
+        "coverage_partial": False,
+        "coverage_failed_reads": [],
+        "timings_ms": None,
+        "count": 0,
+        "pages": [],
+    }
+
+
 async def _build_live_real_sets_audit_report(
     db: AsyncSession,
     *,

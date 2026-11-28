@@ -6048,6 +6048,21 @@ def discover_fun_scout(self, force=False):
 
 @celery_app.task(
     bind=True,
+    soft_time_limit=300,
+    time_limit=360,
+    name="app.tasks.propose_uncovered_containers",
+)
+def propose_uncovered_containers(self, max_proposals: int = 5):
+    """Build nightly preview-only Kit container pages in Redis (#12221, Decision 386: A)."""
+    from app.tasks.container_proposer import (
+        propose_uncovered_containers as _run_propose_uncovered_containers,
+    )
+
+    return _run_propose_uncovered_containers(max_proposals=max_proposals)
+
+
+@celery_app.task(
+    bind=True,
     soft_time_limit=180,
     time_limit=240,
     name="app.tasks.refresh_kit_v1_real_sets_preview",
@@ -9682,6 +9697,13 @@ celery_app.conf.beat_schedule = {
         # (default OFF until Wed Nov 25).
         "task": "app.tasks.discover_fun_scout",
         "schedule": crontab(minute=0, hour=9),  # Daily 09:00 UTC (1:00 AM PT)
+        "options": {"queue": "background"},
+    },
+    "propose-uncovered-containers-nightly": {
+        # #12221 / Decision 386: A: nightly uncovered-family Kit container page
+        # preview builder (stores frozen deck in Redis only, never auto-published).
+        "task": "app.tasks.propose_uncovered_containers",
+        "schedule": crontab(minute=35, hour=9),  # Daily 09:35 UTC (1:35 AM PT)
         "options": {"queue": "background"},
     },
     "grid-register-sentinel-daily": {

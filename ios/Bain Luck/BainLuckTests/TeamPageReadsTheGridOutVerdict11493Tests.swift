@@ -100,7 +100,7 @@ final class TeamPageReadsTheGridOutVerdict11493Tests: XCTestCase {
 
     func testAnUnstampedStepKeepsTodaysNumber() throws {
         let step = try page(pathState: nil).championshipPath[0]
-        XCTAssertEqual(ChampionshipPathPresentation.value(step), .percent("0%"))
+        XCTAssertEqual(ChampionshipPathPresentation.value(step), .percent("<1%"))
         let live = try page(pathProbability: "0.64", pathState: nil).championshipPath[0]
         XCTAssertEqual(ChampionshipPathPresentation.value(live), .percent("64%"))
     }

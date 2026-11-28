@@ -8,9 +8,17 @@ struct DiscoverLikeButton420D: View {
     let isLiked: Bool
     let action: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var iconSizeAX: CGFloat = 15
+    @ScaledMetric(relativeTo: .caption) private var labelSizeAX: CGFloat = 12
 
     var body: some View {
         let hPad: CGFloat = dynamicTypeSize.isAccessibilitySize ? 8 : 10
+        let heartFont: Font = dynamicTypeSize.isAccessibilitySize
+            ? .system(size: min(iconSizeAX, 22), weight: .semibold)
+            : .subheadline.weight(.semibold)
+        let textFont: Font = dynamicTypeSize.isAccessibilitySize
+            ? .system(size: min(labelSizeAX, 20), weight: .semibold)
+            : .caption.weight(.semibold)
         Button {
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -19,9 +27,9 @@ struct DiscoverLikeButton420D: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: isLiked ? "heart.fill" : "heart")
-                    .font(.subheadline.weight(.semibold))
+                    .font(heartFont)
                 Text(isLiked ? "Liked" : "Like")
-                    .font(.caption.weight(.semibold))
+                    .font(textFont)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                     .fixedSize(horizontal: true, vertical: false)
@@ -53,41 +61,27 @@ struct DiscoverCardActionBar420D: View {
     var horizontalPadding: CGFloat = 14
     var verticalPadding: CGFloat = 10
     var surfaceColor: Color? = nil
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var shareIconSizeAX: CGFloat = 15
 
     var body: some View {
         VStack(spacing: 0) {
             if topDivider {
                 Divider()
             }
-            HStack(spacing: 4) {
-                DiscoverLikeButton420D(isLiked: actions.isLiked, action: actions.onToggle)
-
-                Spacer(minLength: 6)
-
-                if let pinType = actions.pinType, let pinId = actions.pinId {
-                    PinButton(type: pinType, id: pinId)
-                        .fixedSize(horizontal: true, vertical: false)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 4) {
+                    DiscoverLikeButton420D(isLiked: actions.isLiked, action: actions.onToggle)
+                    Spacer(minLength: 6)
+                    trailingControls
                 }
 
-                if let shareURL = actions.shareURL {
-                    let shareTitle = actions.shareTitle ?? "Bain Luck"
-                    let shareMessage = actions.shareMessage ?? shareTitle
-                    ShareLink(
-                        item: shareURL,
-                        subject: Text(shareTitle),
-                        message: Text(shareMessage)
-                    ) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(DS.textSecondaryReadable)
-                            .padding(8)
-                            .background(Color.secondary.opacity(0.10), in: Circle())
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Circle())
+                VStack(alignment: .leading, spacing: 6) {
+                    DiscoverLikeButton420D(isLiked: actions.isLiked, action: actions.onToggle)
+                    HStack(spacing: 4) {
+                        Spacer(minLength: 0)
+                        trailingControls
                     }
-                    .buttonStyle(.plain)
-                    .recordsShareOpened { actions.onShare?() }
-                    .accessibilityLabel("Share")
                 }
             }
             .padding(.horizontal, horizontalPadding)
@@ -96,5 +90,38 @@ struct DiscoverCardActionBar420D: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("discover.card.actionBar420D")
+    }
+
+    @ViewBuilder
+    private var trailingControls: some View {
+        if let pinType = actions.pinType, let pinId = actions.pinId {
+            PinButton(type: pinType, id: pinId)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+
+        if let shareURL = actions.shareURL {
+            let shareTitle = actions.shareTitle ?? "Bain Luck"
+            let shareMessage = actions.shareMessage ?? shareTitle
+            ShareLink(
+                item: shareURL,
+                subject: Text(shareTitle),
+                message: Text(shareMessage)
+            ) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(
+                        dynamicTypeSize.isAccessibilitySize
+                            ? .system(size: min(shareIconSizeAX, 22), weight: .medium)
+                            : .subheadline.weight(.medium)
+                    )
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.10), in: Circle())
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .recordsShareOpened { actions.onShare?() }
+            .accessibilityLabel("Share")
+        }
     }
 }

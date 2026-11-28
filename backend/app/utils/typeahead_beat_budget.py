@@ -2210,7 +2210,13 @@ def free_background_slots(
 #: `background` once daily to delete >30d `/guess` rows and pre-freeze the PT
 #: daily pack (two DELETEs + <=20 indexed DB rows/day). Explicit 115 -> 116,
 #: implicit 38, total 154.
-BACKGROUND_BEAT_COUNT = 154
+#: 🔴 RE-DERIVED at atlas/12221-kit-container-pages (2026-11-27, #12221 / #13696):
+#: 154 → 155, explicit 116 → 117, fall-through UNMOVED at 38.
+#: `propose-uncovered-containers-nightly` (`crontab(minute=35, hour=9)`, daily
+#: 09:35 UTC = 1:35 AM PT) names `options={"queue": "background"}` (1 fire/day,
+#: bounded 2,500-market read into Redis-only preview deck). Census RUN over
+#: assembled `beat_schedule` prints `explicit 117 implicit 38 total 155`.
+BACKGROUND_BEAT_COUNT = 155
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
