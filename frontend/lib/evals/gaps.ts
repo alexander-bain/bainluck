@@ -104,16 +104,6 @@ export const GAPS: readonly Gap[] = [
     ...targetFor("chance-failures"),
   },
   {
-    id: "cu-sealed-set",
-    text: "There is no sealed test set for market understanding yet: a set that no fix is ever tuned on.",
-    ...targetFor("cu-sealed-set"),
-  },
-  {
-    id: "cu-run-repeatability",
-    text: "We have not measured how often the AI gives a different answer about the same market when asked twice.",
-    ...targetFor("cu-run-repeatability"),
-  },
-  {
     id: "cu-fact-labels",
     text: "Two people have not yet labeled the same markets, so we do not know how often people agree on these facts.",
     ...targetFor("cu-fact-labels"),
@@ -122,36 +112,11 @@ export const GAPS: readonly Gap[] = [
     id: "cu-scorecard-numbers",
     text: "The scorecard for market understanding has no numbers yet.",
     ...targetFor("cu-scorecard-numbers"),
-    planned: { waitingOn: "the sealed test set and two-person labels", ref: issueRef(13900) },
-  },
-  {
-    id: "cu-signal-list",
-    text: "We have not finished listing, for each fact we record about a market, what uses it and what it changes for a reader.",
-    ...targetFor("cu-signal-list"),
+    planned: { waitingOn: "two-person labels on the sealed set", ref: issueRef(13900) },
   },
   {
     id: "cu-entity-linking",
-    text: "Most markets are not yet linked to the real person, team or place they are about.",
+    text: "Most markets are not yet linked to the real person, team or place they are about. That and the later steps are tracked in one place.",
     ...targetFor("cu-entity-linking"),
-  },
-  {
-    id: "cu-confirm-once",
-    text: "A name we cannot match is not yet sent to a person to confirm once, so the answer can be reused.",
-    ...targetFor("cu-confirm-once"),
-  },
-  {
-    id: "cu-same-claim-key",
-    text: "Two markets that make the same claim in different words are not yet recognized as the same claim.",
-    ...targetFor("cu-same-claim-key"),
-  },
-  {
-    id: "cu-market-relations",
-    text: "We do not yet record how markets relate: the same claim, one implying another, or steps on one ladder.",
-    ...targetFor("cu-market-relations"),
-  },
-  {
-    id: "cu-taste-judge",
-    text: "No AI taste reader for what is interesting has been checked against grades a person held back.",
-    ...targetFor("cu-taste-judge"),
   },
 ];

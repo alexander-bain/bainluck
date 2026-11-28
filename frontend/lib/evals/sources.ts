@@ -262,6 +262,13 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
     usedBy: ["gaps"],
   },
   {
+    id: "cu-repeatability-run",
+    label: "Market understanding repeatability run, results",
+    date: "2026-11-27",
+    href: `${REPO}/issues/13899#issuecomment-7229828764`,
+    usedBy: ["market-understanding"],
+  },
+  {
     id: "cu-scorecard-record",
     label: "Market understanding scorecard, from the scoring script",
     date: "2026-11-27",

@@ -1,6 +1,17 @@
+import RAW_REPEATABILITY from "@/lib/evals/data/cu-repeatability.json";
 import RAW_SCORECARD from "@/lib/evals/data/cu-scorecard.json";
 import { sourceLink } from "@/lib/evals/sources";
 import { issueRef, type MeasuredTruth, type Truth } from "@/lib/evals/truth";
+
+export interface CuRepeatabilityResult {
+  asOf: string;
+  changedMarkets: number;
+  totalMarkets: number;
+  costUsd: number;
+  costCents: number;
+  runs: number;
+  sourceId: string;
+}
 
 export interface CuCountBucket {
   right: number;
@@ -44,6 +55,7 @@ export interface CuScorecard {
   };
   fields: readonly CuFieldScoreRow[];
   slices: Record<string, Record<string, CuSliceGroup>>;
+  repeatability: CuRepeatabilityResult | null;
 }
 
 export const CU_FIELD_WORDS: Record<string, string> = {
@@ -195,11 +207,56 @@ export function parseCuScorecard(raw: unknown): CuScorecard | null {
     },
     fields,
     slices,
+    repeatability: parseCuRepeatability(r.repeatability),
   };
 }
 
+export function parseCuRepeatability(raw: unknown): CuRepeatabilityResult | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const asOf = typeof r.as_of === "string" ? r.as_of : "";
+  if (!asOf) return null;
+  if (
+    typeof r.changed_markets !== "number" ||
+    typeof r.total_markets !== "number" ||
+    typeof r.cost_usd !== "number" ||
+    typeof r.cost_cents !== "number" ||
+    typeof r.runs !== "number" ||
+    typeof r.source_id !== "string" ||
+    !r.source_id
+  ) {
+    return null;
+  }
+  return {
+    asOf,
+    changedMarkets: r.changed_markets,
+    totalMarkets: r.total_markets,
+    costUsd: r.cost_usd,
+    costCents: r.cost_cents,
+    runs: r.runs,
+    sourceId: r.source_id,
+  };
+}
+
+export function cuRepeatabilityTruth(rep: CuRepeatabilityResult): MeasuredTruth {
+  return {
+    kind: "last_run",
+    asOf: rep.asOf,
+    source: sourceLink(rep.sourceId),
+  };
+}
+
+export function loadCuRepeatability(): CuRepeatabilityResult | null {
+  return parseCuRepeatability(RAW_REPEATABILITY);
+}
+
 export function loadCuScorecard(): CuScorecard | null {
-  return parseCuScorecard(RAW_SCORECARD);
+  const scorecard = parseCuScorecard(RAW_SCORECARD);
+  if (!scorecard) return null;
+  return {
+    ...scorecard,
+    repeatability: scorecard.repeatability ?? loadCuRepeatability(),
+  };
 }
 
 export function cuScorecardTruth(scorecard: CuScorecard): Truth {

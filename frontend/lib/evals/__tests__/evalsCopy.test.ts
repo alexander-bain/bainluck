@@ -92,6 +92,8 @@ describe("/evals copy passes the bans", () => {
     expect(ids).toEqual(
       expect.arrayContaining(["blend", "price-family", "venue-kalshi", "evals-will", "evals-soon", "evals-question"])
     );
+    expect(findBannedCopy("Check back later.", BANS).map((h) => h.ban.id)).toContain("evals-soon");
+    expect(findBannedCopy("That and the later steps are tracked in one place.", BANS)).toEqual([]);
   });
 
   it("a venue name as a source label passes; as the subject of a sentence it does not", () => {

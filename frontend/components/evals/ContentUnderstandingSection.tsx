@@ -2,17 +2,62 @@
 
 import EvalsSection from "@/components/evals/EvalsSection";
 import Figure from "@/components/evals/Figure";
+import TruthChip from "@/components/evals/TruthChip";
 import { CU_SCORECARD_COPY as COPY } from "@/lib/evals/copy";
 import {
   CU_SLICE_ORDER,
   CU_SLICE_WORDS,
+  cuRepeatabilityTruth,
   cuScorecardTruth,
   formatCuCostUsd,
   plainCuSliceGroupLabel,
   type CuCountBucket,
+  type CuRepeatabilityResult,
   type CuScorecard,
 } from "@/lib/evals/contentUnderstanding";
 import { pacificDayLabel, type MeasuredTruth } from "@/lib/evals/truth";
+
+function RepeatabilityCard({ repeatability }: { repeatability: CuRepeatabilityResult }) {
+  const truth = cuRepeatabilityTruth(repeatability);
+  const measuredDay = pacificDayLabel(repeatability.asOf);
+  return (
+    <div
+      data-testid="evals-cu-repeatability"
+      data-truth-scope="last_run"
+      className="rounded-lg border border-surface-border bg-surface-elevated p-4 space-y-2"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-caption-strong text-text-primary">{COPY.repeatabilityHeading}</h3>
+        <TruthChip truth={truth} />
+      </div>
+      <p className="text-body text-text-primary">
+        {COPY.repeatabilityBefore}{" "}
+        <Figure truth={truth} value={String(repeatability.changedMarkets)}>
+          {repeatability.changedMarkets.toLocaleString("en-US")}
+        </Figure>{" "}
+        {COPY.repeatabilityOf}{" "}
+        <Figure truth={truth} value={String(repeatability.totalMarkets)}>
+          {repeatability.totalMarkets.toLocaleString("en-US")}
+        </Figure>{" "}
+        {COPY.repeatabilityAfter}{" "}
+        <time dateTime={repeatability.asOf}>{measuredDay ?? repeatability.asOf}</time>
+        {COPY.repeatabilityCostBefore}{" "}
+        <Figure truth={truth} value={String(repeatability.costCents)}>
+          {repeatability.costCents.toLocaleString("en-US")}
+        </Figure>{" "}
+        {COPY.repeatabilityCostAfter}
+      </p>
+      <a
+        href={truth.source.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-block text-caption text-accent-brand hover:underline"
+      >
+        {COPY.repeatabilityLink}
+      </a>
+    </div>
+  );
+}
 
 function BucketCell({
   bucket,
@@ -76,7 +121,9 @@ export default function ContentUnderstandingSection({ scorecard }: { scorecard: 
       detail={COPY.detail}
       truth={truth}
     >
-      {!measuredTruth ? (
+      <div className="space-y-4">
+        {scorecard.repeatability && <RepeatabilityCard repeatability={scorecard.repeatability} />}
+        {!measuredTruth ? (
         <div className="space-y-4">
           <div
             data-testid="evals-cu-unmeasured"
@@ -206,6 +253,7 @@ export default function ContentUnderstandingSection({ scorecard }: { scorecard: 
           </div>
         </div>
       )}
+      </div>
     </EvalsSection>
   );
 }

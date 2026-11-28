@@ -189,7 +189,9 @@ describe("/evals S1 renders the shell", () => {
     const page = await mountPage();
     const rows = Array.from(page.querySelectorAll("[data-gap-id]"));
     expect(rows.map((r) => r.getAttribute("data-gap-id"))).toEqual(GAPS.map((g) => g.id));
+    expect(rows).toHaveLength(11);
     expect(Object.keys(GAP_TARGETS.gaps).sort()).toEqual(GAPS.map((g) => g.id).sort());
+    expect(page.querySelector('[data-gap-id="cu-entity-linking"]')?.textContent).toContain("#13897");
     for (const row of rows) {
       const id = row.getAttribute("data-gap-id")!;
       const entry = GAP_TARGETS.gaps[id];
@@ -256,13 +258,24 @@ describe("/evals S1 renders the shell", () => {
     expect(hits.map((h) => `${h.ban.id}: ${h.context}`)).toEqual([]);
   });
 
-  it("renders the Content Understanding block inside the full record as Not measured yet with date (#13901)", async () => {
+  it("renders the Content Understanding block inside the full record with repeatability numbers and Not measured yet (#13901, #13899)", async () => {
     const page = await mountPage();
     const cuSection = page.querySelector('[data-evals-section="market-understanding"]');
     expect(cuSection).not.toBeNull();
     expect(cuSection?.closest('details[data-evals-fold="record"]')).not.toBeNull();
-    expect(cuSection?.textContent).toContain("Not measured yet as of Nov 27");
-    expect(cuSection?.querySelectorAll("[data-evals-figure]")).toHaveLength(0);
+
+    const rep = cuSection?.querySelector('[data-testid="evals-cu-repeatability"]');
+    expect(rep?.textContent).toContain(
+      "Asked the same thing twice, the AI changed at least one answer on 70 of 200 markets. Measured Nov 27; the two runs cost 19 cents."
+    );
+    expect(
+      Array.from(rep?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent)
+    ).toEqual(["70", "200", "19"]);
+    expect(rep?.querySelector("a[href*='/issues/13899#issuecomment-7229828764']")).not.toBeNull();
+
+    const unmeasured = cuSection?.querySelector('[data-testid="evals-cu-unmeasured"]');
+    expect(unmeasured?.textContent).toContain("Not measured yet as of Nov 27");
+    expect(unmeasured?.querySelectorAll("[data-evals-figure]")).toHaveLength(0);
   });
 });
 

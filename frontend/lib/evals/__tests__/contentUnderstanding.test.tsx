@@ -44,10 +44,27 @@ describe("Content Understanding section on /evals (#13901)", () => {
     expect(scorecard?.asOf).toBe("2026-11-27");
 
     const el = await mount(<ContentUnderstandingSection scorecard={scorecard!} />);
-    const statusText = el.querySelector('[data-testid="evals-cu-unmeasured"]')?.textContent ?? "";
+    const repText = el.querySelector('[data-testid="evals-cu-repeatability"]')?.textContent ?? "";
+    expect(repText).toContain(
+      "Asked the same thing twice, the AI changed at least one answer on 70 of 200 markets. Measured Nov 27; the two runs cost 19 cents."
+    );
+    expect(el.querySelector('[data-testid="evals-cu-repeatability"] [data-truth-chip]')?.textContent).toContain(
+      "LAST RUN · NOV 27"
+    );
+    expect(
+      el.querySelector('[data-testid="evals-cu-repeatability"] a[href*="/issues/13899#issuecomment-7229828764"]')
+    ).not.toBeNull();
+    expect(
+      Array.from(el.querySelectorAll('[data-testid="evals-cu-repeatability"] [data-evals-figure]') ?? []).map(
+        (f) => f.textContent
+      )
+    ).toEqual(["70", "200", "19"]);
+
+    const unmeasured = el.querySelector('[data-testid="evals-cu-unmeasured"]');
+    const statusText = unmeasured?.textContent ?? "";
     expect(statusText).toContain("Not measured yet as of Nov 27");
-    expect(el.querySelector("time")?.getAttribute("dateTime")).toBe("2026-11-27");
-    expect(el.querySelectorAll("[data-evals-figure]")).toHaveLength(0);
+    expect(unmeasured?.querySelector("time")?.getAttribute("dateTime")).toBe("2026-11-27");
+    expect(unmeasured?.querySelectorAll("[data-evals-figure]")).toHaveLength(0);
     expect(el.querySelector('[data-cu-group="code"] [data-cu-planned-field="liveness"]')?.textContent).toBe("Trading activity");
     expect(el.querySelector('[data-cu-group="model"] [data-cu-planned-field="topic"]')?.textContent).toBe("Topic");
     for (const sharedField of ["geography", "event_date", "stakes", "breadth", "junk_flags"]) {
