@@ -1905,6 +1905,15 @@ async def _write_prices(
                         FuturesOutcome.price_changed_at < poll.fetched_at,
                     )
                 )
+                # A copy can nominate a settled leg. The eligible-outcomes
+                # read checks the real row, and these predicates also cover a
+                # grade that lands between that read and the UPDATE.
+                fresher.extend(
+                    (
+                        FuturesOutcome.is_winner.isnot(True),
+                        FuturesOutcome.resolution_source.is_distinct_from(SETTLED_SOURCE),
+                    )
+                )
                 # FOR NO KEY UPDATE SKIP LOCKED: a row another transaction holds
                 # is being written by a newer writer, so the poll leaves it to
                 # the next pass instead of waiting on it while holding this

@@ -11,6 +11,7 @@ import pytest
 
 from app.tasks import polymarket_ws
 from app.tasks import venue_poll_30s as v
+from app.utils import open_futures_outcomes as outcome_copy
 
 
 class _Redis:
@@ -27,9 +28,13 @@ class _Redis:
 class _Session:
     def __init__(self, rows):
         self.rows, self.reads = rows, 0
+        self.sql = ""
+        self.binds = {}
 
-    async def execute(self, *_a, **_k):
+    async def execute(self, stmt, binds):
         self.reads += 1
+        self.sql = str(stmt)
+        self.binds = binds
         rows = self.rows
 
         class _R:
@@ -47,6 +52,7 @@ def rc(monkeypatch):
     monkeypatch.setattr(v, "clear_backoff", lambda _n: None)
     monkeypatch.setattr(v, "shown_market_ids", lambda: [])
     monkeypatch.setattr(v, "population_binds", lambda _ids: {})
+    monkeypatch.setattr(outcome_copy, "_state", lambda: None)
     return fake
 
 
@@ -69,14 +75,13 @@ async def test_an_expired_or_other_statements_population_is_never_reused(rc, mon
     await v.load_population(_Session(ROWS), "polymarket", now_mono=time.monotonic(), stats={})
     (key,) = rc.kv
     monkeypatch.setattr(v, "_POPULATION", {})
-    monkeypatch.setattr(v, "polymarket_population_sql", lambda _arm: "SELECT 'another scope'")
+    monkeypatch.setattr(v, "polymarket_population_sql", lambda _arm, **_kw: "SELECT 'another scope'")
     other = _Session([])
     await v.load_population(other, "polymarket", now_mono=time.monotonic(), stats={})
     assert other.reads == 1, "a different statement reads its own population"
 
     monkeypatch.setattr(v, "_POPULATION", {})
     monkeypatch.setattr(time, "time", lambda: 10 ** 10)  # far past the TTL
-    late = _Session([])
     assert v._read_shared_population("polymarket", "SELECT 'another scope'") is None
 
 
@@ -87,6 +92,39 @@ async def test_unreadable_redis_reads_the_database(rc, monkeypatch):
     s = _Session(ROWS)
     units = await v.load_population(s, "polymarket", now_mono=time.monotonic(), stats={})
     assert s.reads == 1 and len(units) == 2
+
+
+@pytest.mark.parametrize(
+    "state_changes, enabled, use_copy",
+    [
+        (None, "1", False),
+        ({"version": 1}, "1", False),
+        ({"pass_at": 0}, "1", False),
+        ({"cycle_complete": False}, "1", False),
+        ({}, "0", False),
+        ({}, "1", True),
+    ],
+    ids=["absent", "old-columns", "stale", "refilling", "disabled", "ready"],
+)
+async def test_population_uses_only_a_fresh_copy_with_the_poll_fields(
+    rc, monkeypatch, state_changes, enabled, use_copy
+):
+    state = None
+    if state_changes is not None:
+        state = {
+            "version": outcome_copy.OUTCOME_COPY_VERSION,
+            "pass_at": time.time(),
+            "cycle_complete": True,
+            "reader_floor": 10,
+            **state_changes,
+        }
+    monkeypatch.setattr(outcome_copy, "_state", lambda: state)
+    monkeypatch.setenv("OPEN_FUTURES_OUTCOMES_READ", enabled)
+    session = _Session(ROWS)
+    await v.load_population(session, "polymarket", now_mono=time.monotonic())
+
+    assert ("open_futures_outcomes" in session.sql) is use_copy
+    assert session.binds == ({"reader_floor": 10} if use_copy else {})
 
 
 def test_the_props_arms_event_superset_covers_the_sockets_window(monkeypatch):
