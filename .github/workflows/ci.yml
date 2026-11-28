@@ -794,6 +794,20 @@ jobs:
             echo "::error::#13338 onboarding gate did not run all eighteen cases"
             exit 1
           }
+      - name: "#11934 sentence interests return verified chips (real Postgres)"
+        id: db_11934_sentence_interests
+        if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
+        run: |
+          python -m pytest tests/test_onboarding_interest_sentences_11934.py \
+            -v -rs > /tmp/onboarding11934.txt 2>&1 || {
+            cat /tmp/onboarding11934.txt
+            exit 1
+          }
+          cat /tmp/onboarding11934.txt
+          grep -qE "[^0-9]8 passed([,[:space:]]|$)" /tmp/onboarding11934.txt || {
+            echo "::error::#11934 sentence gate did not run all eight cases"
+            exit 1
+          }
       - name: "#12519 team-merge dedup keeps distinct names (real Postgres)"
         id: db_12519_team_merge_dedup
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
