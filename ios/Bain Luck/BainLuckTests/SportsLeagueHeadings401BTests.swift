@@ -354,10 +354,43 @@ final class SportsLeagueHeadings401BTests: XCTestCase {
     }
 
     private func ocrLines(_ image: UIImage) throws -> [String] {
-        let req = VNRecognizeTextRequest()
-        req.recognitionLevel = .accurate
-        req.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([req])
-        return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        let cg = try XCTUnwrap(image.cgImage)
+        // Tall 2x renders (>4000px) can cause VNRecognizeTextRequest to drop
+        // individual mid-strip rows; scan overlapping 1400px horizontal bands
+        // in top-to-bottom order while preserving exact line ordering.
+        if cg.height <= 1800 {
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            req.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: cg).perform([req])
+            return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        }
+        let bandHeight = 1400
+        let step = 1000
+        var items: [(y: CGFloat, text: String)] = []
+        var yStart = 0
+        while yStart < cg.height {
+            let h = min(bandHeight, cg.height - yStart)
+            let rect = CGRect(x: 0, y: yStart, width: cg.width, height: h)
+            guard let slice = cg.cropping(to: rect) else { break }
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            req.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: slice).perform([req])
+            for obs in req.results ?? [] {
+                guard let text = obs.topCandidates(1).first?.string else { continue }
+                let globalY = CGFloat(yStart) + (1.0 - obs.boundingBox.midY) * CGFloat(h)
+                items.append((globalY, text))
+            }
+            if yStart + h >= cg.height { break }
+            yStart += step
+        }
+        items.sort { $0.y < $1.y }
+        var deduped: [(y: CGFloat, text: String)] = []
+        for item in items {
+            let isDup = deduped.contains { abs($0.y - item.y) < 24 && $0.text == item.text }
+            if !isDup { deduped.append(item) }
+        }
+        return deduped.map(\.text)
     }
 }
