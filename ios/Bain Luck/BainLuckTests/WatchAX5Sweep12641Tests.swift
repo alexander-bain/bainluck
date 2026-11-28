@@ -168,9 +168,10 @@ final class WatchAX5Sweep12641Tests: XCTestCase {
         XCTAssertTrue(tile.contains("if isAccessibilitySize {"))
 
         let comp = try String(contentsOf: Self.repoFile("BainLuckWatch Watch App/WatchSavedComplicationContent.swift"), encoding: .utf8)
-        XCTAssertTrue(comp.contains("isA11y ? .system(size: 13.5, weight: .semibold) : .headline"))
-        XCTAssertTrue(comp.contains(".lineLimit(isA11y ? 2 : 1)"))
-        XCTAssertFalse(comp.contains(".font(.subheadline.weight(.semibold))"))
+        XCTAssertTrue(comp.contains(".font(.subheadline.weight(.semibold))"))
+        XCTAssertTrue(comp.contains(".lineLimit(2)"))
+        XCTAssertTrue(comp.contains(".dynamicTypeSize(...DynamicTypeSize.xxxLarge)"))
+        XCTAssertFalse(comp.contains(".system(size: 13.5"))
     }
 
     func testExportDefaultAndAX5ParityRendersIfRequested() throws {
