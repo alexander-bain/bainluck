@@ -186,6 +186,7 @@ export interface OptionDetail {
   label: string;
   marketName: string;
   source: string | null;
+  sourceCount?: number;
   quoted: number | null;
   observedAt: string | null;
   baseline: number | null;

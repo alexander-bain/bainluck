@@ -36,6 +36,7 @@ import type { LadderCard } from "./nbaEventCards";
 import type { MlbExtraInningsCard, MlbHomeRunCard, MlbSeriesCard } from "./mlbEventCards";
 import type { NhlScoringCard } from "./nhlEventCards";
 import type { SoccerExactScoreCard, SoccerThreeWayCard } from "./soccerEventCards";
+import type { TennisExactScoreCard, TennisSetsCard } from "./tennisEventCards";
 
 export const NFL_SPORT_KEY = "americanfootball_nfl";
 
@@ -290,7 +291,9 @@ export type NflEventCard =
   | MlbSeriesCard
   | NhlScoringCard
   | SoccerThreeWayCard
-  | SoccerExactScoreCard;
+  | SoccerExactScoreCard
+  | TennisSetsCard
+  | TennisExactScoreCard;
 
 export function cardTitle(card: NflEventCard): string {
   if (card.kind === "finish") return finishKicker(card);
@@ -307,6 +310,8 @@ export function cardTitle(card: NflEventCard): string {
   if (card.kind === "nhl-scoring") return "Goalscorers";
   if (card.kind === "soccer-three-way") return "Three-way outcome";
   if (card.kind === "soccer-exact-score") return "Exact score";
+  if (card.kind === "tennis-sets") return "Set winners";
+  if (card.kind === "tennis-exact-score") return "Exact match score";
   return `${card.player} · ${card.stat}`;
 }
 
