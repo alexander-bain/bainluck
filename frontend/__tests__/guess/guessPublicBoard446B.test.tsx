@@ -10,7 +10,15 @@ jest.mock("@/hooks", () => ({
 
 import ChanceGame from "@/app/guess/ChanceGame";
 import GuessPage from "@/app/guess/page";
-import { formatOrdinal, GuessApiError, readerSafeBoardError } from "@/lib/guess/api";
+import {
+  cleanDailyNickname,
+  formatOrdinal,
+  GuessApiError,
+  isAllowedNicknameChars,
+  readerSafeBoardError,
+} from "@/lib/guess/api";
+import { BACKEND_AUTH_KEY } from "@/lib/firebase";
+import { SIGNED_IN_MARKER } from "@/hooks/useAuth";
 import { emptyEntry, fullGuess } from "@/lib/guess/engine";
 import { GUESS_PACK } from "@/lib/guess/pack";
 import { loadGame, pruneExpiredSavedGames, saveGame } from "@/lib/guess/storage";
@@ -273,5 +281,335 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await flushUi();
     expect(host.querySelector('[data-testid="public-board-page-label"]')?.textContent).toContain("Page 2 of 2");
     expect(host.querySelectorAll('[data-testid="public-board-table"] tbody tr').length).toBe(4);
+  });
+
+  it("allows accented Latin letters, periods, and ordinary multi-word names while matching hint copy", async () => {
+    for (const ok of [
+      "José",
+      "Zoë",
+      "Søren",
+      "Daphné",
+      "Alex B.",
+      "Matt Watson",
+      "Scott Watts",
+      "Christopher",
+      "O'Brien",
+      "Mary-Kate",
+      "Jean-Luc",
+      "Cass",
+      "Essex",
+      "Nigel",
+    ]) {
+      expect({ ok, allowed: isAllowedNicknameChars(ok) }).toEqual({ ok, allowed: true });
+      expect(cleanDailyNickname(ok)).toBe(ok);
+    }
+    for (const bad of ["Alex!", "bad_name", "...", "---"]) {
+      expect({ bad, allowed: isAllowedNicknameChars(bad) }).toEqual({ bad, allowed: false });
+    }
+
+    await act(async () => {
+      root?.render(<ChanceGame pack={DAILY_PACK} />);
+    });
+    await flushUi();
+
+    const input = host.querySelector('[data-testid="name-input"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "Bad!");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const hint = host.querySelector('[data-testid="name-char-hint"]');
+    expect(hint?.textContent).toBe("Letters, numbers, spaces, periods, apostrophes, and hyphens only.");
+  });
+
+  it("shows 12-letter names cleanly without truncate, uses past-day board copy, and keeps Hide/Put back admin-only", async () => {
+    const pastPack: GamePack = { ...GUESS_PACK, id: "2026-11-26", code: "p095" };
+    const longName = "Maximilianus";
+    const rowdyName = "Rowdy";
+    const groupCode = "grp446past1";
+    const mePlayer = {
+      ...emptyEntry(pastPack, longName, "here"),
+      entryId: 201,
+      guesses: pastPack.cards.map((c) => fullGuess(c)),
+      times: [10, 12, 14],
+    };
+    const rowdyAnswers = pastPack.cards.map((c) => fullGuess(c));
+    saveGame({
+      packId: pastPack.id,
+      groupCode,
+      joinedGroups: [groupCode],
+      phase: "results",
+      index: 14,
+      turn: 0,
+      here: [mePlayer],
+      link: [],
+    });
+
+    let rowdyHidden = false;
+    globalThis.fetch = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const s = String(url);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (s.includes("/api/guess/admin/hidden")) {
+        return mockJsonResponse(
+          200,
+          rowdyHidden
+            ? {
+                authorized: true,
+                day: pastPack.id,
+                entries: [
+                  {
+                    entry_id: 202,
+                    nickname: rowdyName,
+                    points: 205,
+                    total_time_seconds: 39,
+                    hidden_at: "2026-11-28T12:00:00Z",
+                    in_group: true,
+                  },
+                ],
+              }
+            : { authorized: true, day: pastPack.id, entries: [] },
+        );
+      }
+      if (s.includes("/api/guess/admin/entries/202/hide") && method === "POST") {
+        rowdyHidden = true;
+        return mockJsonResponse(200, { status: "hidden", entry_id: 202, day: pastPack.id, hidden_at: "2026-11-28T12:00:00Z" });
+      }
+      if (s.includes("/api/guess/admin/entries/202/unhide") && method === "POST") {
+        rowdyHidden = false;
+        return mockJsonResponse(200, { status: "visible", entry_id: 202, day: pastPack.id });
+      }
+      if (s.includes("/api/guess/groups/")) {
+        const entries = [
+          {
+            entry_id: 201,
+            nickname: longName,
+            answers: mePlayer.guesses,
+            step_times: [10, 12, 14],
+            points: 225,
+            step_points: [50, 75, 100],
+            step_labels: ["5 of 5", "5 of 5", "100"],
+            total_time_seconds: 36,
+          },
+          ...(rowdyHidden
+            ? []
+            : [
+                {
+                  entry_id: 202,
+                  nickname: rowdyName,
+                  answers: rowdyAnswers,
+                  step_times: [12, 13, 14],
+                  points: 205,
+                  step_points: [50, 75, 80],
+                  step_labels: ["5 of 5", "5 of 5", "80"],
+                  total_time_seconds: 39,
+                },
+              ]),
+        ];
+        return mockJsonResponse(200, { day: pastPack.id, edition_code: pastPack.code, group_code: groupCode, entries });
+      }
+      if (s.includes("/api/guess/board")) {
+        const visible = [
+          {
+            entry_id: 201,
+            rank: 1,
+            nickname: longName,
+            points: 225,
+            step_points: [50, 75, 100],
+            step_labels: ["5 of 5", "5 of 5", "100"],
+            total_time_seconds: 36,
+          },
+          ...(rowdyHidden
+            ? []
+            : [
+                {
+                  entry_id: 202,
+                  rank: 2,
+                  nickname: rowdyName,
+                  points: 205,
+                  step_points: [50, 75, 80],
+                  step_labels: ["5 of 5", "5 of 5", "80"],
+                  total_time_seconds: 39,
+                },
+              ]),
+        ];
+        return mockJsonResponse(200, {
+          day: pastPack.id,
+          edition_code: pastPack.code,
+          steps: pastPack.steps.map((st) => ({ name: st.name })),
+          total_count: visible.length,
+          page: 1,
+          page_size: 20,
+          total_pages: 1,
+          entries: visible,
+          me: visible[0],
+        });
+      }
+      return mockJsonResponse(404, {});
+    }) as typeof fetch;
+
+    // 1. Reader (signed out) sees NO Hide controls, past-day copy naming Nov 26, zero "leaderboard", and no truncate on 12-letter name
+    await act(async () => {
+      root?.render(<ChanceGame pack={pastPack} initialGroupCode={groupCode} isToday={false} />);
+    });
+    await flushUi();
+
+    expect(host.querySelector('[data-testid="public-board"]')?.textContent).toContain("Everyone who played on Nov 26");
+    expect(host.textContent?.toLowerCase()).not.toContain("leaderboard");
+    expect(host.querySelector('[data-testid="group-hide-202"]')).toBeNull();
+    expect(host.querySelector('[data-testid="public-hide-202"]')).toBeNull();
+    expect(host.querySelector('[data-testid="admin-hidden-panel"]')).toBeNull();
+    const mePublicRow = host.querySelector('[data-testid="public-board-row-me"]');
+    expect(mePublicRow?.textContent).toContain(longName);
+    expect(mePublicRow?.innerHTML).not.toContain("truncate");
+    expect(host.querySelector('[data-testid="step-table"]')?.innerHTML).not.toContain("truncate");
+
+    // 2. Signed-in admin sees Hide controls, opens in-page confirm, hides from BOTH boards, and puts Rowdy back
+    window.localStorage.setItem(SIGNED_IN_MARKER, "true");
+    window.localStorage.setItem(
+      BACKEND_AUTH_KEY,
+      JSON.stringify({
+        uid: "admin-1",
+        email: "alex@bainluck.com",
+        displayName: "Alex",
+        photoURL: null,
+        idToken: "admin-jwt-446b",
+        expiresAt: Date.now() + 3_600_000,
+      }),
+    );
+
+    await act(async () => {
+      root?.render(<ChanceGame key="admin-view" pack={pastPack} initialGroupCode={groupCode} isToday={false} />);
+    });
+    await flushUi(24);
+
+    const groupHideBtn = host.querySelector('[data-testid="group-hide-202"]') as HTMLButtonElement;
+    expect(groupHideBtn).not.toBeNull();
+    expect(host.querySelector('[data-testid="public-hide-202"]')).not.toBeNull();
+
+    await act(async () => {
+      groupHideBtn.click();
+    });
+    await flushUi(6);
+
+    const confirmBox = host.querySelector('[data-testid="admin-hide-confirm"]');
+    expect(confirmBox?.textContent).toContain("Hide Rowdy from both boards?");
+
+    const confirmYes = host.querySelector('[data-testid="admin-hide-confirm-yes"]') as HTMLButtonElement;
+    await act(async () => {
+      confirmYes.click();
+    });
+    await flushUi(24);
+
+    expect(host.querySelector('[data-testid="public-hide-202"]')).toBeNull();
+    expect(host.querySelector('[data-testid="step-table"]')?.textContent).not.toContain(rowdyName);
+    const hiddenPanel = host.querySelector('[data-testid="admin-hidden-panel"]');
+    expect(hiddenPanel?.textContent).toContain("Hidden on Nov 26");
+    expect(hiddenPanel?.textContent).toContain(rowdyName);
+
+    const unhideBtn = host.querySelector('[data-testid="admin-unhide-202"]') as HTMLButtonElement;
+    await act(async () => {
+      unhideBtn.click();
+    });
+    await flushUi(24);
+
+    expect(host.querySelector('[data-testid="public-hide-202"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="step-table"]')?.textContent).toContain(rowdyName);
+    expect(host.querySelector('[data-testid="admin-hidden-panel"]')).toBeNull();
+  });
+
+  it("allows a reader who has not played to open today's board before playing with no You marker or cards (467: A)", async () => {
+    const urls: string[] = [];
+    const pageOneEntries = Array.from({ length: 20 }, (_, idx) => ({
+      entry_id: 300 + idx,
+      rank: idx + 1,
+      nickname: idx === 0 ? "José" : `Reader ${idx + 1}`,
+      points: 225 - idx * 5,
+      step_points: [50, 75, 100 - idx * 5],
+      step_labels: ["5 of 5", "5 of 5", `${100 - idx * 5}`],
+      total_time_seconds: 30 + idx,
+    }));
+    const pageTwoEntries = [
+      {
+        entry_id: 320,
+        rank: 21,
+        nickname: "Alex B.",
+        points: 115,
+        step_points: [40, 45, 30],
+        step_labels: ["4 of 5", "3 of 5", "30"],
+        total_time_seconds: 51,
+      },
+    ];
+
+    globalThis.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/api/guess/board")) {
+        const pageNum = url.includes("page=2") ? 2 : 1;
+        return mockJsonResponse(200, {
+          day: DAILY_PACK.id,
+          edition_code: DAILY_PACK.code,
+          steps: DAILY_PACK.steps.map((st) => ({ name: st.name })),
+          total_count: 21,
+          page: pageNum,
+          page_size: 20,
+          total_pages: 2,
+          entries: pageNum === 2 ? pageTwoEntries : pageOneEntries,
+          me: null,
+        });
+      }
+      return mockJsonResponse(404, {});
+    }) as typeof fetch;
+
+    await act(async () => {
+      root?.render(<ChanceGame pack={DAILY_PACK} initialGroupCode={null} isToday={true} />);
+    });
+    await flushUi();
+
+    const toggleBtn = host.querySelector('[data-testid="start-board-toggle"]') as HTMLButtonElement;
+    expect(toggleBtn).not.toBeNull();
+    expect(toggleBtn.textContent).toBe("See today's board");
+    expect(host.querySelector('[data-testid="public-board"]')).toBeNull();
+    expect(urls.some((u) => u.includes("/api/guess/board"))).toBe(false);
+
+    await act(async () => {
+      toggleBtn.click();
+    });
+    await flushUi(24);
+
+    const boardUrls = urls.filter((u) => u.includes("/api/guess/board"));
+    expect(boardUrls.length).toBe(1);
+    expect(boardUrls[0]).not.toContain("entry_id=");
+
+    const publicBoard = host.querySelector('[data-testid="public-board"]');
+    expect(publicBoard).not.toBeNull();
+    expect(publicBoard?.textContent).toContain("Everyone who played today");
+    expect(publicBoard?.textContent).toContain("21 games");
+    expect(publicBoard?.textContent).toContain("José");
+    expect(host.querySelector('[data-testid="public-board-place"]')).toBeNull();
+    expect(host.querySelector('[data-testid="public-board-row-me"]')).toBeNull();
+    expect(host.querySelector('[data-testid="public-board-you-badge"]')).toBeNull();
+    expect(host.querySelector('[data-testid^="public-hide-"]')).toBeNull();
+    expect(host.querySelector('[data-testid="admin-hidden-panel"]')).toBeNull();
+    for (const card of DAILY_PACK.cards) {
+      expect(publicBoard?.textContent).not.toContain(card.prompt);
+    }
+
+    const nextBtn = host.querySelector('[data-testid="public-board-next"]') as HTMLButtonElement;
+    expect(nextBtn.disabled).toBe(false);
+    await act(async () => {
+      nextBtn.click();
+    });
+    await flushUi(24);
+
+    expect(host.querySelector('[data-testid="public-board"]')?.textContent).toContain("Alex B.");
+    expect(host.querySelector('[data-testid="public-board-row-me"]')).toBeNull();
+
+    const hideToggle = host.querySelector('[data-testid="start-board-toggle"]') as HTMLButtonElement;
+    expect(hideToggle.textContent).toBe("Hide today's board");
+    await act(async () => {
+      hideToggle.click();
+    });
+    await flushUi();
+    expect(host.querySelector('[data-testid="public-board"]')).toBeNull();
   });
 });

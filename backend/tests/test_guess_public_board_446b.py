@@ -256,6 +256,20 @@ def test_shared_scoring_parity_fixture():
     [
         ("Alex", True),
         ("Ann 2", True),
+        ("José", True),
+        ("Zoë", True),
+        ("Søren", True),
+        ("Daphné", True),
+        ("Alex B.", True),
+        ("Matt Watson", True),
+        ("Scott Watts", True),
+        ("Christopher", True),
+        ("O'Brien", True),
+        ("Mary-Kate", True),
+        ("Jean-Luc", True),
+        ("Cass", True),
+        ("Essex", True),
+        ("Nigel", True),
         ("O'Connor", True),
         ("O’Connor", True),
         ("Mary-Jane", True),
@@ -267,11 +281,18 @@ def test_shared_scoring_parity_fixture():
         ("Alex!", False),
         ("bad_name", False),
         ("---", False),
+        ("...", False),
         ("🔥Alex", False),
         ("Fuck", False),
         ("f u c k", False),
+        ("fu ck", False),
+        ("f.u.c.k", False),
+        ("fück", False),
         ("sh1t", False),
+        ("5 h 1 7", False),
+        ("shît", False),
         ("asshole", False),
+        ("Dick", False),
         ("dick", False),
         ("The Coin", False),
     ],
@@ -397,6 +418,61 @@ async def test_public_board_paging_order_privacy_cache_and_admin_hide(public_boa
     assert pub_json["me"] is None
     assert all(e["entry_id"] != rowdy_id for e in pub_json["entries"])
 
+    # Admin hidden list rejects unauthenticated callers and lists Rowdy cleanly for admin (zero group_code)
+    unauth_hidden = await client.get("/api/guess/admin/hidden?day=2026-11-28")
+    assert unauth_hidden.status_code in (401, 403)
+
+    hidden_list = await client.get(
+        "/api/guess/admin/hidden?day=2026-11-28&group_code=gamma3333",
+        headers={"Authorization": "Bearer test-admin-secret-446b"},
+    )
+    assert hidden_list.status_code == 200
+    hidden_json = hidden_list.json()
+    assert hidden_json["authorized"] is True
+    assert [e["entry_id"] for e in hidden_json["entries"]] == [rowdy_id]
+    assert hidden_json["entries"][0]["in_group"] is True
+    assert _contains_forbidden_group_code(hidden_json, group_codes) == []
+
+    # Admin unhide ("Put back") clears hidden_at and restores Rowdy on BOTH boards
+    unauth_unhide = await client.post(f"/api/guess/admin/entries/{rowdy_id}/unhide")
+    assert unauth_unhide.status_code in (401, 403)
+
+    unhide_res = await client.post(
+        f"/api/guess/admin/entries/{rowdy_id}/unhide",
+        headers={"Authorization": "Bearer test-admin-secret-446b"},
+    )
+    assert unhide_res.status_code == 200
+    assert unhide_res.json()["status"] == "visible"
+
+    db_session.expire_all()
+    restored_row = db_session.scalar(select(GuessGroupEntry).where(GuessGroupEntry.id == rowdy_id))
+    assert restored_row is not None and restored_row.hidden_at is None
+
+    grp_restored = await client.get("/api/guess/groups/gamma3333?day=2026-11-28")
+    assert grp_restored.status_code == 200
+    assert any(e["entry_id"] == rowdy_id for e in grp_restored.json()["entries"])
+
+    pub_restored = await client.get(
+        f"/api/guess/board?day=2026-11-28&page=1&page_size=25&entry_id={rowdy_id}"
+    )
+    assert pub_restored.status_code == 200
+    assert pub_restored.json()["total_count"] == 14
+    assert pub_restored.json()["me"]["entry_id"] == rowdy_id
+
+
+@pytest.mark.asyncio
+async def test_past_day_board_404_is_short_cached(public_board_env):
+    client, _, counter, _, _, _ = public_board_env
+    counter.read_queries = 0
+    first = await client.get("/api/guess/board?day=2026-11-26")
+    assert first.status_code == 404
+    assert counter.read_queries > 0
+
+    counter.read_queries = 0
+    second = await client.get("/api/guess/board?day=2026-11-26")
+    assert second.status_code == 404
+    assert counter.read_queries == 0
+
 
 @pytest.mark.asyncio
 async def test_unscheduled_day_returns_503_with_unscheduled_reason(public_board_env):
@@ -433,3 +509,65 @@ def test_build_daily_pack_tries_next_spare_when_first_spare_breaks_whole_day_inv
     assert "se1" not in easy_ids
     assert len(pack["cards"]) == 15
     assert any(p.get("card_id") == "se2" and p.get("swapped_from_slot") == "e3" for p in provenance)
+
+
+def _walk_keys(obj: object) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            keys.add(str(k))
+            keys |= _walk_keys(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            keys |= _walk_keys(item)
+    return keys
+
+
+@pytest.mark.asyncio
+async def test_public_board_before_playing_has_no_entry_id_cards_or_answers_467a(public_board_env):
+    client, _, _, _, _, _ = public_board_env
+    today_res = await client.get("/api/guess/today")
+    pack = today_res.json()["pack"]
+    best = [full_guess(c) for c in pack["cards"]]
+
+    for idx, nick in enumerate(("Daphné", "Alex B.")):
+        answers = list(best)
+        answers[14] = max(0, min(100, best[14] - idx * 5))
+        res = await client.post(
+            "/api/guess/groups/preplay11/entries",
+            headers={"x-forwarded-for": f"10.1.0.{idx + 1}"},
+            json={
+                "day": "2026-11-28",
+                "nickname": nick,
+                "answers": answers,
+                "step_times": [10, 12, 14],
+            },
+        )
+        assert res.status_code == 201, res.text
+
+    res = await client.get("/api/guess/board?day=2026-11-28&page=1&page_size=20")
+    assert res.status_code == 200
+    assert res.headers.get("cache-control") == "public, max-age=60"
+    payload = res.json()
+    assert payload["me"] is None
+    assert payload["total_count"] == 2
+    assert [e["nickname"] for e in payload["entries"]] == ["Daphné", "Alex B."]
+
+    expected_entry_keys = {
+        "rank",
+        "entry_id",
+        "nickname",
+        "points",
+        "step_points",
+        "step_labels",
+        "total_time_seconds",
+    }
+    for entry in payload["entries"]:
+        assert set(entry.keys()) == expected_entry_keys
+
+    all_keys = _walk_keys(payload)
+    assert all_keys.isdisjoint({"answers", "group_code", "cards", "prompt"})
+    assert _contains_forbidden_group_code(payload, {"preplay11"}) == []
+    dumped = json.dumps(payload)
+    for card in pack["cards"]:
+        assert card["prompt"] not in dumped

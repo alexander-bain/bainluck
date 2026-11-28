@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -57,6 +58,18 @@ GROUP_CODE_RE = re.compile(r"^[a-z0-9]{8,24}$")
 _TAP_KINDS = frozenset({"side", "versus", "four", "leader"})
 _RESERVED_NICKNAMES = frozenset({"the coin", "together"})
 ALLOWED_NICKNAME_RE = re.compile(r"^[A-Za-z0-9 '\-]+$")
+_EXTRA_LATIN_FOLDS = str.maketrans(
+    {
+        "ø": "o",
+        "ð": "d",
+        "đ": "d",
+        "þ": "th",
+        "ł": "l",
+        "ß": "ss",
+        "æ": "ae",
+        "œ": "oe",
+    }
+)
 _RUDE_WHOLE_TOKENS = frozenset(
     {
         "anal",
@@ -237,11 +250,10 @@ def format_as_of_pt(frozen_at: datetime) -> str:
 
 
 def clean_nickname(raw: Any) -> str:
-    """Mirror `cleanName` in `frontend/lib/guess/engine.ts`."""
+    """Mirror daily nickname cleanup while preserving accented Latin letters and periods."""
     if not isinstance(raw, str):
         return ""
-    # Replace control chars and collapse whitespace identically to JS `.replace(/\s+/g, " ").trim()`.
-    stripped = re.sub(r"[\x00-\x1f\x7f]+", " ", raw)
+    stripped = unicodedata.normalize("NFC", re.sub(r"[\x00-\x1f\x7f]+", " ", raw))
     stripped = stripped.replace("’", "'").replace("‘", "'").replace("ʼ", "'")
     collapsed = re.sub(r"\s+", " ", stripped).strip()
     if not collapsed:
@@ -252,24 +264,52 @@ def clean_nickname(raw: Any) -> str:
     return clipped
 
 
-def _is_rude_nickname(nickname: str) -> bool:
-    lowered = nickname.lower()
-    collapsed_alpha = re.sub(r"[^a-z0-9]+", "", lowered)
-    normalized_leet = collapsed_alpha.translate(_LEET_MAP)
-    for stem in _RUDE_SUBSTRINGS:
-        if stem in collapsed_alpha or stem in normalized_leet:
-            return True
-    if collapsed_alpha in _RUDE_WHOLE_TOKENS or normalized_leet in _RUDE_WHOLE_TOKENS:
+def _is_allowed_nickname_char(ch: str) -> bool:
+    if ch in " .'-" or ch.isascii() and ch.isdigit():
         return True
-    for raw_tok in re.split(r"[\s\-']+", lowered):
-        if not raw_tok:
-            continue
-        tok = raw_tok.strip()
-        tok_leet = tok.translate(_LEET_MAP)
-        if tok in _RUDE_WHOLE_TOKENS or tok_leet in _RUDE_WHOLE_TOKENS:
+    return ch.isalpha() and "LATIN" in unicodedata.name(ch, "")
+
+
+def _fold_latin_to_ascii(text: str) -> str:
+    folded = text.lower().translate(_EXTRA_LATIN_FOLDS)
+    nfkd = unicodedata.normalize("NFKD", folded)
+    return "".join(ch for ch in nfkd if unicodedata.category(ch) != "Mn")
+
+
+def _token_hits_rude(tok: str) -> bool:
+    if not tok:
+        return False
+    tok_leet = tok.translate(_LEET_MAP)
+    if tok in _RUDE_WHOLE_TOKENS or tok_leet in _RUDE_WHOLE_TOKENS:
+        return True
+    return any(stem in tok or stem in tok_leet for stem in _RUDE_SUBSTRINGS)
+
+
+def _is_rude_nickname(nickname: str) -> bool:
+    folded = _fold_latin_to_ascii(nickname)
+    tokens = re.findall(r"[a-z0-9]+", folded)
+    if not tokens:
+        return False
+
+    # Check each whole token as written (plus leetspeak), never joining full words
+    # like "Matt Watson" -> "mattwatson".
+    for tok in tokens:
+        if _token_hits_rude(tok):
             return True
-        if any(stem in tok or stem in tok_leet for stem in _RUDE_SUBSTRINGS):
-            return True
+
+    # Join contiguous runs ONLY of 1–2 character tokens to catch spaced-out evasion
+    # such as "f u c k", "fu ck", "f.u.c.k", or "5 h 1 7".
+    short_run: list[str] = []
+    for tok in tokens:
+        if len(tok) <= 2:
+            short_run.append(tok)
+        else:
+            if len(short_run) >= 2 and _token_hits_rude("".join(short_run)):
+                return True
+            short_run = []
+    if len(short_run) >= 2 and _token_hits_rude("".join(short_run)):
+        return True
+
     return False
 
 
@@ -277,7 +317,7 @@ def validate_nickname(raw: Any) -> tuple[str, Optional[str]]:
     """Validate and clean a board nickname, returning `(clean, refusal_reason)`."""
     if not isinstance(raw, str):
         return "", "Please pick a nickname using letters or numbers."
-    stripped = re.sub(r"[\x00-\x1f\x7f]+", " ", raw)
+    stripped = unicodedata.normalize("NFC", re.sub(r"[\x00-\x1f\x7f]+", " ", raw))
     stripped = stripped.replace("’", "'").replace("‘", "'").replace("ʼ", "'")
     collapsed = re.sub(r"\s+", " ", stripped).strip()
     if not collapsed:
@@ -285,10 +325,12 @@ def validate_nickname(raw: Any) -> tuple[str, Optional[str]]:
     clipped = collapsed[:12].strip()
     if clipped.lower() in _RESERVED_NICKNAMES:
         return "", "That name is taken by the house. Please pick another nickname."
-    if not ALLOWED_NICKNAME_RE.fullmatch(clipped) or not re.search(r"[A-Za-z0-9]", clipped):
+    if not all(_is_allowed_nickname_char(ch) for ch in clipped) or not any(
+        ch.isalpha() or (ch.isascii() and ch.isdigit()) for ch in clipped
+    ):
         return (
             "",
-            "Names can use only letters, spaces, numbers, apostrophes, and hyphens. Please pick another.",
+            "Names can use only letters, numbers, spaces, periods, apostrophes, and hyphens. Please pick another.",
         )
     if _is_rude_nickname(clipped):
         return "", "Please pick another nickname for the board."

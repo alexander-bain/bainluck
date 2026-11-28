@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import GuessGroupEntry
+from app.models.models import GuessDailyEdition, GuessGroupEntry
 from app.routes.admin_utils import _check_admin_secret, admin_account_identity
 from app.services.database import get_db_rw
 from app.utils.guess_daily import (
@@ -96,6 +96,7 @@ async def _get_cached_public_board(day_key: str) -> Optional[dict]:
                 if isinstance(parsed, dict):
                     return parsed
         except Exception:
+            # Best-effort Redis cache read; fall back to in-process cache on error.
             pass
     cached = _PUBLIC_BOARD_MEM_CACHE.get(day_key)
     if cached is not None:
@@ -120,6 +121,7 @@ async def _store_cached_public_board(day_key: str, snapshot: dict) -> None:
             )
             return
         except Exception:
+            # Best-effort Redis cache write; fall back to bounded in-process cache.
             pass
     if len(_PUBLIC_BOARD_MEM_CACHE) > 16:
         _PUBLIC_BOARD_MEM_CACHE.clear()
@@ -139,6 +141,7 @@ async def _invalidate_public_board_cache(day_key: str) -> None:
                 timeout=1.0,
             )
         except Exception:
+            # Best-effort Redis cache invalidation; entries expire automatically within 60s.
             pass
 
 
@@ -349,6 +352,11 @@ async def get_public_guess_board(
 
     day_key = target_day.isoformat()
     snapshot = await _get_cached_public_board(day_key)
+    if snapshot is not None and snapshot.get("_not_found"):
+        raise HTTPException(
+            status_code=404,
+            detail=str(snapshot.get("detail") or f"No edition stored for {target_day}."),
+        )
     if snapshot is None:
         try:
             edition = await get_or_freeze_daily_edition(db, target_day)
@@ -361,6 +369,11 @@ async def get_public_guess_board(
                 },
             )
         except GuessEditionNotFoundError as exc:
+            if target_day < today:
+                await _store_cached_public_board(
+                    day_key,
+                    {"_not_found": True, "detail": str(exc)},
+                )
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except GuessEditionUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -526,4 +539,91 @@ async def hide_guess_entry(
         "entry_id": int(entry.id),
         "day": entry.day_pt.isoformat(),
         "hidden_at": entry.hidden_at.isoformat(),
+    }
+
+
+@router.post(
+    "/admin/entries/{entry_id}/unhide",
+    dependencies=[Depends(admin_account_identity)],
+)
+async def unhide_guess_entry(
+    entry_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """Put a hidden board entry back by clearing `hidden_at`."""
+    _check_admin_secret(None, request=request)
+    entry = await db.scalar(
+        select(GuessGroupEntry).where(GuessGroupEntry.id == entry_id)
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found.")
+    if entry.hidden_at is not None:
+        entry.hidden_at = None
+        await db.commit()
+    await _invalidate_public_board_cache(entry.day_pt.isoformat())
+    return {
+        "status": "visible",
+        "entry_id": int(entry.id),
+        "day": entry.day_pt.isoformat(),
+    }
+
+
+@router.get(
+    "/admin/hidden",
+    dependencies=[Depends(admin_account_identity)],
+)
+async def list_hidden_guess_entries(
+    request: Request,
+    day: Optional[date] = Query(default=None),
+    group_code: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """List hidden board entries for an admin so an entry can be put back."""
+    _check_admin_secret(None, request=request)
+    clean_group: Optional[str] = None
+    if group_code is not None and group_code.strip():
+        try:
+            clean_group = validate_group_code(group_code.strip())
+        except GuessInvalidGroupCodeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    target_day = day or today_pt()
+    rows = (
+        await db.scalars(
+            select(GuessGroupEntry)
+            .where(
+                GuessGroupEntry.day_pt == target_day,
+                GuessGroupEntry.hidden_at.is_not(None),
+            )
+            .order_by(GuessGroupEntry.hidden_at.desc(), GuessGroupEntry.id.desc())
+        )
+    ).all()
+
+    edition = await db.scalar(
+        select(GuessDailyEdition).where(GuessDailyEdition.day_pt == target_day)
+    )
+    entries_out: list[dict] = []
+    for row in rows:
+        points = 0
+        total_time_seconds = 0
+        if edition is not None:
+            scored = score_answers(edition.pack_json, row.answers, row.step_times)
+            points = int(scored["points"])
+            total_time_seconds = int(scored["total_time_seconds"])
+        entries_out.append(
+            {
+                "entry_id": int(row.id),
+                "nickname": row.nickname,
+                "points": points,
+                "total_time_seconds": total_time_seconds,
+                "hidden_at": row.hidden_at.isoformat() if row.hidden_at else None,
+                "in_group": bool(clean_group and row.group_code == clean_group),
+            }
+        )
+
+    return {
+        "authorized": True,
+        "day": target_day.isoformat(),
+        "entries": entries_out,
     }

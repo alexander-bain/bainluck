@@ -180,6 +180,7 @@ export interface GamePack {
  * percents packed as `first * 101 + second` (duo). `null` means not answered.
  */
 export interface PlayerEntry {
+  entryId?: number;
   name: string;
   guesses: (number | null)[];
   /** How funny this phone found the line on each card: 1 to 5, 0 for none given. */

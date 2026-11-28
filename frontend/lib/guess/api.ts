@@ -3,7 +3,6 @@
 // and merges stored group entries with local and `#g=` link entries without duplicates.
 
 import { API_URL } from "../api";
-import { cleanName } from "./engine";
 import type { GamePack, PlayerEntry } from "./types";
 
 export const GROUP_CODE_RE = /^[a-z0-9]{8,24}$/;
@@ -65,6 +64,21 @@ export interface GroupEntrySubmissionPayload {
   step_times: number[];
 }
 
+export interface AdminHiddenEntry {
+  entry_id: number;
+  nickname: string;
+  points: number;
+  total_time_seconds: number;
+  hidden_at: string | null;
+  in_group: boolean;
+}
+
+export interface AdminHiddenResponse {
+  authorized: boolean;
+  day: string;
+  entries: AdminHiddenEntry[];
+}
+
 export class GuessApiError extends Error {
   status: number;
   reason: string | null;
@@ -76,12 +90,26 @@ export class GuessApiError extends Error {
   }
 }
 
-const ALLOWED_NICKNAME_RE = /^[A-Za-z0-9 '\-]+$/;
+const ALLOWED_NICKNAME_RE =
+  /^[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u1E00-\u1EFF0-9 .'\-]+$/;
+const HAS_NICKNAME_LETTER_OR_DIGIT_RE =
+  /[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u1E00-\u1EFF0-9]/;
+
+export function cleanDailyNickname(raw: string): string {
+  return raw
+    .normalize("NFC")
+    .replace(/[’‘ʼ]/g, "'")
+    .replace(/[\x00-\x1f\x7f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 12)
+    .trim();
+}
 
 export function isAllowedNicknameChars(raw: string): boolean {
-  const normalized = cleanName(raw).replace(/[’‘ʼ]/g, "'");
+  const normalized = cleanDailyNickname(raw);
   if (!normalized) return false;
-  return ALLOWED_NICKNAME_RE.test(normalized) && /[A-Za-z0-9]/.test(normalized);
+  return ALLOWED_NICKNAME_RE.test(normalized) && HAS_NICKNAME_LETTER_OR_DIGIT_RE.test(normalized);
 }
 
 export function formatOrdinal(n: number): string {
@@ -192,10 +220,50 @@ export async function fetchPublicBoard(
   }
   const res = await fetch(`${API_URL}/api/guess/board?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) {
-    const info = await readErrorInfo(res, "Could not load today's leaderboard right now.");
+    const info = await readErrorInfo(res, "Could not load the public board right now.");
     throw new GuessApiError(res.status, info.detail, info.reason);
   }
   return (await res.json()) as PublicBoardResponse;
+}
+
+export async function fetchAdminHiddenEntries(
+  day: string,
+  token: string,
+  groupCode?: string | null,
+): Promise<AdminHiddenResponse> {
+  const params = new URLSearchParams({ day });
+  if (groupCode) params.set("group_code", groupCode);
+  const res = await fetch(`${API_URL}/api/guess/admin/hidden?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const info = await readErrorInfo(res, "Admin check failed.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
+  }
+  return (await res.json()) as AdminHiddenResponse;
+}
+
+export async function adminHideGuessEntry(entryId: number, token: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/guess/admin/entries/${entryId}/hide`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const info = await readErrorInfo(res, "Could not hide that entry right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
+  }
+}
+
+export async function adminUnhideGuessEntry(entryId: number, token: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/guess/admin/entries/${entryId}/unhide`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const info = await readErrorInfo(res, "Could not put that entry back right now.");
+    throw new GuessApiError(res.status, info.detail, info.reason);
+  }
 }
 
 export async function submitGroupEntry(groupCode: string, payload: GroupEntrySubmissionPayload): Promise<GroupBoardResponse> {
@@ -219,8 +287,9 @@ export async function submitGroupEntry(groupCode: string, payload: GroupEntrySub
 }
 
 export function groupEntryToPlayerEntry(pack: GamePack, row: GroupBoardEntry): PlayerEntry {
-  const name = cleanName(row.nickname) || row.nickname.slice(0, 12);
+  const name = cleanDailyNickname(row.nickname) || row.nickname.slice(0, 12);
   return {
+    entryId: typeof row.entry_id === "number" && row.entry_id > 0 ? row.entry_id : undefined,
     name,
     guesses: pack.cards.map((_, i) => (typeof row.answers[i] === "number" ? row.answers[i] : null)),
     ratings: pack.cards.map(() => 0),
