@@ -13,30 +13,46 @@
   we graded is not the number TestFlight receives — the one fact an unattended
   path most needs to be able to state.
 
-  signingStyle is automatic to match the project (CODE_SIGN_STYLE = Automatic),
-  and the two "iOS Team Store Provisioning Profile" profiles this needs — for
-  com.bainluck.Bain-Luck and com.bainluck.Bain-Luck.BainLuckWidget — are already
-  installed on the build machine. The script's preflight asserts both, because
-  their absence is an export failure five minutes into an archive, not at the
-  start.
+  signingStyle is manual with explicit Store distribution profiles for all five
+  bundles in this target: com.bainluck.Bain-Luck (named by regenerated UUID
+  2a0b16b6-015f-43d7-9627-9494c8d050e1, carrying associated-appclip-app-identifiers,
+  so it cannot collide with any other "BainLuck App AppStore 39" file on disk),
+  com.bainluck.Bain-Luck.BainLuckWidget, com.bainluck.Bain-Luck.Clip,
+  com.bainluck.Bain-Luck.watchkitapp, and
+  com.bainluck.Bain-Luck.watchkitapp.SavedGlance.
 -->
 <plist version="1.0">
 <dict>
-	<key>method</key>
-	<string>app-store-connect</string>
 	<key>destination</key>
 	<string>export</string>
-	<key>teamID</key>
-	<string>J893F72P4R</string>
-	<key>signingStyle</key>
-	<string>automatic</string>
-	<key>uploadSymbols</key>
-	<true/>
-	<key>stripSwiftSymbols</key>
-	<true/>
 	<key>manageAppVersionAndBuildNumber</key>
 	<false/>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.bainluck.Bain-Luck</key>
+		<string>2a0b16b6-015f-43d7-9627-9494c8d050e1</string>
+		<key>com.bainluck.Bain-Luck.BainLuckWidget</key>
+		<string>BainLuck Widget AppStore 39</string>
+		<key>com.bainluck.Bain-Luck.Clip</key>
+		<string>BainLuck Clip AppStore</string>
+		<key>com.bainluck.Bain-Luck.watchkitapp</key>
+		<string>BainLuck Watch AppStore 38</string>
+		<key>com.bainluck.Bain-Luck.watchkitapp.SavedGlance</key>
+		<string>BainLuck Watch SavedGlance AppStore 38</string>
+	</dict>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<key>teamID</key>
+	<string>J893F72P4R</string>
 	<key>testFlightInternalTestingOnly</key>
 	<false/>
+	<key>uploadSymbols</key>
+	<true/>
 </dict>
 </plist>

@@ -126,8 +126,9 @@ def test_main_actor_default_still_set_on_shipped_targets():
     """#1775 keeps the project-wide default; the markers above exist because of it."""
     text = PBXPROJ.read_text(encoding="utf-8")
     count = text.count("SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor")
-    assert count == 8, (
-        f"expected SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor on 8 build "
-        f"configurations (4 targets x Debug/Release), found {count}. #1775 "
+    assert count == 10, (
+        f"expected SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor on 10 build "
+        f"configurations (5 shipped targets x Debug/Release: app, widget, watch app, "
+        f"complication, App Clip #12307), found {count}. #1775 "
         f"approved keeping the default; changing it needs its own ruling."
     )

@@ -344,6 +344,7 @@ const PAIR_PRINTERS: Array<[string, string]> = [
   // tell that makes the rename unable to hide the ninth site.
   [join(IOS_ROOT, "Components/GamePlayCardView.swift"), "the play card under the chart"],
   [join(IOS_ROOT, "Widgets10875/SavedWidgetArt12466.swift"), "the saved-game Home Screen widget live badge"],
+  [join(IOS_ROOT, "AppClip12307/ClipInvocation12307.swift"), "the App Clip live game status eyebrow"],
 ];
 
 /**
