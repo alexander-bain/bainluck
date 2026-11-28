@@ -197,6 +197,244 @@ final class SportsShorterRows13013Tests: XCTestCase {
                 try png.write(to: URL(fileURLWithPath: outPath).appendingPathComponent("\(tag)-390.png"))
             }
         }
+
+        // Verify iPad regular width (`834 pt`) Sports tab also omits Follow buttons while preserving headings & cards.
+        let iPadVM = FeedViewModel(
+            client: FakeSportsProvider13013(main: feed, backfill: emptyBackfill, grouped: emptyGrouped),
+            telemetry: nil,
+            autoRefreshEnabled: false
+        )
+        await iPadVM.startLoad()
+        let iPadImg = await renderViewport(view: FeedView(viewModel: iPadVM), width: 834, height: 1194, scheme: .light, typeSize: .large)
+        let iPadOCR = try ocrLines(iPadImg).joined(separator: " ")
+        XCTAssertFalse(iPadOCR.contains("Follow"), "iPad 834pt Sports tab must omit team Follow buttons: \(iPadOCR)")
+        XCTAssertTrue(iPadOCR.contains("Live Now") && iPadOCR.contains("Celtics"), "iPad 834pt Sports tab must preserve league headings and games: \(iPadOCR)")
+    }
+
+    private final class StaticEventClient13013: EventDetailProviding, @unchecked Sendable {
+        struct Missing: Error {}
+        let event: EventDetail
+        init(event: EventDetail) { self.event = event }
+        func fetchEvent(id: Int) async throws -> EventDetail { event }
+        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { throw Missing() }
+        func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { throw Missing() }
+        func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw Missing() }
+        func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse { throw Missing() }
+        func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw Missing() }
+    }
+
+    private final class StaticStreamHandle13013: LiveStreamHandle, @unchecked Sendable {
+        var isClosed = false
+        var isConnecting = false
+        func on(_ event: String, _ handler: @escaping @MainActor (String) -> Void) {}
+        func close() {}
+    }
+
+    func testMondayWalkExportLiveSportsAndFollowPathIfRequested() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let outPath = env["TEST_RUNNER_LIVE_13013_DIR"] ?? env["LIVE_13013_DIR"], !outPath.isEmpty,
+              let feedPath = env["TEST_RUNNER_LIVE_SPORTS_JSON"] ?? env["LIVE_SPORTS_JSON"],
+              let eventPath = env["TEST_RUNNER_LIVE_EVENT_JSON"] ?? env["LIVE_EVENT_JSON"],
+              let teamPath = env["TEST_RUNNER_LIVE_TEAM_JSON"] ?? env["LIVE_TEAM_JSON"] else {
+            return
+        }
+        try FileManager.default.createDirectory(atPath: outPath, withIntermediateDirectories: true)
+
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+        let feed = try dec.decode(FeedResponse.self, from: Data(contentsOf: URL(fileURLWithPath: feedPath)))
+        let eventDetail = try dec.decode(EventDetail.self, from: Data(contentsOf: URL(fileURLWithPath: eventPath)))
+        let teamPage = try dec.decode(TeamPageResponse.self, from: Data(contentsOf: URL(fileURLWithPath: teamPath)))
+        let emptyBackfill = try dec.decode(FeedResponse.self, from: Data(#"{"items":[],"total":0,"limit":200,"offset":0,"has_more":false}"#.utf8))
+        let emptyGrouped = try dec.decode(GroupedFeedResponse.self, from: Data(#"{"feed":[],"total":0,"limit":20,"offset":0}"#.utf8))
+
+        let vm = FeedViewModel(
+            client: FakeSportsProvider13013(main: feed, backfill: emptyBackfill, grouped: emptyGrouped),
+            telemetry: nil,
+            autoRefreshEnabled: false
+        )
+        await vm.startLoad()
+        let liveGroups = SportsLeagueBands401B.grouped(vm.filteredLiveNow(for: "all"), band: .live)
+        let upcomingGroups = SportsLeagueBands401B.grouped(vm.filteredUpcoming(for: "all"), band: .upcoming)
+
+        @ViewBuilder
+        func bandAndLeagueHeader(bandTitle: String?, bandColor: Color, bandIcon: String, bandCount: Int, group: SportsLeagueGroup401B) -> some View {
+            VStack(alignment: .leading, spacing: 6) {
+                if let bandTitle {
+                    HStack(spacing: 6) {
+                        Image(systemName: bandIcon).font(.subheadline.weight(.semibold)).foregroundStyle(bandColor)
+                        Text(bandTitle).font(.subheadline.weight(.semibold)).foregroundStyle(bandColor).textCase(nil)
+                        Text("\(bandCount)").font(.caption2.weight(.medium)).foregroundStyle(DS.textSecondaryReadable)
+                            .padding(.horizontal, 5).padding(.vertical, 1).background(Color.secondary.opacity(0.12)).clipShape(Capsule())
+                        Spacer(minLength: 0)
+                    }
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: group.systemImage).font(.footnote.weight(.semibold)).foregroundStyle(DS.textSecondaryReadable)
+                    Text(group.title).font(.footnote.weight(.bold)).foregroundStyle(.primary).textCase(nil)
+                    Text("\(group.items.count)").font(.caption2.weight(.medium)).foregroundStyle(DS.textSecondaryReadable)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+
+        func beforeSportsList(isIPad: Bool) -> some View {
+            NavigationStack {
+                List {
+                    Section {
+                        SportFilterChips(selectedCategory: .constant("all"), items: vm.items) { _ in }
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                    if isIPad {
+                        let blocks = SportsRegularGridLayout13869.blocks(from: liveGroups)
+                        ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
+                            switch block {
+                            case .singletons(_, let singletonGroups):
+                                let cols = DiscoverMasonry.columns(cardCount: singletonGroups.count, columnCount: 2)
+                                Section {
+                                    HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
+                                        ForEach(Array(cols.enumerated()), id: \.offset) { _, indices in
+                                            VStack(alignment: .leading, spacing: DiscoverMasonry.listCardSpacing) {
+                                                ForEach(indices, id: \.self) { i in
+                                                    let group = singletonGroups[i]
+                                                    if let ev = group.items.first?.event {
+                                                        VStack(alignment: .leading, spacing: 6) {
+                                                            bandAndLeagueHeader(bandTitle: nil, bandColor: .red, bandIcon: "circle.fill", bandCount: 0, group: group)
+                                                                .padding(.horizontal, 4)
+                                                            EventCardView(event: ev, reason: nil, showsTeamFollowBar: true)
+                                                                .padding(12)
+                                                                .background(Color(uiColor: .secondarySystemGroupedBackground))
+                                                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                                        }
+                                    }
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 10, trailing: 4))
+                                    .listRowBackground(Color.clear)
+                                    .listRowSeparator(.hidden)
+                                } header: {
+                                    if index == 0, let firstSingleton = singletonGroups.first {
+                                        bandAndLeagueHeader(bandTitle: "Live Now", bandColor: .red, bandIcon: "circle.fill", bandCount: liveGroups.flatMap(\.items).count, group: firstSingleton)
+                                    }
+                                }
+                            case .league(let group):
+                                let events = group.items.compactMap(\.event)
+                                let cols = DiscoverMasonry.columns(cardCount: events.count, columnCount: 2)
+                                Section {
+                                    HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
+                                        ForEach(Array(cols.enumerated()), id: \.offset) { _, indices in
+                                            VStack(spacing: DiscoverMasonry.listCardSpacing) {
+                                                ForEach(indices, id: \.self) { i in
+                                                    EventCardView(event: events[i], reason: nil, showsTeamFollowBar: true)
+                                                        .padding(12)
+                                                        .background(Color(uiColor: .secondarySystemGroupedBackground))
+                                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                                }
+                                            }
+                                            .frame(maxWidth: .infinity)
+                                        }
+                                    }
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 10, trailing: 4))
+                                    .listRowBackground(Color.clear)
+                                    .listRowSeparator(.hidden)
+                                } header: {
+                                    bandAndLeagueHeader(bandTitle: index == 0 ? "Live Now" : nil, bandColor: .red, bandIcon: "circle.fill", bandCount: liveGroups.flatMap(\.items).count, group: group)
+                                }
+                            }
+                        }
+                    } else {
+                        ForEach(Array(liveGroups.enumerated()), id: \.element.id) { index, group in
+                            Section {
+                                ForEach(group.items.compactMap(\.event)) { ev in
+                                    EventCardView(event: ev, reason: nil, showsTeamFollowBar: true)
+                                }
+                            } header: {
+                                bandAndLeagueHeader(bandTitle: index == 0 ? "Live Now" : nil, bandColor: .red, bandIcon: "circle.fill", bandCount: liveGroups.flatMap(\.items).count, group: group)
+                            }
+                        }
+                        ForEach(Array(upcomingGroups.prefix(2).enumerated()), id: \.element.id) { index, group in
+                            Section {
+                                ForEach(group.items.compactMap(\.event)) { ev in
+                                    EventCardView(event: ev, reason: nil, showsTeamFollowBar: true)
+                                }
+                            } header: {
+                                bandAndLeagueHeader(bandTitle: index == 0 ? "Upcoming" : nil, bandColor: .blue, bandIcon: "calendar", bandCount: upcomingGroups.flatMap(\.items).count, group: group)
+                            }
+                        }
+                    }
+                }
+                .listStyle(.insetGrouped)
+                .contentMargins(.top, 4, for: .scrollContent)
+                .navigationTitle("Bain Luck")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        HStack(spacing: 6) {
+                            BainLuckMarkView(size: 20)
+                            Text("Bain Luck").font(.headline.weight(.semibold))
+                        }
+                    }
+                }
+            }
+        }
+
+        for (scheme, sName) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
+            for (width, height) in [(CGFloat(390), CGFloat(852)), (CGFloat(834), CGFloat(1194))] {
+                let bImg = await renderViewport(view: beforeSportsList(isIPad: width >= 700), width: width, height: height, scheme: scheme, typeSize: .large)
+                let aImg = await renderViewport(view: FeedView(viewModel: vm), width: width, height: height, scheme: scheme, typeSize: .large)
+                try XCTUnwrap(bImg.pngData()).write(to: URL(fileURLWithPath: "\(outPath)/live-before-\(Int(width))-\(sName).png"))
+                try XCTUnwrap(aImg.pngData()).write(to: URL(fileURLWithPath: "\(outPath)/live-after-\(Int(width))-\(sName).png"))
+            }
+        }
+
+        // Follow path panels
+        let eventVM = EventDetailViewModel(
+            eventId: eventDetail.id,
+            client: StaticEventClient13013(event: eventDetail),
+            makeStreamHandle: { _ in StaticStreamHandle13013() }
+        )
+        await eventVM.load()
+        let gamePageImg = await renderViewport(
+            view: NavigationStack { EventDetailView(eventId: eventDetail.id, viewModel: eventVM) },
+            width: 390,
+            height: 760,
+            scheme: .light,
+            typeSize: .large
+        )
+        try XCTUnwrap(gamePageImg.pngData()).write(to: URL(fileURLWithPath: "\(outPath)/live-game-page-390-light.png"))
+
+        let teamPageImg = await renderViewport(
+            view: NavigationStack { TeamDetailView(slug: teamPage.team.slug, loadedPageForTest: teamPage) },
+            width: 390,
+            height: 620,
+            scheme: .light,
+            typeSize: .large
+        )
+        try XCTUnwrap(teamPageImg.pngData()).write(to: URL(fileURLWithPath: "\(outPath)/live-team-page-390-light.png"))
+
+        if let firstFeedEvent = feed.items.compactMap(\.event).first(where: { $0.id == eventDetail.id }) ?? feed.items.compactMap(\.event).first {
+            let discImg = await renderViewport(
+                view: ScrollView {
+                    NativeEventDiscoverCard(
+                        event: firstFeedEvent,
+                        feedContext: nil,
+                        expandedContext: nil,
+                        navigationPath: .constant(NavigationPath())
+                    )
+                    .padding(16)
+                },
+                width: 390,
+                height: 520,
+                scheme: .light,
+                typeSize: .large
+            )
+            try XCTUnwrap(discImg.pngData()).write(to: URL(fileURLWithPath: "\(outPath)/live-discover-follow-390-light.png"))
+        }
     }
 
     private func render390<V: View>(
@@ -205,11 +443,22 @@ final class SportsShorterRows13013Tests: XCTestCase {
         typeSize: DynamicTypeSize,
         height: CGFloat
     ) async -> UIImage {
+        await renderViewport(view: view, width: 390, height: height, scheme: scheme, typeSize: typeSize)
+    }
+
+    private func renderViewport<V: View>(
+        view: V,
+        width: CGFloat,
+        height: CGFloat,
+        scheme: ColorScheme,
+        typeSize: DynamicTypeSize
+    ) async -> UIImage {
+        let isRegular = width >= 700
         let bg = scheme == .dark ? Color.black : Color(UIColor.systemGroupedBackground)
         let wrapped = view
-            .frame(width: 390, height: height, alignment: .topLeading)
+            .frame(width: width, height: height, alignment: .topLeading)
             .background(bg)
-            .environment(\.horizontalSizeClass, .compact)
+            .environment(\.horizontalSizeClass, isRegular ? .regular : .compact)
             .environment(\.colorScheme, scheme)
             .environment(\.dynamicTypeSize, typeSize)
             .environmentObject(NavigationCoordinator())
@@ -217,16 +466,17 @@ final class SportsShorterRows13013Tests: XCTestCase {
             .environmentObject(AuthManager(restoreOnInit: false))
 
         let host = hostForMeasurement(wrapped, at: typeSize)
+        host.safeAreaRegions = []
         let cat: UIContentSizeCategory = typeSize.isAccessibilitySize
             ? .accessibilityExtraExtraExtraLarge
             : .large
         let traits = UITraitCollection(traitsFrom: [
-            UITraitCollection(horizontalSizeClass: .compact),
+            UITraitCollection(horizontalSizeClass: isRegular ? .regular : .compact),
             UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light),
             UITraitCollection(preferredContentSizeCategory: cat)
         ])
         let container = SportsTraitContainer(child: host, traits: traits)
-        let frame = CGRect(x: 0, y: 0, width: 390, height: height)
+        let frame = CGRect(x: 0, y: 0, width: width, height: height)
         container.view.frame = frame
 
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
@@ -236,15 +486,21 @@ final class SportsShorterRows13013Tests: XCTestCase {
         window.rootViewController = container
         window.isHidden = false
         window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
 
-        for _ in 0..<5 {
+        for _ in 0..<6 {
             container.view.setNeedsLayout()
             container.view.layoutIfNeeded()
             try? await Task.sleep(for: .milliseconds(50))
         }
 
-        let renderer = UIGraphicsImageRenderer(size: frame.size)
-        return renderer.image { _ in
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 2.0
+        fmt.opaque = true
+        return UIGraphicsImageRenderer(size: frame.size, format: fmt).image { _ in
             container.view.drawHierarchy(in: container.view.bounds, afterScreenUpdates: true)
         }
     }
