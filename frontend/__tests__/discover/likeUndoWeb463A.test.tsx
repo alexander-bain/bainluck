@@ -67,8 +67,6 @@ import {
 import type { FeedItem } from "../../lib/types";
 import type { DiscoverGroupedItem } from "../../components/discover/types";
 
-const PROFILE_KEY = "discover_interaction_profile_v1";
-
 interface Browser {
   store: Record<string, string>;
   fetchMock: jest.Mock;
