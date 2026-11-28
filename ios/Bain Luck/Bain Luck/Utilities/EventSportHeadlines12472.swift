@@ -1488,7 +1488,9 @@ enum EventSportHeadlines12472 {
                    let servedHome = pre.homeRenderedPercent,
                    let servedAway = pre.awayRenderedPercent {
                     let servedDraw = 100 - servedHome - servedAway
-                    if servedHome > 0, servedAway > 0, servedDraw > 0,
+                    let hasBoundaryShare = [shares.home, shares.draw, shares.away].contains { $0 < 0.01 || $0 > 0.99 }
+                    if !hasBoundaryShare,
+                       servedHome > 0, servedAway > 0, servedDraw > 0,
                        abs(Double(servedDraw) - shares.draw * 100.0) <= 1.0 {
                         return (home: "\(servedHome)%", draw: "\(servedDraw)%", away: "\(servedAway)%")
                     }
@@ -2176,12 +2178,8 @@ enum EventSportHeadlines12472 {
                 String(format: "%.1f%%", Double(units[2]) / 10.0)
             )
         } else {
-            if shares.contains(where: { $0 < 0.01 || $0 > 0.995 }) {
-                let formatted = shares.map { p -> String in
-                    if p < 0.01 { return "<1%" }
-                    if p > 0.995 { return ">99%" }
-                    return DiscoverRoundupCardModel.probabilityText(probability: p, renderedPercent: nil)
-                }
+            if shares.contains(where: { $0 < 0.01 || $0 > 0.99 }) {
+                let formatted = shares.map { formatProbability($0) }
                 return (formatted[0], formatted[1], formatted[2])
             }
             let units = largestRemainderUnits(shares: shares, targetTotal: 100)

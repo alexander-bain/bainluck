@@ -111,18 +111,8 @@ struct MyStuffView: View {
         Button {
             showPinManagement = true
         } label: {
-            HStack {
-                Label("Manage pins", systemImage: "bookmark.fill")
-                    .font(.subheadline.weight(.medium))
-                Spacer()
-                Text("\(pinManager.savedPins.count)")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 16)
+            ManagePinsHeaderRowLabel13941(savedPinCount: pinManager.savedPins.count)
+                .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(Color.cardBackgroundDark)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1042,21 +1032,12 @@ struct MyStuffView: View {
                 }
             }
         } header: {
-            HStack(spacing: 6) {
-                Label(title, systemImage: systemImage)
-                    .foregroundStyle(imageColor)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .textCase(nil)
-                Text("\(count ?? items.count)")
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(Capsule())
-            }
+            SectionBandHeaderView(
+                title: title,
+                systemImage: systemImage,
+                imageColor: imageColor,
+                count: count ?? items.count
+            )
         }
     }
 

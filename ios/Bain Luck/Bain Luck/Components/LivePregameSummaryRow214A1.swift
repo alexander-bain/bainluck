@@ -227,7 +227,10 @@ struct LivePregameSummaryRow214A1: View {
                     .fontWeight(.semibold)
                     .foregroundColor(HeadlineStyleTable199.quietInk)
             case .quiet:
-                return partial + Text(seg.text)
+                let displayText = (dynamicTypeSize.isAccessibilitySize && seg.text == "\u{2013}")
+                    ? "\u{2060}\u{2013}\u{2060}"
+                    : seg.text
+                return partial + Text(displayText)
                     .fontWeight(.regular)
                     .foregroundColor(Self.connectorInk)
             case .awayTeam:

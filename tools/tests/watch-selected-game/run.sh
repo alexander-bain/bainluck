@@ -7,6 +7,7 @@ swiftc -parse-as-library -swift-version 5 -D DEBUG \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/GameContinuation.swift" \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/PeriodLabel.swift" \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/RenderedPercent.swift" \
+  "$ROOT/ios/Bain Luck/Bain Luck/Utilities/ExternalSurfaceProbabilityFormat.swift" \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/DrawPricedWinner.swift" \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/SportVocab.swift" \
   "$ROOT/ios/Bain Luck/Bain Luck/Utilities/TeamShortName.swift" \

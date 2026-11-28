@@ -63,6 +63,7 @@ const PILLARS: NavPillar[] = [
     items: [
       { label: "Feed Review", href: "/admin/feed-review" },
       { label: "Labeling Workbench", href: "/admin/labeling" },
+      { label: "Market Fact Check", href: "/admin/cu-labeling" },
     ],
   },
   {

@@ -88,7 +88,7 @@ export function BundleActionBar({ items, title, sharedQuestion, storyKey, setId,
   // which a `card_scope: "bundle"` of my own would NOT have: an unregistered key
   // is stripped there silently, which is how every My Stuff latency packet was
   // dropped for the life of the surface (L2-217).
-  const track = (action: "like" | "unlike" | "share") => {
+  const track = (action: "like" | "like_undo" | "share") => {
     trackEvent("feed_card_action", {
       action,
       ...analytics,
@@ -132,7 +132,7 @@ export function BundleActionBar({ items, title, sharedQuestion, storyKey, setId,
         setLiked={(next) => {
           if (feedbackAttempt && !feedbackAttempt()) return;
           setLiked(next);
-          track(next ? "like" : "unlike");
+          track(next ? "like" : "like_undo");
         }}
         onDismiss={handleDismissSet}
         shareUrl={shareUrl}

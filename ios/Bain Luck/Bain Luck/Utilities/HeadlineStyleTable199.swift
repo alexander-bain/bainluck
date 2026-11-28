@@ -88,13 +88,18 @@ nonisolated enum HeadlineStyleTable199 {
 
     // MARK: - 1. `now`: Primary Win Chance (largest number on the surface, in team colour)
 
-    static func now(_ surface: Surface = .page, scaledSize: CGFloat? = nil) -> Font {
+    static func now(
+        _ surface: Surface = .page,
+        scaledSize: CGFloat? = nil,
+        uncapped: Bool = false
+    ) -> Font {
         let size = scaledSize ?? nowBaseSize(surface)
         switch surface {
         case .page:
             return .system(size: min(size, 32), weight: .black, design: .rounded).monospacedDigit()
         case .card:
-            return .system(size: min(size, 24), weight: .heavy, design: .rounded).monospacedDigit()
+            let resolved = uncapped ? size : min(size, 24)
+            return .system(size: resolved, weight: .heavy, design: .rounded).monospacedDigit()
         case .widget:
             return .system(size: size, weight: .heavy, design: .rounded).monospacedDigit()
         case .wristTile:
@@ -109,7 +114,8 @@ nonisolated enum HeadlineStyleTable199 {
     static func secondNumbers(
         _ surface: Surface = .page,
         prominent: Bool = false,
-        scaledSize: CGFloat? = nil
+        scaledSize: CGFloat? = nil,
+        uncapped: Bool = false
     ) -> Font {
         let size = scaledSize ?? secondNumberBaseSize(surface, prominent: prominent)
         switch surface {
@@ -120,7 +126,8 @@ nonisolated enum HeadlineStyleTable199 {
         case .card:
             let weight: Font.Weight = prominent ? .bold : .semibold
             let cap: CGFloat = prominent ? 24 : 20
-            return .system(size: min(size, cap), weight: weight, design: .rounded).monospacedDigit()
+            let resolved = uncapped ? size : min(size, cap)
+            return .system(size: resolved, weight: weight, design: .rounded).monospacedDigit()
         case .widget:
             let weight: Font.Weight = prominent ? .bold : .semibold
             return .system(size: size, weight: weight, design: .rounded).monospacedDigit()
@@ -181,9 +188,14 @@ nonisolated enum HeadlineStyleTable199 {
 
     // MARK: - 5. `headers`: Column Headers (`Score`, `Proj.`, `Now`, `Chance`, `Pregame`, `Final`)
 
-    static func headers(_ surface: Surface = .page, scaledSize: CGFloat? = nil) -> Font {
+    static func headers(
+        _ surface: Surface = .page,
+        scaledSize: CGFloat? = nil,
+        uncapped: Bool = false
+    ) -> Font {
         if let scaledSize {
-            return .system(size: min(scaledSize, 15), weight: .semibold)
+            let resolved = uncapped ? scaledSize : min(scaledSize, 15)
+            return .system(size: resolved, weight: .semibold)
         }
         switch surface {
         case .page, .card:

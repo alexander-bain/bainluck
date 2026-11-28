@@ -255,21 +255,12 @@ struct SportCategoryView: View {
                 .buttonStyle(.plain)
             }
         } header: {
-            HStack(spacing: 6) {
-                Label(title, systemImage: systemImage)
-                    .foregroundStyle(imageColor)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .textCase(nil)
-                Text("\(totalCount)")
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(Capsule())
-            }
+            SectionBandHeaderView(
+                title: title,
+                systemImage: systemImage,
+                imageColor: imageColor,
+                count: totalCount
+            )
         }
     }
 
@@ -321,21 +312,12 @@ struct SportCategoryView: View {
                 }
             }
         } header: {
-            HStack(spacing: 6) {
-                Label(title, systemImage: systemImage)
-                    .foregroundStyle(imageColor)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .textCase(nil)
-                Text("\(items.count)")
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(Capsule())
-            }
+            SectionBandHeaderView(
+                title: title,
+                systemImage: systemImage,
+                imageColor: imageColor,
+                count: items.count
+            )
         }
     }
 
@@ -361,7 +343,7 @@ struct SportCategoryView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         Spacer()
-                        Text("\(Int(o.prob))%")
+                        Text(formatProbability(o.prob / 100.0))
                             .font(.caption)
                             .fontWeight(.bold)
                             .monospacedDigit()
@@ -497,8 +479,8 @@ struct SportCategoryView: View {
                 HStack(spacing: 6) {
                     Text(leaderName)
                         .font(.caption.weight(.medium))
-                    if let p = renderedPercent(leaderProbability) {
-                        Text("\(p)%")
+                    if let prob = leaderProbability, let p = renderedPercent(prob) {
+                        Text(formatProbability(prob, renderedPercent: p))
                             .font(.caption.weight(.semibold).monospacedDigit())
                             .foregroundStyle(.secondary)
                     }

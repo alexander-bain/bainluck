@@ -97,7 +97,7 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
   const analytics = getDiscoverItemAnalytics(item);
   const detailHref = feedItemHref(item);
 
-  const trackAction = useCallback((action: "detail_click" | "like" | "unlike" | "share" | "context_expand" | "context_collapse") => {
+  const trackAction = useCallback((action: "detail_click" | "like" | "like_undo" | "unlike" | "share" | "context_expand" | "context_collapse") => {
     trackEvent("feed_card_action", {
       action,
       ...analytics,
@@ -115,7 +115,7 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
   const setLikedWithTracking = useCallback((next: boolean) => {
     if (!mayRecordFeedback()) return;
     setLiked(next);
-    trackAction(next ? "like" : "unlike");
+    trackAction(next ? "like" : "like_undo");
   }, [mayRecordFeedback, trackAction]);
 
   const handleLike = useCallback(() => setLikedWithTracking(true), [setLikedWithTracking]);

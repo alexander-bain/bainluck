@@ -187,6 +187,40 @@ def test_start_alert_never_prints_zero_or_hundred_percent():
     assert build_activitykit_start_alert(snap_hundred, sent_at=_T0)["body"] == (
         "Starting now · Boston Celtics >99%"
     )
+    snap_sub_one = GameActivitySnapshot(
+        event_id=4201,
+        home_team="Boston Celtics",
+        away_team="New York Knicks",
+        lifecycle="live",
+        home_score=2,
+        away_score=0,
+        home_rendered_percent=1,
+        away_rendered_percent=99,
+        home_sub_one=True,
+        away_above_ninety_nine=True,
+        score_observed_at=_T0 - timedelta(seconds=10),
+        probability_observed_at=_T0 - timedelta(seconds=10),
+    )
+    assert build_activitykit_start_alert(snap_sub_one, sent_at=_T0)["body"] == (
+        "Starting now · New York Knicks >99%"
+    )
+    snap_above_99 = GameActivitySnapshot(
+        event_id=4201,
+        home_team="Boston Celtics",
+        away_team="New York Knicks",
+        lifecycle="live",
+        home_score=2,
+        away_score=0,
+        home_rendered_percent=99,
+        away_rendered_percent=1,
+        home_above_ninety_nine=True,
+        away_sub_one=True,
+        score_observed_at=_T0 - timedelta(seconds=10),
+        probability_observed_at=_T0 - timedelta(seconds=10),
+    )
+    assert build_activitykit_start_alert(snap_above_99, sent_at=_T0)["body"] == (
+        "Starting now · Boston Celtics >99%"
+    )
 
 
 def test_start_payload_rejects_non_live_lifecycles():

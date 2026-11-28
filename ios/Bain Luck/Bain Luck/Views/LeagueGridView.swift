@@ -322,19 +322,12 @@ struct LeagueGridView: View {
                 .buttonStyle(.borderless)
             }
         } header: {
-            HStack(spacing: 6) {
-                Label(title, systemImage: systemImage)
-                    .foregroundStyle(imageColor)
-                    .font(.subheadline.weight(.semibold))
-                    .textCase(nil)
-                Text("\(games.count)")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(Capsule())
-            }
+            SectionBandHeaderView(
+                title: title,
+                systemImage: systemImage,
+                imageColor: imageColor,
+                count: games.count
+            )
         }
     }
 
@@ -418,7 +411,7 @@ struct LeagueGridView: View {
                             .lineLimit(isAX ? nil : 1)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer()
-                        Text("\(Int(o.prob))%")
+                        Text(formatProbability(o.prob / 100.0))
                             .font(.caption)
                             .fontWeight(.bold)
                             .monospacedDigit()

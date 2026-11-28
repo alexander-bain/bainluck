@@ -38,10 +38,12 @@ def _aware_utc(value: object, name: str) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _format_percent(percent: int) -> str:
-    if percent <= 0:
+def _format_percent(
+    percent: int, *, sub_one: bool = False, above_ninety_nine: bool = False
+) -> str:
+    if sub_one or percent <= 0:
         return "<1%"
-    if percent >= 100:
+    if above_ninety_nine or percent >= 100:
         return ">99%"
     return f"{percent}%"
 
@@ -72,10 +74,21 @@ def build_activitykit_start_alert(
             if home_pct >= 50:
                 leader = snapshot.home_team
                 leader_pct = home_pct
+                sub_one = snapshot.home_sub_one is True
+                above_ninety_nine = snapshot.home_above_ninety_nine is True
             else:
                 leader = snapshot.away_team
-                leader_pct = 100 - home_pct
-            body = f"Starting now · {leader} {_format_percent(leader_pct)}"
+                leader_pct = (
+                    snapshot.away_rendered_percent
+                    if snapshot.away_rendered_percent is not None
+                    else 100 - home_pct
+                )
+                sub_one = snapshot.away_sub_one is True
+                above_ninety_nine = snapshot.away_above_ninety_nine is True
+            body = (
+                f"Starting now · {leader} "
+                f"{_format_percent(leader_pct, sub_one=sub_one, above_ninety_nine=above_ninety_nine)}"
+            )
 
     return {"title": title, "body": body}
 
