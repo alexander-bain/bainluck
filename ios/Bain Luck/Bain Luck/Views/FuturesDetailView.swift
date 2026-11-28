@@ -431,6 +431,7 @@ struct FuturesDetailView: View {
                         .minimumScaleFactor(0.76)
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+                        .accessibilityLabel(spokenProbabilityText("\(percentNumber(prob * 100, renderedPercent: heroPercent))%"))
 
                     detailMovementBadge(leader.probabilityChange24h)
                         .padding(.bottom, 8)
@@ -1002,6 +1003,7 @@ struct FuturesDetailView: View {
                                     Text("from \(formatProbability(opening))")
                                         .font(.system(size: 11, design: .monospaced))
                                         .foregroundStyle(DS.textMuted)
+                                        .accessibilityLabel("from \(spokenProbabilityText(formatProbability(opening)))")
                                 }
                             }
                         }
@@ -1030,6 +1032,7 @@ struct FuturesDetailView: View {
                         Text(formatProbability(prob, renderedPercent: percent))
                             .font(.system(size: 18, weight: .semibold, design: .monospaced))
                             .foregroundStyle(DS.probColor(probPct))
+                            .accessibilityLabel(spokenProbabilityText(formatProbability(prob, renderedPercent: percent)))
                     }
                 case .resultUnknown(let lastRecorded):
                     // #698: settled, result not known. No Won/Lost, no tint.
@@ -1041,6 +1044,7 @@ struct FuturesDetailView: View {
                             Text("Last recorded \(formatProbability(lastRecorded, renderedPercent: percent))")
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(DS.textMuted)
+                                .accessibilityLabel("Last recorded \(spokenProbabilityText(formatProbability(lastRecorded, renderedPercent: percent)))")
                         }
                     }
                     .multilineTextAlignment(.trailing)

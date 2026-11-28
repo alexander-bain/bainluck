@@ -175,6 +175,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                         .font(HeadlineStyleTable199.quietText(.card, monospacedDigits: true))
                         .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(spokenTextExpandingProbabilitySymbols(scheduledProjectedLine))
                 }
 
                 projectionAndSuspendedLines()
@@ -410,7 +411,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
                 if model.headers.pregame != nil {
                     let isProjColumn = model.headers.pregame == "Proj."
-                    Text(row.pregameText ?? "")
+                    let preText = row.pregameText ?? ""
+                    Text(preText)
                         .font(HeadlineStyleTable199.secondNumbers(
                             .card,
                             prominent: false,
@@ -421,6 +423,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                         .fixedSize(horizontal: true, vertical: false)
                         .frame(width: effectivePregameWidth, alignment: .trailing)
                         .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
+                        .accessibilityHidden(preText.isEmpty)
+                        .accessibilityLabel(spokenProbabilityText(preText))
                 }
 
                 if model.headers.primary != nil {
@@ -506,7 +510,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .fixedSize(horizontal: true, vertical: false)
                 .frame(width: effectivePregameWidth, alignment: .trailing)
                 .padding(.leading, model.headers.score != nil ? scoreToPregameGutter : 0)
-                .accessibilityLabel(row.pregameText.map { isProjColumn ? "Projected \($0)" : "Pregame \($0)" } ?? "")
+                .accessibilityLabel(row.pregameText.map { isProjColumn ? "Projected \(spokenProbabilityText($0))" : "Pregame \(spokenProbabilityText($0))" } ?? "")
         }
         if let primaryHeader = model.headers.primary {
             primaryCellView(row)
@@ -524,7 +528,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
     ) -> String {
         switch row.primaryCell {
         case .probability(let text):
-            return "\(primaryHeader) \(text)"
+            return "\(primaryHeader) \(spokenProbabilityText(text))"
         case .finalScore(let text, let won, _):
             if won {
                 return text.map { "Final \($0), won" } ?? "Won"
@@ -532,7 +536,9 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             return text.map { "Final \($0)" } ?? ""
         case .won(let text):
             return text
-        case .settledDash, .none:
+        case .settledDash:
+            return "\(primaryHeader) No recent probability"
+        case .none:
             return ""
         }
     }
@@ -553,6 +559,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 abbreviation: event.awayTeamData?.abbreviation,
                 opponentAbbreviation: event.homeTeamData?.abbreviation
             )
+            .accessibilityHidden(true)
         case .home:
             let avatar = event.avatar(home: true)
             TeamLogoView(
@@ -566,6 +573,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 abbreviation: event.homeTeamData?.abbreviation,
                 opponentAbbreviation: event.awayTeamData?.abbreviation
             )
+            .accessibilityHidden(true)
         case .draw:
             ZStack {
                 Circle()
@@ -588,6 +596,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .foregroundStyle(sideAccentColor(for: row.kind))
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(spokenProbabilityText(text))
         case .finalScore(let text, let won, let isDrawOutcome):
             if let text, !text.isEmpty {
                 let prominent = won || isDrawOutcome
@@ -618,6 +627,7 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
                 .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel("No recent probability")
         case .none:
             EmptyView()
         }

@@ -634,7 +634,7 @@ struct EventSportHeadlineCard12472: View {
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                     .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 0.90 : 0.85)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel("\(column.header.isEmpty ? "Chance" : column.header) \(text)")
+                    .accessibilityLabel("\(column.header.isEmpty ? "Chance" : column.header) \(spokenProbabilityText(text))")
             } else {
                 Text(text)
                     .font(HeadlineStyleTable199.now(.page, scaledSize: effectiveNowSize))
@@ -643,7 +643,7 @@ struct EventSportHeadlineCard12472: View {
                     .minimumScaleFactor(0.35)
                     .allowsTightening(true)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel("\(column.header.isEmpty ? "Chance" : column.header) \(text)")
+                    .accessibilityLabel("\(column.header.isEmpty ? "Chance" : column.header) \(spokenProbabilityText(text))")
             }
 
         case .score, .projected:
@@ -671,7 +671,7 @@ struct EventSportHeadlineCard12472: View {
                     .minimumScaleFactor(0.35)
                     .allowsTightening(true)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel("Pregame \(text)")
+                    .accessibilityLabel("Pregame \(spokenProbabilityText(text))")
             }
 
         case .setScore:

@@ -213,7 +213,7 @@ struct LivePregameSummaryRow214A1: View {
             .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityLabel(spokenText ?? "\(summary.leadWord), \(summary.bodyText)")
+            .accessibilityLabel(spokenText ?? "\(summary.leadWord), \(spokenTextExpandingProbabilitySymbols(summary.bodyText))")
             .accessibilityIdentifier(accessibilityIdentifier)
     }
 

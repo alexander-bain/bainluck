@@ -352,6 +352,8 @@ struct NativeFuturesDiscoverCard: View {
                             .lineLimit(1)
                             .foregroundStyle(.white)
                             .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(spokenProbabilityText("\(leaderPercentParts.marker ?? "")\(leaderPercentParts.digits)%"))
 
                         MovementBadge(movement: leader.movement)
                             .padding(.bottom, 8)
@@ -613,8 +615,10 @@ struct NativeFuturesDiscoverCard: View {
                     .background(Color.secondary.opacity(0.10), in: Circle())
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Circle())
+                    .accessibilityHidden(true)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Share")
             .recordsShareOpened { onShare?() }
             .contextMenu {
                 Button(action: copyShareImage) {
@@ -661,10 +665,13 @@ struct NativeFuturesDiscoverCard: View {
             }
         }
         .frame(height: 7)
-        let percentLabel = Text(discoverFuturesCardPercentLabel(percent, probability: outcome.probability))
+        .accessibilityHidden(true)
+        let printedPct = discoverFuturesCardPercentLabel(percent, probability: outcome.probability)
+        let percentLabel = Text(printedPct)
             .font(.caption.weight(.bold).monospacedDigit())
             .lineLimit(1)
             .frame(width: columns.percentWidth, alignment: .trailing)
+            .accessibilityLabel(spokenProbabilityText(printedPct))
 
         // #8213 / #13832 / #13914 — at accessibility text sizes and in
         // narrow two-column iPad mode (`225–299 pt`), stack the full outcome

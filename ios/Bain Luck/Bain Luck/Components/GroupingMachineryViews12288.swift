@@ -214,6 +214,7 @@ struct MachinerySubjectArtView: View {
                     subjectKind: target.kind,
                     box: CGSize(width: w, height: h)
                 )
+                .accessibilityHidden(true)
             } else {
                 Color.clear
                     .frame(width: w, height: 1)
@@ -1509,6 +1510,7 @@ private struct MachineryContenderSpotlightSectionView: View {
                 Text(outcome.probabilityLabel)
                     .font(.system(size: min(labelSize, 20), weight: .heavy).monospacedDigit())
                     .foregroundStyle(primaryInk)
+                    .accessibilityLabel(spokenProbabilityText(outcome.probabilityLabel))
                 if let m = SourceMarkButton(resolvedMark, number: outcome.probability, subject: outcome.name, subtitle: marketTitle, numberSize: 13, compactRow: true) {
                     m
                 }
@@ -1549,6 +1551,7 @@ private struct MachineryContenderSpotlightSectionView: View {
                 }
             }
             .frame(height: 6)
+            .accessibilityHidden(true)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .top)
@@ -1593,6 +1596,7 @@ private struct MachineryContenderSpotlightSectionView: View {
                 Text(outcome.probabilityLabel)
                     .font(.system(size: min(labelSize, 24), weight: .heavy).monospacedDigit())
                     .foregroundStyle(primaryInk)
+                    .accessibilityLabel(spokenProbabilityText(outcome.probabilityLabel))
                 if let m = SourceMarkButton(resolvedMark, number: outcome.probability, subject: outcome.name, subtitle: marketTitle, numberSize: min(labelSize, 20), compactRow: true) {
                     m
                 }
@@ -1649,6 +1653,7 @@ private struct MachineryOutcomeBarRow441A: View {
             }
         }
         .frame(height: 6)
+        .accessibilityHidden(true)
     }
 
     var body: some View {
@@ -1684,6 +1689,7 @@ private struct MachineryOutcomeBarRow441A: View {
                         .font(.system(size: rowFontSize, weight: valueWeight).monospacedDigit())
                         .foregroundStyle(labelColor)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(spokenProbabilityText(display.label))
                     if !isUnpricedOrOut,
                        outcome.servedProbability != nil,
                        let m = SourceMarkButton(
@@ -1724,6 +1730,7 @@ private struct MachineryOutcomeBarRow441A: View {
                                 .font(.system(size: rowFontSize, weight: valueWeight))
                                 .foregroundStyle(labelColor)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityLabel(spokenProbabilityText(display.label))
                         }
                     } else {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1738,6 +1745,7 @@ private struct MachineryOutcomeBarRow441A: View {
                                     .foregroundStyle(labelColor)
                                     .lineLimit(1)
                                     .fixedSize(horizontal: true, vertical: false)
+                                    .accessibilityLabel(spokenProbabilityText(display.label))
                                 if !isUnpricedOrOut,
                                    outcome.servedProbability != nil,
                                    let m = SourceMarkButton(
@@ -1835,6 +1843,7 @@ private struct MachinerySiblingFieldsSectionView: View {
                                 .font(.caption.weight(.semibold))
                                 .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                                 .foregroundStyle(secondaryInk)
+                                .accessibilityHidden(true)
                         }
 
                         VStack(alignment: .leading, spacing: 8) {
@@ -1950,6 +1959,7 @@ private struct MachineryBenchmarkStripSectionView: View {
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
                                         .background(badgeBgColor, in: RoundedRectangle(cornerRadius: 6))
+                                        .accessibilityLabel(spokenProbabilityText(yes.probabilityLabel))
                                     if let m = SourceMarkButton(yesMark, number: yes.probability, subject: market.title, numberSize: min(rowSize, 18), compactRow: true) {
                                         m
                                     }
@@ -2024,6 +2034,7 @@ struct MachineryDiscoverEntryCardView: View {
             Spacer(minLength: 6)
             Image(systemName: "chevron.right")
                 .font(.caption.weight(.semibold))
+                .accessibilityHidden(true)
         }
         .foregroundStyle(colorScheme == .dark ? DS.emerald : DS.greenReadable)
         .padding(.horizontal, 14)
@@ -2187,6 +2198,7 @@ struct MachineryDiscoverCardView: View {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.bold))
                         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        .accessibilityHidden(true)
                 }
                 .font(.system(size: subSize, weight: .semibold))
                 .foregroundStyle(colorScheme == .dark ? DS.emerald : DS.greenReadable)
@@ -2329,6 +2341,7 @@ struct MachineryDiscoverCardView: View {
                             .foregroundStyle(primaryInk)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
+                            .accessibilityLabel("\(spokenProbabilityText("\(r.awayPct)%")) to \(spokenProbabilityText("\(r.homePct)%"))")
                         if let m = SourceMarkButton(r.sourceMark ?? r.awaySourceMark, number: Double(r.homePct) / 100.0, subject: "\(r.awayShort) at \(r.homeShort)", numberSize: min(rowSize, 18), compactRow: true) {
                             m
                         }
@@ -2360,6 +2373,7 @@ struct MachineryDiscoverCardView: View {
                                 .font(.system(size: rowSize, weight: .bold).monospacedDigit())
                                 .foregroundStyle(primaryInk)
                                 .fixedSize(horizontal: true, vertical: false)
+                                .accessibilityLabel(spokenProbabilityText("\(r.awayPct)%"))
                             if let m = SourceMarkButton(r.awaySourceMark, number: Double(r.awayPct) / 100.0, subject: r.awayShort, numberSize: min(rowSize, 22), compactRow: true) {
                                 m
                             }
@@ -2376,6 +2390,7 @@ struct MachineryDiscoverCardView: View {
                                 .font(.system(size: rowSize, weight: .bold).monospacedDigit())
                                 .foregroundStyle(primaryInk)
                                 .fixedSize(horizontal: true, vertical: false)
+                                .accessibilityLabel(spokenProbabilityText("\(r.homePct)%"))
                             if let m = SourceMarkButton(r.sourceMark, number: Double(r.homePct) / 100.0, subject: r.homeShort, numberSize: min(rowSize, 22), compactRow: true) {
                                 m
                             }
@@ -2491,7 +2506,7 @@ struct MachineryDiscoverCardView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: 6) {
                                     if left.art?.verifiedURL == nil {
-                                        Circle().fill(leftColor).frame(width: 9, height: 9)
+                                        Circle().fill(leftColor).frame(width: 9, height: 9).accessibilityHidden(true)
                                     }
                                     Text(left.name)
                                         .font(.system(size: rowSize, weight: .semibold))
@@ -2502,6 +2517,7 @@ struct MachineryDiscoverCardView: View {
                                     Text(left.probabilityLabel)
                                         .font(.system(size: duelPctSize, weight: .heavy).monospacedDigit())
                                         .foregroundStyle(primaryInk)
+                                        .accessibilityLabel(spokenProbabilityText(left.probabilityLabel))
                                     if let m = SourceMarkButton(left.sourceMark, number: left.probability, subject: left.name, subtitle: card.title, numberSize: min(rowSize, 22), compactRow: true) {
                                         m
                                     }
@@ -2519,13 +2535,14 @@ struct MachineryDiscoverCardView: View {
                                         .multilineTextAlignment(.trailing)
                                         .fixedSize(horizontal: false, vertical: true)
                                     if right.art?.verifiedURL == nil {
-                                        Circle().fill(rightColor).frame(width: 9, height: 9)
+                                        Circle().fill(rightColor).frame(width: 9, height: 9).accessibilityHidden(true)
                                     }
                                 }
                                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                                     Text(right.probabilityLabel)
                                         .font(.system(size: duelPctSize, weight: .heavy).monospacedDigit())
                                         .foregroundStyle(primaryInk)
+                                        .accessibilityLabel(spokenProbabilityText(right.probabilityLabel))
                                     if let m = SourceMarkButton(right.sourceMark, number: right.probability, subject: right.name, subtitle: card.title, numberSize: min(rowSize, 22), compactRow: true) {
                                         m
                                     }
@@ -2556,15 +2573,18 @@ struct MachineryDiscoverCardView: View {
                 }
                 .frame(height: 11)
                 .clipShape(Capsule())
+                .accessibilityHidden(true)
 
                 if let middle, !dynamicTypeSize.isAccessibilitySize {
                     HStack(spacing: 4) {
                         Circle()
                             .fill(secondaryInk.opacity(colorScheme == .dark ? 0.42 : 0.28))
                             .frame(width: 7, height: 7)
+                            .accessibilityHidden(true)
                         Text("\(middle.name) \(middle.probabilityLabel)")
                             .font(.system(size: subSize, weight: .medium).monospacedDigit())
                             .foregroundStyle(secondaryInk)
+                            .accessibilityLabel("\(middle.name) \(spokenProbabilityText(middle.probabilityLabel))")
                         if let m = SourceMarkButton(middle.sourceMark, number: middle.probability, subject: middle.name, subtitle: card.title, numberSize: min(subSize, 20), compactRow: true) {
                             m
                         }
@@ -2582,7 +2602,7 @@ struct MachineryDiscoverCardView: View {
             if outcome.art?.verifiedURL != nil {
                 MachinerySubjectArtView(art: outcome.art, width: 36, height: 36)
             } else {
-                Circle().fill(dotColor).frame(width: 10, height: 10)
+                Circle().fill(dotColor).frame(width: 10, height: 10).accessibilityHidden(true)
             }
             Text(outcome.name)
                 .font(.system(size: rowSize, weight: .semibold))
@@ -2593,6 +2613,7 @@ struct MachineryDiscoverCardView: View {
                 Text(outcome.probabilityLabel)
                     .font(.system(size: duelPctSize, weight: .heavy).monospacedDigit())
                     .foregroundStyle(primaryInk)
+                    .accessibilityLabel(spokenProbabilityText(outcome.probabilityLabel))
                 if let m = SourceMarkButton(outcome.sourceMark, number: outcome.probability, subject: outcome.name, subtitle: card.title, numberSize: min(rowSize, 22), compactRow: true) {
                     m
                 }

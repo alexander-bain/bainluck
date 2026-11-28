@@ -527,6 +527,7 @@ struct NativeEventDiscoverCard: View {
                                     .lineLimit(1)
                                     .fixedSize()
                                     .foregroundStyle(awayColor)
+                                    .accessibilityLabel(spokenProbabilityText(formatProbability(awayProbability, renderedPercent: awayPct)))
                                 Spacer()
                                 if !labelOnOwnLine {
                                     winProbabilityLabel
@@ -537,6 +538,7 @@ struct NativeEventDiscoverCard: View {
                                     .lineLimit(1)
                                     .fixedSize()
                                     .foregroundStyle(homeColor)
+                                    .accessibilityLabel(spokenProbabilityText(formatProbability(homeProbability, renderedPercent: homePct)))
                             } else {
                                 // #5363 — the strip has collapsed to ONE number,
                                 // and a lone number in a slot a reader learned to
@@ -564,6 +566,7 @@ struct NativeEventDiscoverCard: View {
                                     .lineLimit(1)
                                     .fixedSize()
                                     .foregroundStyle(homeColor)
+                                    .accessibilityLabel(spokenProbabilityText(formatProbability(homeProbability)))
                                 discoverInlinePregameLabel(discoverLiveSidePregame12616.home)
                             }
                         }
@@ -576,6 +579,7 @@ struct NativeEventDiscoverCard: View {
                                         .foregroundStyle(DS.textSecondaryReadable)
                                         .lineLimit(1)
                                         .fixedSize(horizontal: true, vertical: false)
+                                        .accessibilityLabel(spokenProbabilityText(awayPre))
                                 }
                                 Spacer()
                                 Text("Pregame")
@@ -589,6 +593,7 @@ struct NativeEventDiscoverCard: View {
                                         .foregroundStyle(DS.textSecondaryReadable)
                                         .lineLimit(1)
                                         .fixedSize(horizontal: true, vertical: false)
+                                        .accessibilityLabel(spokenProbabilityText(homePre))
                                 }
                             }
                         }
@@ -600,6 +605,7 @@ struct NativeEventDiscoverCard: View {
                                 : nil,
                             awayIsWithheld: printable.away == nil
                         )
+                        .accessibilityHidden(true)
                     }
                 }
 
@@ -620,6 +626,7 @@ struct NativeEventDiscoverCard: View {
                 .foregroundStyle(DS.textSecondaryReadable)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel("\(spokenProbabilityText(text)) pregame")
         }
     }
 
@@ -674,8 +681,10 @@ struct NativeEventDiscoverCard: View {
                     .background(Color.secondary.opacity(0.10), in: Circle())
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Circle())
+                    .accessibilityHidden(true)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Share")
             .recordsShareOpened { onShare?() }
             .contextMenu {
                 Button(action: copyShareImage) {
