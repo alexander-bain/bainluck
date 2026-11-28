@@ -366,7 +366,7 @@ struct EconomicsView: View {
                 color: prob > 50 ? econGreen : DS.purple.opacity(0.5)
             )
 
-            Text("\(Int(prob))%")
+            Text(formatProbability(prob / 100.0))
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .foregroundStyle(prob > 50 ? econGreen : DS.textMuted)
                 .frame(width: 36, alignment: .trailing)
@@ -538,7 +538,7 @@ struct EconomicsView: View {
 
                         VStack(spacing: 2) {
                             if isPeak {
-                                Text("\(Int(prob))%")
+                                Text(formatProbability(prob / 100.0))
                                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                                     .foregroundStyle(DS.textPrimary)
                             }

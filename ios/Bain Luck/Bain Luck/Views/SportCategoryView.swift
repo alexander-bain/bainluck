@@ -343,7 +343,7 @@ struct SportCategoryView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         Spacer()
-                        Text("\(Int(o.prob))%")
+                        Text(formatProbability(o.prob / 100.0))
                             .font(.caption)
                             .fontWeight(.bold)
                             .monospacedDigit()
@@ -479,8 +479,8 @@ struct SportCategoryView: View {
                 HStack(spacing: 6) {
                     Text(leaderName)
                         .font(.caption.weight(.medium))
-                    if let p = renderedPercent(leaderProbability) {
-                        Text("\(p)%")
+                    if let prob = leaderProbability, let p = renderedPercent(prob) {
+                        Text(formatProbability(prob, renderedPercent: p))
                             .font(.caption.weight(.semibold).monospacedDigit())
                             .foregroundStyle(.secondary)
                     }

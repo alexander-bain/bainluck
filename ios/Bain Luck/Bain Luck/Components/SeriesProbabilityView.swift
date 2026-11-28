@@ -144,24 +144,20 @@ struct SeriesProbabilityView: View {
             }
 
             // Probability / clinched bar
-            let homePct = Int((homeSeriesProb * 100).rounded())
-            let awayPct = 100 - homePct
+            let labels = Self.barLabels(
+                homeSeriesProb: homeSeriesProb,
+                homeTeam: sides.home,
+                awayTeam: sides.away,
+                isSeriesOver: isSeriesOver,
+                homeClinched: isSeriesOver && homeSeriesWins >= gamesToWin,
+                awayClinched: isSeriesOver && awaySeriesWins >= gamesToWin
+            )
             GeometryReader { geo in
-                if homePct >= 100 {
+                if let clinchedLabel = labels.clinched {
                     ZStack {
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(homeTeamColor)
-                        Text("\(sides.home) 100%")
-                            .font(.caption2.weight(.bold).monospacedDigit())
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                    }
-                    .frame(width: geo.size.width)
-                } else if awayPct >= 100 {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(awayTeamColor)
-                        Text("\(sides.away) 100%")
+                            .fill(homeSeriesWins >= gamesToWin ? homeTeamColor : awayTeamColor)
+                        Text(clinchedLabel)
                             .font(.caption2.weight(.bold).monospacedDigit())
                             .foregroundStyle(.white)
                             .lineLimit(1)
@@ -173,7 +169,7 @@ struct SeriesProbabilityView: View {
                         ZStack {
                             RoundedRectangle(cornerRadius: 10)
                                 .fill(homeTeamColor)
-                            Text("\(homePct)%")
+                            Text(labels.home)
                                 .font(.caption2.weight(.bold).monospacedDigit())
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
@@ -182,7 +178,7 @@ struct SeriesProbabilityView: View {
                         ZStack {
                             RoundedRectangle(cornerRadius: 10)
                                 .fill(awayTeamColor)
-                            Text("\(awayPct)%")
+                            Text(labels.away)
                                 .font(.caption2.weight(.bold).monospacedDigit())
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
@@ -209,6 +205,33 @@ struct SeriesProbabilityView: View {
     }
 
     // MARK: - Negative Binomial & Playoff Series Contract (#13182)
+
+    struct BarLabels: Equatable, Sendable {
+        let clinched: String?
+        let home: String
+        let away: String
+    }
+
+    static func barLabels(
+        homeSeriesProb: Double,
+        homeTeam: String,
+        awayTeam: String,
+        isSeriesOver: Bool,
+        homeClinched: Bool,
+        awayClinched: Bool
+    ) -> BarLabels {
+        if isSeriesOver && homeClinched {
+            return BarLabels(clinched: "\(homeTeam) 100%", home: "100%", away: "0%")
+        }
+        if isSeriesOver && awayClinched {
+            return BarLabels(clinched: "\(awayTeam) 100%", home: "0%", away: "100%")
+        }
+        return BarLabels(
+            clinched: nil,
+            home: formatProbability(homeSeriesProb),
+            away: formatProbability(1.0 - homeSeriesProb)
+        )
+    }
 
     private static let playoffRoundTagTokens: Set<String> = [
         "round_1",

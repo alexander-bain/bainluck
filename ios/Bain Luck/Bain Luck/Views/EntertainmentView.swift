@@ -927,7 +927,7 @@ struct EntertainmentView: View {
 
     private func yesNoBar(yes: Double, no: Double) -> some View {
         HStack(spacing: 1.5) {
-            Text("YES \(Int(yes))%")
+            Text("YES \(formatProbability(yes / 100.0))")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .foregroundStyle(DS.emerald)
                 .frame(maxWidth: .infinity)
@@ -935,7 +935,7 @@ struct EntertainmentView: View {
                 .background(DS.emerald.opacity(0.10))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            Text("NO \(Int(no))%")
+            Text("NO \(formatProbability(no / 100.0))")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .foregroundStyle(DS.textSecondary)
                 .frame(maxWidth: .infinity)
