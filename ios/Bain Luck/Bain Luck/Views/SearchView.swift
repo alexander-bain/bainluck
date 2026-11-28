@@ -74,6 +74,7 @@ private struct QuickSearchItem: Identifiable {
 
 struct SearchView: View {
     @StateObject private var viewModel: SearchViewModel
+    @StateObject private var discoveryVM: ContainerDiscoveryViewModel
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @FocusState private var isSearchFocused: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -84,14 +85,41 @@ struct SearchView: View {
     /// results (the view model), the open detail and the results' scroll
     /// offset. `nil` everywhere else, which is today's behaviour.
     private let macPlace: MacReadingPlace<SearchViewModel>?
+    private let previewSets: [BrowsePublicSet402A]
+    private let publicSetsService: (any BrowsePublicSetsLoading)?
+    private let maxSetPillsInEmptyState: Int?
+    private let hasPreloadedTrending: Bool
+    @State private var loadedPublicSets: [BrowsePublicSet402A] = []
     /// #10878 / #4940 — the result row the Mac arrow keys have picked, by its
     /// canonical route. Never set anywhere else, so iPhone and iPad draw and
     /// behave exactly as before.
     @State private var keyboardSelection = MacKeyboardSelection10878<Route>()
 
-    init(macPlace: MacReadingPlace<SearchViewModel>? = nil) {
+    init(
+        macPlace: MacReadingPlace<SearchViewModel>? = nil,
+        discoveryService: any ContainerDiscoveryLoading = ContainerDiscoveryService(),
+        previewSets: [BrowsePublicSet402A] = [],
+        publicSetsService: (any BrowsePublicSetsLoading)? = nil,
+        maxSetPillsInEmptyState: Int? = nil,
+        preloadedTrendingSearches: [TrendingQuery] = []
+    ) {
         self.macPlace = macPlace
-        _viewModel = StateObject(wrappedValue: macPlace?.models(orMake: { SearchViewModel() }) ?? SearchViewModel())
+        self.previewSets = previewSets
+        self.maxSetPillsInEmptyState = maxSetPillsInEmptyState
+        self.hasPreloadedTrending = !preloadedTrendingSearches.isEmpty
+        if let publicSetsService {
+            self.publicSetsService = publicSetsService
+        } else if discoveryService is ContainerDiscoveryService && previewSets.isEmpty {
+            self.publicSetsService = FeedPublicSetsService402A()
+        } else {
+            self.publicSetsService = nil
+        }
+        let vm = macPlace?.models(orMake: { SearchViewModel() }) ?? SearchViewModel()
+        if !preloadedTrendingSearches.isEmpty {
+            vm.setTrendingSearchesForTesting(preloadedTrendingSearches)
+        }
+        _viewModel = StateObject(wrappedValue: vm)
+        _discoveryVM = StateObject(wrappedValue: ContainerDiscoveryViewModel(service: discoveryService))
         _path = State(initialValue: macPlace?.path ?? NavigationPath())
     }
 
@@ -116,19 +144,27 @@ struct SearchView: View {
         .init(icon: "trophy.fill", label: "MVP", query: "MVP"),
     ]
 
-    private struct CategoryLink: Identifiable {
-        let icon: String
-        let label: String
-        let route: Route
-        var id: String { label }
+    private var combinedSetPills: [BrowsePublicSet402A] {
+        var seen = Set<String>()
+        var result: [BrowsePublicSet402A] = []
+        for s in previewSets where seen.insert(s.slug).inserted {
+            result.append(s)
+        }
+        for s in loadedPublicSets where seen.insert(s.slug).inserted {
+            result.append(s)
+        }
+        for entry in discoveryVM.entries where seen.insert(entry.collection.slug).inserted {
+            result.append(
+                BrowsePublicSet402A(
+                    slug: entry.collection.slug,
+                    title: entry.collection.name,
+                    subtitle: entry.subtitle,
+                    imageURL: nil
+                )
+            )
+        }
+        return result
     }
-
-    private let categoryLinks: [CategoryLink] = [
-        .init(icon: "building.columns.fill", label: "Politics", route: .politics),
-        .init(icon: "cloud.sun.fill", label: "Weather", route: .weather),
-        .init(icon: "chart.line.uptrend.xyaxis", label: "Economics", route: .economics),
-        .init(icon: "star.fill", label: "Entertainment", route: .entertainment),
-    ]
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -218,7 +254,15 @@ struct SearchView: View {
         .task {
             consumePendingSearchQuery()
             consumeSearchFocusRequest()
-            await viewModel.loadTrending()
+            if !hasPreloadedTrending {
+                await viewModel.loadTrending()
+            }
+            await discoveryVM.load()
+            if let publicSetsService,
+               let sets = try? await publicSetsService.loadPublicSets(),
+               !sets.isEmpty {
+                loadedPublicSets = sets
+            }
         }
         .onChange(of: navCoordinator.pendingSearchQuery) { _, _ in
             consumePendingSearchQuery()
@@ -530,6 +574,47 @@ struct SearchView: View {
                     }
                 }
 
+                // Sets matching Browse (402: A, never finished/archive hubs)
+                if !combinedSetPills.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        emptySectionHeader13672("Sets")
+
+                        let visibleSets: [BrowsePublicSet402A] = {
+                            if let limit = maxSetPillsInEmptyState, limit > 0, combinedSetPills.count > limit {
+                                return Array(combinedSetPills.prefix(limit))
+                            }
+                            return combinedSetPills
+                        }()
+                        let showsAllSetsPill = maxSetPillsInEmptyState.map { $0 > 0 && combinedSetPills.count > $0 } ?? false
+
+                        FlowLayout(spacing: 8) {
+                            ForEach(visibleSets) { setItem in
+                                quickSearchChip(icon: "square.stack.3d.up.fill", label: setItem.title) {
+                                    path.append(setItem.route)
+                                }
+                            }
+                            if showsAllSetsPill {
+                                quickSearchChip(icon: "square.grid.2x2.fill", label: "All sets") {
+                                    navCoordinator.selectedTab = .leagues
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Categories (navigate to dedicated views, matching Browse 402: A order)
+                VStack(alignment: .leading, spacing: 10) {
+                    emptySectionHeader13672("Categories")
+
+                    FlowLayout(spacing: 8) {
+                        ForEach(BrowseCategoryLink402A.orderedAll) { item in
+                            quickSearchChip(icon: item.searchIcon, label: item.label) {
+                                path.append(item.route)
+                            }
+                        }
+                    }
+                }
+
                 // Quick Search by Sport
                 VStack(alignment: .leading, spacing: 10) {
                     emptySectionHeader13672("Browse by Sport")
@@ -539,19 +624,6 @@ struct SearchView: View {
                             quickSearchChip(icon: item.icon, label: item.label) {
                                 viewModel.query = item.query
                                 Task { await viewModel.search() }
-                            }
-                        }
-                    }
-                }
-
-                // Categories (navigate to dedicated views)
-                VStack(alignment: .leading, spacing: 10) {
-                    emptySectionHeader13672("Categories")
-
-                    FlowLayout(spacing: 8) {
-                        ForEach(categoryLinks) { item in
-                            quickSearchChip(icon: item.icon, label: item.label) {
-                                path.append(item.route)
                             }
                         }
                     }
@@ -571,7 +643,7 @@ struct SearchView: View {
                             }
                         } else {
                             ForEach(viewModel.trendingSearches) { trend in
-                                quickSearchChip(icon: "flame.fill", label: trend.query.capitalized) {
+                                quickSearchChip(icon: "flame.fill", label: Self.formatTrendingQueryLabel(trend.query)) {
                                     viewModel.query = trend.query
                                     Task { await viewModel.search() }
                                 }
@@ -644,6 +716,39 @@ struct SearchView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("search.quickChip.\(label)")
+    }
+
+    private nonisolated static let preservedTrendingUpperTokens: Set<String> = [
+        "NBA", "NFL", "NHL", "MLB", "MLS", "EPL", "UCL", "UFC", "PGA", "ATP", "WTA",
+        "F1", "NCAA", "NCAAB", "NCAAF", "WNBA", "WNCAAB", "MVP", "AI", "GDP", "CPI",
+        "US", "USA", "UK", "EU", "UN", "GOP", "CEO", "IPO", "SEC", "FOMC", "NASCAR",
+        "LIV", "LPGA", "FIFA"
+    ]
+
+    /// Preserves league & macro acronyms (`NBA`, `NFL`, `US`, `AI`, etc.) when formatting
+    /// trending search queries so `"nba"` -> `"NBA"` and `"nba finals"` -> `"NBA Finals"`.
+    nonisolated static func formatTrendingQueryLabel(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return raw }
+        return trimmed
+            .split(whereSeparator: \.isWhitespace)
+            .map { token -> String in
+                let word = String(token)
+                let alnum = word.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+                let upperAlnum = alnum.uppercased()
+                if !alnum.isEmpty, preservedTrendingUpperTokens.contains(upperAlnum) {
+                    return word.replacingOccurrences(of: alnum, with: upperAlnum)
+                }
+                let lower = word.lowercased()
+                guard let firstLetterIdx = lower.firstIndex(where: \.isLetter) else {
+                    return word
+                }
+                let chars = Array(lower)
+                let pos = lower.distance(from: lower.startIndex, to: firstLetterIdx)
+                let upperFirst = String(chars[pos]).uppercased()
+                return String(chars[..<pos]) + upperFirst + String(chars[(pos + 1)...])
+            }
+            .joined(separator: " ")
     }
 
     // MARK: - Suggestions

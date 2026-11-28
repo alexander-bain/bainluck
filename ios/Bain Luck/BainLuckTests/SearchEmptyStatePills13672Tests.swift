@@ -53,7 +53,7 @@ final class SearchEmptyStatePills13672Tests: XCTestCase {
         for (scheme, size, tag, height) in [
             (ColorScheme.light, DynamicTypeSize.large, "light-large", CGFloat(852)),
             (ColorScheme.dark, DynamicTypeSize.large, "dark-large", CGFloat(852)),
-            (ColorScheme.light, DynamicTypeSize.accessibility5, "light-ax5", CGFloat(1150)),
+            (ColorScheme.light, DynamicTypeSize.accessibility5, "light-ax5", CGFloat(1700)),
         ] {
             let navCoordinator = NavigationCoordinator()
             let view = SearchView()
@@ -150,10 +150,27 @@ final class SearchEmptyStatePills13672Tests: XCTestCase {
     }
 
     private func ocrText(_ image: UIImage) throws -> String {
-        let req = VNRecognizeTextRequest()
-        req.recognitionLevel = .accurate
-        req.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([req])
-        return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        let cg = try XCTUnwrap(image.cgImage)
+        if cg.height <= 1800 {
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            req.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: cg).perform([req])
+            return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        }
+        var lines: [String] = []
+        var yStart = 0
+        while yStart < cg.height {
+            let h = min(1400, cg.height - yStart)
+            guard let slice = cg.cropping(to: CGRect(x: 0, y: yStart, width: cg.width, height: h)) else { break }
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            req.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: slice).perform([req])
+            lines.append(contentsOf: (req.results ?? []).compactMap { $0.topCandidates(1).first?.string })
+            if yStart + h >= cg.height { break }
+            yStart += 1000
+        }
+        return lines.joined(separator: " ")
     }
 }

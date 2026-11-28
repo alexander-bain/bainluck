@@ -87,11 +87,28 @@ final class BrowseNoFinishedEventLinks13662Tests: XCTestCase {
     }
 
     private func ocrLines(_ image: UIImage) throws -> [String] {
-        let req = VNRecognizeTextRequest()
-        req.recognitionLevel = .accurate
-        req.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([req])
-        return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        let cg = try XCTUnwrap(image.cgImage)
+        if cg.height <= 1800 {
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            req.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: cg).perform([req])
+            return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        }
+        var lines: [String] = []
+        var yStart = 0
+        while yStart < cg.height {
+            let h = min(1400, cg.height - yStart)
+            guard let slice = cg.cropping(to: CGRect(x: 0, y: yStart, width: cg.width, height: h)) else { break }
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            req.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: slice).perform([req])
+            lines.append(contentsOf: (req.results ?? []).compactMap { $0.topCandidates(1).first?.string })
+            if yStart + h >= cg.height { break }
+            yStart += 1000
+        }
+        return lines
     }
 
     func testContainerDiscoveryDropsFinishedNFLWeeksAndKeepsActiveWeeks() throws {
@@ -124,9 +141,9 @@ final class BrowseNoFinishedEventLinks13662Tests: XCTestCase {
             }
         }
 
-        // Also test actual LeaguesView directly (verifying US Open is absent in featuredGrid)
-        let pureBrowseLight = captureWindow(LeaguesView(), height: 820, scheme: .light)
-        let pureBrowseDark = captureWindow(LeaguesView(), height: 820, scheme: .dark)
+        // Also test actual LeaguesView directly (verifying US Open is absent and Explore reaches bottom)
+        let pureBrowseLight = captureWindow(LeaguesView(), height: 2350, scheme: .light)
+        let pureBrowseDark = captureWindow(LeaguesView(), height: 2350, scheme: .dark)
         let collectionsOnly = captureWindow(
             NavigationStack {
                 BrowseCollectionsView(service: StaticDiscoveryService(nflResponse: sampleCollections))

@@ -139,7 +139,7 @@ const NOT_TEAM_LABELS = new Map<string, Array<[string, string]>>([
     join(IOS_ROOT, "Views/EntertainmentView.swift"),
     [
       [
-        "let initials = String(title.prefix(2)).uppercased()",
+        "return String(candidate.prefix(2)).uppercased()",
         "#4757 — a FILM/SHOW title ('Dune: Part Three'), not a competitor. `TeamShortName` would apply club-designator rules to a work of art",
       ],
     ],

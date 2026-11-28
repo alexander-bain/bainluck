@@ -123,6 +123,7 @@ struct SportCategoryView: View {
         case "mma": return "figure.boxing"
         case "politics": return "building.columns.fill"
         case "entertainment": return "star.fill"
+        case "tech": return "cpu.fill"
         case "crypto": return "bitcoinsign.circle.fill"
         default: return "sportscourt"
         }

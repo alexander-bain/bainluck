@@ -49,12 +49,28 @@ nonisolated struct ContainerDiscoveryRequest: Sendable {
         "final", "completed", "closed", "resolved", "settled", "finished"
     ]
 
+    private static func parseWindowEnd(_ raw: String?) -> Date? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = fractional.date(from: raw) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: raw)
+    }
+
     /// The producer remains the publication authority. These checks refuse a
-    /// mismatched/unsupported edition, finished collection (#13671), or dead destination instead of guessing.
-    func entries(in response: ContainerDiscoveryResponse) -> [ContainerDiscoveryEntry] {
+    /// mismatched/unsupported edition, finished/past-window collection (#13671 / 402: A),
+    /// or dead destination instead of guessing.
+    func entries(in response: ContainerDiscoveryResponse, asOf now: Date = Date()) -> [ContainerDiscoveryEntry] {
         var seen = Set<String>()
         return response.collections.compactMap { card in
             let normalizedStatus = (card.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if let windowEnd = Self.parseWindowEnd(card.windowEnd), windowEnd < now {
+                return nil
+            }
             guard card.canOpen, card.id > 0, card.revision >= 1,
                   !Self.finishedStatuses.contains(normalizedStatus),
                   !card.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

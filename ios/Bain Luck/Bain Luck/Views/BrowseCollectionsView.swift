@@ -1,13 +1,199 @@
 import SwiftUI
 
+/// Real public set entry for 402: A Browse & Search discovery (`machinery-*` / container hubs),
+/// carrying its own verified cover image rather than one generic icon repeated across sets.
+struct BrowsePublicSet402A: Identifiable, Hashable, Sendable {
+    let slug: String
+    let title: String
+    let subtitle: String
+    let imageURL: URL?
+
+    var id: String { slug }
+    @MainActor var route: Route { .containerHub(slug: slug, name: title) }
+
+    nonisolated static func extractFromFeedItems(_ items: [FeedItem], limit: Int = 8) -> [BrowsePublicSet402A] {
+        var seen = Set<String>()
+        var extracted: [BrowsePublicSet402A] = []
+        for item in items {
+            guard item.type == "bundle", let bundle = item.bundle else { continue }
+            let rawSlug = bundle.collectionRef?.slug
+                ?? (bundle.id.hasPrefix("roundup:") ? String(bundle.id.dropFirst("roundup:".count)) : bundle.id)
+            guard rawSlug.hasPrefix("machinery-"), seen.insert(rawSlug).inserted else { continue }
+            let rawTitle = (bundle.collectionRef?.name ?? bundle.title)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawTitle.isEmpty else { continue }
+            let marketCount = max(bundle.collectionRef?.collectionCount ?? 0, bundle.items.count)
+            let subtitle = Self.formatSetSubtitle(kicker: bundle.roundupContract?.kicker, count: marketCount)
+            let url = bundle.imageUrl.flatMap(URL.init(string:))
+            extracted.append(
+                BrowsePublicSet402A(
+                    slug: rawSlug,
+                    title: rawTitle,
+                    subtitle: subtitle,
+                    imageURL: url
+                )
+            )
+            if extracted.count >= limit { break }
+        }
+        return extracted
+    }
+
+    private nonisolated static func formatSetSubtitle(kicker: String?, count: Int) -> String {
+        let countText = count > 0 ? "\(count) \(count == 1 ? "market" : "markets")" : ""
+        let topic = humanizedTopic(from: kicker)
+        if !topic.isEmpty && !countText.isEmpty {
+            return "\(topic) · \(countText)"
+        }
+        return !topic.isEmpty ? topic : (countText.isEmpty ? "Curated set" : countText)
+    }
+
+    private nonisolated static func humanizedTopic(from kicker: String?) -> String {
+        guard let raw = kicker?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return ""
+        }
+        let segments = raw
+            .split(separator: "·")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let chosen: String = {
+            if segments.count >= 2, segments.first?.uppercased() == "ODD" {
+                return segments.dropFirst().joined(separator: " · ")
+            }
+            return segments.last ?? raw
+        }()
+        let keepUpper: Set<String> = ["AI", "US", "UK", "EU", "GDP", "SNL", "NBA", "NFL", "MLB", "NHL", "UFC", "FOMC"]
+        return chosen
+            .split(separator: " ")
+            .map { token -> String in
+                let upper = token.uppercased()
+                if keepUpper.contains(upper) { return upper }
+                return token.lowercased().capitalized
+            }
+            .joined(separator: " ")
+    }
+}
+
+protocol BrowsePublicSetsLoading: Sendable {
+    func loadPublicSets() async throws -> [BrowsePublicSet402A]
+}
+
+struct FeedPublicSetsService402A: BrowsePublicSetsLoading {
+    func loadPublicSets() async throws -> [BrowsePublicSet402A] {
+        let feed = try await APIClient.shared.fetchFeed(limit: 80)
+        return BrowsePublicSet402A.extractFromFeedItems(feed.items, limit: 8)
+    }
+}
+
+/// Shared category catalog for Browse tiles and Search empty-state pills (402: A draft 2),
+/// ordered identically across both screens: Entertainment, Tech and business, Economics, Weather, Politics.
+struct BrowseCategoryLink402A: Identifiable, Sendable {
+    let id: String
+    let label: String
+    let desc: String
+    let icon: String
+    let searchIcon: String
+    let color: Color
+    let route: Route
+
+    static let orderedAll: [BrowseCategoryLink402A] = [
+        BrowseCategoryLink402A(
+            id: "entertainment",
+            label: "Entertainment",
+            desc: "Awards, box office, culture",
+            icon: "film.fill",
+            searchIcon: "star.fill",
+            color: .pink,
+            route: .entertainment
+        ),
+        BrowseCategoryLink402A(
+            id: "tech-and-business",
+            label: "Tech and business",
+            desc: "AI, frontier tech, big caps",
+            icon: "cpu.fill",
+            searchIcon: "cpu.fill",
+            color: .blue,
+            route: .sportCategory(key: "tech", name: "Tech and business")
+        ),
+        BrowseCategoryLink402A(
+            id: "economics",
+            label: "Economics",
+            desc: "Fed rates, inflation, GDP",
+            icon: "chart.bar.fill",
+            searchIcon: "chart.line.uptrend.xyaxis",
+            color: .purple,
+            route: .economics
+        ),
+        BrowseCategoryLink402A(
+            id: "weather",
+            label: "Weather",
+            desc: "Temperature, rainfall, storms",
+            icon: "cloud.sun.fill",
+            searchIcon: "cloud.sun.fill",
+            color: .orange,
+            route: .weather
+        ),
+        BrowseCategoryLink402A(
+            id: "politics",
+            label: "Politics",
+            desc: "Elections, policy, geopolitics",
+            icon: "building.columns.fill",
+            searchIcon: "building.columns.fill",
+            color: .indigo,
+            route: .politics
+        ),
+    ]
+}
+
 /// No heading, placeholder or spinner when discovery is unavailable/disabled.
 /// The ordinary Browse destinations continue rendering during this fresh read.
 struct BrowseCollectionsView: View {
     @StateObject private var vm: ContainerDiscoveryViewModel
+    private let previewSets: [BrowsePublicSet402A]
+    private let preloadedSetImages: [String: Image]
+    private let publicSetsService: (any BrowsePublicSetsLoading)?
+    @State private var loadedPublicSets: [BrowsePublicSet402A] = []
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    init(service: any ContainerDiscoveryLoading = ContainerDiscoveryService()) {
+    init(
+        service: any ContainerDiscoveryLoading = ContainerDiscoveryService(),
+        previewSets: [BrowsePublicSet402A] = [],
+        preloadedSetImages: [String: Image] = [:],
+        publicSetsService: (any BrowsePublicSetsLoading)? = nil
+    ) {
         _vm = StateObject(wrappedValue: ContainerDiscoveryViewModel(service: service))
+        self.previewSets = previewSets
+        self.preloadedSetImages = preloadedSetImages
+        if let publicSetsService {
+            self.publicSetsService = publicSetsService
+        } else if service is ContainerDiscoveryService && previewSets.isEmpty {
+            self.publicSetsService = FeedPublicSetsService402A()
+        } else {
+            self.publicSetsService = nil
+        }
+    }
+
+    private var combinedSets: [BrowsePublicSet402A] {
+        var seen = Set<String>()
+        var result: [BrowsePublicSet402A] = []
+        for s in previewSets where seen.insert(s.slug).inserted {
+            result.append(s)
+        }
+        for s in loadedPublicSets where seen.insert(s.slug).inserted {
+            result.append(s)
+        }
+        for entry in vm.entries where seen.insert(entry.collection.slug).inserted {
+            result.append(
+                BrowsePublicSet402A(
+                    slug: entry.collection.slug,
+                    title: entry.collection.name,
+                    subtitle: entry.subtitle,
+                    imageURL: nil
+                )
+            )
+        }
+        return result
     }
 
     var body: some View {
@@ -16,57 +202,130 @@ struct BrowseCollectionsView: View {
         // resolves to nothing, `.task` attaches to nothing, and the first read
         // that would fill it never starts.
         VStack(alignment: .leading, spacing: 0) {
-            if !vm.entries.isEmpty {
+            if !combinedSets.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Collections")
+                    Text("Sets")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
                         .textCase(.uppercase)
                         .tracking(0.6)
-                    ForEach(vm.entries) { entry in
-                        NavigationLink(value: entry.route) {
-                            HStack(spacing: 12) {
+                    ForEach(combinedSets) { setItem in
+                        NavigationLink(value: setItem.route) {
+                            HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 12) {
+                                setThumbnail(for: setItem)
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(entry.collection.name)
+                                    Text(setItem.title)
                                         .font(.headline)
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                                        .multilineTextAlignment(.leading)
                                         .fixedSize(horizontal: false, vertical: true)
-                                    Text(entry.subtitle)
+                                    Text(setItem.subtitle)
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                                 Spacer(minLength: 4)
                                 Image(systemName: "chevron.right")
                                     .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
                                     .accessibilityHidden(true)
                             }
-                            .foregroundStyle(DS.textPrimary)
-                            .padding(16)
+                            .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
+                            .background(
+                                colorScheme == .dark ? Color.cardBackground : DS.cardBg,
+                                in: RoundedRectangle(cornerRadius: 14)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(colorScheme == .dark ? Color.white.opacity(0.14) : DS.border, lineWidth: 1)
+                            )
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
                             CollectionContextMenuItems(
-                                slug: entry.collection.slug,
+                                slug: setItem.slug,
                                 onShare: {
                                     ShareInstrumentation.recordShareOpened(
                                         itemType: "collection",
-                                        itemId: entry.collection.slug,
-                                        itemName: entry.collection.name,
+                                        itemId: setItem.slug,
+                                        itemName: setItem.title,
                                         category: nil,
                                         surface: .discoverCard
                                     )
                                 }
                             )
                         }
-                        .accessibilityIdentifier("browse-collection-\(entry.id)")
+                        .accessibilityIdentifier("browse-collection-\(setItem.id)")
                     }
                 }
             }
         }
-        .task { await vm.load() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await vm.load() } }
+        .task {
+            await loadAllSets()
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await loadAllSets() }
+            }
+        }
+    }
+
+    private func loadAllSets() async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                await vm.load()
+            }
+            if let publicSetsService {
+                group.addTask { @MainActor in
+                    if let sets = try? await publicSetsService.loadPublicSets(), !sets.isEmpty {
+                        loadedPublicSets = sets
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func setThumbnail(for setItem: BrowsePublicSet402A) -> some View {
+        let trackBg = colorScheme == .dark ? Color.white.opacity(0.08) : DS.trackBg
+        let border = colorScheme == .dark ? Color.white.opacity(0.14) : DS.border
+        Group {
+            if let preloaded = preloadedSetImages[setItem.slug] {
+                preloaded
+                    .resizable()
+                    .scaledToFill()
+            } else if let url = setItem.imageURL {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    default:
+                        initialsBadge(for: setItem, bg: trackBg)
+                    }
+                }
+            } else {
+                initialsBadge(for: setItem, bg: trackBg)
+            }
+        }
+        .frame(width: 52, height: 52)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(border, lineWidth: 1))
+        .accessibilityHidden(true)
+    }
+
+    private func initialsBadge(for setItem: BrowsePublicSet402A, bg: Color) -> some View {
+        let nonYearTitle = setItem.title
+            .split(whereSeparator: { $0.isWhitespace })
+            .filter { !$0.allSatisfy(\.isNumber) }
+            .joined(separator: " ")
+        let label = PairedMetricPresentation.initials(for: nonYearTitle.isEmpty ? setItem.title : nonYearTitle)
+        return Text(label)
+            .font(.system(size: 15, weight: .bold, design: .rounded))
+            .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.85) : DS.textPrimary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(bg)
     }
 }

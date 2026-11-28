@@ -106,22 +106,6 @@ nonisolated func browseFeaturedHubs(
     )
 }
 
-private struct CategoryLink: Identifiable {
-    let id: String
-    let label: String
-    let desc: String
-    let icon: String
-    let color: Color
-    let route: Route
-}
-
-private let categoryLinks: [CategoryLink] = [
-    CategoryLink(id: "politics", label: "Politics", desc: "Elections, policy, geopolitics", icon: "building.columns.fill", color: .indigo, route: .politics),
-    CategoryLink(id: "entertainment", label: "Entertainment", desc: "Awards, box office, culture", icon: "film.fill", color: .pink, route: .entertainment),
-    CategoryLink(id: "economics", label: "Economics", desc: "Fed rates, inflation, GDP", icon: "chart.bar.fill", color: .purple, route: .economics),
-    CategoryLink(id: "weather", label: "Weather", desc: "Temperature, rainfall, storms", icon: "cloud.sun.fill", color: .orange, route: .weather),
-]
-
 // MARK: - View
 
 struct LeaguesView: View {
@@ -129,16 +113,47 @@ struct LeaguesView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var path = NavigationPath()
+    private let previewDiscoveryService: (any ContainerDiscoveryLoading)?
+    private let previewSets: [BrowsePublicSet402A]
+    private let preloadedSetImages: [String: Image]
+    private let previewPublicSetsService: (any BrowsePublicSetsLoading)?
+
+    init(
+        previewDiscoveryService: (any ContainerDiscoveryLoading)? = nil,
+        previewSets: [BrowsePublicSet402A] = [],
+        preloadedSetImages: [String: Image] = [:],
+        previewPublicSetsService: (any BrowsePublicSetsLoading)? = nil
+    ) {
+        self.previewDiscoveryService = previewDiscoveryService
+        self.previewSets = previewSets
+        self.preloadedSetImages = preloadedSetImages
+        self.previewPublicSetsService = previewPublicSetsService
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
+                VStack(alignment: .leading, spacing: 24) {
                     browseHeader
-                    featuredGrid
-                    BrowseCollectionsView()
-                    // topicSection — hidden for v1 (prediction market category pages not ready)
+                    if let previewDiscoveryService {
+                        BrowseCollectionsView(
+                            service: previewDiscoveryService,
+                            previewSets: previewSets,
+                            preloadedSetImages: preloadedSetImages,
+                            publicSetsService: previewPublicSetsService
+                        )
+                    } else {
+                        BrowseCollectionsView(
+                            previewSets: previewSets,
+                            preloadedSetImages: preloadedSetImages,
+                            publicSetsService: previewPublicSetsService
+                        )
+                    }
+                    topicSection
                     leagueSections
+                    BrowseSection(title: "Explore") {
+                        featuredGrid
+                    }
                 }
                 .padding(.horizontal, 22)
                 .padding(.vertical, 18)
@@ -167,7 +182,7 @@ struct LeaguesView: View {
     /// Subtitle only. The word "Browse" is already the navigation title, and
     /// printing it again here rendered the tab's name twice, one line apart.
     private var browseHeader: some View {
-        Text("Markets, sports, and tools")
+        Text("Sets, categories, and leagues")
             .font(.subheadline)
             .foregroundStyle(.secondary)
     }
@@ -247,13 +262,17 @@ struct LeaguesView: View {
         )
     }
 
-    /// Hidden for v1, so it is outside #5655 — which was measured off rasters of
-    /// what the page actually draws. Its spec stays exactly as it was rather
-    /// than inheriting a size-class rule nobody can photograph yet.
     private var topicSection: some View {
-        BrowseSection(title: "Prediction Markets") {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 320), spacing: 12)], spacing: 12) {
-                ForEach(categoryLinks) { cat in
+        let columns: [GridItem] = if dynamicTypeSize.isAccessibilitySize {
+            [GridItem(.flexible())]
+        } else if isRegularWidth {
+            [GridItem(.adaptive(minimum: 190, maximum: 320), spacing: 12)]
+        } else {
+            [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+        }
+        return BrowseSection(title: "Categories") {
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(BrowseCategoryLink402A.orderedAll) { cat in
                     BrowseTopicCard(category: cat)
                 }
             }
@@ -407,38 +426,47 @@ private struct BrowseFeatureCard: View {
 }
 
 private struct BrowseTopicCard: View {
-    let category: CategoryLink
+    let category: BrowseCategoryLink402A
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         NavigationLink(value: category.route) {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Image(systemName: category.icon)
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
+                        .frame(width: 38, height: 38)
                         .background(category.color.gradient, in: RoundedRectangle(cornerRadius: 10))
                     Spacer()
                     Image(systemName: "arrow.up.right")
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(category.color.opacity(0.75))
+                        .foregroundStyle(category.color.opacity(0.85))
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(category.label)
                         .font(.headline.weight(.bold))
                         .foregroundStyle(.primary)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(category.desc)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(15)
-            .frame(maxWidth: .infinity, minHeight: 128, alignment: .leading)
-            .background(category.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(category.color.opacity(0.18), lineWidth: 1))
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 118, maxHeight: .infinity, alignment: .leading)
+            .background(
+                colorScheme == .dark ? Color.cardBackground : DS.cardBg,
+                in: RoundedRectangle(cornerRadius: 14)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(category.color.opacity(0.32), lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -507,6 +535,21 @@ private struct BrowseLeagueTile: View {
 }
 
 extension LeaguesView {
+    static func exploreSampleForTest() -> AnyView {
+        AnyView(
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("EXPLORE")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    LeaguesView().featuredGrid
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
+            }
+        )
+    }
+
     static func leagueTilesSampleForTest() -> AnyView {
         let sampleSlugs = Set(["nba", "mlb", "nhl", "ncaa-women-basketball", "champions-league"])
         let picks = allLeagues.filter { sampleSlugs.contains($0.slug) }

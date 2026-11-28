@@ -76,8 +76,12 @@ enum EntertainmentSectionRows {
 // MARK: - View
 
 struct EntertainmentView: View {
-    @StateObject private var viewModel = EntertainmentViewModel()
+    @StateObject private var viewModel: EntertainmentViewModel
     @Environment(\.horizontalSizeClass) private var sizeClass
+
+    init(preloadedData: EntertainmentResponse? = nil) {
+        _viewModel = StateObject(wrappedValue: EntertainmentViewModel(preloadedData: preloadedData))
+    }
 
     private var isCompact: Bool {
         #if os(macOS)
@@ -114,7 +118,10 @@ struct EntertainmentView: View {
         .navigationBarTitleDisplayMode(.large)
         #endif
         .onAppear { AnalyticsService.trackScreen(name: "entertainment", type: "entertainment") }
-        .task { await viewModel.load() }
+        .task {
+            guard viewModel.data == nil else { return }
+            await viewModel.load()
+        }
         .refreshable { await viewModel.load() }
     }
 
@@ -895,9 +902,19 @@ struct EntertainmentView: View {
         .clipShape(RoundedRectangle(cornerRadius: size > 50 ? 12 : 8))
     }
 
+    nonisolated static func placeholderInitials(for title: String) -> String {
+        let stripped = String(
+            title.drop(while: { ch in
+                !ch.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) }
+            })
+        )
+        let candidate = stripped.isEmpty ? title : stripped
+        return String(candidate.prefix(2)).uppercased()
+    }
+
     private func coverPlaceholder(title: String, kind: String?, size: CGFloat) -> some View {
         let accent = kindAccent[kind ?? "binary"] ?? DS.purple
-        let initials = String(title.prefix(2)).uppercased()
+        let initials = Self.placeholderInitials(for: title)
         return ZStack {
             LinearGradient(
                 colors: [accent.opacity(0.6), accent.opacity(0.3)],
