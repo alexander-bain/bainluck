@@ -25,6 +25,7 @@ from app.utils.guess_daily import (
     build_daily_pack,
     full_guess,
     full_points,
+    is_allowed_nickname_chars,
     is_valid_guess,
     points_for,
     score_step_labels,
@@ -34,6 +35,9 @@ from app.utils.guess_daily import (
 
 PARITY_PATH = (
     Path(__file__).resolve().parents[1] / "data" / "guess" / "scoring_parity_cases.json"
+)
+NICKNAME_PARITY_PATH = (
+    Path(__file__).resolve().parents[1] / "data" / "guess" / "nickname_parity_cases.json"
 )
 
 
@@ -278,11 +282,26 @@ def test_shared_scoring_parity_fixture():
         ("Dickinson", True),
         ("Titus", True),
         ("Cummins", True),
+        ("Łukasz", True),
+        ("Þór", True),
+        ("Straße", True),
+        ("Nguyễn", True),
+        ("J.R.", True),
+        ("Yıldız", True),
+        ("İbrahim", True),
         ("Alex!", False),
         ("bad_name", False),
         ("---", False),
         ("...", False),
         ("🔥Alex", False),
+        ("ƒuck", False),
+        ("ƒ", False),
+        ("ꜰᴜᴄᴋ", False),
+        ("fᴜck", False),
+        ("ɐɓɔ", False),
+        ("shıt", False),
+        ("dıck", False),
+        ("bıtch", False),
         ("Fuck", False),
         ("f u c k", False),
         ("fu ck", False),
@@ -303,6 +322,27 @@ def test_validate_nickname_rules_and_no_scunthorpe(raw, allowed):
         assert clean and err is None
     else:
         assert clean == "" and isinstance(err, str) and err
+
+
+def test_shared_nickname_parity_fixture():
+    data = json.loads(NICKNAME_PARITY_PATH.read_text(encoding="utf-8"))
+    cases = data["cases"]
+    assert len(cases) >= 45
+    for case in cases:
+        raw = case["raw"]
+        assert is_allowed_nickname_chars(raw) is case["chars_allowed"], raw
+        clean, err = validate_nickname(raw)
+        if case["server_allowed"]:
+            assert clean and err is None, raw
+        else:
+            assert clean == "" and isinstance(err, str) and err, raw
+            reason = case["reason"]
+            if reason == "chars":
+                assert ("letters, numbers" in err) or ("valid nickname" in err), (raw, err)
+            elif reason == "rude":
+                assert "another nickname for the board" in err, (raw, err)
+            elif reason == "reserved":
+                assert "taken by the house" in err, (raw, err)
 
 
 @pytest.mark.asyncio

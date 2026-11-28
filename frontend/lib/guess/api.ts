@@ -90,26 +90,56 @@ export class GuessApiError extends Error {
   }
 }
 
-const ALLOWED_NICKNAME_RE =
-  /^[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u1E00-\u1EFF0-9 .'\-]+$/;
-const HAS_NICKNAME_LETTER_OR_DIGIT_RE =
-  /[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u1E00-\u1EFF0-9]/;
+const EXTRA_LATIN_FOLDS: Record<string, string> = {
+  ø: "o",
+  ð: "d",
+  đ: "d",
+  þ: "th",
+  ł: "l",
+  ß: "ss",
+  æ: "ae",
+  œ: "oe",
+  ı: "i",
+};
+
+function foldNicknameLetter(ch: string): string {
+  let mapped = "";
+  for (const c of ch.toLowerCase()) {
+    mapped += EXTRA_LATIN_FOLDS[c] ?? c;
+  }
+  const plain = mapped.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return plain.length > 0 && /^[a-z]+$/.test(plain) ? plain : "";
+}
 
 export function cleanDailyNickname(raw: string): string {
-  return raw
+  const normalized = raw
+    .replace(/[\x00-\x1f\x7f]+/g, " ")
     .normalize("NFC")
     .replace(/[’‘ʼ]/g, "'")
-    .replace(/[\x00-\x1f\x7f]+/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 12)
     .trim();
+  return Array.from(normalized).slice(0, 12).join("").trim();
 }
 
 export function isAllowedNicknameChars(raw: string): boolean {
   const normalized = cleanDailyNickname(raw);
   if (!normalized) return false;
-  return ALLOWED_NICKNAME_RE.test(normalized) && HAS_NICKNAME_LETTER_OR_DIGIT_RE.test(normalized);
+  let hasLetterOrDigit = false;
+  for (const ch of normalized) {
+    if (ch === " " || ch === "." || ch === "'" || ch === "-") {
+      continue;
+    }
+    if (ch >= "0" && ch <= "9") {
+      hasLetterOrDigit = true;
+      continue;
+    }
+    if (foldNicknameLetter(ch)) {
+      hasLetterOrDigit = true;
+      continue;
+    }
+    return false;
+  }
+  return hasLetterOrDigit;
 }
 
 export function formatOrdinal(n: number): string {

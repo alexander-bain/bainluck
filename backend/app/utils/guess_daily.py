@@ -57,7 +57,6 @@ GROUP_CODE_RE = re.compile(r"^[a-z0-9]{8,24}$")
 
 _TAP_KINDS = frozenset({"side", "versus", "four", "leader"})
 _RESERVED_NICKNAMES = frozenset({"the coin", "together"})
-ALLOWED_NICKNAME_RE = re.compile(r"^[A-Za-z0-9 '\-]+$")
 _EXTRA_LATIN_FOLDS = str.maketrans(
     {
         "ø": "o",
@@ -68,6 +67,7 @@ _EXTRA_LATIN_FOLDS = str.maketrans(
         "ß": "ss",
         "æ": "ae",
         "œ": "oe",
+        "ı": "i",
     }
 )
 _RUDE_WHOLE_TOKENS = frozenset(
@@ -249,8 +249,7 @@ def format_as_of_pt(frozen_at: datetime) -> str:
     return local.strftime(f"%a %b {local.day}, {hour_12}:%M {ampm} PT")
 
 
-def clean_nickname(raw: Any) -> str:
-    """Mirror daily nickname cleanup while preserving accented Latin letters and periods."""
+def _normalize_nickname_input(raw: Any) -> str:
     if not isinstance(raw, str):
         return ""
     stripped = unicodedata.normalize("NFC", re.sub(r"[\x00-\x1f\x7f]+", " ", raw))
@@ -258,22 +257,48 @@ def clean_nickname(raw: Any) -> str:
     collapsed = re.sub(r"\s+", " ", stripped).strip()
     if not collapsed:
         return ""
-    clipped = collapsed[:12].strip()
-    if clipped.lower() in _RESERVED_NICKNAMES:
+    return collapsed[:12].strip()
+
+
+def clean_nickname(raw: Any) -> str:
+    """Mirror daily nickname cleanup while preserving accented Latin letters and periods."""
+    clipped = _normalize_nickname_input(raw)
+    if not clipped or clipped.lower() in _RESERVED_NICKNAMES:
         return ""
     return clipped
 
 
+def _fold_nickname_letter(ch: str) -> str:
+    if not unicodedata.category(ch).startswith("L"):
+        return ""
+    nfd = unicodedata.normalize("NFD", ch.lower().translate(_EXTRA_LATIN_FOLDS))
+    plain = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+    if plain and all("a" <= c <= "z" for c in plain):
+        return plain
+    return ""
+
+
 def _is_allowed_nickname_char(ch: str) -> bool:
-    if ch in " .'-" or ch.isascii() and ch.isdigit():
+    if ch in " .'-" or (ch.isascii() and ch.isdigit()):
         return True
-    return ch.isalpha() and "LATIN" in unicodedata.name(ch, "")
+    return bool(_fold_nickname_letter(ch))
+
+
+def is_allowed_nickname_chars(raw: Any) -> bool:
+    """Return True when normalized nickname uses only digits, punctuation, or a-z-folding letters."""
+    clipped = _normalize_nickname_input(raw)
+    if not clipped:
+        return False
+    return all(_is_allowed_nickname_char(ch) for ch in clipped) and any(
+        (ch.isascii() and ch.isdigit()) or bool(_fold_nickname_letter(ch))
+        for ch in clipped
+    )
 
 
 def _fold_latin_to_ascii(text: str) -> str:
     folded = text.lower().translate(_EXTRA_LATIN_FOLDS)
-    nfkd = unicodedata.normalize("NFKD", folded)
-    return "".join(ch for ch in nfkd if unicodedata.category(ch) != "Mn")
+    nfd = unicodedata.normalize("NFD", folded)
+    return "".join(ch for ch in nfd if unicodedata.category(ch) != "Mn")
 
 
 def _token_hits_rude(tok: str) -> bool:
@@ -317,17 +342,12 @@ def validate_nickname(raw: Any) -> tuple[str, Optional[str]]:
     """Validate and clean a board nickname, returning `(clean, refusal_reason)`."""
     if not isinstance(raw, str):
         return "", "Please pick a nickname using letters or numbers."
-    stripped = unicodedata.normalize("NFC", re.sub(r"[\x00-\x1f\x7f]+", " ", raw))
-    stripped = stripped.replace("’", "'").replace("‘", "'").replace("ʼ", "'")
-    collapsed = re.sub(r"\s+", " ", stripped).strip()
-    if not collapsed:
+    clipped = _normalize_nickname_input(raw)
+    if not clipped:
         return "", "Please type a valid nickname."
-    clipped = collapsed[:12].strip()
     if clipped.lower() in _RESERVED_NICKNAMES:
         return "", "That name is taken by the house. Please pick another nickname."
-    if not all(_is_allowed_nickname_char(ch) for ch in clipped) or not any(
-        ch.isalpha() or (ch.isascii() and ch.isdigit()) for ch in clipped
-    ):
+    if not is_allowed_nickname_chars(clipped):
         return (
             "",
             "Names can use only letters, numbers, spaces, periods, apostrophes, and hyphens. Please pick another.",

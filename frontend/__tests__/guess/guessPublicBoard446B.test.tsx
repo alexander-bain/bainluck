@@ -1,4 +1,6 @@
 /** @jest-environment jsdom */
+import fs from "fs";
+import path from "path";
 import React, { StrictMode, act } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -283,7 +285,28 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     expect(host.querySelectorAll('[data-testid="public-board-table"] tbody tr').length).toBe(4);
   });
 
-  it("allows accented Latin letters, periods, and ordinary multi-word names while matching hint copy", async () => {
+  it("allows accented Latin letters, periods, and ordinary multi-word names while matching server char parity", async () => {
+    const parityPath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "backend",
+      "data",
+      "guess",
+      "nickname_parity_cases.json",
+    );
+    const parity = JSON.parse(fs.readFileSync(parityPath, "utf8")) as {
+      cases: { raw: string; chars_allowed: boolean; server_allowed: boolean; reason: string | null }[];
+    };
+    expect(parity.cases.length).toBeGreaterThanOrEqual(45);
+    for (const c of parity.cases) {
+      expect({ raw: c.raw, allowed: isAllowedNicknameChars(c.raw) }).toEqual({
+        raw: c.raw,
+        allowed: c.chars_allowed,
+      });
+    }
+
     for (const ok of [
       "José",
       "Zoë",
@@ -299,11 +322,18 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
       "Cass",
       "Essex",
       "Nigel",
+      "Łukasz",
+      "Þór",
+      "Straße",
+      "Nguyễn",
+      "J.R.",
+      "Yıldız",
+      "İbrahim",
     ]) {
       expect({ ok, allowed: isAllowedNicknameChars(ok) }).toEqual({ ok, allowed: true });
       expect(cleanDailyNickname(ok)).toBe(ok);
     }
-    for (const bad of ["Alex!", "bad_name", "...", "---"]) {
+    for (const bad of ["Alex!", "bad_name", "...", "---", "ƒuck", "ƒ", "ꜰᴜᴄᴋ", "fᴜck", "ɐɓɔ"]) {
       expect({ bad, allowed: isAllowedNicknameChars(bad) }).toEqual({ bad, allowed: false });
     }
 
@@ -313,13 +343,20 @@ describe("446: B public board, unscheduled copy, StrictMode addName, 30d storage
     await flushUi();
 
     const input = host.querySelector('[data-testid="name-input"]') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    for (const badDraft of ["Bad!", "ƒuck", "ꜰᴜᴄᴋ"]) {
+      await act(async () => {
+        setter?.call(input, badDraft);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const hint = host.querySelector('[data-testid="name-char-hint"]');
+      expect(hint?.textContent).toBe("Letters, numbers, spaces, periods, apostrophes, and hyphens only.");
+    }
     await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(input, "Bad!");
+      setter?.call(input, "Yıldız");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const hint = host.querySelector('[data-testid="name-char-hint"]');
-    expect(hint?.textContent).toBe("Letters, numbers, spaces, periods, apostrophes, and hyphens only.");
+    expect(host.querySelector('[data-testid="name-char-hint"]')).toBeNull();
   });
 
   it("shows 12-letter names cleanly without truncate, uses past-day board copy, and keeps Hide/Put back admin-only", async () => {
